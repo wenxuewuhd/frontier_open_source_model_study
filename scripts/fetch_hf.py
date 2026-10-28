@@ -20,6 +20,7 @@ import struct
 import sys
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 API = "https://huggingface.co/api/models/"
@@ -63,25 +64,38 @@ def safetensors_header(repo: str, rev: str, path: str) -> dict:
     return json.loads(_get(url, hdr))
 
 
-def collect_shapes(repo: str, rev: str, files: list) -> dict:
-    """遍历所有 safetensors shard，汇总张量清单。"""
+def collect_shapes(repo: str, rev: str, files: list, workers: int = 8) -> dict:
+    """遍历所有 safetensors shard，汇总张量清单。
+
+    万亿参数模型有几百个分片（每个分片两次 Range 请求），串行要十几分钟，
+    所以并发取。并发数保持适中，不要把 HF 打爆。
+    任何一个分片读失败都要报出来并记进 failed —— 清单缺分片会让参数量
+    静默少算，derive.py 的完整性检查靠层索引连续性兜底，但这里先报一次。
+    """
     shards = sorted(f for f in files if f.endswith(".safetensors"))
     if not shards:
         print("  ! 仓库里没有 .safetensors，shapes 留空", file=sys.stderr)
-        return {}
-    out = {}
-    for i, path in enumerate(shards, 1):
-        print(f"  [{i}/{len(shards)}] {path}", file=sys.stderr)
-        try:
-            head = safetensors_header(repo, rev, path)
-        except (urllib.error.HTTPError, urllib.error.URLError, RuntimeError) as e:
-            print(f"  ! {path} 读头失败: {e}", file=sys.stderr)
-            continue
-        for name, meta in head.items():
-            if name == "__metadata__":
+        return {}, []
+
+    out, failed, done = {}, [], 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(safetensors_header, repo, rev, p): p for p in shards}
+        for fut in as_completed(futs):
+            path = futs[fut]
+            done += 1
+            try:
+                head = fut.result()
+            except (urllib.error.HTTPError, urllib.error.URLError, RuntimeError) as e:
+                failed.append(path)
+                print(f"  ! [{done}/{len(shards)}] {path} 读头失败: {e}", file=sys.stderr)
                 continue
-            out[name] = {"shape": meta.get("shape"), "dtype": meta.get("dtype")}
-    return out
+            for name, meta in head.items():
+                if name == "__metadata__":
+                    continue
+                out[name] = {"shape": meta.get("shape"), "dtype": meta.get("dtype")}
+            if done % 20 == 0 or done == len(shards):
+                print(f"  [{done}/{len(shards)}] {len(out)} 个张量", file=sys.stderr)
+    return out, failed
 
 
 def main():
@@ -91,6 +105,7 @@ def main():
     ap.add_argument("--facts-dir", default="facts")
     ap.add_argument("--rev", default=None, help="指定 commit；默认用仓库当前 sha，保证可复现")
     ap.add_argument("--skip-shapes", action="store_true", help="只取 config 与元数据")
+    ap.add_argument("--workers", type=int, default=8, help="并发读分片头的线程数")
     args = ap.parse_args()
 
     out_dir = os.path.join(args.facts_dir, args.id)
@@ -108,7 +123,10 @@ def main():
     else:
         print("  ! 没有 config.json", file=sys.stderr)
 
-    shapes = {} if args.skip_shapes else collect_shapes(args.repo, rev, files)
+    if args.skip_shapes:
+        shapes, failed = {}, []
+    else:
+        shapes, failed = collect_shapes(args.repo, rev, files, args.workers)
 
     for name, obj in (("repoinfo.json", info), ("cfg.json", cfg), ("shapes.json", shapes)):
         with open(os.path.join(out_dir, name), "w") as f:
@@ -121,12 +139,17 @@ def main():
         "tensor_count": len(shapes),
         "shard_count": sum(1 for f in files if f.endswith(".safetensors")),
         "config_url": RESOLVE.format(repo=args.repo, rev=rev, path="config.json"),
+        "failed_shards": failed,
     }
     with open(os.path.join(out_dir, "fetched.json"), "w") as f:
         json.dump(record, f, ensure_ascii=False, indent=1)
 
     print(f"==> {out_dir}: config {'有' if cfg else '无'}, {len(shapes)} 个张量, rev={rev[:12]}",
           file=sys.stderr)
+    if failed:
+        print(f"! {len(failed)} 个分片读失败，清单不完整，参数量会少算。重跑以补全。",
+              file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

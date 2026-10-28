@@ -1,0 +1,205 @@
+id: qwen3.8-2.4t-a95b
+family: qwen
+kind: llm
+display_name: Qwen3.8-2.4T-A95B
+released: 2026-08-12
+license: apache-2.0
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B
+    locator: config.json @ 207bd685a7e3
+    accessed: 2026-10-28
+    note: 另有 Qwen3.8-2.4T-A95B-FP8 为同模型的 FP8 发布，213 分片 2.27 TiB
+
+hf:
+  repo: Qwen/Qwen3.8-2.4T-A95B
+  pipeline_tag: text-generation
+  gated: false
+
+lineage:
+  track: main
+  changed_from_predecessor:
+    - axis: attention
+      text: 混合线性注意力，92 层中 69 层线性、23 层 full attention（每 4 层一个）
+    - axis: moe
+      text: 512 路由专家 top-10，另有一个共享专家
+    - axis: scale
+      text: 2.4T 总参数 / 95B 激活
+
+params:
+  total: 2.4e+12
+  active_decode: 95.0e+9
+  counting_note: >-
+    总量与激活量取自模型名（2.4T-A95B），属厂商声明。是否含 1 层 MTP 未说明，
+    交叉核对结果见 data/derived/。注意「激活参数」的厂商口径与带宽口径不同：
+    后者不含只 gather 一行的输入词表，做带宽估算要用带宽口径。
+
+context:
+  max: 262144
+
+arch:
+  layers: 92
+  hidden: 8192
+  vocab: 248320
+  norm: RMSNorm
+  norm_eps: 1.0e-06
+  activation: SwiGLU
+  position: RoPE theta 1e7，partial_rotary_factor 0.25（只对 1/4 维度加 rope）
+
+  attention:
+    type: hybrid
+    num_heads: 64
+    num_kv_heads: 4
+    head_dim: 256
+    partial_rotary_factor: 0.25
+    layer_pattern: 3:1 linear:full，每 4 层一个 full attention
+    hybrid:
+      layer_types_count:
+        linear: 69
+        full: 23
+      interval: 4
+      note: >-
+        只有 23 层累积 KV cache，其余 69 层携带每序列固定的递归状态。
+        容量规划必须按两类对象分别建模。
+    output_gate:
+      enabled: true
+      type: swish
+    linear_state:
+      mechanism: 门控线性注意力 + 短卷积
+      num_key_heads: 16
+      num_value_heads: 128
+      key_head_dim: 128
+      value_head_dim: 128
+      conv_kernel_dim: 4
+      state_dtype: FP32
+      state_layout_note: >-
+        key 头数（16）与 value 头数（128）相差 8 倍，状态按哪个头数展开会带来
+        8 倍差异。config 不给布局，但权重清单给出了答案：每层有
+        linear_attn.A_log [128] 与 linear_attn.dt_bias [128] —— 衰减参数
+        每状态头一个，故状态头数为 128（即 value 头数）。
+        in_proj_qkv [20480, 8192] 也对得上：q 16×128 + k 16×128 + v 128×128。
+        推导脚本按 value 头数估算，与此一致。
+
+  ffn:
+    type: moe
+
+  moe:
+    routed_experts: 512
+    shared_experts: 1
+    top_k: 10
+    intermediate: 2048
+    routing: 带辅助损失（router_aux_loss_coef 0.001）
+    balance: aux-loss
+    storage_note: >-
+      专家为堆叠存储：每层一个 [512, 4096, 8192] 的 gate_up_proj 与一个
+      [512, 8192, 2048] 的 down_proj，gate 与 up 融合在一起。
+      grouped GEMM 因此吃 3 维权重，算子签名与逐专家独立张量的布局不同。
+
+  decoding:
+    mtp_layers: 1
+
+precision:
+  training: BF16
+  weights_release: [BF16, FP8_E4M3]
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      混合结构把 KV 压力降到 1/4 的层，但换来每序列固定的大块状态。
+      与纯注意力模型相反：长上下文下状态便宜，大批量下状态贵。
+    quantified: 23 层累积 KV、69 层带固定状态
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      一个模型内两套注意力路径按 3:1 交替，引擎要支持异构层调度；
+      线性层还需要递归状态更新与短卷积算子。
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      专家堆叠成 3 维张量存储，grouped GEMM 的权重布局与逐专家独立张量不同。
+      按逐专家布局写的算子无法直接复用，EP 切分也要按首维切而非按张量切。
+    visibility: public
+  - dimension: ep-comm
+    finding: >-
+      512 专家 top-10，每 token 的 dispatch/combine 通信量比常见的 top-8
+      配置更高，且专家更细（中间维 2048），跨机 EP 下通信占比会上升。
+    visibility: public
+
+infra_signals:
+  - text: >-
+      旗舰规模已到 2.4T 总参数、万亿级权重存储（BF16 约 4.45 TiB，213 分片），
+      单机已不可能装下。权重分片加载、分层 offload 与跨机参数服务
+      从「可选优化」变成「部署前提」。
+    evidence: judgement
+    horizon: now
+    axis: scale
+  - text: >-
+      混合线性注意力已是 Qwen 全线的默认结构，不再是实验特性。
+      KV 容量模型要改成「部分层随上下文增长 + 部分层每序列常量」两分量，
+      分页管理、调度与吞吐曲线都要按此重做。
+    evidence: judgement
+    horizon: now
+    axis: attention
+  - text: >-
+      线性状态的张量布局不在 config 里，而它按 key 头数还是 value 头数展开
+      会带来 8 倍差异。这类「容量关键参数只存在于实现中」的情况，
+      要求适配流程把状态布局当作必须核实项，不能从配置推。
+    evidence: judgement
+    horizon: now
+    axis: attention
+
+evidence:
+  id: official
+  family: official
+  kind: official
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: official
+  lineage.changed_from_predecessor: derived
+  params: official
+  params.counting_note: judgement
+  context: official
+  arch: official
+  arch.attention.type: judgement
+  arch.attention.layer_pattern: derived
+  arch.attention.hybrid.layer_types_count: derived
+  arch.attention.hybrid.note: judgement
+  arch.attention.linear_state.mechanism: judgement
+  arch.attention.linear_state.state_layout_note: judgement
+  arch.ffn.type: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.position: derived
+  precision: official
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  Qwen 家族的当前旗舰（2026-08-12）。同代另有 Qwen3.8-27B（dense、带视觉）
+  作为较小档位，已单独记录。两者共享混合线性注意力结构，但 FFN 形态
+  （MoE vs dense）和头数配置不同。
+
+open_questions:
+  - >-
+    状态的第二维是否就是 key_head_dim（128）仍需按实现确认；
+    状态头数已由权重清单确定为 128，不再是开放问题
+  - 2.4T / 95B 是否含 1 层 MTP 未说明，以交叉核对结果为准
+  - KV cache 的实际存储精度未披露，推导时按模型 dtype 兜底
+  - FP8 发布版的量化配置与 BF16 版的差异未核对

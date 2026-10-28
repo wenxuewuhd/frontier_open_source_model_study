@@ -1,0 +1,161 @@
+{
+ "id": "qwen3.8-2.4t-a95b",
+ "generated_by": "scripts/derive.py",
+ "generated_at": "2026-10-28T09:27:05+00:00",
+ "inputs": {
+  "facts_dir": "facts/qwen3.8-2.4t-a95b",
+  "config_present": true,
+  "shapes_present": true,
+  "model_yaml": "data/models/qwen/qwen3.8-2.4t-a95b.yaml",
+  "ep_size": 8
+ },
+ "from_shapes": {
+  "available": true,
+  "complete": true,
+  "tensor_count": 1609,
+  "params_total": 2446182725504.0,
+  "params_by_subsystem": {
+   "expert": 2370821947392.0,
+   "norm": 1515520.0,
+   "attention": 39895618944.0,
+   "router": 385875968.0,
+   "shared_expert": 4631265280.0,
+   "embed": 2034237440.0,
+   "draft": 26378027520.0,
+   "lm_head": 2034237440.0
+  },
+  "weight_bytes_total": 4892365451008.0,
+  "weight_bytes_by_subsystem": {
+   "expert": 4741643894784.0,
+   "norm": 3031040.0,
+   "attention": 79791237888.0,
+   "router": 771751936.0,
+   "shared_expert": 9262530560.0,
+   "embed": 4068474880.0,
+   "draft": 52756055040.0,
+   "lm_head": 4068474880.0
+  },
+  "weight_bytes_by_dtype": {
+   "BF16": 4892365451008.0
+  },
+  "experts_seen": 512,
+  "expert_storage": "stacked",
+  "layers_present": 92,
+  "layer_index_max": 92,
+  "layers_missing": [],
+  "moe_layers_seen": 92,
+  "unknown_dtypes": [],
+  "packing_applied": {},
+  "packing_suspect": [],
+  "incomplete_note": null
+ },
+ "kv_cache": {
+  "status": "partial",
+  "attention_type": "HYBRID",
+  "kv_dtype": "bfloat16",
+  "layers": 92,
+  "full_attention_layers": 23,
+  "linear_attention_layers": 69,
+  "per_token_bytes": 94208,
+  "per_sequence_bytes": 581074944,
+  "components": {
+   "full_attention": {
+    "layers": 23,
+    "bytes_per_layer": 4096,
+    "bytes_per_token": 94208,
+    "dtype": "bfloat16",
+    "terms": {
+     "num_kv_heads": 4,
+     "head_dim": 256,
+     "formula": "2 * num_kv_heads * head_dim * bytes"
+    }
+   },
+   "linear_state": {
+    "layers": 69,
+    "bytes_per_layer": 8421376,
+    "bytes_per_sequence": 581074944,
+    "dtype": "FP32",
+    "terms": {
+     "matrix_state": "num_value_heads(128) * key_head_dim(128) * value_head_dim(128) * bytes(4)",
+     "conv_state": "conv_kernel_dim(4) * heads * key_head_dim"
+    },
+    "assumption": "递归状态按 [num_value_heads, key_head_dim, value_head_dim] 估，conv 状态按卷积窗估。实际布局依实现而定，需核实后再用于容量规划"
+   }
+  },
+  "notes": [
+   "线性注意力的状态布局依实现而定，此处是按常见布局的估算"
+  ],
+  "dtype_assumed": true,
+  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
+ },
+ "kv_capacity_bytes_at_context": {
+  "4096": 966950912,
+  "32768": 3668082688,
+  "131072": 12929105920
+ },
+ "active_params": {
+  "status": "ok",
+  "total": 93253629312.0,
+  "total_with_embed": 95287866752.0,
+  "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的输入词表）；total_with_embed 含输入词表，用于和各家公布的「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
+  "expert_active": 46305116160.0,
+  "expert_total": 2370821947392.0,
+  "expert_ratio": "10/512",
+  "always_active": 46948513152.0,
+  "lm_head": 2034237440.0,
+  "dense": false,
+  "excluded": {
+   "embed_tokens": 2034237440.0,
+   "retrieval_table": 0.0,
+   "vision": 0.0,
+   "draft": 26378027520.0
+  },
+  "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
+ },
+ "flops": {
+  "linear_per_token": 186507258624.0,
+  "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
+ },
+ "arithmetic_intensity": {
+  "decode_weight_bytes_per_token": 186507258624.0,
+  "decode_flops_per_byte": 1.0,
+  "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
+ },
+ "ep_communication": {
+  "status": "ok",
+  "ep_size": 8,
+  "moe_layers": 92,
+  "bytes_per_token": 30146560,
+  "bytes_per_layer": 327680,
+  "formula": "2(dispatch+combine) * top_k * hidden * bytes * moe_layers",
+  "note": "EP=1 时为 0；跨机时该量按互联带宽折算成时间，是 decode 尾延迟的主因之一"
+ },
+ "reconciliation": [
+  {
+   "item": "路由专家数",
+   "config": 512.0,
+   "shapes": 512.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "专家存储布局",
+   "status": "ok",
+   "why": "stacked（一个张量装一层全部专家，grouped GEMM 吃 3 维权重）"
+  },
+  {
+   "item": "层数",
+   "config": 92.0,
+   "shapes": 92.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "参数总量",
+   "YAML 声明": 2400000000000.0,
+   "shapes 实测": 2446182725504.0,
+   "delta_pct": 1.92,
+   "status": "ok"
+  }
+ ]
+}

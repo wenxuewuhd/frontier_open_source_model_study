@@ -1,7 +1,7 @@
 {
  "id": "deepseek-v41-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-28T09:09:52+00:00",
+ "generated_at": "2026-10-28T09:27:05+00:00",
  "inputs": {
   "facts_dir": "facts/deepseek-v41-flash",
   "config_present": true,
@@ -49,6 +49,7 @@
    "INT8": 278585671680.0
   },
   "experts_seen": 384,
+  "expert_storage": "individual",
   "layers_present": 40,
   "layer_index_max": 40,
   "layers_missing": [],
@@ -147,6 +148,11 @@
    "shapes": 384.0,
    "delta_pct": 0.0,
    "status": "ok"
+  },
+  {
+   "item": "专家存储布局",
+   "status": "ok",
+   "why": "individual（逐专家独立张量）"
   },
   {
    "item": "层数",

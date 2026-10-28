@@ -18,7 +18,7 @@ hf:
   gated: false
 
 lineage:
-  track: main
+  track: side
 
 params:
   counting_note: >-
@@ -174,6 +174,8 @@ evidence:
   open_questions: judgement
 
 notes: >-
+  较小档位，不是家族旗舰（旗舰见 qwen3.8-2.4t-a95b）。保留它是因为它是
+  同代里下载量最高的一个，且带视觉塔与 dense FFN，和旗舰形成结构对照。
   本记录是 P0-D 的 schema 普适性测试用例。原计划找一个「结构朴素」的旗舰作对照，
   但调研发现 2026 年的旗舰已无朴素结构：Qwen3.8 全线是混合线性注意力，
   GLM-5.3 是 MLA + DSA 稀疏。于是改选与 V4.1 差异最大的这一个，

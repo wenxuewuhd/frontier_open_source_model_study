@@ -81,6 +81,7 @@ def from_shapes(shapes: dict, logical: dict = None) -> dict:
     packing_applied = {}
     packing_suspect = set()
     expert_ids, layer_ids, moe_layers = set(), set(), set()
+    stacked_experts = set()
 
     for name, meta in shapes.items():
         n = numel(meta.get("shape"))
@@ -105,6 +106,10 @@ def from_shapes(shapes: dict, logical: dict = None) -> dict:
         m = _EXPERT_IDX.search(name)
         if m:
             expert_ids.add(int(m.group(1)))
+        elif sub == "expert" and len(meta.get("shape") or []) == 3:
+            # 堆叠存储：一个张量装一层的全部专家，专家数是首维。
+            # 这种布局下 grouped GEMM 吃 3 维权重，算子签名与逐专家存储不同。
+            stacked_experts.add(meta["shape"][0])
         m = _LAYER_IDX.search(name)
         if m:
             layer_ids.add(int(m.group(1)))
@@ -126,7 +131,10 @@ def from_shapes(shapes: dict, logical: dict = None) -> dict:
         "weight_bytes_total": sum(nbytes.values()),
         "weight_bytes_by_subsystem": nbytes,
         "weight_bytes_by_dtype": by_dtype,
-        "experts_seen": (max(expert_ids) + 1) if expert_ids else 0,
+        "experts_seen": ((max(expert_ids) + 1) if expert_ids
+                         else (max(stacked_experts) if stacked_experts else 0)),
+        "expert_storage": ("individual" if expert_ids
+                           else "stacked" if stacked_experts else None),
         "layers_present": len(layer_ids),
         "layer_index_max": layer_max,
         "layers_missing": missing[:20],
@@ -406,6 +414,11 @@ def reconcile(cfg_t: dict, shp: dict, declared: dict) -> list:
         else:
             add("路由专家数", n_exp, shp.get("experts_seen") or None,
                 "config", "shapes", tol=0.0)
+            if shp.get("expert_storage"):
+                out.append({"item": "专家存储布局", "status": "ok",
+                            "why": f"{shp['expert_storage']}"
+                                   + ("（一个张量装一层全部专家，grouped GEMM 吃 3 维权重）"
+                                      if shp["expert_storage"] == "stacked" else "（逐专家独立张量）")})
         if not shp.get("complete"):
             # 清单不完整时，参数量核对无意义 —— 不报假的 -63%，直接说清单不能用
             out.append({"item": "权重清单完整性", "status": "MISMATCH",
@@ -546,6 +559,9 @@ def main():
               f"    权重存储 {dtypes.fmt_bytes(shp['weight_bytes_total'])}")
         top = sorted(shp["weight_bytes_by_subsystem"].items(), key=lambda kv_: -kv_[1])[:5]  # noqa
         print("  按子系统       " + ", ".join(f"{k} {dtypes.fmt_bytes(v)}" for k, v in top))
+        if shp.get("expert_storage"):
+            print(f"  专家存储       {shp['expert_storage']}"
+                  f"（{shp.get('experts_seen')} 专家）")
         print("  按精度         " + ", ".join(
             f"{k} {dtypes.fmt_bytes(v)}" for k, v in
             sorted(shp["weight_bytes_by_dtype"].items(), key=lambda kv_: -kv_[1])))

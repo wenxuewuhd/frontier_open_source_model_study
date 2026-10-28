@@ -264,7 +264,8 @@
             "first_k_dense": { "type": "integer" },
             "routing": { "type": "string" },
             "balance": { "type": "string", "description": "aux-loss / aux-loss-free bias 等" },
-            "expert_groups": { "type": "integer" }
+            "expert_groups": { "type": "integer" },
+            "storage_note": { "type": "string", "description": "专家是逐个独立张量还是堆叠成一个，决定 grouped GEMM 的权重布局与 EP 切分方式" }
           }
         },
 
