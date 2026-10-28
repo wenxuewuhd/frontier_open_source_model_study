@@ -1,0 +1,214 @@
+# 算子表渲染用的测试 fixture。
+#
+# 内容是合成的，不对应任何真实模型，也不代表任何硬件的真实适配状态。
+# 存在的目的只有一个：把 mk_ops_table.py 的每条渲染路径都走一遍 ——
+# 三类归属配色、核查留痕、实现分叉、拼装基线告警、带宽账 sheet、
+# 以及自查规则（分组引用、归属一致、孤立算子）。
+#
+# 真实算子表含内部信息，放在 data-private/ops/<id>/，不进公开仓。
+
+model: fixture-demo
+visibility: public
+
+baseline:
+  hardware: 示例加速器（fixture）
+  parallel: TP1/DP2/EP2
+  exec_mode: prefill eager + decode 图模式
+  quantization: 示例 W8A8
+  block_size: 128
+  config_origin: assembled
+  config_caveat: >-
+    这是 fixture，基线是为了测试渲染而拼的，不是任何文档化配方。
+    真实算子表若也是拼装配置，必须在这里写明拼了什么、改哪个参数会让结论翻转。
+
+rows:
+  - module: step.prologue
+    op: embed_tokens
+    kernel: VocabParallelEmbedding
+    op_type: gather
+    input_shape: "[V,H];[T]"
+    output_shape: "[T,H]"
+    dim: T
+    shape_range: "symbolic:T; fixed:V=vocab,H=hidden"
+    input_dtype: BF16;INT32
+    output_dtype: BF16
+    input_format: ND;ND
+    output_format: ND
+    dtype_next1: 低位权重 → 出 BF16
+    group: F1
+    ownership: existing
+    note: tp=1 时无 vocab mask、无 all_reduce。切 TP 才需要越界置 0 加规约那套。
+    evidence:
+      verdict: standalone
+      impl:
+        file: engine/models/demo/model.py
+        anchor: "self.embed_tokens = VocabParallelEmbedding("
+        repo: example/engine@abc1234
+
+  - module: layer_i.attn
+    op: qkv_proj
+    kernel: 示例融合预处理算子
+    op_type: "fused: GEMM+norm+rope"
+    input_shape: "[T,H];[3H,H]"
+    output_shape: "[T,3H]"
+    dim: T
+    shape_range: "symbolic:T; fixed:H; attrs:rope_theta"
+    input_dtype: BF16;FP8_E4M3
+    output_dtype: BF16
+    input_format: ND;ND
+    output_format: ND
+    dtype_next1: W4A8 → 出 BF16
+    group: F2
+    ownership: generic
+    note: 任何同类 TP transformer 都要，不该占本模型优先级。
+    evidence:
+      verdict: fused
+      impl:
+        file: engine/layers/attention.py
+        anchor: "def forward(self, hidden_states"
+      ref_impl:
+        file: reference/modeling_demo.py
+        anchor: "q = self.q_proj(hidden_states)"
+      divergence: >-
+        参考实现分三次独立 GEMM，目标引擎融合成一次。两侧激活精度不同，
+        照参考实现写规格会少一次量化。
+
+  - module: layer_i.attn
+    op: attn_core
+    kernel: 示例注意力算子
+    op_type: attention
+    input_shape: "[T,N,D];[L,N,D]"
+    output_shape: "[T,N,D]"
+    dim: T, L
+    shape_range: "symbolic:T,L; fixed:N=heads,D=head_dim"
+    input_dtype: BF16
+    output_dtype: BF16
+    input_format: TND
+    output_format: TND
+    group: F2
+    ownership: generic
+    note: 随上下文线性增长，长序列下由访存主导。
+
+  - module: layer_i.moe
+    op: router
+    kernel: 示例路由算子
+    op_type: "fused: GEMV+topk"
+    input_shape: "[T,H];[E,H]"
+    output_shape: "[T,K] idx;[T,K] w"
+    dim: T
+    shape_range: "symbolic:T; fixed:E=experts,K=top_k"
+    input_dtype: BF16;FP32
+    output_dtype: INT32;FP32
+    input_format: ND;ND
+    output_format: ND;ND
+    group: F3
+    ownership: model-specific
+    note: 打分函数非常规，图编译器的通用 topk 融合匹配不上。
+    evidence:
+      verdict: diverged
+      divergence: 打分函数与参考实现不同，直接套通用实现会得到不同的选路结果。
+    review:
+      - id: R1
+        text: >-
+          原先记为「已有通用算子承接」。核查源码后发现打分函数不在通用算子的
+          支持列表里，归属改为本模型专属。
+        resolution: corrected
+
+  - module: layer_i.moe
+    op: grouped_gemm
+    kernel: 示例分组矩阵乘
+    op_type: grouped GEMM
+    input_shape: "[T,H];[E/ep,H,I]"
+    output_shape: "[T,I]"
+    dim: T
+    shape_range: "symbolic:T; fixed:H,I=intermediate; attrs:ep 切分"
+    input_dtype: FP8_E4M3;FP8_E4M3
+    output_dtype: BF16
+    input_format: ND;ND
+    output_format: ND
+    dtype_next1: W4A8
+    dtype_next2: W4A4
+    group: F3
+    ownership: model-specific
+    note: 专家维按 ep 切，每 rank 持有 E/ep 个专家。
+
+  - module: layer_i.moe
+    op: dispatch_combine
+    kernel: 示例 all-to-all
+    op_type: communication
+    input_shape: "[T,K,H]"
+    output_shape: "[T,K,H]"
+    dim: T
+    shape_range: "symbolic:T; fixed:K,H"
+    input_dtype: BF16
+    output_dtype: BF16
+    input_format: ND
+    output_format: ND
+    group: F3
+    ownership: model-specific
+    note: ep=1 时整组不生效。跨机时是尾延迟的主要来源。
+
+params:
+  - section: 基线配置
+    key: 模型
+    value: fixture-demo（合成，不对应真实模型）
+  - section: 基线配置
+    key: 并行配置
+    value: TP1/DP2/EP2。因 tp=1，注意力侧维度不切分
+    pitfall: true
+  - section: 符号
+    key: T
+    value: 一次 forward 的 token 数。decode 时 T = B
+  - section: 符号
+    key: L
+    value: 上下文长度
+  - section: 符号
+    key: E / K
+    value: 专家总数 / 每 token 选中数
+
+groups:
+  - id: F1
+    ownership: existing
+    status: have
+    fused_op: 已有 → VocabParallelEmbedding
+    benefit: low
+    benefit_note: 已有算子承接，不排期。列出来是为了说明它不需要新增。
+    members: [embed_tokens]
+
+  - id: F2
+    ownership: generic
+    status: extend
+    fused_op: 建议 → 把已有的融合预处理算子接到本模型的注意力路径
+    benefit: medium
+    benefit_note: 算子存在但没接到这条路径上。属于适配工作，不是新开发。
+    members: [qkv_proj, attn_core]
+    note: 通用组。NPU 侧可能已有现成算子或图编译器能覆盖。
+
+  - id: F3
+    ownership: model-specific
+    status: new
+    fused_op: 建议 → 路由打分与分组矩阵乘合并，通信与计算重叠
+    benefit: high
+    benefit_note: 真正要为本模型做的活。打分函数非常规，通用算子盖不住。
+    members: [router, grouped_gemm, dispatch_combine]
+
+accounting:
+  - item: 每 token 权重搬运
+    value: 示例值 1234 MiB/rank
+    basis: derived
+    vs_official: 与官方口径一致
+  - item: 每 token KV
+    value: 示例值 890 B
+    basis: official
+  - item: 每 token KV（实现实测）
+    value: 示例值 970 B（+9%）
+    basis: measured
+    vs_official: scale 容器用了比官方口径更宽的类型
+    fixable: 换成官方口径的 scale 类型即可对齐
+
+open_items:
+  - fixture 不含真实待实测项；真实算子表在这里列出需要上机确认的条目
+
+generated:
+  at: "2026-10-28"
+  by: tests/fixtures（手写 fixture，非脚本产出）

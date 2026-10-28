@@ -1,0 +1,14 @@
+# facts/ 是取数缓存，可由 scripts/fetch_hf.py 按 pinned sha 复现。
+# shapes.json 每模型数 MB，不进仓库；data/derived/*.json 才是提交物。
+facts/
+
+# 内部数据 overlay：算子表、自测性能、硬件相关瓶颈分析。
+# 公开仓库永不包含，validate.py 另有防泄漏检查。
+data-private/
+
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/
+site/dist/
+.venv/

@@ -1,0 +1,262 @@
+id: deepseek-v41-flash
+family: deepseek
+kind: vlm
+display_name: DeepSeek-V4.1-Flash
+released: 2026-10-12
+license: mit
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash
+    locator: config.json @ 314113f8a7dadb388215396ba5fbee2c610a04d6
+    accessed: 2026-10-28
+    note: 该 rev 与更早的 5254448 相比 config 零差异，仅权重与元数据重传
+  - kind: repo
+    url: https://github.com/vllm-project/vllm
+    locator: vllm/models/deepseek_v41/
+    note: 上游参考实现，算子行为以它为准
+
+hf:
+  repo: deepseek-ai/DeepSeek-V4.1-Flash
+  sha: 314113f8a7dadb388215396ba5fbee2c610a04d6
+  last_modified: 2026-10-12T09:45:54.000Z
+  pipeline_tag: image-text-to-text
+  gated: false
+
+lineage:
+  track: main
+  changed_from_predecessor:
+    - axis: residual
+      text: 残差流扩成 4 份并行拷贝（mHC），整个主干的残差都是 4×hidden
+    - axis: retrieval
+      text: 新增 Engram 外置查表层，装在第 1、14 层，两张表合计约 196B 参数
+    - axis: attention
+      text: KV 只由 4 层产出、其余层跨层读取，并带逐层压缩比
+    - axis: decoding
+      text: 自带 DSpark 草稿模型，有独立的 128 专家集
+
+params:
+  total: 748.0e+9
+  active_prefill: 8.0e+9
+  active_decode: 16.0e+9
+  breakdown:
+    backbone: 552.0e+9
+    retrieval_table: 196.0e+9
+  excludes: [draft]
+  counting_note: >-
+    总量 = 552B 主干 + 196B Engram 两张表，不含 MTP / DSpark 草稿部分。
+    已按完整权重清单逐项核对（rev 314113f8，48 分片 96085 张量）：
+    主干 552.0B（专家 543.6 + 注意力 5.1 + 共享专家 1.4 + 其他 1.3 + 视觉 0.5 + 路由 0.1），
+    Engram 196.9B，另有 draft 侧 7.4B 不计入声明值，合计与声明差 0.13%。
+    注意路由专家以 FP4 两个一字节打包存放，safetensors 里的 numel 是容器数，
+    直接求和会把参数量少算一半。
+    Engram 表每 token 只读取极少行，计入总参数但不计入激活参数。
+
+context:
+  max: 1048576
+  train_native: 65536
+  extension_method: YaRN, factor 16, beta_fast 32, beta_slow 1
+
+arch:
+  layers: 40
+  hidden: 5120
+  vocab: 129280
+  norm: RMSNorm
+  norm_eps: 1.0e-20
+  activation: SwiGLU, swiglu_limit 10.0
+  position: RoPE theta 10000 + YaRN；压缩路径另用 theta 160000
+
+  attention:
+    type: MLA
+    num_heads: 64
+    num_kv_heads: 1
+    head_dim: 512
+    qk_rope_head_dim: 64
+    q_lora_rank: 1280
+    o_lora_rank: 1024
+    o_groups: 8
+    sliding_window: 128
+    kv_sharing:
+      source_layers: [2, 8, 14, 20]
+      index_source_layers: [2, 8, 14, 20, 24, 28, 32, 36]
+      compress_ratios: [0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+                        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+                        0, 0, 0]
+      note: >-
+        compress_ratios 有 43 项而主干只有 40 层，末尾 3 项对应 MTP 层。
+        按总层数乘 KV 会高估约十倍，任何 KV 估算都必须先看这里。
+    sparse:
+      mechanism: indexer 打分选块，再在选中的块上做全注意力
+      index_n_heads: 32
+      index_head_dim: 128
+      index_topk: 512
+      candidate_source_layer: 20
+      candidate_topk_blocks: 2048
+      candidate_block_size: 8
+
+  moe:
+    routed_experts: 384
+    shared_experts: 1
+    top_k: 6
+    intermediate: 2304
+    routing: noaux_tc 选路 + sqrtsoftplus 打分，norm_topk_prob，routed_scaling_factor 1.5
+    balance: 无辅助损失，靠可学习偏置调节
+
+  residual:
+    type: mHC
+    multiplier: 4
+    note: >-
+      残差被展开成 4 份，经 Sinkhorn 过的双随机矩阵混合后写回。
+      常驻激活是同规模普通 transformer 的 4 倍，图模式的固定 buffer 要按 4× 预留。
+
+  retrieval:
+    mechanism: n-gram 哈希查表（Engram），哈希只依赖 token id，与隐层无关
+    layers: [1, 14]
+    table_rows: [384006168, 384016682]
+    entry_dim: 256
+    hash_cols: 24
+    placement: host UVA 常驻，按需稀疏取
+    lookup_bytes_per_token: 12288
+
+  decoding:
+    mtp_layers: 3
+    speculative:
+      method: DSpark
+      num_tokens: 5
+      target_layers: [37, 38, 39]
+      own_moe:
+        routed_experts: 128
+        top_k: 3
+        rank: 256
+
+  vision:
+    encoder: DeepSeek-V4.1 vision tower
+    layers: 32
+    hidden: 1024
+    num_heads: 16
+    patch_size: 14
+    downsample_ratio: 3
+    max_image_tokens: 1024
+    fusion: aligner MLP 投影到主干 hidden
+
+precision:
+  weights_release: [FP8_E4M3, FP4]
+  quantization:
+    method: fp8
+    activation_scheme: dynamic
+    weight_block_size: [32, 32]
+    scale_format: ue8m0
+    expert_dtype: FP4
+    per_subsystem:
+      expert: FP4
+      draft: FP4
+      attention: FP8_E4M3
+      retrieval_table: FP8_E4M3
+      shared_expert: FP8_E4M3
+    packing_note: >-
+      FP4 权重打包进 INT8 容器，每字节两个。工具据 per_subsystem 的逻辑精度
+      与实际容器类型自动还原参数量；字节数不还原，容器就是真实存储。
+
+platforms:
+  - engine: vLLM
+    hardware: NVIDIA
+    status: supported
+    precision: FP8_E4M3
+    ref:
+      kind: repo
+      url: https://github.com/vllm-project/vllm
+      locator: vllm/models/deepseek_v41/
+    visibility: public
+
+bottlenecks:
+  - dimension: operator-gap
+    finding: >-
+      norm_eps 取 1e-20，落在常见图编译器融合 pass 的 epsilon 白名单（通常只列 1e-5、1e-6）之外。
+      norm 相关的融合会静默匹配不上，退化成逐个小算子。
+    quantified: 每 token 约 2×40=80 次纯访存小算子
+    fix: 在融合 pass 的 epsilon 列表里加入该取值，属于一行改动
+    visibility: public
+  - dimension: weight-bandwidth
+    finding: >-
+      head_dim 512 × 64 头让 q 的上投影矩阵异常大。在不切 TP 的部署下，
+      decode 的权重搬运由注意力投影主导，而不是通常以为的 MoE 主导。
+    fix: 切 TP 可直接摊薄该矩阵，但会改变整个瓶颈结构，结论需随并行配置重算
+    visibility: public
+  - dimension: kv-capacity
+    finding: >-
+      跨层 KV 共享（仅 4 层产出）叠加逐层压缩，把 1M 上下文的 KV 压到可接受范围。
+      代价是 KV 的读写模式变得不规则，缓存管理与跨层依赖都比常规 MLA 复杂。
+    visibility: public
+
+ops_table:
+  ref: ops/deepseek-v41-flash/
+  visibility: internal
+
+infra_signals:
+  - text: >-
+      外置查表层把「参数量」和「每 token 带宽」彻底解耦：196B 的表每 token 只读约 12KB，
+      是极小的随机读。下一代 infra 要准备的是 host/SSD 侧的稀疏随机取数通路，
+      而不是更大的 HBM。
+    evidence: judgement
+    horizon: next-gen
+    axis: retrieval
+  - text: >-
+      跨层 KV 共享 + 逐层压缩成为主流后，「KV 容量 = 层数 × 每层 KV」这个估算模型失效。
+      容量规划与缓存管理都要改成按产出层建模。
+    evidence: judgement
+    horizon: now
+    axis: attention
+  - text: >-
+      非常规的 norm_eps 取值会让图编译器的融合静默失效。这类「配置值落在白名单外」
+      的失配不报错、只掉性能，值得在适配流程里加一道配置值对账。
+    evidence: judgement
+    horizon: now
+    axis: precision
+
+evidence:
+  id: official
+  family: official
+  kind: official
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: official
+  params.counting_note: judgement
+  context: official
+  arch: official
+  arch.attention.type: judgement
+  arch.attention.kv_sharing.note: derived
+  arch.attention.sparse.mechanism: judgement
+  arch.residual.note: judgement
+  arch.retrieval.mechanism: judgement
+  arch.retrieval.hash_cols: derived
+  arch.retrieval.placement: judgement
+  arch.retrieval.lookup_bytes_per_token: derived
+  arch.vision.fusion: judgement
+  precision: official
+  precision.quantization.packing_note: derived
+  platforms: official
+  bottlenecks: judgement
+  ops_table: official
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  本记录是 P0-A 的 schema 压力测试用例：选它是因为它同时带有 MLA、细粒度 MoE、
+  跨层 KV 共享、稀疏选块、残差流改造、外置查表、自带草稿模型和混合精度，
+  字段覆盖最宽。schema 撑不住的地方会先在这里暴露。
+
+open_questions:
+  - 训练精度未在 config 或模型卡中披露，暂不填 precision.training
+  - >-
+    KV cache 的实际存储精度与 scale 容器精度需查实现确认。未填时推导脚本按模型
+    dtype（BF16）兜底，并在输出里标注「精度兜底」—— 该值直接决定容量结论
+  - released 取自 HF lastModified，不等于正式发布日，待查技术报告
+  - >-
+    逐层 compress_ratios 的折算方式未建模，推导脚本给出的 KV 是未压缩上界
+    （70144 B/token）。真实值需以官方披露或实测为准
+  - hash_cols 24 由 (max_ngram 4 - 1) × n_heads 8 推得，需与实现确认

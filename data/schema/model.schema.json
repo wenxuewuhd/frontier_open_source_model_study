@@ -1,0 +1,505 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/wenxuewuhd/frontier_open_source_model_study/schema/model.schema.json",
+  "title": "模型记录",
+  "description": "一个模型版本的完整记录。数值字段只写事实，推导值由 scripts/derive.py 填入 derived 块，不手写。",
+  "type": "object",
+  "required": ["id", "family", "kind", "display_name", "released", "visibility", "evidence"],
+  "additionalProperties": false,
+
+  "$defs": {
+    "evidence_tag": {
+      "description": "证据口径。official=官方披露；derived=由本仓脚本计算；judgement=解释判断；unknown=未知",
+      "enum": ["official", "derived", "judgement", "unknown"]
+    },
+    "visibility": {
+      "description": "public 进公开站；internal 只在内部 overlay 构建中出现，公开仓 CI 会拒绝",
+      "enum": ["public", "internal"]
+    },
+    "ref": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["paper", "modelcard", "blog", "repo", "pr", "issue", "doc", "internal", "self-test"] },
+        "url": { "type": "string" },
+        "locator": { "type": "string", "description": "页码、章节号、文件:锚点，便于复核" },
+        "accessed": { "type": "string", "format": "date" },
+        "note": { "type": "string" }
+      }
+    },
+    "dtype": {
+      "description": "权重/激活的数据类型记号，沿用 safetensors 与各家量化方案的写法",
+      "type": "string",
+      "enum": [
+        "FP32", "TF32", "BF16", "FP16",
+        "FP8_E4M3", "FP8_E5M2", "MXFP8", "HIF8",
+        "FP6", "MXFP4", "NVFP4", "FP4", "HIF4",
+        "INT8", "INT4", "UINT8",
+        "FP8_E8M0", "MIXED"
+      ]
+    }
+  },
+
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]*$",
+      "description": "全仓唯一短 id，小写，用于文件名、URL 和跨表引用"
+    },
+    "family": {
+      "enum": ["deepseek", "glm", "minimax", "kimi", "qwen", "stepfun", "other"]
+    },
+    "kind": {
+      "description": "llm=纯语言；vlm=图文理解；omni=全模态理解；dllm=扩散语言模型；image-gen/video-gen=生成类",
+      "enum": ["llm", "vlm", "omni", "dllm", "image-gen", "video-gen"]
+    },
+    "display_name": { "type": "string" },
+    "aliases": { "type": "array", "items": { "type": "string" } },
+    "released": { "type": "string", "format": "date" },
+    "license": { "type": "string" },
+    "visibility": { "$ref": "#/$defs/visibility" },
+
+    "sources": {
+      "type": "array",
+      "description": "本记录依据的全部来源，字段级 evidence 指向这里的下标",
+      "items": { "$ref": "#/$defs/ref" }
+    },
+
+    "hf": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repo": { "type": "string" },
+        "sha": { "type": "string", "description": "取数时的 commit，保证 shapes/config 可复现" },
+        "last_modified": { "type": "string" },
+        "pipeline_tag": { "type": "string" },
+        "gated": { "type": "boolean" }
+      }
+    },
+
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "track": { "enum": ["main", "side", "historical"], "description": "主线 / 平行支线 / 历史节点" },
+        "predecessor": { "type": "string" },
+        "successor": { "type": "string" },
+        "changed_from_predecessor": {
+          "type": "array",
+          "description": "相对前代改了什么，这是家族页时间线的内容来源",
+          "items": {
+            "type": "object",
+            "required": ["axis", "text"],
+            "additionalProperties": false,
+            "properties": {
+              "axis": { "enum": ["attention", "moe", "residual", "retrieval", "precision", "context", "modality", "decoding", "scale", "training"] },
+              "text": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "params": {
+      "type": "object",
+      "description": "参数口径。total 按声明形状统计权重元素，MoE 含全部专家；active_* 是每 token 选中的线性权重，不等于计算量",
+      "additionalProperties": false,
+      "properties": {
+        "total": { "type": "number" },
+        "active_decode": { "type": "number" },
+        "active_prefill": { "type": "number" },
+        "breakdown": {
+          "type": "object",
+          "additionalProperties": { "type": "number" },
+          "description": "按子系统拆分，如 backbone / retrieval_table / vision / audio / draft"
+        },
+        "excludes": {
+          "type": "array",
+          "description": "声明值不含哪些子系统（如 draft）。推导脚本据此扣减后再核对，否则会报出一个口径不同导致的假差异",
+          "items": { "enum": ["draft", "vision", "audio", "retrieval", "embed", "expert"] }
+        },
+        "counting_note": { "type": "string", "description": "是否含 MTP、共享别名、非训练表，必须写明" }
+      }
+    },
+
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max": { "type": "integer" },
+        "train_native": { "type": "integer", "description": "原生训练长度，与外推后的上限区分" },
+        "compress_ratio": { "type": "number" },
+        "extension_method": { "type": "string" }
+      }
+    },
+
+    "arch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layers": { "type": "integer" },
+        "hidden": { "type": "integer" },
+        "vocab": { "type": "integer" },
+        "norm": { "type": "string" },
+        "norm_eps": { "type": "number", "description": "非常规取值会让图编译器的融合 pass 匹配不上，必须记" },
+        "activation": { "type": "string" },
+        "position": { "type": "string" },
+
+        "attention": {
+          "type": "object",
+          "required": ["type"],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "description": "混合结构用 hybrid，再在 layer_pattern 里写分布",
+              "enum": ["MHA", "GQA", "MQA", "MLA", "linear", "sparse", "hybrid"]
+            },
+            "num_heads": { "type": "integer" },
+            "num_kv_heads": { "type": "integer" },
+            "head_dim": { "type": "integer" },
+            "qk_rope_head_dim": { "type": "integer" },
+            "qk_nope_head_dim": { "type": "integer" },
+            "kv_lora_rank": { "type": "integer" },
+            "q_lora_rank": { "type": "integer" },
+            "o_lora_rank": { "type": "integer" },
+            "o_groups": { "type": "integer" },
+            "sliding_window": { "type": "integer" },
+            "kv_sharing": {
+              "type": "object",
+              "description": "跨层 KV 共享。只有部分层产出 KV、其余层读取时，按层数乘的 KV 公式会高估一个量级，必须显式给出",
+              "additionalProperties": false,
+              "properties": {
+                "source_layers": { "type": "array", "items": { "type": "integer" }, "description": "真正产出 KV 的层" },
+                "compress_ratios": { "type": "array", "items": { "type": "number" }, "description": "逐层压缩比，0 表示该层不建 KV" },
+                "index_source_layers": { "type": "array", "items": { "type": "integer" } },
+                "note": { "type": "string" }
+              }
+            },
+            "layer_pattern": { "type": "string", "description": "混合注意力的层分布，如 3:1 linear:full" },
+            "sparse": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "mechanism": { "type": "string", "description": "如 indexer 选块、滑窗、NSA/MoBA 式" },
+                "index_n_heads": { "type": "integer" },
+                "index_head_dim": { "type": "integer" },
+                "block_size": { "type": "integer" },
+                "selected_blocks": { "type": "integer" },
+                "index_topk": { "type": "integer" },
+                "candidate_source_layer": { "type": "integer" },
+                "candidate_topk_blocks": { "type": "integer" },
+                "candidate_block_size": { "type": "integer" }
+              }
+            },
+            "linear_state": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "mechanism": { "type": "string" },
+                "state_dim": { "type": "integer" },
+                "num_heads": { "type": "integer" }
+              }
+            }
+          }
+        },
+
+        "moe": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "routed_experts": { "type": "integer" },
+            "shared_experts": { "type": "integer" },
+            "top_k": { "type": "integer" },
+            "intermediate": { "type": "integer" },
+            "dense_intermediate": { "type": "integer" },
+            "first_k_dense": { "type": "integer" },
+            "routing": { "type": "string" },
+            "balance": { "type": "string", "description": "aux-loss / aux-loss-free bias 等" },
+            "expert_groups": { "type": "integer" }
+          }
+        },
+
+        "residual": {
+          "type": "object",
+          "description": "残差流本身被改造的情况，如 mHC 把残差扩成多份",
+          "additionalProperties": false,
+          "properties": {
+            "type": { "type": "string" },
+            "multiplier": { "type": "integer" },
+            "note": { "type": "string" }
+          }
+        },
+
+        "retrieval": {
+          "type": "object",
+          "description": "外置查表/记忆层，如 Engram。它的存储量级和主干不是一个量级，必须单列",
+          "additionalProperties": false,
+          "properties": {
+            "mechanism": { "type": "string" },
+            "layers": { "type": "array", "items": { "type": "integer" }, "description": "装在哪几层" },
+            "table_rows": { "type": "array", "items": { "type": "number" }, "description": "每张表行数，各表可能不等" },
+            "entry_dim": { "type": "integer" },
+            "hash_cols": { "type": "integer" },
+            "lookup_bytes_per_token": { "type": "number" },
+            "placement": { "type": "string", "description": "HBM / host UVA / SSD" }
+          }
+        },
+
+        "decoding": {
+          "type": "object",
+          "description": "投机解码、MTP 等会改变每步 token 数的机制",
+          "additionalProperties": false,
+          "properties": {
+            "mtp_layers": { "type": "integer" },
+            "speculative": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "method": { "type": "string" },
+                "num_tokens": { "type": "integer" },
+                "accept_rate": { "type": "number" },
+                "target_layers": { "type": "array", "items": { "type": "integer" } },
+                "own_moe": {
+                  "type": "object",
+                  "description": "草稿模型自带专家集时单列 —— 它的权重要另算一份，不能并入主干 MoE",
+                  "additionalProperties": false,
+                  "properties": {
+                    "routed_experts": { "type": "integer" },
+                    "top_k": { "type": "integer" },
+                    "rank": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        },
+
+        "vision": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "encoder": { "type": "string" },
+            "layers": { "type": "integer" },
+            "hidden": { "type": "integer" },
+            "num_heads": { "type": "integer" },
+            "patch_size": { "type": "integer" },
+            "downsample_ratio": { "type": "number" },
+            "max_image_tokens": { "type": "integer" },
+            "params": { "type": "number" },
+            "fusion": { "type": "string", "description": "projector 结构与 token 压缩方式" }
+          }
+        },
+
+        "audio": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "encoder": { "type": "string" },
+            "params": { "type": "number" },
+            "tokens_per_second": { "type": "number" },
+            "fusion": { "type": "string" },
+            "output": { "enum": ["understand-only", "tts", "duplex"] }
+          }
+        }
+      }
+    },
+
+    "generation": {
+      "type": "object",
+      "description": "仅生成类模型（image-gen / video-gen）。负载特征和 LLM 差别很大，单列",
+      "additionalProperties": false,
+      "properties": {
+        "backbone": { "type": "string", "description": "DiT / MMDiT / UNet" },
+        "text_encoder": { "type": "string" },
+        "vae": { "type": "string" },
+        "vae_downsample": { "type": "string" },
+        "default_steps": { "type": "integer" },
+        "distilled_steps": { "type": "integer" },
+        "resolutions": { "type": "array", "items": { "type": "string" } },
+        "max_frames": { "type": "integer" },
+        "max_duration_s": { "type": "number" }
+      }
+    },
+
+    "precision": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "training": { "$ref": "#/$defs/dtype" },
+        "weights_release": {
+          "type": "array",
+          "description": "官方发布的权重精度，可多种",
+          "items": { "$ref": "#/$defs/dtype" }
+        },
+        "kv_cache": { "$ref": "#/$defs/dtype" },
+        "kv_cache_scale": { "$ref": "#/$defs/dtype" },
+        "quantization": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "method": { "type": "string" },
+            "activation_scheme": { "enum": ["static", "dynamic"] },
+            "weight_block_size": { "type": "array", "items": { "type": "integer" } },
+            "scale_format": { "type": "string" },
+            "expert_dtype": { "$ref": "#/$defs/dtype" },
+            "packing_note": { "type": "string", "description": "亚字节权重打包进整型容器时说明清楚：numel 是容器数不是参数数" },
+            "per_subsystem": {
+              "type": "object",
+              "additionalProperties": { "$ref": "#/$defs/dtype" },
+              "description": "不同子系统精度不同时逐个写，如 expert / retrieval_table / attention"
+            }
+          }
+        },
+        "qat": { "type": "boolean", "description": "官方是否做了量化感知训练，决定低位精度能不能直接用" }
+      }
+    },
+
+    "derived": {
+      "type": "object",
+      "description": "全部由 scripts/derive.py 生成，evidence 一律 derived。手写内容会被 validate.py 拒绝",
+      "additionalProperties": true,
+      "properties": {
+        "generated_by": { "type": "string" },
+        "generated_at": { "type": "string" },
+        "inputs": { "type": "object", "description": "取数依据：config 与 shapes 的来源和 sha" }
+      }
+    },
+
+    "platforms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["engine", "hardware", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "engine": { "type": "string" },
+          "engine_version": { "type": "string" },
+          "hardware": { "type": "string" },
+          "precision": { "$ref": "#/$defs/dtype" },
+          "parallel": { "type": "string", "description": "如 TP1/DP4/EP4" },
+          "status": {
+            "description": "day0=发布同日可用；supported=已支持；partial=部分可用；wip=进行中；none=不支持；unknown=未查",
+            "enum": ["day0", "supported", "partial", "wip", "none", "unknown"]
+          },
+          "since": { "type": "string" },
+          "graph_mode": { "type": "string" },
+          "caveat": { "type": "string", "description": "代码支持但无文档化配方、CI 未绿之类的限定，必须写" },
+          "ref": { "$ref": "#/$defs/ref" },
+          "visibility": { "$ref": "#/$defs/visibility" }
+        }
+      }
+    },
+
+    "performance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "hardware", "engine"],
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "type": "object",
+            "required": ["type"],
+            "additionalProperties": false,
+            "properties": {
+              "type": { "enum": ["official", "community", "self"] },
+              "ref": { "$ref": "#/$defs/ref" }
+            }
+          },
+          "hardware": { "type": "string" },
+          "device_count": { "type": "integer" },
+          "engine": { "type": "string" },
+          "engine_version": { "type": "string" },
+          "precision": { "$ref": "#/$defs/dtype" },
+          "parallel": { "type": "string" },
+          "input_len": { "type": "integer" },
+          "output_len": { "type": "integer" },
+          "batch": { "type": "integer" },
+          "concurrency": { "type": "integer" },
+          "throughput_tok_s": { "type": "number" },
+          "throughput_per_device": { "type": "number" },
+          "ttft_ms": { "type": "number" },
+          "tpot_ms": { "type": "number" },
+          "visibility": { "$ref": "#/$defs/visibility" }
+        }
+      }
+    },
+
+    "bottlenecks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["dimension", "finding"],
+        "additionalProperties": false,
+        "properties": {
+          "dimension": {
+            "enum": ["weight-bandwidth", "kv-capacity", "kv-bandwidth", "compute", "ep-comm", "tp-comm", "host-io", "cube-vector-balance", "operator-gap", "long-context", "graph-mode", "other"]
+          },
+          "finding": { "type": "string" },
+          "quantified": { "type": "string", "description": "能量化就量化，并说明是实测还是推导" },
+          "fix": { "type": "string", "description": "可修则写怎么修，这是 infra 侧的行动项" },
+          "ref": { "$ref": "#/$defs/ref" },
+          "visibility": { "$ref": "#/$defs/visibility" }
+        }
+      }
+    },
+
+    "ops_table": {
+      "type": "object",
+      "description": "算子表只放摘要和指针，表体在 data-private/ops/<id>/，由 mk_ops_table.py 渲染",
+      "additionalProperties": false,
+      "properties": {
+        "ref": { "type": "string", "description": "相对 data-private 的路径" },
+        "target_hardware": { "type": "string" },
+        "baseline_parallel": { "type": "string" },
+        "row_count": { "type": "integer" },
+        "existing_ops": { "type": "integer" },
+        "new_ops": { "type": "integer" },
+        "fusion_groups": { "type": "integer" },
+        "visibility": { "$ref": "#/$defs/visibility" }
+      }
+    },
+
+    "infra_signals": {
+      "type": "array",
+      "description": "本记录对下一代 infra 的结论，1-3 条。这是全项目的落点",
+      "items": {
+        "type": "object",
+        "required": ["text", "evidence"],
+        "additionalProperties": false,
+        "properties": {
+          "text": { "type": "string" },
+          "evidence": { "$ref": "#/$defs/evidence_tag" },
+          "horizon": { "enum": ["now", "next-gen", "watch"] },
+          "axis": { "type": "string" },
+          "visibility": { "$ref": "#/$defs/visibility" }
+        }
+      }
+    },
+
+    "evidence": {
+      "type": "object",
+      "description": "字段级证据口径。键是点分路径，支持前缀继承：arch.* 覆盖整棵子树；更深的路径优先。validate.py 检查每个叶子都有归属",
+      "additionalProperties": { "$ref": "#/$defs/evidence_tag" }
+    },
+
+    "notes": { "type": "string" },
+    "open_questions": {
+      "type": "array",
+      "description": "已知未解的问题，明确写出来比留空好",
+      "items": { "type": "string" }
+    }
+  },
+
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "enum": ["image-gen", "video-gen"] } }, "required": ["kind"] },
+      "then": { "required": ["generation"] }
+    },
+    {
+      "if": { "properties": { "kind": { "enum": ["vlm", "omni"] } }, "required": ["kind"] },
+      "then": { "properties": { "arch": { "required": ["vision"] } } }
+    }
+  ]
+}

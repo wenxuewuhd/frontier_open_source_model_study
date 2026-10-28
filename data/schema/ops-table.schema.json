@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/wenxuewuhd/frontier_open_source_model_study/schema/ops-table.schema.json",
+  "title": "算子表",
+  "description": "一个模型在目标硬件上的 decode 算子表。三个 sheet 对应 rows / params / groups 三个块。列定义沿用既有家规（21 列），不另造。表体通常是 internal。",
+  "type": "object",
+  "required": ["model", "baseline", "visibility", "rows"],
+  "additionalProperties": false,
+
+  "$defs": {
+    "ownership": {
+      "description": "这行算子要不要干活。existing=已有算子承接，不排期；generic=任何同类模型都要，不该占本模型优先级；model-specific=只有本模型的特殊结构才需要，真正要做的活",
+      "enum": ["existing", "generic", "model-specific"]
+    },
+    "source_anchor": {
+      "type": "object",
+      "description": "源码锚点。用锚点而非行号，上游改动后仍可定位",
+      "required": ["file", "anchor"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string" },
+        "anchor": { "type": "string", "description": "可唯一匹配的代码片段" },
+        "up": { "type": "integer", "default": 0 },
+        "down": { "type": "integer", "default": 6 },
+        "repo": { "type": "string", "description": "锚点所在仓库与 commit" }
+      }
+    }
+  },
+
+  "properties": {
+    "model": { "type": "string", "description": "对应 data/models 里的模型 id" },
+    "visibility": { "enum": ["public", "internal"] },
+
+    "baseline": {
+      "type": "object",
+      "description": "基线配置。改这里会动摇全表，所以单列并要求写明来源",
+      "required": ["hardware", "parallel"],
+      "additionalProperties": false,
+      "properties": {
+        "hardware": { "type": "string" },
+        "soc_version": { "type": "string" },
+        "parallel": { "type": "string", "description": "如 TP1/DP4/EP4" },
+        "exec_mode": { "type": "string", "description": "prefill/decode 的 eager 或图模式" },
+        "launch_args": { "type": "string" },
+        "quantization": { "type": "string" },
+        "block_size": { "type": "integer" },
+        "config_origin": {
+          "description": "documented=文档化配方；assembled=本表拼装（必须说明拼了什么）；measured=实测配置",
+          "enum": ["documented", "assembled", "measured"]
+        },
+        "config_caveat": { "type": "string", "description": "拼装配置必须写明风险，以及改哪个参数会让结论翻转" }
+      }
+    },
+
+    "rows": {
+      "type": "array",
+      "description": "算子行。对应 xlsx 的『算子表』sheet",
+      "items": {
+        "type": "object",
+        "required": ["module", "op", "op_type"],
+        "additionalProperties": false,
+        "properties": {
+          "module": { "type": "string", "description": "执行阶段/模块，如 step.prologue、layer_i.moe" },
+          "op": { "type": "string", "description": "算子名，表内唯一，供 groups 引用" },
+          "kernel": { "type": "string", "description": "实际承接的 kernel 或『非独立算子』说明" },
+          "op_type": { "type": "string", "description": "gather / GEMM / RMSNorm / fused:... 等" },
+          "input_shape": { "type": "string" },
+          "output_shape": { "type": "string" },
+          "dim": { "type": "string" },
+          "shape_range": { "type": "string", "description": "symbolic/fixed/attrs 三类分开写，便于算子团队判断动态性" },
+          "input_dtype": { "type": "string" },
+          "output_dtype": { "type": "string" },
+          "input_format": { "type": "string" },
+          "output_format": { "type": "string" },
+          "dtype_next1": { "type": "string", "description": "下一代精度设想，第一档" },
+          "dtype_next2": { "type": "string", "description": "下一代精度设想，第二档" },
+          "group": { "type": "string", "pattern": "^F[0-9]+$" },
+          "ownership": { "$ref": "#/$defs/ownership" },
+          "note": { "type": "string" },
+          "evidence": {
+            "type": "object",
+            "description": "本行结论的源码依据，两侧并排以便发现实现分叉",
+            "additionalProperties": false,
+            "properties": {
+              "impl": { "$ref": "#/$defs/source_anchor", "description": "目标引擎实现侧" },
+              "ref_impl": { "$ref": "#/$defs/source_anchor", "description": "参考实现侧（如 HF）" },
+              "upstream": { "$ref": "#/$defs/source_anchor" },
+              "verdict": {
+                "description": "fused=已融合在某 kernel 内；standalone=独立算子；absent=该配置下不存在；diverged=两侧实现语义不同",
+                "enum": ["fused", "standalone", "absent", "diverged", "unknown"]
+              },
+              "divergence": { "type": "string", "description": "verdict=diverged 时必须写清差在哪，这是最容易静默出错的地方" }
+            }
+          },
+          "review": {
+            "type": "array",
+            "description": "核查修正留痕。不覆盖原值，而是记下改了什么、依据什么",
+            "items": {
+              "type": "object",
+              "required": ["id", "text"],
+              "additionalProperties": false,
+              "properties": {
+                "id": { "type": "string" },
+                "text": { "type": "string" },
+                "resolution": { "enum": ["corrected", "refuted", "confirmed", "open"] }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "params": {
+      "type": "array",
+      "description": "对应『模型参数』sheet：符号表与基线取值",
+      "items": {
+        "type": "object",
+        "required": ["key", "value"],
+        "additionalProperties": false,
+        "properties": {
+          "section": { "type": "string" },
+          "key": { "type": "string" },
+          "value": { "type": "string" },
+          "pitfall": { "type": "boolean", "description": "标记容易静默出错的条目，渲染时高亮" }
+        }
+      }
+    },
+
+    "groups": {
+      "type": "array",
+      "description": "对应『融合分组』sheet。这是给算子团队排期用的,ownership 决定配色",
+      "items": {
+        "type": "object",
+        "required": ["id", "ownership", "members"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^F[0-9]+$" },
+          "ownership": { "$ref": "#/$defs/ownership" },
+          "status": {
+            "description": "have=已有融合算子；extend=扩展已有；new=要新写 kernel；code-only=纯代码改动",
+            "enum": ["have", "extend", "new", "code-only"]
+          },
+          "fused_op": { "type": "string", "description": "已有组写现成算子名；要做的组写建议形态" },
+          "benefit": { "enum": ["high", "medium", "low"] },
+          "benefit_note": { "type": "string", "description": "已有组读作『该融合的价值』，待做组读作『预期收益』" },
+          "members": { "type": "array", "items": { "type": "string" }, "description": "引用 rows[].op" },
+          "note": { "type": "string" }
+        }
+      }
+    },
+
+    "accounting": {
+      "type": "array",
+      "description": "带宽/容量账。每条都要说明是实测还是推导，以及与官方口径的差异",
+      "items": {
+        "type": "object",
+        "required": ["item", "value", "basis"],
+        "additionalProperties": false,
+        "properties": {
+          "item": { "type": "string" },
+          "value": { "type": "string" },
+          "basis": { "enum": ["measured", "derived", "official"] },
+          "vs_official": { "type": "string", "description": "与官方/论文口径的差异及根因" },
+          "fixable": { "type": "string" }
+        }
+      }
+    },
+
+    "open_items": {
+      "type": "array",
+      "description": "待实测项。明确列出比留空好",
+      "items": { "type": "string" }
+    },
+
+    "generated": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "at": { "type": "string" },
+        "by": { "type": "string" },
+        "facts_dir": { "type": "string" },
+        "sources": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
