@@ -1,0 +1,190 @@
+id: qwen3.8-27b
+family: qwen
+kind: vlm
+display_name: Qwen3.8-27B
+released: 2026-08-14
+license: apache-2.0
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3.8-27B
+    locator: config.json @ 1d4bf0f2ff60
+    accessed: 2026-10-28
+
+hf:
+  repo: Qwen/Qwen3.8-27B
+  pipeline_tag: image-text-to-text
+  gated: false
+
+lineage:
+  track: main
+
+params:
+  counting_note: >-
+    按完整权重清单统计（18 分片 1199 张量）。含 1 层 MTP；不含独立的量化 scale
+    （本版以 BF16 发布，无量化 scale 张量）。实测总量 27.8B、权重存储 51.75 GiB。
+    激活参数两个口径：带宽口径 25.6B、可比官方口径 26.9B（含输入词表）。
+    模型卡未以单一数字披露总参数量，故 params 不填声明值，交叉核对相应跳过。
+
+context:
+  max: 262144
+
+arch:
+  layers: 64
+  hidden: 5120
+  vocab: 248320
+  norm: RMSNorm
+  norm_eps: 1.0e-06
+  activation: SwiGLU
+  position: RoPE，partial_rotary_factor 0.25（只对 1/4 维度加 rope）
+
+  attention:
+    type: hybrid
+    num_heads: 24
+    num_kv_heads: 4
+    head_dim: 256
+    partial_rotary_factor: 0.25
+    layer_pattern: 3:1 linear:full，每 4 层一个 full attention
+    hybrid:
+      layer_types_count:
+        linear: 48
+        full: 16
+      interval: 4
+      note: >-
+        这是本记录的关键结构。16 层 full attention 的 KV 随上下文线性增长，
+        48 层线性注意力只带每序列固定的递归状态。两者增长方式不同，
+        容量规划必须分开算。
+    output_gate:
+      enabled: true
+      type: swish
+    linear_state:
+      mechanism: 门控线性注意力 + 短卷积
+      num_key_heads: 16
+      num_value_heads: 48
+      key_head_dim: 128
+      value_head_dim: 128
+      conv_kernel_dim: 4
+      state_dtype: FP32
+      state_layout_note: >-
+        config 只给出头数与头维，不给状态张量布局。推导脚本按
+        [num_value_heads, key_head_dim, value_head_dim] 估算，并标为含估算项。
+        用于容量规划前需按实现核实。
+
+  ffn:
+    type: dense
+    intermediate: 17408
+
+  decoding:
+    mtp_layers: 1
+
+  vision:
+    encoder: Qwen3.8 vision tower
+    layers: 27
+    hidden: 1152
+    num_heads: 16
+    patch_size: 16
+    spatial_merge_size: 2
+    temporal_patch_size: 2
+    out_hidden: 5120
+    fusion: patch merge 后投影到主干 hidden
+
+precision:
+  training: BF16
+  weights_release: [BF16]
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/Qwen/Qwen3.8-27B
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      混合结构把长上下文的 KV 压力大幅转移：只有 1/4 的层累积 KV cache，
+      其余层的状态与上下文长度无关。代价是引擎要同时管理两种生命周期不同的
+      显存对象，而且线性层的状态无法像 KV 那样按 block 分页复用。
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      线性注意力层需要递归状态更新与短卷积，和 full attention 完全不同的算子。
+      一个模型内两套注意力路径都要支持，且要按层交替调度。
+    visibility: public
+  - dimension: compute
+    finding: >-
+      dense FFN 意味着每 token 都要搬运全部 FFN 权重，没有 MoE 的稀疏激活优势。
+      同参数规模下 decode 的权重带宽需求高于 MoE 模型。
+    visibility: public
+
+infra_signals:
+  - text: >-
+      混合线性注意力让「KV 容量 = 层数 × 每层 KV × 上下文」这个模型彻底失效：
+      一部分显存随上下文增长，一部分是每序列常量。容量规划、分页管理和调度
+      都要按两类对象分别建模。
+    evidence: judgement
+    horizon: now
+    axis: attention
+  - text: >-
+      线性注意力的递归状态每序列固定，所以长上下文下它便宜、大批量下它贵，
+      与 KV cache 的代价结构正好相反。batch 与 context 的权衡点变了，
+      需要重新测吞吐曲线而不能沿用纯注意力模型的经验。
+    evidence: judgement
+    horizon: next-gen
+    axis: attention
+  - text: >-
+      同一模型内两套注意力路径按层交替，要求引擎支持异构层调度。
+      这是比单一新算子更深的改动，影响图捕获与内存池的组织方式。
+    evidence: judgement
+    horizon: now
+    axis: attention
+
+evidence:
+  id: official
+  family: official
+  kind: official
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: official
+  params: official
+  params.counting_note: derived
+  context: official
+  arch: official
+  arch.attention.type: judgement
+  arch.attention.layer_pattern: derived
+  arch.attention.hybrid.layer_types_count: derived
+  arch.attention.hybrid.note: judgement
+  arch.attention.linear_state.mechanism: judgement
+  arch.attention.linear_state.state_layout_note: judgement
+  arch.ffn.type: derived
+  arch.vision.encoder: judgement
+  arch.vision.fusion: judgement
+  arch.position: derived
+  precision: official
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  本记录是 P0-D 的 schema 普适性测试用例。原计划找一个「结构朴素」的旗舰作对照，
+  但调研发现 2026 年的旗舰已无朴素结构：Qwen3.8 全线是混合线性注意力，
+  GLM-5.3 是 MLA + DSA 稀疏。于是改选与 V4.1 差异最大的这一个，
+  它在三个轴上都和 V4.1 不同：dense FFN（无 moe 块）、混合线性注意力、不同的视觉融合路径。
+
+open_questions:
+  - >-
+    线性注意力的状态张量布局未在 config 中给出，推导值是按常见布局的估算。
+    要用于容量规划需按实现核实
+  - params.total 未在模型卡中以单一数字披露，当前以权重清单实测为准
+  - >-
+    full_attention_interval 为 4，但 layer_types 的首尾是否严格按周期排布
+    需与实现确认（本记录按 config 的 layer_types 逐层统计，不依赖周期假设）
+  - KV cache 的实际存储精度未披露，推导时按模型 dtype 兜底

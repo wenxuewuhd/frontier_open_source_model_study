@@ -36,7 +36,8 @@ SUBSYSTEM = [
     ("expert", re.compile(r"\.experts?\.\d+\.|\bexperts\.", re.I)),
     ("shared_expert", re.compile(r"shared_expert", re.I)),
     ("router", re.compile(r"\bgate\b|router|e_score|expert_bias", re.I)),
-    ("embed", re.compile(r"embed_tokens|\blm_head\b|\bwte\b", re.I)),
+    ("lm_head", re.compile(r"\blm_head\b|output_layer|^head\.weight$", re.I)),
+    ("embed", re.compile(r"embed_tokens|\bwte\b|embed_in|^embed\.weight$", re.I)),
     ("attention", re.compile(r"attn|\bwq|\bwk|\bwv|\bwo\b|q_proj|k_proj|v_proj|o_proj|kv_[ab]|q_[ab]|indexer", re.I)),
     ("dense_ffn", re.compile(r"mlp|ffn|gate_proj|up_proj|down_proj|w1|w2|w3", re.I)),
     ("norm", re.compile(r"norm|\bln\b|layernorm", re.I)),
@@ -152,94 +153,146 @@ def text_cfg(cfg: dict) -> dict:
     return t
 
 
-def kv_per_token(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None) -> dict:
-    """每 token 的 KV 字节。公式按注意力类型分支，用到哪些字段一并记下备查。"""
+def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None) -> dict:
+    """注意力的显存模型，分两个分量返回。
+
+    混合结构里这两者的增长方式根本不同，混成一个数就没法做容量规划：
+      per_token_bytes     随上下文线性增长 —— full attention 的 KV cache
+      per_sequence_bytes  每序列固定、与上下文长度无关 —— 线性注意力的递归状态
+
+    纯注意力模型 per_sequence_bytes 为 0；全线性模型 per_token_bytes 为 0。
+    full attention 的口径按可用字段判断（有 kv_lora_rank 走 MLA，否则走 GQA），
+    不依赖 attention.type 的声明，这样混合结构也能算。
+    """
     layers = t.get("num_hidden_layers")
     if not layers:
         return {"status": "unknown", "why": "config 里没有 num_hidden_layers"}
-
     b = dtypes.nbytes(kv_dtype)
     if b == 0:
         return {"status": "unknown", "why": f"KV 精度 {kv_dtype} 未知"}
 
     atype = (attn.get("type") or "").upper()
-    terms, per_layer = {}, None
+    hyb = attn.get("hybrid") or {}
+    share = attn.get("kv_sharing") or {}
+    comp, notes, status = {}, [], "ok"
 
-    if atype == "MLA":
+    # --- 层分布：先分清哪些层走 full attention、哪些走线性
+    types = t.get("layer_types") or hyb.get("layer_types")
+    if types:
+        full_layers = sum(1 for x in types if "full" in str(x))
+        linear_layers = sum(1 for x in types if "linear" in str(x) or "mamba" in str(x))
+    else:
+        cnt = hyb.get("layer_types_count") or {}
+        linear_layers = cnt.get("linear", 0)
+        full_layers = cnt.get("full", layers - linear_layers)
+
+    # 跨层 KV 共享会覆盖 full 层数：只有部分层真正产出 KV
+    src = share.get("source_layers")
+    if src:
+        full_layers = len(src)
+        notes.append(f"只有 {full_layers} 层产出 KV（共 {layers} 层），其余层跨层读取；"
+                     "按总层数乘会高估")
+
+    # --- full attention：随上下文增长
+    if full_layers:
         lora = attn.get("kv_lora_rank") or t.get("kv_lora_rank")
         rope = attn.get("qk_rope_head_dim") or t.get("qk_rope_head_dim")
-        if not lora:
-            # 有的实现不设 kv_lora_rank，而是用 num_kv_heads=1 的单头 latent
-            kvh = attn.get("num_kv_heads") or t.get("num_key_value_heads")
-            hd = attn.get("head_dim") or t.get("head_dim")
-            if kvh and hd:
-                lora = kvh * hd
-                terms["latent_from"] = f"num_kv_heads({kvh}) * head_dim({hd})"
-        if lora and rope:
-            per_layer = (lora + rope) * b
-            terms.update({"latent": lora, "qk_rope_head_dim": rope,
-                          "formula": "(latent + qk_rope_head_dim) * bytes"})
-    elif atype in ("GQA", "MHA", "MQA"):
         kvh = attn.get("num_kv_heads") or t.get("num_key_value_heads")
         hd = attn.get("head_dim") or t.get("head_dim")
         if not hd and t.get("hidden_size") and t.get("num_attention_heads"):
             hd = t["hidden_size"] // t["num_attention_heads"]
-        if kvh and hd:
+        per_layer, terms = None, {}
+        if not lora and atype == "MLA" and kvh and hd:
+            # 不设 kv_lora_rank、而用 num_kv_heads=1 的单头 latent 的写法
+            lora = kvh * hd
+            terms["latent_from"] = f"num_kv_heads({kvh}) * head_dim({hd})"
+        if lora and rope:
+            per_layer = (lora + rope) * b
+            terms.update({"latent": lora, "qk_rope_head_dim": rope,
+                          "formula": "(latent + qk_rope_head_dim) * bytes"})
+        elif kvh and hd:
             per_layer = 2 * kvh * hd * b
             terms = {"num_kv_heads": kvh, "head_dim": hd,
                      "formula": "2 * num_kv_heads * head_dim * bytes"}
+        if per_layer:
+            comp["full_attention"] = {
+                "layers": full_layers, "bytes_per_layer": per_layer,
+                "bytes_per_token": per_layer * full_layers, "dtype": kv_dtype,
+                "terms": terms,
+            }
+        else:
+            status = "partial"
+            notes.append(f"有 {full_layers} 层 full attention 但字段不足，这部分 KV 未计入")
 
-    if per_layer is None:
-        return {"status": "unknown", "why": f"注意力类型 {atype or '未声明'} 缺少必要字段",
-                "note": "hybrid / linear 结构请在模型 YAML 里按层分布显式给出"}
+    # --- 线性注意力：每序列固定状态
+    ls = attn.get("linear_state") or {}
+    nvh = ls.get("num_value_heads") or t.get("linear_num_value_heads")
+    nkh = ls.get("num_key_heads") or t.get("linear_num_key_heads")
+    kd = ls.get("key_head_dim") or t.get("linear_key_head_dim")
+    vd = ls.get("value_head_dim") or t.get("linear_value_head_dim")
+    conv = ls.get("conv_kernel_dim") or t.get("linear_conv_kernel_dim")
+    sdt = dtypes.norm(ls.get("state_dtype") or t.get("mamba_ssm_dtype") or kv_dtype)
+    sb = dtypes.nbytes(sdt)
+    if linear_layers and nvh and kd and vd and sb:
+        mat = nvh * kd * vd * sb
+        cv = conv * (nkh or nvh) * kd * sb if conv else 0
+        comp["linear_state"] = {
+            "layers": linear_layers,
+            "bytes_per_layer": mat + cv,
+            "bytes_per_sequence": (mat + cv) * linear_layers,
+            "dtype": sdt,
+            "terms": {
+                "matrix_state": f"num_value_heads({nvh}) * key_head_dim({kd})"
+                                f" * value_head_dim({vd}) * bytes({sb})",
+                "conv_state": f"conv_kernel_dim({conv}) * heads * key_head_dim" if conv else None,
+            },
+            "assumption": "递归状态按 [num_value_heads, key_head_dim, value_head_dim] 估，"
+                          "conv 状态按卷积窗估。实际布局依实现而定，需核实后再用于容量规划",
+        }
+        status = "partial"
+        notes.append("线性注意力的状态布局依实现而定，此处是按常见布局的估算")
+    elif linear_layers:
+        status = "partial"
+        notes.append(f"有 {linear_layers} 层线性注意力但缺少 linear_* 字段，其状态未计入")
 
-    # 跨层 KV 共享：只有部分层产出 KV。按总层数乘会高估一个量级。
-    share = attn.get("kv_sharing") or {}
-    src = share.get("source_layers")
-    eff_layers, caveat = layers, None
-    if src:
-        eff_layers = len(src)
-        caveat = (f"只有 {eff_layers} 层产出 KV（共 {layers} 层），其余层跨层读取；"
-                  "按总层数乘会高估")
-    ratios = share.get("compress_ratios")
-
-    out = {
-        "status": "ok", "attention_type": atype, "kv_dtype": kv_dtype,
-        "bytes_per_layer": per_layer,
-        "layers": layers, "kv_producing_layers": eff_layers,
-        "bytes_per_token": per_layer * eff_layers, "terms": terms,
-    }
-    if caveat:
-        out["kv_sharing_note"] = caveat
-    if ratios:
-        # 逐层压缩比本公式表达不了，不替用户折算，直接降级并要求人工确认
-        out["status"] = "partial"
-        out["why"] = ("存在逐层压缩比（compress_ratios），本公式未建模。"
-                      "此处数值只是未压缩上界，真实值请以官方披露或实测为准，"
-                      "并记入模型 YAML 的 official 字段与算子表 accounting")
-        out["compress_ratios"] = ratios
-
-    # 稀疏注意力的 indexer 另有一份缓存，漏掉会低估 KV
+    # --- 稀疏注意力的 indexer 缓存：漏掉会低估
     sp = attn.get("sparse") or {}
     inh = sp.get("index_n_heads") or t.get("index_n_heads")
     ihd = sp.get("index_head_dim") or t.get("index_head_dim")
     if inh and ihd:
-        # indexer 也只装在部分层上，按总层数乘同样会高估
         isrc = share.get("index_source_layers") or t.get("index_source_layer_ids")
         ilayers = len(isrc) if isrc else layers
-        extra = inh * ihd * b * ilayers
-        out["indexer_bytes_per_token"] = extra
-        out["indexer_layers"] = ilayers
-        out["bytes_per_token"] += extra
-        out["terms"]["indexer"] = (
-            f"index_n_heads({inh}) * index_head_dim({ihd}) * bytes * "
-            f"{'index_source_layers' if isrc else 'layers'}({ilayers})")
+        comp["indexer"] = {
+            "layers": ilayers, "bytes_per_token": inh * ihd * b * ilayers,
+            "terms": {"formula": f"index_n_heads({inh}) * index_head_dim({ihd}) * bytes * "
+                                 f"{'index_source_layers' if isrc else 'layers'}({ilayers})"},
+        }
 
+    # --- 逐层压缩比表达不了，降级而不是替人折算
+    ratios = share.get("compress_ratios")
+    if ratios:
+        status = "partial"
+        notes.append("存在逐层压缩比（compress_ratios），本公式未建模；"
+                     "per_token 只是未压缩上界，真实值以官方披露或实测为准")
+
+    if not comp:
+        return {"status": "unknown",
+                "why": f"注意力类型 {atype or '未声明'} 缺少必要字段",
+                "note": "混合结构请在 YAML 的 attention.hybrid / linear_state 里显式给出"}
+
+    per_token = sum(c.get("bytes_per_token", 0) for c in comp.values())
+    per_seq = sum(c.get("bytes_per_sequence", 0) for c in comp.values())
+    out = {
+        "status": status, "attention_type": atype, "kv_dtype": kv_dtype,
+        "layers": layers, "full_attention_layers": full_layers,
+        "linear_attention_layers": linear_layers,
+        "per_token_bytes": per_token, "per_sequence_bytes": per_seq,
+        "components": comp, "notes": notes,
+    }
     if scale_dtype:
         out["scale_note"] = (
-            f"scale 容器声明为 {scale_dtype}；若实现用了更宽的类型，"
-            "每 token 会多出一份，属于可修的实现差异，记在算子表 accounting 里"
-        )
+            f"scale 容器声明为 {scale_dtype}；实现若用了更宽的类型，每 token 会多一份，"
+            "属可修的实现差异，记在算子表 accounting 里")
     return out
 
 
@@ -260,28 +313,37 @@ def active_params(shp: dict, t: dict, attn: dict, moe: dict) -> dict:
         expert_active = expert_total * top_k / experts
         ratio = f"{top_k}/{experts}"
     else:
-        expert_active, ratio = expert_total, "全部（未识别到路由）"
+        expert_active, ratio = expert_total, ("dense，无 MoE" if not expert_total
+                                               else "全部（未识别到路由）")
 
-    # 每 token 全走的部分：注意力、dense FFN、共享专家、router、norm、输出头
+    # 每 token 全量搬运的部分。lm_head 必须计入：它对整个词表做全量 GEMM，
+    # 不是「只触及少量行」—— 大词表模型里这一项可观。
     always = sum(p.get(k, 0.0) for k in
-                 ("attention", "dense_ffn", "shared_expert", "router", "norm", "other"))
-    # embed 与 lm_head 只触及少量行/列，不计入「每 token 搬运的线性权重」
-    # retrieval 表每 token 只读极少行，同理不计入，另由 lookup 单独记
+                 ("attention", "dense_ffn", "shared_expert", "router", "norm",
+                  "lm_head", "other"))
+    embed = p.get("embed", 0.0)
     return {
         "status": "ok",
         "total": always + expert_active,
+        "total_with_embed": always + expert_active + embed,
+        "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的"
+                     "输入词表）；total_with_embed 含输入词表，用于和各家公布的"
+                     "「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
         "expert_active": expert_active,
         "expert_total": expert_total,
         "expert_ratio": ratio,
         "always_active": always,
+        "lm_head": p.get("lm_head", 0.0),
+        "dense": not bool(expert_total),
         "excluded": {
-            "embed+lm_head": p.get("embed", 0.0),
+            "embed_tokens": p.get("embed", 0.0),
             "retrieval_table": p.get("retrieval", 0.0),
             "vision": p.get("vision", 0.0),
             "draft": p.get("draft", 0.0),
         },
-        "note": "embed/输出头/检索表/视觉塔不计入：它们每 token 只触及极少行，"
-                "计入会把 decode 的带宽需求算高一个量级",
+        "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、"
+                "视觉塔与草稿模型不在主路径上，这四项不计入；"
+                "lm_head 计入，因为它每步对全词表做 GEMM",
     }
 
 
@@ -290,8 +352,11 @@ def comm_per_token(t: dict, moe: dict, hidden: int, act_dtype: str, ep: int) -> 
     top_k = moe.get("top_k") or t.get("num_experts_per_tok")
     layers = t.get("num_hidden_layers")
     first_dense = moe.get("first_k_dense") or t.get("first_k_dense_replace") or 0
-    if not (top_k and layers and hidden):
-        return {"status": "unknown", "why": "缺 top_k / 层数 / hidden"}
+    if not top_k:
+        return {"status": "ok", "bytes_per_token": 0,
+                "why": "dense 模型，无专家并行通信"}
+    if not (layers and hidden):
+        return {"status": "unknown", "why": "缺层数 / hidden"}
     b = dtypes.nbytes(act_dtype)
     moe_layers = max(layers - first_dense, 0)
     per_layer = 2 * top_k * hidden * b  # 发出去再收回来
@@ -335,9 +400,12 @@ def reconcile(cfg_t: dict, shp: dict, declared: dict) -> list:
         })
 
     if shp.get("available"):
-        add("路由专家数",
-            cfg_t.get("n_routed_experts") or cfg_t.get("num_experts"),
-            shp.get("experts_seen") or None, "config", "shapes", tol=0.0)
+        n_exp = cfg_t.get("n_routed_experts") or cfg_t.get("num_experts")
+        if not n_exp and not shp.get("experts_seen"):
+            out.append({"item": "路由专家数", "status": "ok", "why": "dense 模型，无 MoE"})
+        else:
+            add("路由专家数", n_exp, shp.get("experts_seen") or None,
+                "config", "shapes", tol=0.0)
         if not shp.get("complete"):
             # 清单不完整时，参数量核对无意义 —— 不报假的 -63%，直接说清单不能用
             out.append({"item": "权重清单完整性", "status": "MISMATCH",
@@ -407,7 +475,7 @@ def main():
 
     logical = ((prec.get("quantization") or {}).get("per_subsystem") or {})
     shp = from_shapes(shapes, logical)
-    kv = kv_per_token(t, attn, kv_dtype, prec.get("kv_cache_scale"))
+    kv = kv_memory(t, attn, kv_dtype, prec.get("kv_cache_scale"))
     if kv_dtype_assumed and kv.get("status") in ("ok", "partial"):
         kv["dtype_assumed"] = True
         kv["dtype_assumed_note"] = (
@@ -436,7 +504,7 @@ def main():
     kv_at = {}
     if kv.get("status") in ("ok", "partial"):
         for L in [int(x) for x in args.context_lens.split(",") if x.strip()]:
-            kv_at[str(L)] = kv["bytes_per_token"] * L
+            kv_at[str(L)] = kv["per_sequence_bytes"] + kv["per_token_bytes"] * L
 
     declared = {"params_total": (model.get("params") or {}).get("total"),
                 "excludes": (model.get("params") or {}).get("excludes")}
@@ -482,16 +550,28 @@ def main():
             f"{k} {dtypes.fmt_bytes(v)}" for k, v in
             sorted(shp["weight_bytes_by_dtype"].items(), key=lambda kv_: -kv_[1])))
     if act.get("status") == "ok":
-        print(f"激活线性参数     {dtypes.fmt_count(act['total'])}  (专家 {act['expert_ratio']})")
+        tail = ("dense，无 MoE" if act.get("dense") else f"专家 {act['expert_ratio']}")
+        if act.get("lm_head"):
+            tail += f"，含 lm_head {dtypes.fmt_count(act['lm_head'])}"
+        print(f"激活(带宽口径)   {dtypes.fmt_count(act['total'])}  ({tail})")
+        if act.get("total_with_embed", 0) > act.get("total", 0):
+            print(f"激活(可比官方)   {dtypes.fmt_count(act['total_with_embed'])}"
+                  f"  (含输入词表 {dtypes.fmt_count(act['excluded']['embed_tokens'])})")
     if kv.get("status") in ("ok", "partial"):
         warn = " [精度兜底]" if kv.get("dtype_assumed") else ""
-        warn += " [逐层压缩未建模,此为上界]" if kv.get("status") == "partial" else ""
-        print(f"KV / token       {kv['bytes_per_token']:.0f} B  "
-              f"({kv['attention_type']}, {kv['kv_dtype']}, "
-              f"KV源层 {kv.get('kv_producing_layers')}/{kv.get('layers')}"
-              f"{', indexer层 ' + str(kv['indexer_layers']) if kv.get('indexer_layers') else ''}){warn}")
+        warn += " [含估算项]" if kv.get("status") == "partial" else ""
+        fa = kv.get("full_attention_layers"); la = kv.get("linear_attention_layers")
+        print(f"注意力显存       {kv['per_token_bytes']:.0f} B/token"
+              f" + {dtypes.fmt_bytes(kv['per_sequence_bytes'])}/序列"
+              f"  ({kv['attention_type']}, full {fa} 层 / 线性 {la} 层){warn}")
+        for name, c in (kv.get("components") or {}).items():
+            bit = (f"{c['bytes_per_token']:.0f} B/token" if c.get("bytes_per_token")
+                   else f"{dtypes.fmt_bytes(c.get('bytes_per_sequence', 0))}/序列")
+            print(f"    {name:16s} {c['layers']:>3d} 层  {bit}")
+        for n in kv.get("notes") or []:
+            print(f"    ! {n}")
         for L, v in kv_at.items():
-            print(f"    @{int(L):>7d} tok  {dtypes.fmt_bytes(v)}")
+            print(f"    @{int(L):>8d} tok  {dtypes.fmt_bytes(v)}")
     else:
         print(f"KV / token       未知 — {kv.get('why')}")
     if comm.get("status") == "ok" and args.ep > 1:

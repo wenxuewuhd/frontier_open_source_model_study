@@ -1,0 +1,145 @@
+{
+ "id": "qwen3.8-27b",
+ "generated_by": "scripts/derive.py",
+ "generated_at": "2026-10-28T09:09:52+00:00",
+ "inputs": {
+  "facts_dir": "facts/qwen3.8-27b",
+  "config_present": true,
+  "shapes_present": true,
+  "model_yaml": "data/models/qwen/qwen3.8-27b.yaml",
+  "ep_size": 1
+ },
+ "from_shapes": {
+  "available": true,
+  "complete": true,
+  "tensor_count": 1199,
+  "params_total": 27781427952.0,
+  "params_by_subsystem": {
+   "norm": 660480.0,
+   "attention": 7239780864.0,
+   "dense_ffn": 17112760320.0,
+   "vision": 460730096.0,
+   "embed": 1271398400.0,
+   "lm_head": 1271398400.0,
+   "draft": 424699392.0
+  },
+  "weight_bytes_total": 55562855904.0,
+  "weight_bytes_by_subsystem": {
+   "norm": 1320960.0,
+   "attention": 14479561728.0,
+   "dense_ffn": 34225520640.0,
+   "vision": 921460192.0,
+   "embed": 2542796800.0,
+   "lm_head": 2542796800.0,
+   "draft": 849398784.0
+  },
+  "weight_bytes_by_dtype": {
+   "BF16": 55562855904.0
+  },
+  "experts_seen": 0,
+  "layers_present": 64,
+  "layer_index_max": 64,
+  "layers_missing": [],
+  "moe_layers_seen": 0,
+  "unknown_dtypes": [],
+  "packing_applied": {},
+  "packing_suspect": [],
+  "incomplete_note": null
+ },
+ "kv_cache": {
+  "status": "partial",
+  "attention_type": "HYBRID",
+  "kv_dtype": "BF16",
+  "layers": 64,
+  "full_attention_layers": 16,
+  "linear_attention_layers": 48,
+  "per_token_bytes": 65536,
+  "per_sequence_bytes": 152567808,
+  "components": {
+   "full_attention": {
+    "layers": 16,
+    "bytes_per_layer": 4096,
+    "bytes_per_token": 65536,
+    "dtype": "BF16",
+    "terms": {
+     "num_kv_heads": 4,
+     "head_dim": 256,
+     "formula": "2 * num_kv_heads * head_dim * bytes"
+    }
+   },
+   "linear_state": {
+    "layers": 48,
+    "bytes_per_layer": 3178496,
+    "bytes_per_sequence": 152567808,
+    "dtype": "FP32",
+    "terms": {
+     "matrix_state": "num_value_heads(48) * key_head_dim(128) * value_head_dim(128) * bytes(4)",
+     "conv_state": "conv_kernel_dim(4) * heads * key_head_dim"
+    },
+    "assumption": "递归状态按 [num_value_heads, key_head_dim, value_head_dim] 估，conv 状态按卷积窗估。实际布局依实现而定，需核实后再用于容量规划"
+   }
+  },
+  "notes": [
+   "线性注意力的状态布局依实现而定，此处是按常见布局的估算"
+  ],
+  "dtype_assumed": true,
+  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype BF16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
+ },
+ "kv_capacity_bytes_at_context": {
+  "4096": 421003264,
+  "32768": 2300051456,
+  "131072": 8742502400
+ },
+ "active_params": {
+  "status": "ok",
+  "total": 25624600064.0,
+  "total_with_embed": 26895998464.0,
+  "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的输入词表）；total_with_embed 含输入词表，用于和各家公布的「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
+  "expert_active": 0.0,
+  "expert_total": 0.0,
+  "expert_ratio": "dense，无 MoE",
+  "always_active": 25624600064.0,
+  "lm_head": 1271398400.0,
+  "dense": true,
+  "excluded": {
+   "embed_tokens": 1271398400.0,
+   "retrieval_table": 0.0,
+   "vision": 460730096.0,
+   "draft": 424699392.0
+  },
+  "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
+ },
+ "flops": {
+  "linear_per_token": 51249200128.0,
+  "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
+ },
+ "arithmetic_intensity": {
+  "decode_weight_bytes_per_token": 51249200128.0,
+  "decode_flops_per_byte": 1.0,
+  "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
+ },
+ "ep_communication": {
+  "status": "ok",
+  "bytes_per_token": 0,
+  "why": "dense 模型，无专家并行通信"
+ },
+ "reconciliation": [
+  {
+   "item": "路由专家数",
+   "status": "ok",
+   "why": "dense 模型，无 MoE"
+  },
+  {
+   "item": "层数",
+   "config": 64.0,
+   "shapes": 64.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "参数总量",
+   "status": "skip",
+   "why": "YAML 声明 缺失"
+  }
+ ]
+}

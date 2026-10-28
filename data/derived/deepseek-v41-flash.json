@@ -1,7 +1,7 @@
 {
  "id": "deepseek-v41-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-28T08:58:13+00:00",
+ "generated_at": "2026-10-28T09:09:52+00:00",
  "inputs": {
   "facts_dir": "facts/deepseek-v41-flash",
   "config_present": true,
@@ -16,12 +16,13 @@
   "params_total": 763205315536.0,
   "params_by_subsystem": {
    "vision": 485268480.0,
-   "other": 1323827200.0,
+   "embed": 661913600.0,
    "attention": 5146431424.0,
    "router": 78673920.0,
    "dense_ffn": 19866560.0,
    "shared_expert": 1415577600.0,
    "expert": 543581798400.0,
+   "lm_head": 661913600.0,
    "norm": 5120.0,
    "draft": 14225362512.0,
    "retrieval": 196928504320.0
@@ -29,12 +30,13 @@
   "weight_bytes_total": 510286023000.0,
   "weight_bytes_by_subsystem": {
    "vision": 970536960.0,
-   "other": 2647654400.0,
+   "embed": 1323827200.0,
    "attention": 5230613728.0,
    "router": 157409280.0,
    "dense_ffn": 79057120.0,
    "expert": 288777830400.0,
    "shared_expert": 1416960000.0,
+   "lm_head": 1323827200.0,
    "norm": 10240.0,
    "draft": 7932874632.0,
    "retrieval": 203073076240.0
@@ -63,66 +65,36 @@
   "status": "partial",
   "attention_type": "MLA",
   "kv_dtype": "bfloat16",
-  "bytes_per_layer": 1152,
   "layers": 40,
-  "kv_producing_layers": 4,
-  "bytes_per_token": 70144,
-  "terms": {
-   "latent_from": "num_kv_heads(1) * head_dim(512)",
-   "latent": 512,
-   "qk_rope_head_dim": 64,
-   "formula": "(latent + qk_rope_head_dim) * bytes",
-   "indexer": "index_n_heads(32) * index_head_dim(128) * bytes * index_source_layers(8)"
+  "full_attention_layers": 4,
+  "linear_attention_layers": 0,
+  "per_token_bytes": 70144,
+  "per_sequence_bytes": 0,
+  "components": {
+   "full_attention": {
+    "layers": 4,
+    "bytes_per_layer": 1152,
+    "bytes_per_token": 4608,
+    "dtype": "bfloat16",
+    "terms": {
+     "latent_from": "num_kv_heads(1) * head_dim(512)",
+     "latent": 512,
+     "qk_rope_head_dim": 64,
+     "formula": "(latent + qk_rope_head_dim) * bytes"
+    }
+   },
+   "indexer": {
+    "layers": 8,
+    "bytes_per_token": 65536,
+    "terms": {
+     "formula": "index_n_heads(32) * index_head_dim(128) * bytes * index_source_layers(8)"
+    }
+   }
   },
-  "kv_sharing_note": "只有 4 层产出 KV（共 40 层），其余层跨层读取；按总层数乘会高估",
-  "why": "存在逐层压缩比（compress_ratios），本公式未建模。此处数值只是未压缩上界，真实值请以官方披露或实测为准，并记入模型 YAML 的 official 字段与算子表 accounting",
-  "compress_ratios": [
-   0,
-   0,
-   2,
-   2,
-   2,
-   2,
-   2,
-   2,
-   2,
-   2,
-   2,
-   2,
-   2,
-   2,
-   2,
-   2,
-   2,
-   2,
-   2,
-   2,
-   1,
-   1,
-   1,
-   1,
-   1,
-   1,
-   1,
-   1,
-   1,
-   1,
-   1,
-   1,
-   1,
-   1,
-   1,
-   1,
-   1,
-   1,
-   1,
-   1,
-   0,
-   0,
-   0
+  "notes": [
+   "只有 4 层产出 KV（共 40 层），其余层跨层读取；按总层数乘会高估",
+   "存在逐层压缩比（compress_ratios），本公式未建模；per_token 只是未压缩上界，真实值以官方披露或实测为准"
   ],
-  "indexer_bytes_per_token": 65536,
-  "indexer_layers": 8,
   "dtype_assumed": true,
   "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
  },
@@ -133,25 +105,29 @@
  },
  "active_params": {
   "status": "ok",
-  "total": 16477847424.0,
+  "total": 15815933824.0,
+  "total_with_embed": 16477847424.0,
+  "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的输入词表）；total_with_embed 含输入词表，用于和各家公布的「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
   "expert_active": 8493465600.0,
   "expert_total": 543581798400.0,
   "expert_ratio": "6/384",
-  "always_active": 7984381824.0,
+  "always_active": 7322468224.0,
+  "lm_head": 661913600.0,
+  "dense": false,
   "excluded": {
-   "embed+lm_head": 0.0,
+   "embed_tokens": 661913600.0,
    "retrieval_table": 196928504320.0,
    "vision": 485268480.0,
    "draft": 14225362512.0
   },
-  "note": "embed/输出头/检索表/视觉塔不计入：它们每 token 只触及极少行，计入会把 decode 的带宽需求算高一个量级"
+  "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
  },
  "flops": {
-  "linear_per_token": 32955694848.0,
+  "linear_per_token": 31631867648.0,
   "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
  },
  "arithmetic_intensity": {
-  "decode_weight_bytes_per_token": 11017238819.52855,
+  "decode_weight_bytes_per_token": 10574677359.80339,
   "decode_flops_per_byte": 2.9912844214273138,
   "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
  },

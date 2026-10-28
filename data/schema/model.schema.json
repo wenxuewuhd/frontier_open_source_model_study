@@ -177,6 +177,35 @@
               }
             },
             "layer_pattern": { "type": "string", "description": "混合注意力的层分布，如 3:1 linear:full" },
+            "partial_rotary_factor": { "type": "number", "description": "只对部分维度加 rope 时的比例" },
+            "output_gate": {
+              "type": "object",
+              "description": "注意力输出门控。会多一路投影与逐元素乘，算子表里是独立一行",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "type": { "type": "string" }
+              }
+            },
+            "hybrid": {
+              "type": "object",
+              "description": "混合注意力的层分布。必须机器可读：full 层的 KV 随上下文增长，线性层只带固定状态，两者增长方式不同，混在一起无法做容量规划",
+              "additionalProperties": false,
+              "properties": {
+                "layer_types_count": {
+                  "type": "object",
+                  "additionalProperties": { "type": "integer" },
+                  "description": "各类型层数，如 {linear: 48, full: 16}"
+                },
+                "interval": { "type": "integer", "description": "每隔几层一个 full attention" },
+                "layer_types": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "逐层类型。config 里有就不必重复写在这里"
+                },
+                "note": { "type": "string" }
+              }
+            },
             "sparse": {
               "type": "object",
               "additionalProperties": false,
@@ -194,13 +223,32 @@
             },
             "linear_state": {
               "type": "object",
+              "description": "线性/状态空间注意力的递归状态。它每序列固定、与上下文长度无关，是和 KV cache 完全不同的显存模型",
               "additionalProperties": false,
               "properties": {
                 "mechanism": { "type": "string" },
                 "state_dim": { "type": "integer" },
-                "num_heads": { "type": "integer" }
+                "num_heads": { "type": "integer" },
+                "num_key_heads": { "type": "integer" },
+                "num_value_heads": { "type": "integer" },
+                "key_head_dim": { "type": "integer" },
+                "value_head_dim": { "type": "integer" },
+                "conv_kernel_dim": { "type": "integer", "description": "短卷积窗长，另带一份小状态" },
+                "state_dtype": { "type": "string", "description": "状态常以 FP32 保存，和 KV 精度不同" },
+                "state_layout_note": { "type": "string", "description": "状态布局依实现而定；推导脚本按常见布局估算并标注" }
               }
             }
+          }
+        },
+
+        "ffn": {
+          "type": "object",
+          "description": "FFN 形态。dense 模型没有 moe 块，中间维度写在这里",
+          "additionalProperties": false,
+          "properties": {
+            "type": { "enum": ["dense", "moe", "hybrid"] },
+            "intermediate": { "type": "integer" },
+            "layer_pattern": { "type": "string", "description": "dense 与 moe 层混排时的分布" }
           }
         },
 
@@ -285,6 +333,9 @@
             "num_heads": { "type": "integer" },
             "patch_size": { "type": "integer" },
             "downsample_ratio": { "type": "number" },
+            "spatial_merge_size": { "type": "integer" },
+            "temporal_patch_size": { "type": "integer" },
+            "out_hidden": { "type": "integer", "description": "投影到主干前的输出维度" },
             "max_image_tokens": { "type": "integer" },
             "params": { "type": "number" },
             "fusion": { "type": "string", "description": "projector 结构与 token 压缩方式" }
