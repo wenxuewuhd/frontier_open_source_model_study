@@ -1,0 +1,48 @@
+---
+import Base from '../../layouts/Base.astro';
+import { families, url, fmtCount, fmtBytes } from '../../lib/data';
+
+const fams = families();
+---
+
+<Base title="模型" lead="按家族列出已录记录。总参数与权重存储由权重清单实测得出。">
+  {
+    fams.map((f) => (
+      <>
+        <h2>{f.label}</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>模型</th>
+              <th>发布</th>
+              <th>类型</th>
+              <th class="num">总参数</th>
+              <th class="num">权重存储</th>
+              <th class="num">激活（带宽口径）</th>
+              <th>档位</th>
+            </tr>
+          </thead>
+          <tbody>
+            {f.models.map((m) => {
+              const s = m.derived?.from_shapes;
+              const a = m.derived?.active_params;
+              return (
+                <tr>
+                  <td><a href={url(`/models/${m.id}/`)}>{m.display_name}</a></td>
+                  <td class="num">{m.released ?? '—'}</td>
+                  <td>{m.kind}</td>
+                  <td class="num">{s?.complete ? fmtCount(s.params_total) : '—'}</td>
+                  <td class="num">{s?.complete ? fmtBytes(s.weight_bytes_total) : '—'}</td>
+                  <td class="num">{a?.status === 'ok' ? fmtCount(a.total) : '—'}</td>
+                  <td class="small muted">
+                    {m.lineage?.track === 'side' ? '支线' : '主线旗舰'}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </>
+    ))
+  }
+</Base>

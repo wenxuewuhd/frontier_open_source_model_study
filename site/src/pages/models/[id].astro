@@ -1,0 +1,627 @@
+---
+import Base from '../../layouts/Base.astro';
+import Evidence from '../../components/Evidence.astro';
+import Facts from '../../components/Facts.astro';
+import {
+  allModels, modelById, url, fmtCount, fmtBytes, fmtInt, fmtSci, FAMILY_LABEL,
+} from '../../lib/data';
+
+export function getStaticPaths() {
+  return allModels().map((m) => ({ params: { id: m.id } }));
+}
+
+const { id } = Astro.params;
+const m = modelById(id!)!;
+const ev = m.evidence;
+const d = m.derived ?? null;
+const s = d?.from_shapes;
+const kv = d?.kv_cache;
+const act = d?.active_params;
+const rec: any[] = d?.reconciliation ?? [];
+const mismatches = rec.filter((r) => r.status === 'MISMATCH');
+
+const a = m.arch?.attention ?? {};
+const moe = m.arch?.moe ?? {};
+const ret = m.arch?.retrieval ?? {};
+const q = m.precision?.quantization ?? {};
+
+const subsystems = s?.weight_bytes_by_subsystem
+  ? Object.entries(s.weight_bytes_by_subsystem as Record<string, number>)
+      .sort((x, y) => y[1] - x[1])
+  : [];
+const dtypeRows = s?.weight_bytes_by_dtype
+  ? Object.entries(s.weight_bytes_by_dtype as Record<string, number>)
+      .sort((x, y) => y[1] - x[1])
+  : [];
+const capacity = d?.kv_capacity_bytes_at_context
+  ? Object.entries(d.kv_capacity_bytes_at_context as Record<string, number>)
+      .sort((x, y) => Number(x[0]) - Number(y[0]))
+  : [];
+const compRatios: number[] | undefined = a.kv_sharing?.compress_ratios;
+---
+
+<Base
+  title={m.display_name}
+  lead={`${FAMILY_LABEL[m.family] ?? m.family} · ${m.kind}${
+    m.lineage?.track === 'side' ? ' · 支线档位' : ''
+  }`}
+>
+  {
+    mismatches.length > 0 && (
+      <div class="note" style="margin-bottom:18px">
+        <strong>交叉核对有 {mismatches.length} 处不一致</strong>
+        ，见下方「交叉核对」一节。在弄清差异根因之前，本页的推导值不宜直接采信。
+      </div>
+    )
+  }
+
+  <h2>基本信息</h2>
+  <div class="grid c2">
+    <div class="card">
+      <Facts
+        evidence={ev}
+        rows={[
+          { label: '发布', value: m.released, path: 'released', mono: true },
+          { label: 'License', value: m.license, path: 'license' },
+          { label: 'HF 仓库', value: m.hf?.repo, path: 'hf' },
+          { label: '取数 commit', value: m.hf?.sha?.slice(0, 12), path: 'hf', mono: true },
+        ]}
+      />
+    </div>
+    <div class="card">
+      <Facts
+        evidence={ev}
+        rows={[
+          { label: '上下文上限', value: fmtInt(m.context?.max), path: 'context', mono: true },
+          { label: '原生训练长度', value: fmtInt(m.context?.train_native), path: 'context', mono: true },
+          { label: '外推方式', value: m.context?.extension_method, path: 'context' },
+        ]}
+      />
+    </div>
+  </div>
+
+  <h2>规模与存储</h2>
+  <div class="grid c3">
+    <div class="card stat">
+      <div class="label">总参数 · 声明</div>
+      <div class="value">
+        {fmtCount(m.params?.total)}
+        <Evidence tag={m.params?.total !== undefined ? 'official' : undefined} hideUnknown />
+      </div>
+      <div class="sub">
+        {m.params?.excludes?.length ? `不含 ${m.params.excludes.join('、')}` : ''}
+      </div>
+    </div>
+    <div class="card stat">
+      <div class="label">总参数 · 实测</div>
+      <div class="value">
+        {s?.complete ? fmtCount(s.params_total) : '—'}
+        <Evidence tag="derived" />
+      </div>
+      <div class="sub">
+        {s ? `${fmtInt(s.tensor_count)} 个张量` : '无权重清单'}
+        {s?.expert_storage ? ` · 专家 ${s.expert_storage}` : ''}
+      </div>
+    </div>
+    <div class="card stat">
+      <div class="label">权重存储</div>
+      <div class="value">{s?.complete ? fmtBytes(s.weight_bytes_total) : '—'}</div>
+      <div class="sub">含量化 scale</div>
+    </div>
+  </div>
+
+  {
+    s && !s.complete && (
+      <div class="note" style="margin-top:12px">{s.incomplete_note}</div>
+    )
+  }
+  {
+    m.params?.counting_note && (
+      <p class="small muted" style="margin-top:10px">
+        <strong>口径</strong>
+        <Evidence tag="judgement" />：{m.params.counting_note}
+      </p>
+    )
+  }
+
+  {
+    subsystems.length > 0 && (
+      <div class="grid c2" style="margin-top:14px">
+        <div>
+          <h3>按子系统</h3>
+          <table>
+            <thead><tr><th>子系统</th><th class="num">参数</th><th class="num">存储</th></tr></thead>
+            <tbody>
+              {subsystems.map(([k, v]) => (
+                <tr>
+                  <td>{k}</td>
+                  <td class="num">{fmtCount(s.params_by_subsystem?.[k])}</td>
+                  <td class="num">{fmtBytes(v)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <h3>按精度</h3>
+          <table>
+            <thead><tr><th>数据类型</th><th class="num">存储</th></tr></thead>
+            <tbody>
+              {dtypeRows.map(([k, v]) => (
+                <tr><td class="num">{k}</td><td class="num">{fmtBytes(v)}</td></tr>
+              ))}
+            </tbody>
+          </table>
+          {s.packing_applied && Object.keys(s.packing_applied).length > 0 && (
+            <p class="small muted">
+              已按打包因子还原参数量：
+              {Object.entries(s.packing_applied).map(([k, v]) => `${k} ×${v}`).join('、')}。
+              存储不还原 —— 容器就是真实存储。
+            </p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  <h2>架构</h2>
+  <div class="grid c2">
+    <div class="card">
+      <h3 style="margin-top:0">主干</h3>
+      <Facts
+        evidence={ev}
+        rows={[
+          { label: '层数', value: m.arch?.layers, path: 'arch.layers', mono: true },
+          { label: 'hidden', value: m.arch?.hidden, path: 'arch.hidden', mono: true },
+          { label: '词表', value: fmtInt(m.arch?.vocab), path: 'arch.vocab', mono: true },
+          { label: 'norm', value: m.arch?.norm, path: 'arch.norm' },
+          { label: 'norm_eps', value: fmtSci(m.arch?.norm_eps), path: 'arch.norm_eps', mono: true },
+          { label: '激活函数', value: m.arch?.activation, path: 'arch.activation' },
+          { label: '位置编码', value: m.arch?.position, path: 'arch.position' },
+        ]}
+      />
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">注意力</h3>
+      <Facts
+        evidence={ev}
+        rows={[
+          { label: '类型', value: a.type, path: 'arch.attention.type' },
+          { label: '层分布', value: a.layer_pattern, path: 'arch.attention.layer_pattern' },
+          { label: 'heads', value: a.num_heads, path: 'arch.attention.num_heads', mono: true },
+          { label: 'KV heads', value: a.num_kv_heads, path: 'arch.attention.num_kv_heads', mono: true },
+          { label: 'head_dim', value: a.head_dim, path: 'arch.attention.head_dim', mono: true },
+          { label: 'kv_lora_rank', value: a.kv_lora_rank, path: 'arch.attention.kv_lora_rank', mono: true },
+          { label: 'q_lora_rank', value: a.q_lora_rank, path: 'arch.attention.q_lora_rank', mono: true },
+          { label: 'rope 部分比例', value: a.partial_rotary_factor, path: 'arch.attention.partial_rotary_factor', mono: true },
+          { label: '输出门控', value: a.output_gate?.enabled ? a.output_gate.type : undefined, path: 'arch.attention.output_gate' },
+        ]}
+      />
+    </div>
+  </div>
+
+  {
+    (a.hybrid || a.linear_state) && (
+      <div class="grid c2" style="margin-top:12px">
+        {a.hybrid && (
+          <div class="card">
+            <h3 style="margin-top:0">混合层分布</h3>
+            <Facts
+              evidence={ev}
+              rows={[
+                { label: 'full attention 层', value: a.hybrid.layer_types_count?.full, path: 'arch.attention.hybrid.layer_types_count', mono: true },
+                { label: '线性注意力层', value: a.hybrid.layer_types_count?.linear, path: 'arch.attention.hybrid.layer_types_count', mono: true },
+                { label: '间隔', value: a.hybrid.interval, path: 'arch.attention.hybrid', mono: true },
+              ]}
+            />
+            {a.hybrid.note && (
+              <p class="small muted">{a.hybrid.note}<Evidence tag="judgement" /></p>
+            )}
+          </div>
+        )}
+        {a.linear_state && (
+          <div class="card">
+            <h3 style="margin-top:0">线性状态</h3>
+            <Facts
+              evidence={ev}
+              rows={[
+                { label: '机制', value: a.linear_state.mechanism, path: 'arch.attention.linear_state.mechanism' },
+                { label: 'key / value 头数', value: `${a.linear_state.num_key_heads ?? '—'} / ${a.linear_state.num_value_heads ?? '—'}`, path: 'arch.attention.linear_state', mono: true },
+                { label: 'key / value 头维', value: `${a.linear_state.key_head_dim ?? '—'} / ${a.linear_state.value_head_dim ?? '—'}`, path: 'arch.attention.linear_state', mono: true },
+                { label: '卷积窗', value: a.linear_state.conv_kernel_dim, path: 'arch.attention.linear_state', mono: true },
+                { label: '状态精度', value: a.linear_state.state_dtype, path: 'arch.attention.linear_state', mono: true },
+              ]}
+            />
+            {a.linear_state.state_layout_note && (
+              <p class="small muted">{a.linear_state.state_layout_note}</p>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  {
+    (a.kv_sharing || a.sparse) && (
+      <div class="grid c2" style="margin-top:12px">
+        {a.kv_sharing && (
+          <div class="card">
+            <h3 style="margin-top:0">跨层 KV 共享</h3>
+            <Facts
+              evidence={ev}
+              rows={[
+                { label: 'KV 产出层', value: a.kv_sharing.source_layers, path: 'arch.attention.kv_sharing', mono: true },
+                { label: 'indexer 产出层', value: a.kv_sharing.index_source_layers, path: 'arch.attention.kv_sharing', mono: true },
+                {
+                  label: '逐层压缩比',
+                  value: compRatios
+                    ? `${compRatios.length} 项，取值 ${[...new Set(compRatios)].sort().join('/')}`
+                    : undefined,
+                  path: 'arch.attention.kv_sharing',
+                },
+              ]}
+            />
+            {a.kv_sharing.note && (
+              <p class="small muted">{a.kv_sharing.note}<Evidence tag="derived" /></p>
+            )}
+          </div>
+        )}
+        {a.sparse && (
+          <div class="card">
+            <h3 style="margin-top:0">稀疏注意力</h3>
+            <Facts
+              evidence={ev}
+              rows={[
+                { label: '机制', value: a.sparse.mechanism, path: 'arch.attention.sparse.mechanism' },
+                { label: 'index heads × dim', value: `${a.sparse.index_n_heads ?? '—'} × ${a.sparse.index_head_dim ?? '—'}`, path: 'arch.attention.sparse', mono: true },
+                { label: 'index topk', value: a.sparse.index_topk, path: 'arch.attention.sparse', mono: true },
+                { label: '候选块', value: a.sparse.candidate_topk_blocks, path: 'arch.attention.sparse', mono: true },
+                { label: '块大小', value: a.sparse.candidate_block_size, path: 'arch.attention.sparse', mono: true },
+              ]}
+            />
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  <div class="grid c2" style="margin-top:12px">
+    <div class="card">
+      <h3 style="margin-top:0">FFN</h3>
+      <Facts
+        evidence={ev}
+        rows={[
+          { label: '形态', value: m.arch?.ffn?.type ?? (moe.routed_experts ? 'moe' : undefined), path: 'arch.ffn.type' },
+          { label: '中间维', value: m.arch?.ffn?.intermediate, path: 'arch.ffn', mono: true },
+          { label: '路由专家', value: moe.routed_experts, path: 'arch.moe.routed_experts', mono: true },
+          { label: '共享专家', value: moe.shared_experts, path: 'arch.moe.shared_experts', mono: true },
+          { label: 'top_k', value: moe.top_k, path: 'arch.moe.top_k', mono: true },
+          { label: '专家中间维', value: moe.intermediate, path: 'arch.moe.intermediate', mono: true },
+          { label: '选路', value: moe.routing, path: 'arch.moe.routing' },
+          { label: '均衡', value: moe.balance, path: 'arch.moe.balance' },
+        ]}
+      />
+      {moe.storage_note && <p class="small muted">{moe.storage_note}<Evidence tag="derived" /></p>}
+    </div>
+
+    {
+      (m.arch?.residual || ret.mechanism || m.arch?.decoding) && (
+        <div class="card">
+          <h3 style="margin-top:0">其他机制</h3>
+          <Facts
+            evidence={ev}
+            rows={[
+              { label: '残差流', value: m.arch?.residual ? `${m.arch.residual.type} ×${m.arch.residual.multiplier}` : undefined, path: 'arch.residual' },
+              { label: '外置查表', value: ret.mechanism, path: 'arch.retrieval.mechanism' },
+              { label: '表所在层', value: ret.layers, path: 'arch.retrieval.layers', mono: true },
+              { label: '表行数', value: ret.table_rows?.map(fmtCount), path: 'arch.retrieval.table_rows', mono: true },
+              { label: '每 token 查表', value: ret.lookup_bytes_per_token ? fmtBytes(ret.lookup_bytes_per_token) : undefined, path: 'arch.retrieval.lookup_bytes_per_token', mono: true },
+              { label: '表放置', value: ret.placement, path: 'arch.retrieval.placement' },
+              { label: 'MTP 层', value: m.arch?.decoding?.mtp_layers, path: 'arch.decoding', mono: true },
+              { label: '投机解码', value: m.arch?.decoding?.speculative ? `${m.arch.decoding.speculative.method} ×${m.arch.decoding.speculative.num_tokens}` : undefined, path: 'arch.decoding' },
+            ]}
+          />
+          {m.arch?.residual?.note && <p class="small muted">{m.arch.residual.note}</p>}
+        </div>
+      )
+    }
+  </div>
+
+  {
+    m.arch?.vision && (
+      <div class="card" style="margin-top:12px">
+        <h3 style="margin-top:0">视觉</h3>
+        <Facts
+          evidence={ev}
+          rows={[
+            { label: '编码器', value: m.arch.vision.encoder, path: 'arch.vision.encoder' },
+            { label: '层 / hidden', value: `${m.arch.vision.layers ?? '—'} / ${m.arch.vision.hidden ?? '—'}`, path: 'arch.vision', mono: true },
+            { label: 'patch', value: m.arch.vision.patch_size, path: 'arch.vision', mono: true },
+            { label: '空间合并', value: m.arch.vision.spatial_merge_size, path: 'arch.vision', mono: true },
+            { label: '最大图像 token', value: m.arch.vision.max_image_tokens, path: 'arch.vision', mono: true },
+            { label: '融合方式', value: m.arch.vision.fusion, path: 'arch.vision.fusion' },
+          ]}
+        />
+      </div>
+    )
+  }
+
+  <h2>精度</h2>
+  <div class="card">
+    <Facts
+      evidence={ev}
+      rows={[
+        { label: '训练精度', value: m.precision?.training, path: 'precision.training' },
+        { label: '发布权重精度', value: m.precision?.weights_release, path: 'precision.weights_release' },
+        { label: 'KV cache', value: m.precision?.kv_cache, path: 'precision.kv_cache' },
+        { label: '量化方法', value: q.method, path: 'precision.quantization' },
+        { label: '激活量化', value: q.activation_scheme, path: 'precision.quantization' },
+        { label: 'block 大小', value: q.weight_block_size, path: 'precision.quantization', mono: true },
+        { label: 'scale 格式', value: q.scale_format, path: 'precision.quantization', mono: true },
+        {
+          label: '分子系统精度',
+          value: q.per_subsystem
+            ? Object.entries(q.per_subsystem).map(([k, v]) => `${k}=${v}`).join('，')
+            : undefined,
+          path: 'precision.quantization',
+        },
+      ]}
+    />
+    {q.packing_note && <p class="small muted">{q.packing_note}<Evidence tag="derived" /></p>}
+  </div>
+
+  <h2>推导负载</h2>
+  <p class="small muted">
+    本节全部由 <code>scripts/derive.py</code> 生成<Evidence tag="derived" />，不手写。
+    {d?.generated_at && ` 生成于 ${d.generated_at}。`}
+  </p>
+
+  {
+    kv?.status && kv.status !== 'unknown' ? (
+      <>
+        <div class="grid c3">
+          <div class="card stat">
+            <div class="label">随上下文增长</div>
+            <div class="value">{kv.per_token_bytes?.toLocaleString()} B</div>
+            <div class="sub">每 token · full attention {kv.full_attention_layers} 层</div>
+          </div>
+          <div class="card stat">
+            <div class="label">每序列固定</div>
+            <div class="value">{fmtBytes(kv.per_sequence_bytes)}</div>
+            <div class="sub">
+              {kv.linear_attention_layers
+                ? `线性注意力 ${kv.linear_attention_layers} 层的递归状态`
+                : '无线性层'}
+            </div>
+          </div>
+          <div class="card stat">
+            <div class="label">激活 · 带宽口径</div>
+            <div class="value">{act?.status === 'ok' ? fmtCount(act.total) : '—'}</div>
+            <div class="sub">
+              {act?.total_with_embed ? `可比官方口径 ${fmtCount(act.total_with_embed)}` : ''}
+            </div>
+          </div>
+        </div>
+
+        <div class="grid c2" style="margin-top:14px">
+          <div>
+            <h3>注意力显存分量</h3>
+            <table>
+              <thead><tr><th>分量</th><th class="num">层数</th><th class="num">贡献</th></tr></thead>
+              <tbody>
+                {Object.entries(kv.components ?? {}).map(([name, c]: [string, any]) => (
+                  <tr>
+                    <td>{name}</td>
+                    <td class="num">{c.layers}</td>
+                    <td class="num">
+                      {c.bytes_per_token
+                        ? `${c.bytes_per_token.toLocaleString()} B/token`
+                        : `${fmtBytes(c.bytes_per_sequence)}/序列`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {(kv.notes ?? []).length > 0 && (
+              <div class="note" style="margin-top:10px">
+                <ul class="plain" style="margin:0">
+                  {kv.notes.map((n: string) => <li>{n}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+          <div>
+            <h3>KV 容量</h3>
+            <table>
+              <thead><tr><th class="num">上下文</th><th class="num">容量</th></tr></thead>
+              <tbody>
+                {capacity.map(([L, v]) => (
+                  <tr>
+                    <td class="num">{fmtInt(Number(L))}</td>
+                    <td class="num">{fmtBytes(v)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <table style="margin-top:12px">
+              <tbody>
+                {d?.flops?.linear_per_token && (
+                  <tr>
+                    <td>线性 FLOPs / token</td>
+                    <td class="num">{fmtCount(d.flops.linear_per_token)}</td>
+                  </tr>
+                )}
+                {d?.arithmetic_intensity?.decode_flops_per_byte && (
+                  <tr>
+                    <td>算术强度（decode）</td>
+                    <td class="num">
+                      {d.arithmetic_intensity.decode_flops_per_byte.toFixed(2)} FLOP/B
+                    </td>
+                  </tr>
+                )}
+                {d?.ep_communication?.bytes_per_token ? (
+                  <tr>
+                    <td>EP all-to-all / token（EP={d.ep_communication.ep_size}）</td>
+                    <td class="num">{fmtBytes(d.ep_communication.bytes_per_token)}</td>
+                  </tr>
+                ) : (
+                  <tr>
+                    <td>EP all-to-all</td>
+                    <td class="num muted">{d?.ep_communication?.why ?? '—'}</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </>
+    ) : (
+      <div class="note">注意力显存未能推导：{kv?.why ?? '缺少必要字段'}</div>
+    )
+  }
+
+  {act?.note && <p class="small muted" style="margin-top:10px">{act.note}</p>}
+  {act?.semantics && <p class="small muted">{act.semantics}</p>}
+
+  <h2>交叉核对</h2>
+  <p class="small muted">
+    config 公式与权重清单两条路都能算的量在这里核对。这是人工复核的主要入口。
+  </p>
+  <table>
+    <thead><tr><th>条目</th><th>结论</th><th>说明</th></tr></thead>
+    <tbody>
+      {
+        rec.map((r) => (
+          <tr>
+            <td>{r.item}</td>
+            <td>
+              {r.status === 'MISMATCH' ? <strong>不一致</strong> : r.status === 'skip' ? <span class="muted">跳过</span> : '一致'}
+              {r.delta_pct !== undefined && <span class="num"> {r.delta_pct > 0 ? '+' : ''}{r.delta_pct}%</span>}
+            </td>
+            <td class="small muted">
+              {r.why ??
+                Object.entries(r)
+                  .filter(([k]) => !['item', 'status', 'why', 'delta_pct'].includes(k))
+                  .map(([k, v]) => `${k}=${typeof v === 'number' ? fmtCount(v) : v}`)
+                  .join('  ')}
+            </td>
+          </tr>
+        ))
+      }
+    </tbody>
+  </table>
+
+  {
+    (m.platforms ?? []).length > 0 && (
+      <>
+        <h2>平台支持</h2>
+        <table>
+          <thead>
+            <tr><th>引擎</th><th>硬件</th><th>精度</th><th>状态</th><th>限定</th></tr>
+          </thead>
+          <tbody>
+            {m.platforms!.map((p: any) => (
+              <tr>
+                <td>{p.engine}{p.engine_version ? ` ${p.engine_version}` : ''}</td>
+                <td>{p.hardware}</td>
+                <td class="num">{p.precision ?? '—'}</td>
+                <td>{p.status}</td>
+                <td class="small muted">{p.caveat ?? ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </>
+    )
+  }
+
+  {
+    (m.bottlenecks ?? []).length > 0 && (
+      <>
+        <h2>瓶颈分析</h2>
+        <div class="grid">
+          {m.bottlenecks!.map((b: any) => (
+            <div class="card">
+              <div class="small muted" style="margin-bottom:4px">
+                {b.dimension}
+                <Evidence tag={b.evidence ?? 'judgement'} />
+              </div>
+              <div>{b.finding}</div>
+              {b.quantified && <div class="small num" style="margin-top:6px">{b.quantified}</div>}
+              {b.fix && <div class="small muted" style="margin-top:6px"><strong>可修</strong>：{b.fix}</div>}
+            </div>
+          ))}
+        </div>
+      </>
+    )
+  }
+
+  {
+    m.ops_table && (
+      <>
+        <h2>算子表</h2>
+        <div class="note">
+          本模型的 decode 算子表位于 <code>{m.ops_table.ref}</code>，
+          归属 <strong>{m.ops_table.visibility === 'internal' ? '内部' : '公开'}</strong>。
+          {m.ops_table.visibility === 'internal' &&
+            '公开站不含表体；内部构建（叠加 overlay）可浏览并下载 xlsx。'}
+        </div>
+      </>
+    )
+  }
+
+  {
+    (m.infra_signals ?? []).length > 0 && (
+      <>
+        <h2>Infra 信号</h2>
+        <div class="grid">
+          {m.infra_signals!.map((sg: any) => (
+            <div class="card">
+              <div class="small muted" style="margin-bottom:4px">
+                {sg.horizon === 'now' ? '当下就要动' : sg.horizon === 'next-gen' ? '下一代要准备' : '继续观察'}
+                {sg.axis && ` · ${sg.axis}`}
+                <Evidence tag={sg.evidence} />
+              </div>
+              <div>{sg.text}</div>
+            </div>
+          ))}
+        </div>
+      </>
+    )
+  }
+
+  <div class="grid c2" style="margin-top:18px">
+    {
+      (m.open_questions ?? []).length > 0 && (
+        <div>
+          <h2 style="margin-top:0">开放问题</h2>
+          <ul class="plain small">
+            {m.open_questions!.map((o: string) => <li>{o}</li>)}
+          </ul>
+        </div>
+      )
+    }
+    {
+      (m.sources ?? []).length > 0 && (
+        <div>
+          <h2 style="margin-top:0">来源</h2>
+          <ul class="plain small">
+            {m.sources!.map((src: any) => (
+              <li>
+                {src.url ? <a href={src.url}>{src.kind}</a> : src.kind}
+                {src.locator && <span class="muted"> · {src.locator}</span>}
+                {src.note && <div class="muted">{src.note}</div>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )
+    }
+  </div>
+
+  {m.notes && <><h2>备注</h2><p class="small">{m.notes}</p></>}
+
+  <p class="small muted" style="margin-top:28px">
+    <a href={url('/models/')}>← 返回模型列表</a>
+  </p>
+</Base>

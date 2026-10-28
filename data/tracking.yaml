@@ -1,0 +1,49 @@
+# 追踪名册：每个家族追最新旗舰。
+# 这份清单是选取结果，不是模型记录本身 —— 双周采集时核对并更新。
+# 较小档位只在有结构对照价值时才录，并在其记录里标 lineage.track: side。
+
+updated: 2026-10-28
+policy: 每个家族追最新旗舰；较小档位仅在有结构对照价值时收录
+
+families:
+  - family: deepseek
+    flagship: DeepSeek-V4.1-Flash
+    hf_repo: deepseek-ai/DeepSeek-V4.1-Flash
+    released: 2026-10-16
+    model_id: deepseek-v41-flash
+    status: recorded
+    note: 另有 DeepSeek-V4.1-Flash-1017 刷新版（下载量约 1/16）；V4.1 线尚无 Pro 档
+
+  - family: qwen
+    flagship: Qwen3.8-2.4T-A95B
+    hf_repo: Qwen/Qwen3.8-2.4T-A95B
+    released: 2026-08-12
+    model_id: qwen3.8-2.4t-a95b
+    status: recorded
+
+  - family: glm
+    flagship: GLM-5.3
+    hf_repo: zai-org/GLM-5.3
+    released: 2026-10-14
+    status: pending
+    note: model_type 为 glm_moe_dsa，MLA + DSA 稀疏
+
+  - family: minimax
+    flagship: MiniMax-M3
+    hf_repo: MiniMaxAI/MiniMax-M3
+    released: 2026-10-26
+    status: pending
+    note: 另有更新的 M3.1-Flash，但无完整 M3.1，故旗舰仍取 M3
+
+  - family: kimi
+    flagship: Kimi-K3
+    hf_repo: moonshotai/Kimi-K3
+    released: 2026-09-02
+    status: pending
+
+  - family: stepfun
+    flagship: Step-5-Preview
+    hf_repo: stepfun-ai/Step-5-Preview
+    released: 2026-10-15
+    status: pending
+    note: 另有 BF16 与 NVFP4 两个发布变体

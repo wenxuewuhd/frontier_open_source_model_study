@@ -1,0 +1,115 @@
+---
+import Base from '../layouts/Base.astro';
+import Evidence from '../components/Evidence.astro';
+import { EVIDENCE_LABEL, BUILD_IS_INTERNAL } from '../lib/data';
+
+const tags = ['official', 'derived', 'judgement', 'unknown'] as const;
+const tagDesc: Record<string, string> = {
+  official: '官方模型卡、技术报告或 config 里直接写明的',
+  derived: '由已知量算出来的，可复算',
+  judgement: '我们的解释与判断 —— 会错的主要是这一类',
+  unknown: '没有归属。显示为未知而不是留空，因为留空会被当成「没问题」',
+};
+---
+
+<Base
+  title="口径说明"
+  lead="这个站点的可信度来自两件事：每个数字都能追到来源，以及把容易混淆的口径明确分开。"
+>
+  <h2>证据口径</h2>
+  <p class="small muted">
+    页面上每个手写数字旁边都有一个徽标。鼠标悬停可看全称。
+  </p>
+  <table>
+    <thead><tr><th>徽标</th><th>含义</th><th>说明</th></tr></thead>
+    <tbody>
+      {
+        tags.map((t) => (
+          <tr>
+            <td><Evidence tag={t} /></td>
+            <td>{EVIDENCE_LABEL[t]}</td>
+            <td class="small">{tagDesc[t]}</td>
+          </tr>
+        ))
+      }
+    </tbody>
+  </table>
+  <p class="small muted">
+    口径支持前缀继承：声明 <code>arch: official</code> 即覆盖整棵子树，更深的路径优先。
+    校验脚本会检查每个叶子字段都有归属，没有归属的记录无法通过构建。
+  </p>
+  <div class="note">
+    复核时只需要看 <strong>解释判断</strong> 类。官方披露与计算推导可以自动过 ——
+    会错的是判断。
+  </div>
+
+  <h2>三个口径不能混</h2>
+  <table>
+    <thead>
+      <tr><th>口径</th><th>含不含 scale</th><th>低位打包</th><th>用途</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>参数量</td><td>排除</td>
+        <td>还原（张量里的 numel 是容器数，不是参数数）</td>
+        <td>对外说「多大的模型」</td>
+      </tr>
+      <tr>
+        <td>权重存储</td><td>包含</td>
+        <td>不还原（容器就是真实存储）</td>
+        <td>显存与带宽规划</td>
+      </tr>
+      <tr>
+        <td>激活参数</td><td>排除</td>
+        <td>还原</td>
+        <td>decode 带宽需求</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="small muted">
+    激活参数另有两个子口径：<strong>带宽口径</strong>不含只 gather 一行的输入词表，
+    但含每步要对全词表做 GEMM 的输出头；<strong>可比官方口径</strong>含输入词表，
+    用来和各家公布的「激活参数」对比。两者差几个百分点，且概念不同，做带宽估算要用前者。
+  </p>
+
+  <h2>注意力显存分两个分量</h2>
+  <p class="small">
+    混合结构里这两者的增长方式根本不同，混成一个数就没法做容量规划：
+  </p>
+  <ul class="plain small">
+    <li><strong>随上下文增长</strong> —— full attention 层的 KV cache，按 token 累积。</li>
+    <li>
+      <strong>每序列固定</strong> —— 线性注意力层的递归状态，与上下文长度无关。
+      它的代价结构和 KV 正好相反：长上下文下便宜，大批量下贵。
+    </li>
+  </ul>
+  <p class="small muted">
+    所以「KV 容量 = 层数 × 每层 KV × 上下文」这个估算模型对当前的旗舰已经失效：
+    有的模型只有部分层产出 KV（跨层共享），有的模型大部分层根本不建 KV（线性注意力）。
+  </p>
+
+  <h2>公开与内部</h2>
+  <p class="small">
+    公开站与内部站是同一套代码构建两次。公开站只含公开来源的架构、精度、引擎支持与
+    公开 benchmark；算子表、自测性能和硬件相关的瓶颈分析属内部数据，放在单独的
+    overlay 里叠加。校验脚本默认拒绝内部数据进公开构建 —— 整条记录拒绝，不做字段级脱敏，
+    因为脱敏做不干净。
+  </p>
+  <p class="small muted">
+    当前构建：<strong>{BUILD_IS_INTERNAL ? '内部（含 overlay）' : '公开'}</strong>。
+  </p>
+
+  <h2>流程与复核点</h2>
+  <p class="small">人只进三个闸口，多了就没人真看。</p>
+  <table>
+    <thead><tr><th>闸口</th><th>时机</th><th>看什么</th></tr></thead>
+    <tbody>
+      <tr><td>范围</td><td>选题时</td><td>本期追哪些。最便宜，但决定全部工作量</td></tr>
+      <tr>
+        <td><strong>口径</strong></td><td>推导之后</td>
+        <td><strong>交叉核对的差异</strong>。账对不上，后面所有结论都是错的</td>
+      </tr>
+      <tr><td>结论</td><td>核查之后</td><td>Infra 信号与核查修正 —— 会被别人引用的部分</td></tr>
+    </tbody>
+  </table>
+</Base>

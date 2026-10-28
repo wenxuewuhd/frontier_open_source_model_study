@@ -1,0 +1,64 @@
+---
+/**
+ * 证据口径徽标。
+ *
+ * 这是整个站点可信度的来源：每个手写数字旁边都要能看出「谁说的」。
+ * 没有归属的字段显示为未知而不是留空 —— 留空会被当成「没问题」。
+ */
+import { EVIDENCE_LABEL, type EvidenceTag } from '../lib/data';
+
+interface Props {
+  tag?: EvidenceTag;
+  /** 没有口径时不渲染，用于本身就是推导块的区域 */
+  hideUnknown?: boolean;
+}
+const { tag, hideUnknown = false } = Astro.props;
+const t: EvidenceTag = tag ?? 'unknown';
+const show = !(hideUnknown && !tag);
+const short: Record<EvidenceTag, string> = {
+  official: '官',
+  derived: '推',
+  judgement: '判',
+  unknown: '?',
+};
+---
+
+{
+  show && (
+    <span class={`ev ev-${t}`} title={EVIDENCE_LABEL[t]} aria-label={EVIDENCE_LABEL[t]}>
+      {short[t]}
+    </span>
+  )
+}
+
+<style>
+  .ev {
+    display: inline-block;
+    min-width: 1.25em;
+    text-align: center;
+    font-size: 10.5px;
+    line-height: 1.5;
+    padding: 0 3px;
+    border-radius: 3px;
+    margin-left: 5px;
+    vertical-align: 1.5px;
+    font-family: system-ui, sans-serif;
+    cursor: help;
+    user-select: none;
+  }
+  .ev-official { color: #fff; background: var(--official); }
+  .ev-derived { color: #fff; background: var(--derived); }
+  .ev-judgement { color: #fff; background: var(--judgement); }
+  .ev-unknown {
+    color: var(--unknown);
+    border: 1px dashed var(--unknown);
+    background: transparent;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) .ev-official,
+    :root:not([data-theme='light']) .ev-derived,
+    :root:not([data-theme='light']) .ev-judgement {
+      color: #15161a;
+    }
+  }
+</style>

@@ -1,0 +1,69 @@
+---
+import Base from '../layouts/Base.astro';
+import { allModels, url, BUILD_IS_INTERNAL } from '../lib/data';
+
+const rows = allModels().flatMap((m) =>
+  (m.platforms ?? []).map((p: any) => ({ model: m, ...p })),
+);
+const engines = [...new Set(rows.map((r) => r.engine))].sort();
+const statusLabel: Record<string, string> = {
+  day0: '发布同日可用',
+  supported: '已支持',
+  partial: '部分可用',
+  wip: '进行中',
+  none: '不支持',
+  unknown: '未查',
+};
+---
+
+<Base
+  title="平台矩阵"
+  lead="模型 × 引擎 × 硬件 × 精度。每条都带状态与限定说明 —— 「代码支持」和「有文档化配方」不是一回事，限定必须写出来。"
+>
+  {
+    !BUILD_IS_INTERNAL && (
+      <div class="note" style="margin-bottom:16px">
+        这是公开构建，只含公开来源的支持状态。昇腾侧的适配状态、自测性能与算子缺口
+        属内部数据，在叠加 overlay 的内部构建里才会出现。
+      </div>
+    )
+  }
+
+  {
+    rows.length === 0 ? (
+      <p class="muted">还没有平台记录。</p>
+    ) : (
+      <>
+        <table>
+          <thead>
+            <tr>
+              <th>模型</th>
+              <th>引擎</th>
+              <th>硬件</th>
+              <th>精度</th>
+              <th>并行</th>
+              <th>状态</th>
+              <th>限定</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr>
+                <td><a href={url(`/models/${r.model.id}/`)}>{r.model.display_name}</a></td>
+                <td>{r.engine}{r.engine_version ? ` ${r.engine_version}` : ''}</td>
+                <td>{r.hardware}</td>
+                <td class="num">{r.precision ?? '—'}</td>
+                <td class="num">{r.parallel ?? '—'}</td>
+                <td>{statusLabel[r.status] ?? r.status}</td>
+                <td class="small muted">{r.caveat ?? ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p class="small muted">
+          共 {rows.length} 条，覆盖 {engines.length} 个引擎：{engines.join('、')}。
+        </p>
+      </>
+    )
+  }
+</Base>

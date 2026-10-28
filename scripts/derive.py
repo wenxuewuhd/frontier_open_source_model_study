@@ -461,8 +461,8 @@ def main():
     ap.add_argument("--model", default=None, help="模型 YAML；给了就用它的注意力类型和精度，并核对声明值")
     ap.add_argument("--out-dir", default="data/derived")
     ap.add_argument("--ep", type=int, default=1, help="通信量按这个 EP 规模算")
-    ap.add_argument("--context-lens", default="4096,32768,131072",
-                    help="按这些上下文长度给出 KV 容量")
+    ap.add_argument("--context-lens", default=None,
+                    help="按这些上下文长度给出 KV 容量；默认取 4K/32K 与模型自身上限")
     args = ap.parse_args()
 
     fd = os.path.join(args.facts_dir, args.id)
@@ -516,7 +516,13 @@ def main():
 
     kv_at = {}
     if kv.get("status") in ("ok", "partial"):
-        for L in [int(x) for x in args.context_lens.split(",") if x.strip()]:
+        if args.context_lens:
+            lens = [int(x) for x in args.context_lens.split(",") if x.strip()]
+        else:
+            # 默认带上模型自身的上下文上限 —— 容量结论最该看的就是满上下文那一档
+            cap = (model.get("context") or {}).get("max") or t.get("max_position_embeddings")
+            lens = sorted({x for x in [4096, 32768, cap] if x and x <= (cap or x)})
+        for L in lens:
             kv_at[str(L)] = kv["per_sequence_bytes"] + kv["per_token_bytes"] * L
 
     declared = {"params_total": (model.get("params") or {}).get("total"),

@@ -12,3 +12,7 @@ __pycache__/
 node_modules/
 site/dist/
 .venv/
+
+# Astro 生成的类型与构建产物
+site/.astro/
+site/dist/

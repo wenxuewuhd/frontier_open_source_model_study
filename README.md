@@ -66,6 +66,24 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 `derive.py` 在有不一致项时返回非零，`validate.py` 在有错误时返回非零，都可以直接给 CI 用。
 
+## 网站
+
+```bash
+cd site && npm install && npm run dev     # 本地预览
+npm run build                             # 产物在 site/dist
+```
+
+Astro 静态站，直接读 `data/` 下的 YAML 与 derived JSON，**不另定一套 content collection schema** —— 校验是 `validate.py` 的职责，站点只负责渲染。
+
+页面：总览（追踪名册 + Infra 信号 + 时间线）、模型列表、模型详情、平台矩阵、口径说明。
+
+两个要点：
+
+- **每个手写数字旁边都有证据徽标**（官 / 推 / 判 / ?），前缀继承规则与 `validate.py` 共用一套实现。两边不一致会让校验通过的记录在页面上显示错的口径。
+- **内部 overlay**：设 `OVERLAY_DIR` 指向私有数据目录即可构建内部站，记录按 id 深合并、数组追加。不设就是公开构建，页头会标明当前是哪一种。
+
+`.github/workflows/site.yml` 先跑校验（含防泄漏）再构建部署到 GitHub Pages —— 数据不合规时站点不会被构建出来。
+
 ## 三个口径不能混
 
 这是本仓最容易出错的地方，工具里已经固化：

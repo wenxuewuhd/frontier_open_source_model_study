@@ -1,0 +1,47 @@
+---
+/**
+ * 一组「字段 -> 值 + 证据口径」。
+ *
+ * rows 里的 path 是模型记录里的点分路径，用来查证据归属 ——
+ * 和 scripts/validate.py 的前缀继承规则共用一套实现。
+ */
+import Evidence from './Evidence.astro';
+import { evidenceFor, type EvidenceTag } from '../lib/data';
+
+interface Row {
+  label: string;
+  value: unknown;
+  /** 点分路径；给了就查口径并显示徽标 */
+  path?: string;
+  mono?: boolean;
+}
+interface Props {
+  rows: Row[];
+  evidence?: Record<string, EvidenceTag>;
+}
+const { rows, evidence } = Astro.props;
+
+// 格式化函数对缺失值返回 '—'，所以要一并当作缺失 ——
+// 否则页面上会出现「字段名 — 官」这种带证据徽标的空值，比不显示更糟。
+const shown = rows.filter(
+  (r) => r.value !== undefined && r.value !== null && r.value !== '' && r.value !== '—' &&
+         !(Array.isArray(r.value) && r.value.length === 0),
+);
+const render = (v: unknown) => (Array.isArray(v) ? v.join(', ') : String(v));
+---
+
+{
+  shown.length > 0 && (
+    <dl class="kv">
+      {shown.map((r) => (
+        <>
+          <dt>{r.label}</dt>
+          <dd>
+            <span class={r.mono ? 'num' : undefined}>{render(r.value)}</span>
+            {r.path && <Evidence tag={evidenceFor(r.path, evidence)} />}
+          </dd>
+        </>
+      ))}
+    </dl>
+  )
+}

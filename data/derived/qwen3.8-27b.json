@@ -1,7 +1,7 @@
 {
  "id": "qwen3.8-27b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-28T09:27:05+00:00",
+ "generated_at": "2026-10-28T09:46:39+00:00",
  "inputs": {
   "facts_dir": "facts/qwen3.8-27b",
   "config_present": true,
@@ -89,7 +89,7 @@
  "kv_capacity_bytes_at_context": {
   "4096": 421003264,
   "32768": 2300051456,
-  "131072": 8742502400
+  "262144": 17332436992
  },
  "active_params": {
   "status": "ok",
