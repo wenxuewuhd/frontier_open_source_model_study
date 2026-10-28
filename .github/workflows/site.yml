@@ -1,6 +1,9 @@
 name: validate and deploy site
 
 # 校验先跑：数据不合规、证据无归属或内部数据混入公开仓时，站点不应该被构建出来。
+#
+# runner 钉死版本而不用 ubuntu-latest：ubuntu-latest 正在向 Ubuntu 26 迁移，
+# 迁移期两边都可能拿到。本仓的产出是要对账的数字，构建环境漂移不值得冒险。
 on:
   push:
     branches: [main]
@@ -18,7 +21,7 @@ concurrency:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -33,7 +36,7 @@ jobs:
 
   build:
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -52,7 +55,7 @@ jobs:
   deploy:
     needs: build
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
