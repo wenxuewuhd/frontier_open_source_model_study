@@ -247,6 +247,36 @@ export function timeline(): Model[] {
 
 export const BUILD_IS_INTERNAL = Boolean(OVERLAY);
 
+export const SEVERITY_LABEL: Record<string, string> = {
+  wrong: '事实错误',
+  unsupported: '缺依据',
+  imprecise: '表述误导',
+  missing: '漏字段',
+  stale: '已过时',
+  overreach: '过度推论',
+  miscategorized: '口径标错',
+};
+
+export const RESOLUTION_LABEL: Record<string, string> = {
+  corrected: '已改',
+  refuted: '质疑不成立',
+  confirmed: '已确认',
+  open: '未解决',
+  deferred: '本期不处理',
+};
+
+/** 核查状态。未核查的记录要在列表里看得出来，否则「没问题」和「没人看过」分不开。 */
+export function reviewStatus(m: Model) {
+  const findings = (m as any).review ?? [];
+  return {
+    reviewed: Boolean((m as any).reviewed),
+    date: (m as any).reviewed?.date as string | undefined,
+    total: findings.length as number,
+    open: findings.filter((f: any) => f.resolution === 'open').length as number,
+    corrected: findings.filter((f: any) => f.resolution === 'corrected').length as number,
+  };
+}
+
 export interface RosterEntry {
   family: string;
   flagship: string;

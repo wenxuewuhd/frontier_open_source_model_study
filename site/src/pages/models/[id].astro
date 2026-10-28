@@ -4,6 +4,7 @@ import Evidence from '../../components/Evidence.astro';
 import Facts from '../../components/Facts.astro';
 import {
   allModels, modelById, url, fmtCount, fmtBytes, fmtInt, fmtSci, FAMILY_LABEL,
+  reviewStatus, SEVERITY_LABEL, RESOLUTION_LABEL,
 } from '../../lib/data';
 
 export function getStaticPaths() {
@@ -38,6 +39,7 @@ const capacity = d?.kv_capacity_bytes_at_context
       .sort((x, y) => Number(x[0]) - Number(y[0]))
   : [];
 const compRatios: number[] | undefined = a.kv_sharing?.compress_ratios;
+const rv = reviewStatus(m);
 ---
 
 <Base
@@ -618,6 +620,52 @@ const compRatios: number[] | undefined = a.kv_sharing?.compress_ratios;
       )
     }
   </div>
+
+  <h2>核查</h2>
+  {
+    rv.reviewed ? (
+      <>
+        <p class="small muted">
+          {(m as any).reviewed.date} 核查 · 覆盖
+          {((m as any).reviewed.scope ?? []).join('、') || '未说明范围'} ·
+          共 {rv.total} 条发现，已改 {rv.corrected}，未解决 {rv.open}。
+          <br />
+          方法：{(m as any).reviewed.method}
+        </p>
+        {((m as any).review ?? []).length > 0 && (
+          <table>
+            <thead>
+              <tr>
+                <th>编号</th><th>字段</th><th>类型</th><th>发现</th><th>结论</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(m as any).review.map((f: any) => (
+                <tr>
+                  <td class="num">{f.id}</td>
+                  <td class="small num">{f.field}</td>
+                  <td class="small">{SEVERITY_LABEL[f.severity] ?? f.severity}</td>
+                  <td class="small">
+                    {f.claim && <div class="muted">原先：{f.claim}</div>}
+                    <div>{f.finding}</div>
+                    {f.changed_to && <div class="muted">改为：{f.changed_to}</div>}
+                  </td>
+                  <td class="small">
+                    <strong>{RESOLUTION_LABEL[f.resolution] ?? f.resolution}</strong>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </>
+    ) : (
+      <div class="note">
+        这份记录<strong>还没有经过核查</strong>。数字通过了 schema 校验与交叉核对，
+        但判断类内容没有被独立质疑过，引用前请自行复核。
+      </div>
+    )
+  }
 
   {m.notes && <><h2>备注</h2><p class="small">{m.notes}</p></>}
 

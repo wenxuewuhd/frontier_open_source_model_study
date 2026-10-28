@@ -1,6 +1,6 @@
 ---
 import Base from '../../layouts/Base.astro';
-import { families, url, fmtCount, fmtBytes } from '../../lib/data';
+import { families, url, fmtCount, fmtBytes, reviewStatus } from '../../lib/data';
 
 const fams = families();
 ---
@@ -20,6 +20,7 @@ const fams = families();
               <th class="num">权重存储</th>
               <th class="num">激活（带宽口径）</th>
               <th>档位</th>
+              <th>核查</th>
             </tr>
           </thead>
           <tbody>
@@ -36,6 +37,13 @@ const fams = families();
                   <td class="num">{a?.status === 'ok' ? fmtCount(a.total) : '—'}</td>
                   <td class="small muted">
                     {m.lineage?.track === 'side' ? '支线' : '主线旗舰'}
+                  </td>
+                  <td class="small">
+                    {(() => {
+                      const r = reviewStatus(m);
+                      if (!r.reviewed) return <span class="muted">未核查</span>;
+                      return <>已核查 {r.open > 0 ? <strong>· {r.open} 项未解决</strong> : ''}</>;
+                    })()}
                   </td>
                 </tr>
               );

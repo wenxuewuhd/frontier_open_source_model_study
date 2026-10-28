@@ -210,10 +210,13 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None) -> di
         if not hd and t.get("hidden_size") and t.get("num_attention_heads"):
             hd = t["hidden_size"] // t["num_attention_heads"]
         per_layer, terms = None, {}
-        if not lora and atype == "MLA" and kvh and hd:
+        if not lora and atype in ("MLA", "MQA-LATENT") and kvh and hd:
             # 不设 kv_lora_rank、而用 num_kv_heads=1 的单头 latent 的写法
             lora = kvh * hd
             terms["latent_from"] = f"num_kv_heads({kvh}) * head_dim({hd})"
+            terms["rope_caveat"] = ("qk_rope_head_dim 是否在 latent 维之内未确认。"
+                                    "若在其内，每层应为 latent*bytes 而非 (latent+rope)*bytes，"
+                                    "当前取值为上界")
         if lora and rope:
             per_layer = (lora + rope) * b
             terms.update({"latent": lora, "qk_rope_head_dim": rope,
@@ -268,7 +271,13 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None) -> di
     inh = sp.get("index_n_heads") or t.get("index_n_heads")
     ihd = sp.get("index_head_dim") or t.get("index_head_dim")
     if inh and ihd:
-        isrc = share.get("index_source_layers") or t.get("index_source_layer_ids")
+        # 只有真正产出 index K 的层才占缓存；只重打分的层复用已有 K。
+        # 把两者混在一起会让 indexer 缓存高估一倍 —— 而它往往是 KV 的大头。
+        isrc = share.get("index_kv_source_layers")
+        src_kind = "index_kv_source_layers"
+        if not isrc:
+            isrc = share.get("index_source_layers") or t.get("index_source_layer_ids")
+            src_kind = "index_source_layers(未区分产出/重打分，可能高估)"
         ilayers = len(isrc) if isrc else layers
         comp["indexer"] = {
             "layers": ilayers, "bytes_per_token": inh * ihd * b * ilayers,

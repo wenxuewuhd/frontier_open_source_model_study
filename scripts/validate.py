@@ -23,7 +23,8 @@ import os
 import sys
 
 # evidence 里不需要逐个声明的结构性键
-SKIP_KEYS = {"evidence", "sources", "visibility"}
+# 元字段：描述记录本身而非模型事实，不需要证据归属
+SKIP_KEYS = {"evidence", "sources", "visibility", "reviewed", "review"}
 # 这些字段由脚本生成，YAML 里不该出现
 GENERATED_ONLY = {"derived"}
 
@@ -99,6 +100,72 @@ def check_evidence(doc, path, errors, warnings, judgements):
             warnings.append(f"{path}: evidence 里的 '{k}' 在文档里找不到对应字段")
 
 
+MISSING = object()
+
+
+def resolve_path(doc, dotted):
+    """按点分路径取值，支持 a.b[0].c 这种下标写法。路径不存在返回 MISSING。"""
+    cur = doc
+    for part in dotted.split("."):
+        name, _, idx = part.partition("[")
+        if name:
+            if not isinstance(cur, dict) or name not in cur:
+                return MISSING
+            cur = cur[name]
+        while idx:
+            n, _, rest = idx.partition("]")
+            try:
+                cur = cur[int(n)]
+            except (ValueError, TypeError, IndexError, KeyError):
+                return MISSING
+            idx = rest.partition("[")[2]
+    return cur
+
+
+def check_review(doc, path, errors, warnings):
+    """核查块的自洽性。
+
+    三条规则，都是为了让问题藏不住：
+      1. 没有 reviewed 块 -> 告警，以便一眼看出哪些记录还没被核查过
+      2. field 必须指向记录里真实存在的路径，否则核查留痕会指向空气
+      3. resolution=open 的发现必须同时写进 open_questions —— 否则未解决的问题
+         只存在于核查块里，读记录的人看不到
+    """
+    review = doc.get("review") or []
+    if not doc.get("reviewed"):
+        warnings.append(f"{path}: 还没有 reviewed 块，这份记录未经核查")
+        if review:
+            errors.append(f"{path}: 有 review 发现却没有 reviewed 元信息，无法判断核查范围")
+        return
+
+    seen = set()
+    open_q = " ".join(doc.get("open_questions") or [])
+    for f in review:
+        fid = f.get("id", "?")
+        if fid in seen:
+            errors.append(f"{path}: 核查编号 {fid} 重复")
+        seen.add(fid)
+
+        field = f.get("field", "")
+        # 已删除的字段无从指向，所以 severity=missing 与被删掉的条目允许指向不存在的路径
+        if field and field != "-" and resolve_path(doc, field) is MISSING:
+            # 指向「本来就缺失」的字段是合法的：漏字段、已改掉的字段、
+            # 以及未解决的缺失项，都无从指向一个现存路径
+            if (f.get("severity") != "missing"
+                    and f.get("resolution") not in ("corrected", "open")):
+                errors.append(f"{path}: 核查 {fid} 指向的字段 '{field}' 在记录里不存在")
+
+        if f.get("resolution") == "open":
+            key = field.split("[")[0].split(".")[-1]
+            if key and key not in open_q and field not in open_q:
+                warnings.append(
+                    f"{path}: 核查 {fid}（{field}）未解决，但 open_questions 里没有对应条目 —— "
+                    f"未解决的问题不应该只存在于核查块里"
+                )
+        if f.get("resolution") == "corrected" and not f.get("changed_to"):
+            warnings.append(f"{path}: 核查 {fid} 标为已改，但没写改成了什么")
+
+
 def check_leak(doc, path, errors, allow_internal):
     if allow_internal:
         return
@@ -149,6 +216,7 @@ def main():
             continue
         check_schema(doc, model_schema, p, errors)
         check_evidence(doc, p, errors, warnings, judgements)
+        check_review(doc, p, errors, warnings)
         check_leak(doc, p, errors, args.allow_internal)
 
     ops = sorted(glob.glob(os.path.join(args.data_dir, "ops", "**", "*.yaml"), recursive=True))

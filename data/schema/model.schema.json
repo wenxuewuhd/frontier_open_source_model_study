@@ -28,6 +28,31 @@
         "note": { "type": "string" }
       }
     },
+    "review_finding": {
+      "type": "object",
+      "description": "一条核查发现。被改掉的和被证伪的都要留痕 —— 后者同样有价值，它能挡住以后重复提同一个质疑",
+      "required": ["id", "field", "severity", "finding", "resolution"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^R[0-9]+$" },
+        "field": {
+          "type": "string",
+          "description": "被质疑的字段点分路径；整条记录层面的问题写 '-'"
+        },
+        "severity": {
+          "description": "wrong=数值或事实错误；unsupported=找不到依据；imprecise=不算错但会误导；missing=漏了重要字段；stale=已过时；overreach=过度推论；miscategorized=口径标错",
+          "enum": ["wrong", "unsupported", "imprecise", "missing", "stale", "overreach", "miscategorized"]
+        },
+        "claim": { "type": "string", "description": "核查前记录里是怎么说的" },
+        "finding": { "type": "string", "description": "核查结论及其依据，要能复核" },
+        "resolution": {
+          "description": "corrected=已改；refuted=质疑不成立，原值保留；confirmed=原值正确且补了依据；open=确有问题但未解决；deferred=已知但本期不处理",
+          "enum": ["corrected", "refuted", "confirmed", "open", "deferred"]
+        },
+        "changed_to": { "type": "string", "description": "resolution=corrected 时，改成了什么" }
+      }
+    },
+
     "dtype": {
       "description": "权重/激活的数据类型记号，沿用 safetensors 与各家量化方案的写法",
       "type": "string",
@@ -152,8 +177,8 @@
           "additionalProperties": false,
           "properties": {
             "type": {
-              "description": "混合结构用 hybrid，再在 layer_pattern 里写分布",
-              "enum": ["MHA", "GQA", "MQA", "MLA", "linear", "sparse", "hybrid"]
+              "description": "混合结构用 hybrid，再在 layer_pattern 里写分布。MQA-latent 指多个 query 头共读一个低秩 latent KV，但发布权重里没有把 latent 升回逐头 K/V 的上投影 —— 与 MLA 同构却不是 MLA，KV 公式按 latent 维算而不是按 2×头数×头维",
+              "enum": ["MHA", "GQA", "MQA", "MQA-latent", "MLA", "linear", "sparse", "hybrid"]
             },
             "num_heads": { "type": "integer" },
             "num_kv_heads": { "type": "integer" },
@@ -164,7 +189,8 @@
             "q_lora_rank": { "type": "integer" },
             "o_lora_rank": { "type": "integer" },
             "o_groups": { "type": "integer" },
-            "sliding_window": { "type": "integer" },
+            "sliding_window": { "type": "integer", "description": "局部窗口大小。有滑窗时每层都有自己的窗口 KV，不随上下文增长但常驻" },
+            "attn_sink": { "type": "string", "description": "attention sink 的形态。它改变 softmax 的算子签名，漏掉不报错但分布错" },
             "kv_sharing": {
               "type": "object",
               "description": "跨层 KV 共享。只有部分层产出 KV、其余层读取时，按层数乘的 KV 公式会高估一个量级，必须显式给出",
@@ -172,7 +198,9 @@
               "properties": {
                 "source_layers": { "type": "array", "items": { "type": "integer" }, "description": "真正产出 KV 的层" },
                 "compress_ratios": { "type": "array", "items": { "type": "number" }, "description": "逐层压缩比，0 表示该层不建 KV" },
-                "index_source_layers": { "type": "array", "items": { "type": "integer" } },
+                "index_source_layers": { "type": "array", "items": { "type": "integer" }, "description": "已废弃，改用下面两个 —— 它把产出层和重打分层混在一起，会让 indexer 缓存高估一倍" },
+                "index_kv_source_layers": { "type": "array", "items": { "type": "integer" }, "description": "真正产出 index K 的层（有 indexer.wk 权重）。indexer 缓存只按这些层算" },
+                "index_rescore_layers": { "type": "array", "items": { "type": "integer" }, "description": "只复用已有 index K 重新打分、不产出 K 的层（有 wq_b/weights_proj 但无 wk）" },
                 "note": { "type": "string" }
               }
             },
@@ -264,6 +292,7 @@
             "first_k_dense": { "type": "integer" },
             "routing": { "type": "string" },
             "balance": { "type": "string", "description": "aux-loss / aux-loss-free bias 等" },
+            "routing_bias": { "type": "string", "description": "路由偏置的套数与用途。多套偏置会改变融合 router 的算子签名" },
             "expert_groups": { "type": "integer" },
             "storage_note": { "type": "string", "description": "专家是逐个独立张量还是堆叠成一个，决定 grouped GEMM 的权重布局与 EP 切分方式" }
           }
@@ -276,6 +305,9 @@
           "properties": {
             "type": { "type": "string" },
             "multiplier": { "type": "integer" },
+            "sinkhorn_iters": { "type": "integer" },
+            "eps": { "type": "number", "description": "与主干 norm_eps 是两个不同的 epsilon，别混" },
+            "coef_proj": { "type": "string", "description": "混合系数投影的形状与精度，决定 decode 的额外权重搬运" },
             "note": { "type": "string" }
           }
         },
@@ -291,6 +323,7 @@
             "entry_dim": { "type": "integer" },
             "hash_cols": { "type": "integer" },
             "lookup_bytes_per_token": { "type": "number" },
+          "projection": { "type": "string", "description": "查表之外的稠密投影。它每 token 全量搬运，和稀疏查表是完全不同的负载，必须分开说" },
             "placement": { "type": "string", "description": "HBM / host UVA / SSD" }
           }
         },
@@ -334,7 +367,8 @@
             "num_heads": { "type": "integer" },
             "patch_size": { "type": "integer" },
             "downsample_ratio": { "type": "number" },
-            "spatial_merge_size": { "type": "integer" },
+            "intermediate": { "type": "integer" },
+          "spatial_merge_size": { "type": "integer" },
             "temporal_patch_size": { "type": "integer" },
             "out_hidden": { "type": "integer", "description": "投影到主干前的输出维度" },
             "max_image_tokens": { "type": "integer" },
@@ -394,6 +428,7 @@
             "activation_scheme": { "enum": ["static", "dynamic"] },
             "weight_block_size": { "type": "array", "items": { "type": "integer" } },
             "scale_format": { "type": "string" },
+            "block_size_note": { "type": "string", "description": "config 的单一 block 取值常常只覆盖部分子系统，实际粒度以权重清单为准" },
             "expert_dtype": { "$ref": "#/$defs/dtype" },
             "packing_note": { "type": "string", "description": "亚字节权重打包进整型容器时说明清楚：numel 是容器数不是参数数" },
             "per_subsystem": {
@@ -534,6 +569,29 @@
       "type": "object",
       "description": "字段级证据口径。键是点分路径，支持前缀继承：arch.* 覆盖整棵子树；更深的路径优先。validate.py 检查每个叶子都有归属",
       "additionalProperties": { "$ref": "#/$defs/evidence_tag" }
+    },
+
+    "reviewed": {
+      "type": "object",
+      "description": "核查元信息。没有这个块说明这份记录还没被核查过 —— 校验会告警而不是报错，以便看清哪些未核查",
+      "required": ["date", "method"],
+      "additionalProperties": false,
+      "properties": {
+        "date": { "type": "string" },
+        "method": { "type": "string", "description": "怎么核的，要具体到依据了哪些来源" },
+        "scope": {
+          "type": "array",
+          "description": "核查覆盖了哪些口径类别",
+          "items": { "enum": ["official", "derived", "judgement"] }
+        },
+        "reviewer": { "type": "string" }
+      }
+    },
+
+    "review": {
+      "type": "array",
+      "description": "核查发现。resolution=open 的条目必须同时出现在 open_questions 里，否则问题会藏在这里没人看见",
+      "items": { "$ref": "#/$defs/review_finding" }
     },
 
     "notes": { "type": "string" },

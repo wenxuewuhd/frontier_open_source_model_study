@@ -2,7 +2,7 @@ id: deepseek-v41-flash
 family: deepseek
 kind: vlm
 display_name: DeepSeek-V4.1-Flash
-released: 2026-10-12
+released: 2026-09-10
 license: mit
 visibility: public
 
@@ -20,7 +20,7 @@ sources:
 hf:
   repo: deepseek-ai/DeepSeek-V4.1-Flash
   sha: 314113f8a7dadb388215396ba5fbee2c610a04d6
-  last_modified: 2026-10-12T09:45:54.000Z
+  last_modified: 2026-10-16T09:27:28.000Z
   pipeline_tag: image-text-to-text
   gated: false
 
@@ -42,13 +42,13 @@ params:
   active_decode: 16.0e+9
   breakdown:
     backbone: 552.0e+9
-    retrieval_table: 196.0e+9
+    retrieval_table: 196.9e+9
   excludes: [draft]
   counting_note: >-
     总量 = 552B 主干 + 196B Engram 两张表，不含 MTP / DSpark 草稿部分。
     已按完整权重清单逐项核对（rev 314113f8，48 分片 96085 张量）：
-    主干 552.0B（专家 543.6 + 注意力 5.1 + 共享专家 1.4 + 其他 1.3 + 视觉 0.5 + 路由 0.1），
-    Engram 196.9B，另有 draft 侧 7.4B 不计入声明值，合计与声明差 0.13%。
+    主干 552.05B、Engram 196.93B，另有 draft 侧 14.2B 参数（7.39 GiB 存储）不计入声明值。
+    与声明的 0.13% 缺口几乎全部集中在 Engram 表一项（196.93 vs 196.0），不是均摊。
     注意路由专家以 FP4 两个一字节打包存放，safetensors 里的 numel 是容器数，
     直接求和会把参数量少算一半。
     Engram 表每 token 只读取极少行，计入总参数但不计入激活参数。
@@ -71,7 +71,7 @@ arch:
   position: RoPE theta 10000 + YaRN；压缩路径另用 theta 160000
 
   attention:
-    type: MLA
+    type: MQA-latent
     num_heads: 64
     num_kv_heads: 1
     head_dim: 512
@@ -80,15 +80,21 @@ arch:
     o_lora_rank: 1024
     o_groups: 8
     sliding_window: 128
+    attn_sink: 每头一个可学习 sink（[64] FP32，全部 40 层及 MTP 层）。它进 softmax 分母，
+      改变算子签名；config 里没有这个开关，只能从权重清单发现
     kv_sharing:
       source_layers: [2, 8, 14, 20]
-      index_source_layers: [2, 8, 14, 20, 24, 28, 32, 36]
+      index_kv_source_layers: [2, 8, 14, 20]
+      index_rescore_layers: [24, 28, 32, 36]
       compress_ratios: [0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
                         1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
                         0, 0, 0]
       note: >-
         compress_ratios 有 43 项而主干只有 40 层，末尾 3 项对应 MTP 层。
-        按总层数乘 KV 会高估约十倍，任何 KV 估算都必须先看这里。
+        「只有 4 层产出 KV」只对全局/压缩 KV 成立：attn.wkv 与 kv_norm 在全部 40 层
+        都存在，配合 sliding_window=128，每层都有自己的局部窗口 KV（不随上下文增长）。
+        indexer 同理要分开看：产出 index K 的只有 4 层（有 indexer.wk 权重），
+        另外 4 层只复用已有 K 重新打分。按 8 层算会让 indexer 缓存高估一倍。
     sparse:
       mechanism: indexer 打分选块，再在选中的块上做全注意力
       index_n_heads: 32
@@ -105,13 +111,23 @@ arch:
     intermediate: 2304
     routing: noaux_tc 选路 + sqrtsoftplus 打分，norm_topk_prob，routed_scaling_factor 1.5
     balance: 无辅助损失，靠可学习偏置调节
+    routing_bias: 每层两套偏置 gate.bias 与 gate.bias_vl（各 [384] FP32，分模态路由）；
+      config 里没有，只能从权重清单发现。decode 下 bias_vl 是否参与待实测
 
   residual:
     type: mHC
     multiplier: 4
+    sinkhorn_iters: 20
+    eps: 1.0e-06
+    coef_proj: 每层 hc_attn_fn 与 hc_ffn_fn 各一个 [24, 20480] FP32
     note: >-
       残差被展开成 4 份，经 Sinkhorn 过的双随机矩阵混合后写回。
-      常驻激活是同规模普通 transformer 的 4 倍，图模式的固定 buffer 要按 4× 预留。
+      4× 只适用于残差流相关的常驻张量，注意力中间量、MoE intermediate 与 KV 都与它无关，
+      按 4× 一刀切预留会显著过量。
+      decode 下真正可观的是混合系数本身：hc_*_fn 全 FP32 且未切分，
+      40 层合计约 150 MiB/token 的权重读（连 MTP 层共 43 层则约 161 MiB），
+      另有每 token 80 次 20 轮 Sinkhorn 的串行归一化。
+      注意 hc_eps(1e-6) 与主干 norm_eps(1e-20) 是两个不同的 epsilon。
 
   retrieval:
     mechanism: n-gram 哈希查表（Engram），哈希只依赖 token id，与隐层无关
@@ -120,7 +136,9 @@ arch:
     entry_dim: 256
     hash_cols: 24
     placement: host UVA 常驻，按需稀疏取
-    lookup_bytes_per_token: 12288
+    lookup_bytes_per_token: 12672
+    projection: 每层一个 engram.wkv [25600, 6144] FP8_E4M3，两层合计 0.315B 参数、
+      约 300 MiB/token 稠密全量读 —— 与稀疏查表完全不同的负载，不能一起说成「只读极少行」
 
   decoding:
     mtp_layers: 3
@@ -140,15 +158,19 @@ arch:
     num_heads: 16
     patch_size: 14
     downsample_ratio: 3
+    intermediate: 2816
     max_image_tokens: 1024
     fusion: aligner MLP 投影到主干 hidden
 
 precision:
-  weights_release: [FP8_E4M3, FP4]
+  weights_release: [FP8_E4M3, FP4, BF16, FP32]
   quantization:
     method: fp8
     activation_scheme: dynamic
     weight_block_size: [32, 32]
+    block_size_note: >-
+      config 的单一 [32,32] 只覆盖注意力与共享专家。权重清单实测路由专家与 Engram 表
+      是沿 K 的 1×32（w1 [2304,2560] 对 scale [2304,160]），按单一值实现会解错专家权重
     scale_format: ue8m0
     expert_dtype: FP4
     per_subsystem:
@@ -157,6 +179,12 @@ precision:
       attention: FP8_E4M3
       retrieval_table: FP8_E4M3
       shared_expert: FP8_E4M3
+      embed: BF16
+      lm_head: BF16
+      vision: BF16
+      router: BF16
+      norm: BF16
+      residual: FP32
     packing_note: >-
       FP4 权重打包进 INT8 容器，每字节两个。工具据 per_subsystem 的逻辑精度
       与实际容器类型自动还原参数量；字节数不还原，容器就是真实存储。
@@ -173,64 +201,83 @@ platforms:
     visibility: public
 
 bottlenecks:
-  - dimension: operator-gap
-    finding: >-
-      norm_eps 取 1e-20，落在常见图编译器融合 pass 的 epsilon 白名单（通常只列 1e-5、1e-6）之外。
-      norm 相关的融合会静默匹配不上，退化成逐个小算子。
-    quantified: 每 token 约 2×40=80 次纯访存小算子
-    fix: 在融合 pass 的 epsilon 列表里加入该取值，属于一行改动
-    visibility: public
   - dimension: weight-bandwidth
     finding: >-
-      head_dim 512 × 64 头让 q 的上投影矩阵异常大。在不切 TP 的部署下，
-      decode 的权重搬运由注意力投影主导，而不是通常以为的 MoE 主导。
-    fix: 切 TP 可直接摊薄该矩阵，但会改变整个瓶颈结构，结论需随并行配置重算
+      decode 的权重搬运由注意力还是 MoE 主导，取决于专家并行度，不能脱离并行配置说。
+      按权重清单实算每 token（40 层主干，含 scale）：注意力侧 5.15 GB（投影 5.07 + indexer/压缩 0.08），
+      MoE 侧在 EP=1 时为 6.09 GB（激活路由专家 4.51 + 共享专家 1.42 + router 0.16），
+      MoE 比注意力高约 18%；EP=4 把路由专家摊薄到 1.13 GB 后比值翻转为 0.52，注意力才成为主导。
+    quantified: 注意力内部以输出路径为大头 —— wo_b 1.68 + wo_a 1.34 = 3.02 GB，大于 q 路径的 1.94 GB；lm_head 单项 1.32 GB
+    fix: >-
+      wo_b 的宽度由 o_groups(8) × o_lora_rank(1024) 决定、与 head_dim 无关，只有 wo_a 是 head_dim 驱动的；
+      切 TP 可摊薄这些矩阵，但 o_groups=8 是硬上限，TP>8 分不开
     visibility: public
   - dimension: kv-capacity
     finding: >-
-      跨层 KV 共享（仅 4 层产出）叠加逐层压缩，把 1M 上下文的 KV 压到可接受范围。
-      代价是 KV 的读写模式变得不规则，缓存管理与跨层依赖都比常规 MLA 复杂。
+      长上下文的 KV 大头不是注意力本身，而是稀疏选块的索引缓存。
+      主 KV 由 4 层产出并跨层复用，仅 4608 B/token；indexer K 由另外 4 层产出，
+      32768 B/token，占每 token 总量 37376 B 的 88%。
+      容量规划要盯 index_kv_source_layers，而不是 kv_source_layers。
+    quantified: 1M 上下文单序列约 36.5 GiB（按 BF16 兜底精度算的上界；实际 KV 精度未披露）
     visibility: public
-
+  - dimension: operator-gap
+    finding: >-
+      norm_eps 取 1e-20，比常见默认值小 14 个数量级。带 eps 参数的归一化算子与融合 pass
+      普遍以默认值或固定取值表处理 eps，若未把模型的取值显式传下去，不会报错而会静默改变数值结果；
+      融合匹配不上只是其中较轻的一面。本模型的 mHC 前置算子签名本身带 norm_eps，
+      属于必须逐个核对默认值的那一类。
+    fix: 适配时把所有带 eps 的算子与融合 pass 逐个核对其默认值，不能假定会透传模型配置
+    visibility: public
 ops_table:
   ref: ops/deepseek-v41-flash/
   visibility: internal
 
 infra_signals:
   - text: >-
-      外置查表层把「参数量」和「每 token 带宽」彻底解耦：196B 的表每 token 只读约 12KB，
-      是极小的随机读。下一代 infra 要准备的是 host/SSD 侧的稀疏随机取数通路，
-      而不是更大的 HBM。
+      外置查表把「参数量」和「每 token 带宽」部分解耦，但只有表本身解耦：
+      196.9B 的表每 token 只读 24 行 × (256 payload + 8 scale) × 2 层 ≈ 12.7 KB，
+      而且是 48 次 264 字节的随机读、不是连续读。同一个 Engram 层还有一个稠密投影
+      engram.wkv（0.315B 参数、约 300 MiB/token 全量读），比任何一个主干层都重。
+      下一代 infra 要准备的是 host 侧的细粒度随机取数通路，而这并不减少 HBM 需求。
     evidence: judgement
     horizon: next-gen
     axis: retrieval
   - text: >-
-      跨层 KV 共享 + 逐层压缩成为主流后，「KV 容量 = 层数 × 每层 KV」这个估算模型失效。
-      容量规划与缓存管理都要改成按产出层建模。
+      KV 容量不能再用「层数 × 每层 KV × 上下文」估算，而且要按三类对象分别建模：
+      全局/压缩 KV 按产出层（4 层 × 1152 B），indexer K 按产出 K 的层
+      （4 层 × 32 头 × 128 维），滑窗 KV 按窗口大小常驻（40 层各自 128 窗口，不随上下文增长）。
+      只改成「按产出层建模」会漏掉占比最大的 indexer。
     evidence: judgement
     horizon: now
     axis: attention
   - text: >-
-      非常规的 norm_eps 取值会让图编译器的融合静默失效。这类「配置值落在白名单外」
-      的失配不报错、只掉性能，值得在适配流程里加一道配置值对账。
+      这类结构把容量关键参数藏在实现而非配置里：attention sink、双路由偏置、
+      indexer 产出层与重打分层的区分，在 config 里都查不到，只能从权重清单发现。
+      适配流程要把「逐张量读权重清单」作为必经步骤，不能只读 config。
+    evidence: judgement
+    horizon: now
+    axis: attention
+  - text: >-
+      非常规配置值的主要风险是静默算错而不是掉性能。norm_eps 1e-20 若被算子默认值覆盖，
+      结果会错且不报错；量化 block 粒度同理 —— config 写单一 [32,32]，
+      而路由专家实际是沿 K 的 1×32，按配置值实现会直接解错专家权重。
     evidence: judgement
     horizon: now
     axis: precision
-
 evidence:
   id: official
   family: official
   kind: official
   display_name: official
-  released: derived
+  released: official
   license: official
   hf: official
   lineage: judgement
-  params: official
+  params: judgement
   params.counting_note: judgement
   context: official
   arch: official
-  arch.attention.type: judgement
+  arch.attention.type: derived
   arch.attention.kv_sharing.note: derived
   arch.attention.sparse.mechanism: judgement
   arch.residual.note: judgement
@@ -241,12 +288,232 @@ evidence:
   arch.vision.fusion: judgement
   precision: official
   precision.quantization.packing_note: derived
+  precision.quantization.block_size_note: derived
+  arch.attention.attn_sink: derived
+  arch.attention.kv_sharing.index_kv_source_layers: derived
+  arch.attention.kv_sharing.index_rescore_layers: derived
+  arch.residual.coef_proj: derived
+  arch.retrieval.projection: derived
+  arch.moe.routing_bias: derived
   platforms: official
   bottlenecks: judgement
-  ops_table: official
+  ops_table: derived
   infra_signals: judgement
   notes: judgement
   open_questions: judgement
+
+reviewed:
+  date: 2026-10-28
+  scope: [official, derived, judgement]
+  reviewer: 两个独立核查代理交叉验证，全部结论由本会话按权重清单复算后才采纳
+  method: >-
+    一路核查 official/derived 字段是否能在 config、权重清单与 HF 元数据里复现；
+    另一路挑战 judgement 内容是否过度推论。两路各自独立，结论互不可见。
+    代理产出不直接采信 —— 每条改动前都用 facts/ 下的事实重算过一遍。
+
+review:
+  - id: R1
+    field: arch.attention.kv_sharing.index_kv_source_layers
+    severity: wrong
+    claim: index_source_layers 列了 8 层，indexer 缓存按 8 层算得 65536 B/token
+    finding: >-
+      权重清单显示 indexer.wk 与 indexer.k_norm 只存在于 L2/8/14/20；
+      L24/28/32/36 只有 wq_b 与 weights_proj，即只复用已有 K 重新打分、不产出 K。
+      按 8 层算把 indexer 缓存高估一倍。
+    resolution: corrected
+    changed_to: 拆成 index_kv_source_layers(4 层) 与 index_rescore_layers(4 层)；每 token 注意力显存由 70144 修正为 37376 B
+  - id: R2
+    field: arch.attention.type
+    severity: miscategorized
+    claim: type 标为 MLA
+    finding: >-
+      在 96085 个张量里搜 kv_b/k_b/v_b/kv_up 全部零命中：每层只有 wkv[512,5120] 下投影，
+      没有把 latent 升回逐头 K/V 的上投影，config 里也没有 kv_lora_rank。
+      发布形态是 64 个 query 头共读一个 512 维 latent，与 MLA 同构但不是 MLA。
+    resolution: corrected
+    changed_to: type 改为 MQA-latent，并在 schema 里新增该枚举值与对应的 KV 公式
+  - id: R3
+    field: arch.attention.kv_sharing.note
+    severity: wrong
+    claim: 按总层数乘 KV 会高估约十倍
+    finding: >-
+      十倍只对主 KV 这一个分量成立（40/4）。对读者真正要用的每 token 总量，
+      错误值 111616 对正确值 70144 是 1.59 倍。而且「只有 4 层产出 KV」本身也不准确：
+      attn.wkv 与 kv_norm 在全部 40 层都存在，配合 sliding_window=128，每层都有局部窗口 KV。
+    resolution: corrected
+    changed_to: note 改为区分全局/压缩 KV、indexer K 与滑窗 KV 三类，删去「十倍」
+  - id: R4
+    field: bottlenecks[0]
+    severity: unsupported
+    claim: decode 权重搬运由注意力投影主导而非 MoE 主导，前提写的是「不切 TP」
+    finding: >-
+      按权重清单实算，EP=1 时 MoE 侧 6.09 GB 反而大于注意力侧 5.15 GB（比值 1.18）；
+      只有 EP=4 把路由专家摊薄后比值才翻转为 0.52。原结论来自一份 EP=4 的每 rank 数据，
+      搬过来时丢掉了 EP 这个决定性前提。
+    resolution: corrected
+    changed_to: 改写为按并行度分情况，并给出 EP=1 与 EP=4 两组实算值
+  - id: R5
+    field: bottlenecks[0].finding
+    severity: imprecise
+    claim: head_dim 512 × 64 头让 q 的上投影矩阵异常大
+    finding: >-
+      实算输出路径 wo_b 1.68 + wo_a 1.34 = 3.02 GB，大于 q 路径的 1.94 GB；
+      lm_head 单项 1.32 GB 也超过 wq_a+wq_b 之外的任何单项。
+      且 wo_b 的宽度由 o_groups × o_lora_rank 决定，与 head_dim 无关。
+      只点 q 会让人去优化错的矩阵。
+    resolution: corrected
+    changed_to: 列出 wo_b/wo_a/wq_b/lm_head 的实际 GB/token，并说明 o_groups=8 是 TP 硬上限
+  - id: R6
+    field: bottlenecks[1]
+    severity: unsupported
+    claim: 跨层 KV 共享叠加逐层压缩把 1M 上下文的 KV 压到可接受范围
+    finding: >-
+      功劳归错对象。修正后每 token 37376 B 里，indexer K 占 32768 B（88%），
+      而它既不受 kv_source_layers 影响也不在 compress_ratios 作用域内。
+      另外「可接受范围」没有数值，是把需要前提的判断写成了结论。
+    resolution: corrected
+    changed_to: 改为指出容量瓶颈在 index_kv_source_layers，并给出 1M 下约 36.5 GiB 的数
+  - id: R7
+    field: bottlenecks[2]
+    severity: unsupported
+    claim: norm_eps 1e-20 落在「常见图编译器融合 pass 的 epsilon 白名单」外，属一行改动
+    finding: >-
+      该说法的唯一依据是某个厂商插件某个版本里的一个硬编码常量列表，
+      既不在本记录的 sources 里，也不能泛化成「常见图编译器」；
+      而且该依据属内部材料，不应写进公开记录。
+      更重要的是主要风险被说反了：eps 被算子默认值覆盖会静默改变数值结果，
+      不只是掉性能。
+    resolution: corrected
+    changed_to: 收窄为「带 eps 的算子需逐个核对默认值」，并把主要风险改为静默算错
+  - id: R8
+    field: params.counting_note
+    severity: wrong
+    claim: draft 侧 7.4B 不计入声明值
+    finding: >-
+      7.4 是 GiB 存储不是参数量。draft 子树按 FP4 打包还原后是 14.2B 参数、7.39 GiB 存储。
+      这恰好是同一段 note 自己警告过的打包错误。
+    resolution: corrected
+    changed_to: 改为 14.2B 参数（7.39 GiB 存储）
+  - id: R9
+    field: params.breakdown.retrieval_table
+    severity: imprecise
+    claim: retrieval_table 196.0e9，并称与声明的 0.13% 差异是整体缺口
+    finding: 实测 196.93B；0.13% 的缺口几乎全部集中在 Engram 表这一项，主干侧只差 0.009%
+    resolution: corrected
+    changed_to: 改为 196.9e9，并在 counting_note 说明缺口集中在表
+  - id: R10
+    field: precision.quantization.weight_block_size
+    severity: imprecise
+    claim: weight_block_size [32, 32] 作为全模型单一取值
+    finding: >-
+      权重清单实测两档：路由专家 w1[2304,2560] 对 scale[2304,160] 是沿 K 的 1×32，
+      Engram 表同样是 1×32；注意力 wq_b[32768,1280] 对 scale[1024,40] 才是 32×32。
+      按 config 的单一值实现会解错专家权重。
+    resolution: corrected
+    changed_to: 保留 config 原值并新增 block_size_note 说明两档粒度
+  - id: R11
+    field: arch.attention.attn_sink
+    severity: missing
+    claim: 注意力段没有 sink 相关字段
+    finding: >-
+      每层都有 attn.attn_sink [64] FP32，40 个主干层加 3 个 MTP 层共 43 个；
+      config 里没有这个开关。它进 softmax 分母，改变算子签名，漏掉不报错但分布错。
+    resolution: corrected
+    changed_to: 新增 arch.attention.attn_sink，evidence 标 derived
+  - id: R12
+    field: arch.residual.coef_proj
+    severity: missing
+    claim: 残差只写了 type 与 multiplier，note 只谈 4× 常驻激活
+    finding: >-
+      遗漏了 decode 下真正可观的那笔：hc_attn_fn 与 hc_ffn_fn 每层各一个 [24,20480] FP32，
+      40 层约 150 MiB/token 全量读，且未切分。另有每 token 80 次 20 轮 Sinkhorn 的串行归一化。
+      而 4× 只适用于残差流张量，按 4× 一刀切预留 buffer 会显著过量。
+    resolution: corrected
+    changed_to: 补 sinkhorn_iters、eps、coef_proj 三个字段并重写 note
+  - id: R13
+    field: arch.retrieval.projection
+    severity: missing
+    claim: Engram 只描述了稀疏查表，counting_note 称其「只读取极少行」
+    finding: >-
+      每个 Engram 层还有一个稠密投影 engram.wkv [25600,6144] FP8，两层 0.315B 参数、
+      约 300 MiB/token 全量读 —— 是查表量的两万多倍，也是全模型 per-layer 最重的一层。
+      带宽口径激活 15.8B 把它一并排除了。
+    resolution: corrected
+    changed_to: 新增 arch.retrieval.projection 字段并在 infra 信号里改口
+  - id: R14
+    field: arch.retrieval.lookup_bytes_per_token
+    severity: imprecise
+    claim: 12288（24 行 × 256 × 1B × 2 层）
+    finding: 每行还挂一个 8 字节 E8M0 scale，反量化必须一起读，应为 24 × (256+8) × 2 = 12672
+    resolution: corrected
+    changed_to: 改为 12672，并在信号里注明是 48 次 264 字节的随机读而非连续读
+  - id: R15
+    field: arch.moe.routing_bias
+    severity: missing
+    claim: 只写了「靠可学习偏置调节」单一偏置
+    finding: 每层有两套偏置 gate.bias 与 gate.bias_vl（分模态路由），config 里没有，只能从权重清单发现
+    resolution: corrected
+    changed_to: 新增 routing_bias 字段；decode 下 bias_vl 是否参与列为待实测
+  - id: R16
+    field: precision.weights_release
+    severity: imprecise
+    claim: weights_release 只列 FP8_E4M3 与 FP4
+    finding: >-
+      发布权重还含 BF16（embed/lm_head/vision/router/norm）与 FP32（mHC 系数、attn_sink）。
+      mHC 系数是 FP32 且未切分，对 decode 带宽有结论意义，漏掉会被误读成纯 FP8/FP4 模型。
+    resolution: corrected
+    changed_to: 补 BF16 与 FP32，并在 per_subsystem 里逐项列出
+  - id: R17
+    field: released
+    severity: wrong
+    claim: released 2026-10-12，口径取自 HF lastModified
+    finding: >-
+      repoinfo 的 lastModified 是 2026-10-16，createdAt 是 2026-09-10，
+      记录里的 10-12 在三个事实文件里都找不到。且 lastModified 会随权重重传漂移，
+      不适合当发布日。
+    resolution: corrected
+    changed_to: released 改为 createdAt 2026-09-10，last_modified 改为 2026-10-16
+  - id: R18
+    field: params
+    severity: unsupported
+    claim: params 整块 evidence 标 official
+    finding: >-
+      config 与 HF 元数据里都没有参数量或激活量字段，552+196 与 8B/16B 激活
+      来自一份本地二手分析，不是官方披露。
+    resolution: corrected
+    changed_to: params 的 evidence 由 official 降为 judgement
+  - id: R19
+    field: arch.vision.intermediate
+    severity: missing
+    claim: 视觉段缺 FFN 宽度
+    finding: vision_config.intermediate_size = 2816，缺了它无法算视觉塔的 prefill 负载
+    resolution: corrected
+    changed_to: 补 arch.vision.intermediate 2816
+  - id: R20
+    field: evidence.ops_table
+    severity: miscategorized
+    claim: evidence 里 ops_table 标 official
+    finding: ops_table 是本项目内部产出物的指针，不是官方披露
+    resolution: corrected
+    changed_to: 改为 derived
+  - id: R21
+    field: precision.kv_cache
+    severity: unsupported
+    claim: KV 精度未填，推导按模型 dtype BF16 兜底
+    finding: >-
+      有二手材料称滑窗 KV、主 KV 与 indexer 各用不同的低位格式，均远小于 BF16，
+      但该材料自身存在与权重清单矛盾之处，不足采信。
+      当前 37376 B/token 与 36.5 GiB@1M 都是按 BF16 兜底算的上界。
+    resolution: open
+  - id: R22
+    field: arch.attention.qk_rope_head_dim
+    severity: imprecise
+    claim: KV 按 (latent 512 + rope 64) × bytes 计算
+    finding: >-
+      wkv 输出总共只有 512 维且没有独立的 k_rope 投影，
+      qk_rope_head_dim=64 可能是 512 维之内的一段切片而非额外维度。
+      若是切片，每层应为 1024 B 而非 1152 B，当前值高约 12.5%。
+    resolution: open
 
 notes: >-
   本记录是 P0-A 的 schema 压力测试用例：选它是因为它同时带有 MLA、细粒度 MoE、
@@ -255,6 +522,12 @@ notes: >-
 
 open_questions:
   - 训练精度未在 config 或模型卡中披露，暂不填 precision.training
+  - >-
+    precision.kv_cache 未确认（核查 R21）。当前 37376 B/token 与 1M 下 36.5 GiB
+    都是按模型 dtype BF16 兜底算的上界，不可直接引用
+  - >-
+    arch.attention.qk_rope_head_dim 是否在 latent 512 维之内尚未确认（核查 R22）。
+    若在其内，每层 KV 应为 1024 B 而非 1152 B
   - >-
     KV cache 的实际存储精度与 scale 容器精度需查实现确认。未填时推导脚本按模型
     dtype（BF16）兜底，并在输出里标注「精度兜底」—— 该值直接决定容量结论
