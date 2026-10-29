@@ -1,7 +1,7 @@
 {
  "id": "ds-v3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T15:16:29+00:00",
+ "generated_at": "2026-10-29T16:01:54+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v3",
   "config_present": true,
@@ -25,6 +25,7 @@
    "lm_head": 926679040.0,
    "draft": 13463426304.0
   },
+  "scale_elements": 41540496.0,
   "weight_bytes_total": 688574839360.0,
   "weight_bytes_by_subsystem": {
    "expert": 654068416512.0,
@@ -49,6 +50,19 @@
   "mtp_layers_seen": [
    61
   ],
+  "mtp_attention_suffixes": [
+   "self_attn.kv_a_proj_with_mqa.weight",
+   "self_attn.kv_a_proj_with_mqa.weight_scale_inv",
+   "self_attn.kv_b_proj.weight",
+   "self_attn.kv_b_proj.weight_scale_inv",
+   "self_attn.o_proj.weight",
+   "self_attn.o_proj.weight_scale_inv",
+   "self_attn.q_a_proj.weight",
+   "self_attn.q_a_proj.weight_scale_inv",
+   "self_attn.q_b_proj.weight",
+   "self_attn.q_b_proj.weight_scale_inv"
+  ],
+  "draft_blocks_seen": 1,
   "layer_index_max": 61,
   "layers_missing": [],
   "moe_layers_seen": 58,
@@ -161,6 +175,16 @@
    "item": "口径说明",
    "status": "ok",
    "why": "声明值不含 draft；含在内的实测总量为 684.5B"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "ok",
+   "why": "与 HF 的 safetensors tally 逐位相同（684,489,845,504）"
+  },
+  {
+   "item": "KV 层覆盖口径",
+   "status": "ok",
+   "why": "公式按主干 61 层算（config num_hidden_layers）；清单里另有 1 个草稿块，带着与主干注意力同名的 10 个投影，即它们也产出 KV。开草稿侧时容量要按 62 层算 —— 记录里要写明用哪个口径"
   }
  ]
 }

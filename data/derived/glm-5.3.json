@@ -1,7 +1,7 @@
 {
  "id": "glm-5.3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T15:20:17+00:00",
+ "generated_at": "2026-10-29T16:01:58+00:00",
  "inputs": {
   "facts_dir": "facts/glm-5.3",
   "config_present": true,
@@ -26,6 +26,7 @@
    "dense_ffn": 679477248.0,
    "draft": 9952920576.0
   },
+  "scale_elements": 45853104.0,
   "weight_bytes_total": 755617140416.0,
   "weight_bytes_by_subsystem": {
    "expert": 724952678400.0,
@@ -51,6 +52,19 @@
   "mtp_layers_seen": [
    78
   ],
+  "mtp_attention_suffixes": [
+   "self_attn.kv_a_proj_with_mqa.weight",
+   "self_attn.kv_a_proj_with_mqa.weight_scale_inv",
+   "self_attn.kv_b_proj.weight",
+   "self_attn.kv_b_proj.weight_scale_inv",
+   "self_attn.o_proj.weight",
+   "self_attn.o_proj.weight_scale_inv",
+   "self_attn.q_a_proj.weight",
+   "self_attn.q_a_proj.weight_scale_inv",
+   "self_attn.q_b_proj.weight",
+   "self_attn.q_b_proj.weight_scale_inv"
+  ],
+  "draft_blocks_seen": 1,
   "layer_index_max": 78,
   "layers_missing": [],
   "moe_layers_seen": 75,
@@ -167,6 +181,16 @@
    "shapes 实测": 753329940480.0,
    "delta_pct": -0.0,
    "status": "ok"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "ok",
+   "why": "与 HF 的 safetensors tally 逐位相同（753,329,940,480）"
+  },
+  {
+   "item": "KV 层覆盖口径",
+   "status": "ok",
+   "why": "公式按主干 78 层算（config num_hidden_layers）；清单里另有 1 个草稿块，带着与主干注意力同名的 10 个投影，即它们也产出 KV。开草稿侧时容量要按 79 层算 —— 记录里要写明用哪个口径"
   }
  ]
 }

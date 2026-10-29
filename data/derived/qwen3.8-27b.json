@@ -1,7 +1,7 @@
 {
  "id": "qwen3.8-27b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T13:01:34+00:00",
+ "generated_at": "2026-10-29T16:01:58+00:00",
  "inputs": {
   "facts_dir": "facts/qwen3.8-27b",
   "config_present": true,
@@ -23,6 +23,7 @@
    "lm_head": 1271398400.0,
    "draft": 424699392.0
   },
+  "scale_elements": 0.0,
   "weight_bytes_total": 55562855904.0,
   "weight_bytes_by_subsystem": {
    "norm": 1349632.0,
@@ -41,6 +42,13 @@
   "expert_storage": null,
   "layers_present": 64,
   "mtp_layers_seen": [],
+  "mtp_attention_suffixes": [
+   "self_attn.k_proj.weight",
+   "self_attn.o_proj.weight",
+   "self_attn.q_proj.weight",
+   "self_attn.v_proj.weight"
+  ],
+  "draft_blocks_seen": 1,
   "layer_index_max": 64,
   "layers_missing": [],
   "moe_layers_seen": 0,
@@ -148,6 +156,16 @@
    "item": "参数总量",
    "status": "skip",
    "why": "YAML 声明 缺失"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "ok",
+   "why": "与 HF 的 safetensors tally 逐位相同（27,781,427,952）"
+  },
+  {
+   "item": "KV 层覆盖口径",
+   "status": "ok",
+   "why": "公式按主干 64 层算（config num_hidden_layers）；清单里另有 1 个草稿块，带着与主干注意力同名的 4 个投影，即它们也产出 KV。开草稿侧时容量要按 65 层算 —— 记录里要写明用哪个口径"
   }
  ]
 }

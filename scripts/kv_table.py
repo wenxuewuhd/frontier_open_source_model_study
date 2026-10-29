@@ -97,11 +97,15 @@ def shape(kv: dict) -> str:
     return " + ".join(COMPONENT_LABEL.get(k, f"`{k}`") for k in comps)
 
 
-def table_basis(records: dict) -> list:
+def table_basis(records: dict, problems: list) -> list:
     rows = ["| 版本 | 元素/token | 字节/token | basis |", "|---|---|---|---|"]
     for mid in BASIS_ROWS:
         kv = load_kv(mid)
         if not kv:
+            # 静默跳过会让表少一行而没人发现 —— 删记录时实际发生过。
+            # 要么补 derive，要么把它从 BASIS_ROWS 里删掉，两件都得有人决定
+            problems.append(f"BASIS_ROWS 里的 {mid} 没有 data/derived/{mid}.json："
+                            "补 derive，或把它从 BASIS_ROWS 里删掉")
             continue
         name = (records.get(mid) or {}).get("display_name", mid)
         rows.append(f"| {name} | **{elems(kv)}** | {num(kv.get('per_token_bytes'))} B "
@@ -109,7 +113,7 @@ def table_basis(records: dict) -> list:
     return rows
 
 
-def table_roster(records: dict) -> list:
+def table_roster(records: dict, problems: list) -> list:
     doc = yaml.safe_load(open(os.path.join(ROOT, "data", "tracking.yaml"))) or {}
     rows = ["| 族系旗舰 | 类型 | 缓存分量 | 元素/token | 字节/token | 每序列固定 | basis |",
             "|---|---|---|---|---|---|---|"]
@@ -143,17 +147,24 @@ def table_roster(records: dict) -> list:
 BLOCKS = {"kv-basis": table_basis, "kv-roster": table_roster}
 
 
-def render(text: str, records: dict) -> str:
+def render(text: str, records: dict) -> tuple:
+    """重新生成每个标记区，并把「生成不出来」的情况收集成 problems。
+
+    这些情况以前只往 stderr 印一行就继续，于是 --check 仍然返回 0：标记区被删掉
+    或 BASIS_ROWS 里的记录没了，表会停在旧值上而闸口全绿。闸口放过自己要管的事，
+    比没有闸口更糟 —— 它会让人以为查过了。
+    """
+    problems = []
     for key, fn in BLOCKS.items():
         begin, end = MARK.format(key), END.format(key)
         i, j = text.find(begin), text.find(end)
         if i < 0 or j < 0:
-            print(f"  ! docs 里找不到 {key} 的标记区，跳过 —— 标记被删掉了就不会有人发现表过期",
-                  file=sys.stderr)
+            problems.append(f"docs 里找不到 {key} 的标记区（起始或结束标记被删了）—— "
+                            "没有标记区就没人会发现这张表过期")
             continue
-        body = "\n".join(fn(records))
+        body = "\n".join(fn(records, problems))
         text = text[:i] + begin + "\n" + body + "\n" + text[j:]
-    return text
+    return text, problems
 
 
 def main():
@@ -162,9 +173,14 @@ def main():
     args = ap.parse_args()
 
     old = open(DOC).read()
-    new = render(old, load_records())
+    new, problems = render(old, load_records())
+
+    for p in problems:
+        print(f"! kv_table: {p}", file=sys.stderr)
 
     if args.check:
+        if problems:
+            return 1
         if old == new:
             print("kv_table: docs/kv-cache-accounting.md 是最新的")
             return 0
@@ -172,13 +188,15 @@ def main():
               "跑 scripts/kv_table.py 重新生成", file=sys.stderr)
         return 1
 
+    # 写入模式下也返回非零：表已按能生成的部分更新，但有一块生成不出来，
+    # 需要人去决定（补 derive、改 BASIS_ROWS、还是把标记区加回去）
     if old == new:
         print("kv_table: 无变化")
-        return 0
+        return 1 if problems else 0
     with open(DOC, "w") as fh:
         fh.write(new)
     print(f"kv_table: 已更新 {os.path.relpath(DOC, ROOT)}")
-    return 0
+    return 1 if problems else 0
 
 
 if __name__ == "__main__":

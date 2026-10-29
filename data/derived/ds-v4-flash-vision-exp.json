@@ -1,7 +1,7 @@
 {
  "id": "ds-v4-flash-vision-exp",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T15:14:38+00:00",
+ "generated_at": "2026-10-29T16:01:55+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-flash-vision-exp",
   "config_present": true,
@@ -28,6 +28,7 @@
    "lm_head": 529530880.0,
    "draft": 19845851751.0
   },
+  "scale_elements": 9261408000.0,
   "weight_bytes_total": 167811372792.0,
   "weight_bytes_by_subsystem": {
    "router": 108881920.0,
@@ -60,6 +61,20 @@
   "expert_storage": "individual",
   "layers_present": 43,
   "mtp_layers_seen": [],
+  "mtp_attention_suffixes": [
+   "attn.attn_sink",
+   "attn.wkv.scale",
+   "attn.wkv.weight",
+   "attn.wo_a.scale",
+   "attn.wo_a.weight",
+   "attn.wo_b.scale",
+   "attn.wo_b.weight",
+   "attn.wq_a.scale",
+   "attn.wq_a.weight",
+   "attn.wq_b.scale",
+   "attn.wq_b.weight"
+  ],
+  "draft_blocks_seen": 3,
   "layer_index_max": 43,
   "layers_missing": [],
   "moe_layers_seen": 43,
@@ -192,6 +207,16 @@
    "item": "口径说明",
    "status": "ok",
    "why": "声明值不含 draft；含在内的实测总量为 304.6B"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "ok",
+   "why": "与 HF 的 safetensors tally 逐位相同（304,646,824,126）"
+  },
+  {
+   "item": "KV 层覆盖口径",
+   "status": "ok",
+   "why": "公式按主干 43 层算（config num_hidden_layers）；清单里另有 3 个草稿块，带着与主干注意力同名的 11 个投影，即它们也产出 KV。开草稿侧时容量要按 46 层算 —— 记录里要写明用哪个口径"
   }
  ]
 }

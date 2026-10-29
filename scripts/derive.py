@@ -33,6 +33,8 @@ from lib.subsystems import classify  # noqa: E402
 
 _EXPERT_IDX = re.compile(r"experts?\.(\d+)\.", re.I)
 _LAYER_IDX = re.compile(r"layers?\.(\d+)\.", re.I)
+# 第一个「.数字.」就是块号，不管这个块叫 layers 还是 mtp
+_BLOCK_IDX = re.compile(r"\.(\d+)\.")
 
 
 
@@ -73,6 +75,14 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
     expert_ids, layer_ids, moe_layers = set(), set(), set()
     mtp_layer_ids = set()
     stacked_experts = set()
+    scale_elems = 0.0
+    # 按「剥掉块号后的后缀」记两个集合，用来判断草稿块有没有自己的注意力。
+    # 不用张量名硬匹配 —— 各家名字不同，而本仓栽在名字上已经不止一次。
+    # 结构自相似是更稳的判据：草稿块若带着与主干注意力同名的那套投影，
+    # 它就有自己的 KV，容量按主干层数算会少掉这些块。
+    # 两代的块命名不同（V3 借用层号 layers.61.*，V4 是 mtp.0.*），所以按
+    # 第一个 `.<数字>.` 剥前缀，不认具体名字
+    trunk_attn_suffixes, draft_suffixes, draft_blocks = set(), set(), set()
 
     for name, meta in shapes.items():
         n = numel(meta.get("shape"))
@@ -91,6 +101,10 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
                 label = lg
                 dtype_containers.setdefault(label, set()).add(dt)
         by_dtype[label] = by_dtype.get(label, 0.0) + n * b
+        if dtypes.is_scale_tensor(name, dt):
+            # 单独记下来，好跟外部的参数量 tally 对账：有的仓把 scale 算进了
+            # 参数量，有的没算，两种都要能解释（见 reconcile 的外部对账一项）
+            scale_elems += n
         if not dtypes.is_scale_tensor(name, dt):
             f = dtypes.packing_factor(logical.get(sub, ""), dt)
             if f > 1:
@@ -108,6 +122,15 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
             # 堆叠存储：一个张量装一层的全部专家，专家数是首维。
             # 这种布局下 grouped GEMM 吃 3 维权重，算子签名与逐专家存储不同。
             stacked_experts.add(meta["shape"][0])
+        if sub in ("attention", "draft"):
+            mb = _BLOCK_IDX.search(name)
+            if mb:
+                if sub == "attention":
+                    trunk_attn_suffixes.add(name[mb.end():])
+                else:
+                    draft_suffixes.add(name[mb.end():])
+                    draft_blocks.add(mb.group(1))
+
         m = _LAYER_IDX.search(name)
         if m:
             idx = int(m.group(1))
@@ -132,6 +155,7 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
         "tensor_count": len(shapes),
         "params_total": sum(params.values()),
         "params_by_subsystem": params,
+        "scale_elements": scale_elems,
         "weight_bytes_total": sum(nbytes.values()),
         "weight_bytes_by_subsystem": nbytes,
         "weight_bytes_by_dtype": by_dtype,
@@ -144,6 +168,10 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
                            else "stacked" if stacked_experts else None),
         "layers_present": len(layer_ids),
         "mtp_layers_seen": sorted(mtp_layer_ids),
+        # 草稿块里与主干注意力同名的那套投影。非空说明草稿块自带注意力，
+        # 于是它也产出 KV —— 按 config 的 num_hidden_layers 算容量会少掉这些块
+        "mtp_attention_suffixes": sorted(trunk_attn_suffixes & draft_suffixes),
+        "draft_blocks_seen": len(draft_blocks),
         "layer_index_max": layer_max,
         "layers_missing": missing[:20],
         "moe_layers_seen": len(moe_layers),
@@ -520,8 +548,15 @@ def comm_per_token(t: dict, moe: dict, hidden: int, act_dtype: str, ep: int) -> 
 
 # ---------------------------------------------------------------- 交叉核对
 
-def reconcile(cfg_t: dict, shp: dict, declared: dict) -> list:
-    """两条路都能算的量做核对。有差异就报，不替用户选一个。"""
+def reconcile(cfg_t: dict, shp: dict, declared: dict, external: dict = None,
+              kv: dict = None) -> list:
+    """两条路都能算的量做核对。有差异就报，不替用户选一个。
+
+    `external` 是 repoinfo.json 里 HF 自己从分片头统计的 safetensors tally。
+    它是唯一一条不依赖本仓任何代码的参数量来源 —— 本仓的归类、打包还原和排
+    scale 全都错过，而这个 tally 不会跟着错。scale 判据漏了一整代后缀那次
+    （params 偏高 0.006%），Gate B 的 2% 容差吞掉了差异，只有它能接住。
+    """
     out = []
 
     def add(item, a, b, la, lb, tol=0.01):
@@ -579,6 +614,53 @@ def reconcile(cfg_t: dict, shp: dict, declared: dict) -> list:
                 out.append({"item": "口径说明", "status": "ok",
                             "why": f"声明值不含 {'+'.join(excl)}；"
                                    f"含在内的实测总量为 {shp['params_total']/1e9:.1f}B"})
+            # 外部对账：逐位比，不给容差。这里不是「声明值取整了」的场合 ——
+            # 两边都是从同一批分片头数出来的，对不上就是有一侧算错了
+            tally = (external or {}).get("total")
+            if tally:
+                mine = shp["params_total"]
+                scale = shp.get("scale_elements") or 0.0
+                if abs(tally - mine) < 1:
+                    out.append({"item": "外部参数量对账", "status": "ok",
+                                "why": f"与 HF 的 safetensors tally 逐位相同（{tally:,.0f}）"})
+                elif scale and abs(tally - (mine + scale)) < 1:
+                    # 同样是 fp8 发布，有的仓的 tally 含 scale、有的不含
+                    # （ds-v3 不含、ds-v3.2-exp 含）。两种都对得上才算核过
+                    out.append({"item": "外部参数量对账", "status": "ok",
+                                "why": f"与 HF 的 safetensors tally 相同（{tally:,.0f}），"
+                                       f"但那边把 {scale:,.0f} 个 scale 元素算进了参数量；"
+                                       "本仓排 scale，差值恰等于 scale 总数"})
+                else:
+                    # scale 为 0 时不提「加 scale」那个备选 —— 它等于本仓参数量本身，
+                    # 印出来是同一个数两遍。而 scale 恰好为 0 本身就是个线索：
+                    # 量化发布的仓里一个 scale 都没认出来，多半是判据没命中
+                    alt = (f"，也不等于本仓参数量加 scale（{mine + scale:,.0f}）"
+                           if scale else "")
+                    hint = ("本仓在这份清单里一个 scale 张量都没认出来 —— "
+                            "若它是量化发布，先查 lib/dtypes.py 的 scale 判据"
+                            if not scale else
+                            "先查本仓的子系统归类、打包还原与 scale 判据")
+                    out.append({"item": "外部参数量对账", "status": "MISMATCH",
+                                "HF tally": tally, "本仓": mine,
+                                "why": "HF 的 tally 由它自己从分片头统计、不依赖本仓代码，"
+                                       f"所以对不上时问题在本仓侧：不等于本仓参数量{alt}。"
+                                       + hint})
+            elif external is not None:
+                out.append({"item": "外部参数量对账", "status": "skip",
+                            "why": "repoinfo.json 里没有 safetensors tally"})
+        # KV 的层覆盖：公式路取 config 的 num_hidden_layers，而 MTP 块若自带注意力
+        # 也会产出 KV。两路都锚在同一份 config 上，所以这件事不会表现为「不一致」——
+        # 它只会表现为一个偏小的容量。不报 MISMATCH（按主干口径记账是合法选择），
+        # 但每次 derive 都把两个数摆出来，让 Gate B 的人决定按哪个口径写
+        mtp_attn = shp.get("mtp_attention_suffixes") or []
+        blocks = shp.get("draft_blocks_seen") or 0
+        if mtp_attn and blocks and kv and kv.get("layers"):
+            out.append({"item": "KV 层覆盖口径", "status": "ok",
+                        "why": f"公式按主干 {kv['layers']} 层算（config "
+                               f"num_hidden_layers）；清单里另有 {blocks} 个草稿块，"
+                               f"带着与主干注意力同名的 {len(mtp_attn)} 个投影，"
+                               f"即它们也产出 KV。开草稿侧时容量要按 "
+                               f"{kv['layers'] + blocks} 层算 —— 记录里要写明用哪个口径"})
         if shp.get("unknown_dtypes"):
             out.append({"item": "未知数据类型", "status": "MISMATCH",
                         "detail": shp["unknown_dtypes"],
@@ -609,6 +691,8 @@ def main():
     fd = os.path.join(args.facts_dir, args.id)
     cfg = json.load(open(os.path.join(fd, "cfg.json"))) if os.path.exists(os.path.join(fd, "cfg.json")) else {}
     shapes = json.load(open(os.path.join(fd, "shapes.json"))) if os.path.exists(os.path.join(fd, "shapes.json")) else {}
+    rip = os.path.join(fd, "repoinfo.json")
+    repoinfo = json.load(open(rip)) if os.path.exists(rip) else None
     if not cfg and not shapes:
         sys.exit(f"! {fd} 下既没有 cfg.json 也没有 shapes.json，先跑 fetch_hf.py")
 
@@ -673,7 +757,8 @@ def main():
 
     declared = {"params_total": (model.get("params") or {}).get("total"),
                 "excludes": (model.get("params") or {}).get("excludes")}
-    rec = reconcile(t, shp, declared)
+    rec = reconcile(t, shp, declared, external=(repoinfo.get("safetensors") or {})
+                    if repoinfo else None, kv=kv)
 
     out = {
         "id": args.id,

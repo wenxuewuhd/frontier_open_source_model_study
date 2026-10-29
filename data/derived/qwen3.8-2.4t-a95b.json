@@ -1,7 +1,7 @@
 {
  "id": "qwen3.8-2.4t-a95b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T13:01:34+00:00",
+ "generated_at": "2026-10-29T16:01:58+00:00",
  "inputs": {
   "facts_dir": "facts/qwen3.8-2.4t-a95b",
   "config_present": true,
@@ -24,6 +24,7 @@
    "draft": 26378027520.0,
    "lm_head": 2034237440.0
   },
+  "scale_elements": 0.0,
   "weight_bytes_total": 4892365451008.0,
   "weight_bytes_by_subsystem": {
    "expert": 4741643894784.0,
@@ -43,6 +44,13 @@
   "expert_storage": "stacked",
   "layers_present": 92,
   "mtp_layers_seen": [],
+  "mtp_attention_suffixes": [
+   "self_attn.k_proj.weight",
+   "self_attn.o_proj.weight",
+   "self_attn.q_proj.weight",
+   "self_attn.v_proj.weight"
+  ],
+  "draft_blocks_seen": 1,
   "layer_index_max": 92,
   "layers_missing": [],
   "moe_layers_seen": 92,
@@ -163,6 +171,16 @@
    "shapes 实测": 2446182725504.0,
    "delta_pct": 1.92,
    "status": "ok"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "ok",
+   "why": "与 HF 的 safetensors tally 逐位相同（2,446,182,725,504）"
+  },
+  {
+   "item": "KV 层覆盖口径",
+   "status": "ok",
+   "why": "公式按主干 92 层算（config num_hidden_layers）；清单里另有 1 个草稿块，带着与主干注意力同名的 4 个投影，即它们也产出 KV。开草稿侧时容量要按 93 层算 —— 记录里要写明用哪个口径"
   }
  ]
 }

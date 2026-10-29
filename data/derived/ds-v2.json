@@ -1,7 +1,7 @@
 {
  "id": "ds-v2",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T13:01:29+00:00",
+ "generated_at": "2026-10-29T16:01:52+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v2",
   "config_present": true,
@@ -24,6 +24,7 @@
    "lm_head": 524288000.0,
    "dense_ffn": 188743680.0
   },
+  "scale_elements": 0.0,
   "weight_bytes_total": 471482869760.0,
   "weight_bytes_by_subsystem": {
    "expert": 445435084800.0,
@@ -43,6 +44,8 @@
   "expert_storage": "individual",
   "layers_present": 60,
   "mtp_layers_seen": [],
+  "mtp_attention_suffixes": [],
+  "draft_blocks_seen": 0,
   "layer_index_max": 60,
   "layers_missing": [],
   "moe_layers_seen": 59,
@@ -155,6 +158,11 @@
    "item": "口径说明",
    "status": "ok",
    "why": "声明值不含 draft；含在内的实测总量为 235.7B"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "ok",
+   "why": "与 HF 的 safetensors tally 逐位相同（235,741,434,880）"
   }
  ]
 }
