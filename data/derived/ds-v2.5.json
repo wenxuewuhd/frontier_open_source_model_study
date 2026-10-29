@@ -1,7 +1,7 @@
 {
  "id": "ds-v2.5",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T10:34:21+00:00",
+ "generated_at": "2026-10-29T12:02:58+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v2.5",
   "config_present": true,
@@ -21,12 +21,15 @@
   "linear_attention_layers": 0,
   "per_token_bytes": 69120,
   "per_sequence_bytes": 0,
+  "per_token_elems": 34560,
+  "per_token_elems_bound": "exact",
   "components": {
    "full_attention": {
     "layers": 60,
     "bytes_per_layer": 1152,
     "bytes_per_token": 69120,
     "dtype": "bfloat16",
+    "elements_per_token": 34560,
     "terms": {
      "latent": 512,
      "qk_rope_head_dim": 64,

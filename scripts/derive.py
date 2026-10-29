@@ -157,12 +157,20 @@ def text_cfg(cfg: dict) -> dict:
 
 
 def _kv_out(comp, status, atype, kv_dtype, layers, full_layers, linear_layers, notes):
+    # 元素口径与精度无关，跨代比 KV 结构只能用它：两侧字节口径不同（一侧落盘精度、
+    # 一侧 dtype 兜底）时，字节的倍数里混着精度假设的差，不是结构的差。
+    # 任何一个随上下文增长的分量缺元素数，合计就不报，免得少算一项还像是精确值
+    per_tok = [c for c in comp.values() if c.get("bytes_per_token")]
+    elems = [c.get("elements_per_token") for c in per_tok]
     return {
         "status": status, "attention_type": atype, "kv_dtype": kv_dtype,
         "layers": layers, "full_attention_layers": full_layers,
         "linear_attention_layers": linear_layers,
         "per_token_bytes": sum(c.get("bytes_per_token", 0) for c in comp.values()),
         "per_sequence_bytes": sum(c.get("bytes_per_sequence", 0) for c in comp.values()),
+        "per_token_elems": sum(elems) if per_tok and all(elems) else None,
+        "per_token_elems_bound": ("upper_bound" if any(c.get("elements_upper_bound") for c in per_tok)
+                                  else "exact"),
         "components": comp, "notes": notes,
     }
 
@@ -243,7 +251,7 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None,
         hd = attn.get("head_dim") or t.get("head_dim")
         if not hd and t.get("hidden_size") and t.get("num_attention_heads"):
             hd = t["hidden_size"] // t["num_attention_heads"]
-        per_layer, terms = None, {}
+        per_layer, terms, upper = None, {}, False
         if not lora and atype in ("MLA", "MQA-LATENT") and kvh and hd:
             # 不设 kv_lora_rank、而用 num_kv_heads=1 的单头 latent 的写法
             lora = kvh * hd
@@ -251,20 +259,26 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None,
             terms["rope_caveat"] = ("qk_rope_head_dim 是否在 latent 维之内未确认。"
                                     "若在其内，每层应为 latent*bytes 而非 (latent+rope)*bytes，"
                                     "当前取值为上界")
+            upper = True
         if lora and rope:
-            per_layer = (lora + rope) * b
+            el = lora + rope
+            per_layer = el * b
             terms.update({"latent": lora, "qk_rope_head_dim": rope,
                           "formula": "(latent + qk_rope_head_dim) * bytes"})
         elif kvh and hd:
-            per_layer = 2 * kvh * hd * b
+            el = 2 * kvh * hd
+            per_layer = el * b
             terms = {"num_kv_heads": kvh, "head_dim": hd,
                      "formula": "2 * num_kv_heads * head_dim * bytes"}
         if per_layer:
             comp["full_attention"] = {
                 "layers": full_layers, "bytes_per_layer": per_layer,
                 "bytes_per_token": per_layer * full_layers, "dtype": kv_dtype,
+                "elements_per_token": el * full_layers,
                 "terms": terms,
             }
+            if upper:
+                comp["full_attention"]["elements_upper_bound"] = True
         else:
             status = "partial"
             notes.append(f"有 {full_layers} 层 full attention 但字段不足，这部分 KV 未计入")
@@ -319,7 +333,8 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None,
             terms = {"elements" + per: elems, "bytes_per_element": bpe, "source": "完整权重清单实测"}
             if fmt:
                 terms["storage"] = fmt
-            comp[key] = {"bytes" + per: elems * bpe, "bytes_basis": basis, "terms": terms}
+            comp[key] = {"bytes" + per: elems * bpe, "elements" + per: elems,
+                         "bytes_basis": basis, "terms": terms}
 
         for key in ("global_kv", "indexer"):
             if meas.get(key):
@@ -390,8 +405,12 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None,
                 "indexer.compressor.wkv）的输出维，填进 sparse.index_kv_dim")
         comp["indexer"] = {
             "layers": ilayers, "width": width, "bytes_per_token": width * b * ilayers,
+            "elements_per_token": width * ilayers,
             "terms": {"formula": f"{wsrc} * bytes * {src_kind}({ilayers})"},
         }
+        # 层数没声明产出层、或宽度用的是头数乘积，元素数都只是上界
+        if src_kind != "index_kv_source_layers" or not ikv:
+            comp["indexer"]["elements_upper_bound"] = True
 
     # --- 逐层压缩比表达不了，降级而不是替人折算
     ratios = share.get("compress_ratios")

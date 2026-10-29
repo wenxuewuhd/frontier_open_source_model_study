@@ -1,7 +1,7 @@
 {
  "id": "ds-v4-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T10:34:25+00:00",
+ "generated_at": "2026-10-29T12:03:02+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-flash",
   "config_present": true,
@@ -73,9 +73,12 @@
   "linear_attention_layers": 0,
   "per_token_bytes": 13600,
   "per_sequence_bytes": 5636096,
+  "per_token_elems": 6800,
+  "per_token_elems_bound": "exact",
   "components": {
    "global_kv": {
     "bytes_per_token": 10912,
+    "elements_per_token": 5456,
     "bytes_basis": "dtype_fallback",
     "terms": {
      "elements_per_token": 5456,
@@ -85,6 +88,7 @@
    },
    "indexer": {
     "bytes_per_token": 2688,
+    "elements_per_token": 1344,
     "bytes_basis": "dtype_fallback",
     "terms": {
      "elements_per_token": 1344,

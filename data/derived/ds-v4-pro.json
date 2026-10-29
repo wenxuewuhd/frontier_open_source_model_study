@@ -1,7 +1,7 @@
 {
  "id": "ds-v4-pro",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T10:34:26+00:00",
+ "generated_at": "2026-10-29T12:03:03+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-pro",
   "config_present": true,
@@ -73,9 +73,12 @@
   "linear_attention_layers": 0,
   "per_token_bytes": 19448,
   "per_sequence_bytes": 7995392,
+  "per_token_elems": 9724,
+  "per_token_elems_bound": "exact",
   "components": {
    "global_kv": {
     "bytes_per_token": 15608,
+    "elements_per_token": 7804,
     "bytes_basis": "dtype_fallback",
     "terms": {
      "elements_per_token": 7804,
@@ -85,6 +88,7 @@
    },
    "indexer": {
     "bytes_per_token": 3840,
+    "elements_per_token": 1920,
     "bytes_basis": "dtype_fallback",
     "terms": {
      "elements_per_token": 1920,

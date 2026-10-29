@@ -391,3 +391,22 @@ V4.1 更细：`compressor.wkv`/`norm` 在 4 个源层都有，但 `compressor.wg
 **二、V3.2-Exp 把 layernorm 权重从 BF16 换成了 FP32。** config 没有这个信息，张量名也和 V3.1 逐个相同 —— 只有 dtype 看得出来。影响是 RMSNorm 变成混合精度算子：FP32 权重配 BF16 激活，按「norm 权重与激活同 dtype」写的核会直接读错。
 
 > 抽样只读了 163 个分片里的 10 个，覆盖第 0–8 层。那几层里 `input_layernorm` / `post_attention_layernorm` **占比 100%** 是 F32，但**占比不是覆盖率** —— 第 9–60 层没抽到，所以不能说「全部层」。
+
+#### 跨代比 KV 必须用元素口径
+
+族谱页上 V4 → V4.1 的 KV 是 **13600 B → 890 B，15.3 倍**。这个倍数里混着一样不属于架构的东西：
+
+| | 元素/token | 字节 | basis |
+|---|---|---|---|
+| V4-Flash | 5456 + 1344 = **6800** | 13600 B | `dtype_fallback`（BF16 兜底） |
+| V4-Pro | **9724** | 19448 B | `dtype_fallback` |
+| V4.1-Flash | 1280 + 320 = **1600** | 890 B | `theoretical_floor`（FP4 + scale） |
+
+属于结构的只有 **6800 / 1600 = 4.25 倍**。另外 3.6 倍是「V4.1 查到了落盘格式、V4 还在按模型 dtype 兜底」—— 是调研进度的差，不是跨代改进。旗舰记录的 `lineage` 里早就把结构因子与精度因子拆开写了（R32），但族谱跨代那一栏仍在混比。
+
+两头一起改：
+
+- `derive.py` 的每个随上下文增长的分量都带上 `elements_per_token`，合计成 `kv_cache.per_token_elems`。公式路径里层数或宽度只是上界的（V3.2 的 indexer 按全部 61 层计、宽度用头数乘积），标 `per_token_elems_bound: upper_bound`，页面上显示成 `≤ 42,944`。任一分量缺元素数就不报合计 —— 少算一项还印成精确值比不印更糟。
+- `data.ts` 的 `TRACKED_FIELDS` 新增 `diff: 'same-basis'` 守卫，和既有的 `'both-measured'` 并列。KV 字节行挂这个守卫，两侧 `bytes_basis` 不同（或任一侧是 `mixed`）就不出 from→to；出得来的也把口径写在数字旁边（`13,600 B（精度兜底）`）。跨代的结构比较改由新的「KV 元素 / token」行承担，它与精度无关。
+
+**没有去查 V4 的实际落盘精度。** 那份实现分析是 V4.1 专有的，V4 没有对应来源；按元素口径写，这个未知就不影响结论。`dtype_fallback` 这个标签本身是诚实的，`cache_basis` 里也早写明两种 basis 不能混比 —— 问题只在页面上已经在混比。

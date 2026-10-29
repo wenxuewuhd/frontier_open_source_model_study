@@ -337,12 +337,24 @@ export interface TrackedField {
    *   false            不比。自由文本（措辞差异不是架构变化）
    *   'both-measured'  只在两边都测过时才比。实测字段缺值是「没测」不是「取消」，
    *                    照常比会把调研进度显示成模型变化
+   *   'same-basis'     只在两边口径（basis）相同时才比。KV 字节一侧按落盘精度算（理论下限）、
+   *                    一侧按模型 dtype 兜底时，from → to 的倍数里混着「换了一套精度假设」，
+   *                    读者会把它整个算成架构的功劳
    */
-  diff?: boolean | 'both-measured';
+  diff?: boolean | 'both-measured' | 'same-basis';
+  /** diff 为 'same-basis' 时的口径。取不到或为 mixed 都不比：mixed 两边可能是不同的混法 */
+  basis?: (m: Model) => string | undefined;
   get: (m: Model) => string | number | undefined;
 }
 
 const dtype = (v: unknown) => (typeof v === 'string' ? v.toUpperCase() : undefined);
+
+export const KV_BASIS_LABEL: Record<string, string> = {
+  theoretical_floor: '理论下限',
+  dtype_fallback: '精度兜底',
+  declared_dtype: '声明精度',
+  mixed: '口径混合',
+};
 
 export const TRACKED_FIELDS: TrackedField[] = [
   { key: 'layers', label: '层数', axis: 'scale', group: 'spec', get: (m) => m.arch?.layers },
@@ -373,6 +385,16 @@ export const TRACKED_FIELDS: TrackedField[] = [
     get: (m) => {
       const k = m.arch?.attention?.kv_sharing?.index_kv_source_layers;
       return k ? `${k.length} 层` : undefined;
+    } },
+  // 跨代比 KV 结构用元素数，不用字节：字节 = 元素 × 精度，而各代的精度来源不一
+  // （V4 按 BF16 兜底，V4.1 查到了落盘格式）。V4 → V4.1 按字节是 15.3 倍，
+  // 属于结构的只有元素那 4.25 倍。只计随上下文增长的分量，滑窗与线性状态是每序列常量
+  { key: 'kv_elems', label: 'KV 元素 / token', axis: 'attention', group: 'spec',
+    get: (m) => {
+      const kv = m.derived?.kv_cache;
+      if (!kv?.per_token_elems) return undefined;
+      // 公式路径里层数或宽度是上界的，数字前标 ≤，比较时读者能看出哪一侧不精确
+      return `${kv.per_token_elems_bound === 'upper_bound' ? '≤ ' : ''}${fmtInt(kv.per_token_elems)}`;
     } },
   { key: 'experts', label: '路由专家 / top-k', axis: 'moe', group: 'spec',
     get: (m) => (m.arch?.moe?.routed_experts
@@ -420,6 +442,16 @@ export const TRACKED_FIELDS: TrackedField[] = [
     get: (m) => m.precision?.quantization?.activation_scheme },
   { key: 'kv_dtype', label: 'KV 缓存精度', axis: 'precision', group: 'precision',
     get: (m) => dtype(m.precision?.kv_cache) },
+  // 字节随精度假设变，口径写在数字旁边；口径不同的两版不进变化矩阵 —— 结构变化看上面的元素行
+  { key: 'kv_bytes', label: 'KV 字节 / token', axis: 'precision', group: 'precision',
+    diff: 'same-basis',
+    basis: (m) => m.derived?.kv_cache?.bytes_basis,
+    get: (m) => {
+      const kv = m.derived?.kv_cache;
+      if (!kv?.per_token_bytes) return undefined;
+      const b = KV_BASIS_LABEL[kv.bytes_basis];
+      return `${fmtInt(Math.round(kv.per_token_bytes))} B${b ? `（${b}）` : ''}`;
+    } },
   ...subsystemFields(),
 ];
 
@@ -467,6 +499,11 @@ export function changesFor(m: Model): FieldChange[] {
       // 两边都有值才算得上变化，否则矩阵会把调研进度显示成模型变化。
       if (c.field.diff === 'both-measured' && (c.from === undefined || c.to === undefined)) {
         return false;
+      }
+      if (c.field.diff === 'same-basis') {
+        const a = c.field.basis?.(prev);
+        const b = c.field.basis?.(m);
+        if (!a || !b || a !== b || a === 'mixed') return false;
       }
       return String(c.from ?? '') !== String(c.to ?? '');
     });

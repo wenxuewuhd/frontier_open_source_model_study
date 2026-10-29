@@ -1,7 +1,7 @@
 {
  "id": "ds-v3.2-exp",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T10:34:22+00:00",
+ "generated_at": "2026-10-29T12:02:59+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v3.2-exp",
   "config_present": true,
@@ -67,12 +67,15 @@
   "linear_attention_layers": 0,
   "per_token_bytes": 85888,
   "per_sequence_bytes": 0,
+  "per_token_elems": 42944,
+  "per_token_elems_bound": "upper_bound",
   "components": {
    "full_attention": {
     "layers": 61,
     "bytes_per_layer": 1152,
     "bytes_per_token": 70272,
     "dtype": "bfloat16",
+    "elements_per_token": 35136,
     "terms": {
      "latent": 512,
      "qk_rope_head_dim": 64,
@@ -83,9 +86,11 @@
     "layers": 61,
     "width": 128,
     "bytes_per_token": 15616,
+    "elements_per_token": 7808,
     "terms": {
      "formula": "index_kv_dim(128)，实测自 model.layers.N.self_attn.indexer.wk.weight [128, 7168]，输出维 128（62 层都有） * bytes * layers(全部层，未声明产出层)(61)"
-    }
+    },
+    "elements_upper_bound": true
    }
   },
   "notes": [

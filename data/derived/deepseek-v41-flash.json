@@ -1,7 +1,7 @@
 {
  "id": "deepseek-v41-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T10:34:21+00:00",
+ "generated_at": "2026-10-29T12:02:58+00:00",
  "inputs": {
   "facts_dir": "facts/deepseek-v41-flash",
   "config_present": true,
@@ -76,9 +76,12 @@
   "linear_attention_layers": 0,
   "per_token_bytes": 890.0,
   "per_sequence_bytes": 2840064.0,
+  "per_token_elems": 1600,
+  "per_token_elems_bound": "exact",
   "components": {
    "global_kv": {
     "bytes_per_token": 720.0,
+    "elements_per_token": 1280,
     "bytes_basis": "theoretical_floor",
     "terms": {
      "elements_per_token": 1280,
@@ -94,6 +97,7 @@
    },
    "indexer": {
     "bytes_per_token": 170.0,
+    "elements_per_token": 320,
     "bytes_basis": "theoretical_floor",
     "terms": {
      "elements_per_token": 320,
@@ -109,6 +113,7 @@
    },
    "local_window": {
     "bytes_per_sequence": 2840064.0,
+    "elements_per_sequence": 2818048,
     "bytes_basis": "theoretical_floor",
     "terms": {
      "elements_per_sequence": 2818048,
