@@ -1,0 +1,640 @@
+id: glm-5.3
+family: glm
+kind: llm
+display_name: GLM-5.3
+released: 2026-10-14
+license: other
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/zai-org/GLM-5.3
+    locator: config.json @ ba32f8c19c87
+    accessed: 2026-10-29
+    note: >-
+      FP8 发布（tags 带 fp8），141 分片。权重清单逐分片读头取全，
+      118629 个张量，无读失败分片
+
+hf:
+  repo: zai-org/GLM-5.3
+  pipeline_tag: text-generation
+  gated: false
+
+lineage:
+  track: main
+
+params:
+  total: 753330000000.0
+  breakdown:
+    expert: 724776000000.0
+    attention: 12871500000.0
+    draft: 9952920000.0
+    shared_expert: 2831160000.0
+    embed: 951583000.0
+    lm_head: 951583000.0
+    dense_ffn: 679477000.0
+    indexer: 196805000.0
+    router: 117984000.0
+    norm: 1169660.0
+  counting_note: >-
+    按完整权重清单（141 分片 118629 条目）逐项统计。118629 是 safetensors 条目数，
+    其中 59044 条是 weight_scale_inv（FP8 的 per-block scale 容器）—— 不计入参数、
+    只计入权重存储；真权重张量 59585 条。厂商未在 config 或模型卡里声明总参数或
+    激活参数，total 是本仓按清单求和的实测值，不是声明值；它与 HF 平台自己从分片头
+    统计的 safetensors tally（753,329,940,480，同样排 scale）逐 dtype 逐位相同。
+    全清单 dtype 只有 F8_E4M3 / BF16 / F32 三种，无 INT8/UINT8 打包容器，
+    numel 即参数数，不需还原。激活参数有带宽口径与可比官方口径两套，见 data/derived/，
+    这里不写单一值 —— 两者不是同一个量。
+
+context:
+  max: 1048576
+
+arch:
+  layers: 78
+  hidden: 6144
+  vocab: 154880
+  norm: RMSNorm
+  norm_eps: 1.0e-05
+  activation: SwiGLU
+  position: RoPE theta 8e6，interleave
+
+  attention:
+    type: MLA
+    num_heads: 64
+    num_kv_heads: 64
+    head_dim: 192
+    v_head_dim: 256
+    head_dim_note: >-
+      每头 QK 全宽 256（config 的 qk_head_dim，= qk_nope 192 + qk_rope 64），V 每头
+      也是 256，两者相等。不对称只在 kv_b_proj [28672, 512] 内部：28672 = 64 ×
+      (K-nope 192 + V 256)，K 的 rope 64 维由 kv_a_proj_with_mqa 的尾段直接产出、
+      不经 kv_b_proj。config 的 head_dim=192 等于 qk_nope，拿它推 o_proj 入口会得
+      64×192=12288，比实测的 16384 低 25% —— 方向与 DeepSeek 一代相反，那边
+      v_head_dim 比 head_dim 小，按 head_dim 推是高 50%。
+      另外 num_kv_heads=64 是 query 侧可见的 KV 头数，不是缓存宽度：落盘缓存是
+      kv_a_proj_with_mqa 的 576 维 latent（kv_lora 512 + rope 64），
+      按 2×64×192=24576 折算会高估 42.7 倍
+    qk_rope_head_dim: 64
+    qk_nope_head_dim: 192
+    kv_lora_rank: 512
+    q_lora_rank: 2048
+    sparse:
+      mechanism: >-
+        DSA indexer 选 token。L0 / L1 / L2 各自算一次 topk，之后每 4 层一次
+        （L2+4k，止于 L74），主干共 21 层产出；其余 57 层复用上游那一次的选择结果。
+        间隔序列是 1,1,4,4,… 而不是均匀的 4 —— 按「每 4 层」从 L0 起推会得到
+        0,4,…,76 共 20 层，层数和层号都错（config index_topk_freq=4，
+        前三层的例外疑与 index_skip_topk_offset=3 有关，见 open_questions）。
+        MTP 块（L78）另有完整一套
+      index_n_heads: 32
+      index_head_dim: 128
+      index_topk: 2048
+      index_kv_dim: 128
+      index_kv_source: >-
+        model.layers.N.self_attn.indexer.wk.weight [128, 6144]，输出维 128。
+        index_n_heads × index_head_dim = 32 × 128 = 4096 是 32 倍的上界：
+        index K 在 32 个 index 头之间共享，不是逐头
+    kv_sharing:
+      index_kv_source_layers:
+        [0, 1, 2, 6, 10, 14, 18, 22, 26, 30, 34, 38, 42, 46, 50, 54, 58, 62, 66, 70, 74]
+      layer_coverage: >-
+        三种覆盖面各不相同，不能统称「逐层」。以下层数都是**主干口径**（0–77）：
+        全量 MLA KV 在 78/78 层（每层都有 kv_a_proj_with_mqa [576, 6144]，无跨层共享）；
+        indexer 整套（wk / wq_b / weights_proj / k_norm）只在 21 层，即 config
+        indexer_types 里的 full；其余 57 个 shared 层**连一个 indexer 张量都没有**
+        （按全名正则穷举过，不是抽样）。
+        另有 MTP 块（第 78 层）自带一整套 indexer，也自带自己的 kv_a_proj_with_mqa；
+        indexer_types 长度只有 78、只覆盖主干 0–77，按它数会漏掉这一套。
+        所以权重清单里产出 MLA KV 的层共 79 个、产出 index K 的共 22 个，
+        开 MTP 时要按这两个数算
+      note: >-
+        GLM 的 shared 层与 DeepSeek V4.1 的「重打分层」不是一回事，schema 的
+        index_rescore_layers 在这里不适用，故留空：V4.1 的重打分层有 wq_b/weights_proj、
+        只是不产出 K，仍要逐层算一次打分；GLM 的 shared 层一个 indexer 张量都没有，
+        复用的是上一个 full 层的 **topk 选择结果**本身（config index_topk_freq=4）。
+        前者是「K 共享、打分不共享」，后者是「选择共享」—— 算子图与访存都不同
+
+  ffn:
+    type: moe
+    layer_pattern: >-
+      第 0–2 层稠密（intermediate 12288），其余 75 层为 MoE；MTP 块（第 78 层）也是 MoE。
+      稠密层的 FFN 比单个专家宽 6 倍，是全模型最宽的单个 GEMM —— 单层 226,492,416 参数，
+      是一层注意力 165,019,648 的 1.37 倍
+
+  moe:
+    routed_experts: 256
+    shared_experts: 1
+    top_k: 8
+    intermediate: 2048
+    first_k_dense: 3
+    dense_intermediate: 12288
+    routing: sigmoid 打分、noaux_tc 选路，routed_scaling_factor 2.5，打分走 FP32
+      （config moe_router_dtype=float32，而 gate 权重是 BF16）
+    balance: e_score_correction_bias（无辅助损失）
+    storage_note: >-
+      逐专家独立张量（mlp.experts.N.{gate,up,down}_proj），不是堆叠的 3 维权重。
+      grouped GEMM 因此吃 2 维张量列表；EP 切分按张量分配，不按首维切。
+      n_group=1 且 topk_group=1，分组路由实际未启用
+
+  decoding:
+    mtp_layers: 1
+
+precision:
+  weights_release: [FP8_E4M3, BF16, FP32]
+  quantization:
+    method: fp8
+    weight_format: e4m3
+    weight_block_size: [128, 128]
+    activation_scheme: dynamic
+    per_subsystem:
+      expert: FP8_E4M3
+      shared_expert: FP8_E4M3
+      attention: FP8_E4M3
+      indexer: FP8_E4M3
+      dense_ffn: FP8_E4M3
+      draft: FP8_E4M3
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+    per_subsystem_scale:
+      expert: FP32
+      shared_expert: FP32
+      attention: FP32
+      indexer: FP32
+      dense_ffn: FP32
+      draft: FP32
+    per_subsystem_block:
+      expert: '[128,128]'
+      shared_expert: '[128,128]'
+      attention: '[128,128]+[128ceil,128]'
+      indexer: '[128,128]'
+      dense_ffn: '[128,128]'
+      draft: '[128,128]+[128ceil,128]'
+    block_size_note: >-
+      config 声明的 [128,128] 与实测一致 —— 这一代没有 DeepSeek V4 那种
+      「声明 [128,128]、FP4 专家实为 [1,32]」的分歧。但 kv_a_proj_with_mqa
+      输出维 576 = 4×128 + 64，scale 是 5 条，末块不满（记作 128ceil）。
+      按「block 一律整除」写的反量化会在这个张量上错位 —— 和 DeepSeek V3
+      同一个张量、同一个坑。
+      scale 容器实测全是 FP32，config 没有声明 scale 格式
+    subsystem_method: >-
+      全部来自完整权重清单（141 分片 118629 条目）逐项统计，非抽样：每个条目都带
+      shape 与 dtype，无缺失、无读失败分片（fetched.json 的 failed_shards 为空）。
+      归类用 scripts/lib/subsystems.py，与参数量口径同一份。
+      发布权重不是纯 FP8：按元素数 FP8_E4M3 751,226,191,872（699.63 GiB）、
+      BF16 2,103,729,152（3.92 GiB）、FP32 19,456 个真参数 + 45,853,104 个 scale 元素
+      （合计 175 MiB）—— 只报 FP8 会被误读成纯 FP8 模型。
+      两个桶内部不同质，整桶一个精度看不见：
+      indexer 按元素数 97.9% 是 FP8_E4M3（wk / wq_b），但 weights_proj [32, 6144]
+      的 21 份是 BF16；注意 indexer.k_norm.{weight,bias} 按 subsystems.py 的优先级
+      （norm 在 indexer 之前）归在 norm 桶，不在这个 97.9% 的分母里。
+      draft 按元素数 99.22% 是 FP8_E4M3，但 12 个张量共 77,300,480 元素是 BF16，
+      其中 eh_proj [6144, 12288] 一张占 97.7% —— 这一截是 indexer 那截 BF16 的 18.7 倍，
+      假定「MTP 块整体 FP8」的引擎会在它上面直接解错。
+      router 桶的 75 个 mlp.gate.weight 是 BF16，而 75 个 e_score_correction_bias [256]
+      是 FP32 真参数（不是 scale，所以 per_subsystem_scale 里没有 router 项）；
+      config 的 moe_router_dtype=float32 与此一致
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: FP8_E4M3
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/zai-org/GLM-5.3
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      与 DeepSeek V4.1 那条「少数层产出 KV」的路线相反：GLM-5.3 的主干 78 层
+      每层都产出自己的 MLA KV，跨层共享一处都没有。稀疏只作用在
+      「读哪些 token」（DSA 选 topk），不作用在「存多少层」。
+      所以它的 KV 容量仍随层数线性增长，长上下文下是硬开销。
+    quantified: >-
+      口径为**主干 78 层，不含 MTP 块**：MLA 576 元素/层/token × 78 层 = 44928，
+      加 index K 128 × 21 层 = 2688，合计 47616 元素/token。
+      开 MTP 时第 78 层另有一层 576 宽 MLA KV 和一份 128 宽 index K，
+      即 79 / 22 层、48320 元素/token（+704，+1.5%）；index K 那一侧还要看
+      index_share_for_mtp_iteration 共享的是选择还是 K（见 open_questions）。
+      每条目按 1:1 计费 —— DSA 的 topk 选的是「读哪些 token」而非「存哪些」，
+      这一点没有一手来源，见 open_questions。
+      KV 存储精度未披露，按 config 声明的 dtype=bfloat16 兜底（2 B/元素，
+      不是权重落盘的 FP8_E4M3）得 95232 B/token、1M 上下文 93.0 GiB ——
+      这是 dtype_fallback 兜底口径，不是实测落盘量
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      indexer 只在 21 层存在，另 57 层复用上游的 topk 选择结果。
+      调度上这不是「每层一次稀疏注意力」，而是「产出层算一次选择、其后的层
+      拿着同一份索引做 gather」—— 产出层是 L0/L1/L2 与 L2+4k，间隔 1,1,4,4,…，
+      不是均匀的每 4 层（见 arch.attention.sparse.mechanism）。
+      按逐层建 indexer 的实现会多算 57 次选择，也会多留 57 份 index K 缓存。
+    quantified: 21 层有 indexer（另 MTP 块 1 套），57 层无任何 indexer 张量
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      MTP 块（第 78 层）是个完整 transformer 层：自带注意力、自带 indexer、
+      自带 256 专家与共享专家。草稿侧成本不是「再跑一个投影头」，
+      而是接近一层主干的全量开销 —— 实测 9.95B 参数，比主干 MoE 层的均值
+      9.87B 还高 0.8%。另有主干根本没有的算子：eh_proj [6144, 12288]
+      把两路 hidden 拼接后降维，以及 enorm / hnorm / shared_head.norm。
+      按主干层的算子集合去排 MTP 块，会少掉 eh_proj 这一张最宽的投影。
+    visibility: public
+  - dimension: ep-comm
+    finding: >-
+      256 专家 top-8、专家中间维 2048，逐专家独立张量存放。
+      EP 切分按张量分配而非按堆叠首维切，与 Qwen 那类 3 维堆叠权重的
+      切分方式和算子签名都不同。
+    visibility: public
+
+infra_signals:
+  - text: >-
+      稀疏注意力正在分化成两条不同的路线，容量模型不能混用：
+      DeepSeek V4.1 省的是「存多少层 KV」（4/40 层产出），
+      GLM-5.3 省的是「每层读多少 token」（78 层全量存、topk 选读）。
+      前者改容量，后者改带宽与算子图。按一条路线写的 KV 规划套到另一条上会差一个量级。
+    evidence: judgement
+    horizon: now
+    axis: attention
+  - text: >-
+      「每 N 层算一次 topk、其余层复用选择」把稀疏选择从逐层算子变成了跨层共享状态。
+      引擎要能在层之间传递并复用索引，调度单元不再是单层。
+      这类「跨层复用」在 KV（V4.1）和选择（GLM-5.3）两侧同时出现，
+      适配流程要把「这一层到底复用了什么」当作必问项。
+    evidence: judgement
+    horizon: now
+    axis: attention
+  - text: >-
+      config 的 modules_to_not_convert 列了 22 个
+      model.layers.N.self_attn.indexers_proj，而权重里根本没有这个名字 ——
+      真实张量叫 self_attn.indexer.weights_proj。22 这个数是精确的：
+      21 个 full indexer 层加 MTP 块（第 78 层），正好对上权重里有 indexer 的 22 层，
+      所以不是 config 多写了一个。而同一份清单里 indexer.k_norm 与 k_norm.bias
+      的拼写都是对的 —— 错的只有 weights_proj 这一项（indexer + weights_proj
+      粘成了 indexers_proj），不是「这份清单用了另一套命名」。
+      本次发布它恰好是 BF16，所以没出事；但任何按这份清单做名字精确匹配的
+      再量化流程，都会把它当成不存在而照常量化。
+      排除清单要对着权重清单验，不能只读 config。
+    evidence: judgement
+    horizon: now
+    axis: precision
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: official
+  license: official
+  hf: official
+  lineage: official
+  params: derived
+  params.counting_note: derived
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.ffn.type: derived
+  arch.attention.type: derived
+  arch.attention.v_head_dim: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.sparse.mechanism: judgement
+  arch.attention.sparse.index_kv_dim: derived
+  arch.attention.sparse.index_kv_source: derived
+  arch.attention.kv_sharing.index_kv_source_layers: derived
+  arch.attention.kv_sharing.layer_coverage: derived
+  arch.attention.kv_sharing.note: judgement
+  arch.moe.routing: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.moe.first_k_dense: derived
+  arch.moe.dense_intermediate: official
+  arch.ffn.layer_pattern: derived
+  arch.decoding.mtp_layers: derived
+  precision: official
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.per_subsystem_scale: derived
+  precision.quantization.per_subsystem_block: derived
+  precision.quantization.block_size_note: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-29'
+  scope:
+    - official
+    - derived
+    - judgement
+  reviewer: 三个独立核查代理分管互不重叠的因子组，结论互不可见
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序分三路，各管一组因子、结论互不可见：
+    一路核结构几何与层集合（对 118629 条清单穷举，不抽样），
+    一路独立重算缓存账（代替当时还没跑过的 Gate B），
+    一路核逐子系统精度与记账卫生（含 Gate C 的 evidence 继承链解析）。
+    三路在重叠处互相印证：MTP 块的层覆盖、modules_to_not_convert 的 22 条、
+    indexer 的 21 层集合三处都由两路以上各自算出同一结果。
+    本会话独立复算的部分是：scale 判据在全部 11 份 facts 上的新旧分类差异、
+    ds-v3 / ds-v3.2-exp / glm-5.3 的参数总量与子系统拆分、以及 derive.py 的
+    KV 公式路输出。其余计数（量化块的逐对相除、97.9% 的分母、
+    排除清单的逐条比对）依据的是代理在完整清单上的枚举，未逐项重跑。
+review:
+  - id: R1
+    field: arch.attention.kv_sharing.layer_coverage
+    severity: imprecise
+    claim: 全量 MLA KV 在 78/78 层、indexer 在 21 层，未说明这是主干口径
+    finding: >-
+      清单里 kv_a_proj_with_mqa 有 79 个（层索引 0–78 连续）、indexer.wk 有 22 个
+      （含第 78 层），MTP 块两样都自带。78 与 21 分别来自 config 的
+      num_hidden_layers 和 indexer_types（长度 78，只覆盖主干 0–77），
+      两个都是主干口径。同一份记录的 operator-gap 一条已经把 MTP 块数了进去
+      （「21 层有 indexer（另 MTP 块 1 套）」），kv-capacity 一条没有 ——
+      两条口径不一致是这个问题的内部指纹。本仓 V4.1 的滑窗 KV 按 43 层
+      （40 主干 + 3 MTP 块）记并在括号里另给主干值，GLM 这份缺同样的括号。
+    resolution: corrected
+    changed_to: >-
+      按用户决定保留主干口径，但在 layer_coverage 与 kv-capacity 的 quantified
+      里写明「主干 78 层、不含 MTP 块」，并给出开 MTP 时的 79 / 22 层与
+      48320 元素/token（+704）。数值口径未变，缺的是口径声明
+  - id: R2
+    field: precision.weights_release
+    severity: wrong
+    claim: weights_release 只列 FP8_E4M3
+    finding: >-
+      发布权重不是纯 FP8：BF16 2,103,729,152 参数（3.92 GiB，含 embed / lm_head /
+      router gate / draft 的 eh_proj / indexer 的 weights_proj / norm）、
+      FP32 19,456 个真参数。同一份记录的 per_subsystem 已经把 BF16 逐项列了出来，
+      两个字段互相矛盾。这是 deepseek-v41-flash 的 R16 原样复发。
+    resolution: corrected
+    changed_to: weights_release 改为 [FP8_E4M3, BF16, FP32]，并在 subsystem_method 里给出三者的元素数
+  - id: R3
+    field: arch.attention.sparse.mechanism
+    severity: imprecise
+    claim: 「每 4 层算一次 topk，其余层复用该次选择」
+    finding: >-
+      实测 indexer 层是 [0,1,2,6,10,…,74,78]，间隔序列 1,1,4,4,…。
+      按「每 4 层」从 L0 起推得 0,4,…,76 共 20 层，层数和层号集合都错 ——
+      只读这一句去做 index K 规划会把 21 写成 20（2688 vs 2560 元素/token）。
+      记录自己的 index_kv_source_layers 是 21 层，与 config 的 full 位置逐个相等。
+    resolution: corrected
+    changed_to: 改写成「L0/L1/L2 各一次，之后每 4 层一次（L2+4k，止于 L74），主干共 21 层」，并点明按字面推会得 20 层
+  - id: R4
+    field: arch.attention.num_kv_heads
+    severity: missing
+    claim: num_kv_heads 64 原样抄自 config，旁边没有口径说明
+    finding: >-
+      GLM-5.3 是 MLA，落盘缓存是 kv_a_proj_with_mqa 的 576 维 latent。
+      按 2×64×head_dim 192 折算得 24576 元素/层/token，对实际 576 是 42.7 倍高估。
+      head_dim_note 警告了 V 与 o_proj，唯独没警告 KV 宽度 ——
+      而「头数乘积当缓存宽度」正是 skill 规则 2 点名的坑。
+    resolution: corrected
+    changed_to: head_dim_note 末尾补「num_kv_heads=64 是 query 侧可见的头数，不是缓存宽度，按 24576 折算高估 42.7 倍」
+  - id: R5
+    field: params.total
+    severity: missing
+    claim: params 块只有 counting_note，总量「见 data/derived/」
+    finding: >-
+      data/derived/glm-5.3.json 当时不存在 —— derive.py 从未对这份跑过，
+      Gate B 的两路对账没做过，总参数量在仓里任何地方都查不到。
+      「厂商没声明」和「不写本仓自己的统计值」是两件事：本仓多数记录的
+      params 就是清单实测值。
+    resolution: corrected
+    changed_to: >-
+      补 total 753330000000 与十项 breakdown（权重路实测 753,329,940,480，
+      与 HF 的 safetensors tally 逐 dtype 逐位相同），跑通 derive.py，
+      Gate B 的参数总量一项由 skip 变为 ok、delta 0.0
+  - id: R6
+    field: params.counting_note
+    severity: miscategorized
+    claim: 「完整权重清单（141 分片 118629 张量）逐项统计……numel 即参数数」
+    finding: >-
+      118629 是 safetensors 条目数，其中 59044 条是 weight_scale_inv（scale 容器，
+      不是参数），真权重张量 59585 条。按字面「118629 张量 numel 即参数数」求和
+      得 753,375,793,584，比真值多 45,853,104（+0.006%）。
+      「不打包」那半句是对的：全清单只有 F8_E4M3 / BF16 / F32 三种 dtype，
+      无 INT8/UINT8 容器。
+    resolution: corrected
+    changed_to: counting_note 区分「条目数 118629」与「权重张量 59585」，并写明 scale 不计入参数、只计入权重存储
+  - id: R7
+    field: precision.quantization.subsystem_method
+    severity: wrong
+    claim: 「weights_proj [32, 6144] 与 k_norm 是 BF16」，用来解释 indexer 桶里非 FP8 的那 2.1%
+    finding: >-
+      按记录自己声明的归类器 scripts/lib/subsystems.py（顺序即优先级，norm 在
+      indexer 之前），indexer.k_norm.{weight,bias} 落在 norm 桶，不在 indexer 桶。
+      实测 indexer 桶的 BF16 只有 21 个 weights_proj、4,128,768 元素，一个 k_norm
+      都没有 —— 即 97.9% 的分母里本来就不含 k_norm，拿它解释这 2.1% 是混了两个口径。
+      97.9% 这个数本身换四种口径都落在 97.89–97.91%，不受影响。
+    resolution: corrected
+    changed_to: 改成「weights_proj 的 21 份是 BF16；k_norm 按优先级归在 norm 桶，不在这个分母里」
+  - id: R8
+    field: precision.quantization.per_subsystem.draft
+    severity: imprecise
+    claim: draft 整桶报 FP8_E4M3
+    finding: >-
+      draft 桶按元素数 99.22% 是 FP8_E4M3，但 12 个张量共 77,300,480 元素是 BF16，
+      其中 eh_proj [6144, 12288] 一张占 97.7%。这一截是记录专门写了告警的
+      indexer BF16（4,128,768）的 18.7 倍，却一个字没提；而同一份记录的
+      bottleneck 还强调 MTP 块「接近一层主干的全量开销」。
+      假定 MTP 块整体 FP8 的引擎会在 eh_proj 上直接解错。
+    resolution: corrected
+    changed_to: subsystem_method 按 indexer 那句的写法补了 draft 桶的异质构成
+  - id: R9
+    field: precision.quantization.per_subsystem.router
+    severity: imprecise
+    claim: router 整桶报 BF16
+    finding: >-
+      router 桶的 75 个 mlp.gate.weight 是 BF16，但 75 个 e_score_correction_bias
+      [256] 是 FP32 真参数（不是 scale，per_subsystem_scale 里也没有 router 项，
+      所以此前仓里没有任何地方记下它们）。解释就在 config 里：
+      moe_router_dtype=float32，整份记录没提过这个字段。
+    resolution: corrected
+    changed_to: subsystem_method 注明 e_score_correction_bias 是 FP32 真参数，arch.moe.routing 补 moe_router_dtype=float32
+  - id: R10
+    field: precision.training
+    severity: unsupported
+    claim: training BF16，继承 precision official
+    finding: >-
+      能读到的只有 config 的 dtype=bfloat16，它描述的是未被量化那些模块的
+      落盘/计算 dtype（本次就是那 2.1B BF16 张量），不是训练精度；
+      模型卡 tags 只有 fp8，cardData 无训练信息。标 official 名不副实，
+      且因为继承 precision official 而不进 --list-judgements，绕过了 Gate C。
+      数值上无下游影响（derive.py 的 act_dtype 回落到同一个 cfg.dtype）。
+    resolution: corrected
+    changed_to: 删掉 precision.training，并加一条 open question 说明训练精度无一手来源
+  - id: R11
+    field: arch.ffn.layer_pattern
+    severity: missing
+    claim: arch.ffn 只有 type moe，arch.moe 没有 dense_intermediate
+    finding: >-
+      本仓 4 份带 first_k_dense 的记录（ds-v2 / v3 / v3.1 / v3.2-exp）全部同时带
+      这两个字段，无例外，且都是 schema 正式字段。稠密中间维清单里有：
+      L0–L2 的 mlp.gate_proj [12288, 6144]，是单个专家的 6 倍、单层 226,492,416
+      参数，全模型最宽的单个 GEMM，对算子表与 TP 切分都是实的。
+    resolution: corrected
+    changed_to: 补 arch.ffn.layer_pattern 与 arch.moe.dense_intermediate 12288
+  - id: R12
+    field: evidence
+    severity: miscategorized
+    claim: mtp_layers 与 first_k_dense 继承 arch official
+    finding: >-
+      两个都是 skill 规则 2 点名要用权重验的字段（mtp_layers 逐字点名：
+      DeepSeek 声明 1、权重里 3 块），而 notes 又说「结构事实全部对照清单核过」。
+      值本身核过且正确 —— 层索引 0–78 连续、L78 是唯一 MTP 块；
+      无专家的层只有 [0,1,2] —— 但标成 official 就不进 --list-judgements。
+      「本代没踩 V4 那个坑」本身就是值得标 derived 的信息。
+    resolution: corrected
+    changed_to: evidence 补 arch.decoding.mtp_layers derived、arch.moe.first_k_dense derived、precision.weights_release derived
+  - id: R13
+    field: notes
+    severity: overreach
+    claim: 「结构事实全部对照完整权重清单核过」
+    finding: >-
+      top_k / index_topk / routed_scaling_factor / norm_eps 这类运行期标量，
+      权重清单在原理上核不了 —— 清单只有名字、形状与 dtype。
+      把一句真话（结构形状全核过）扩成了一句假话。
+    resolution: corrected
+    changed_to: 按能核与不能核分开陈述，点明哪些只有 config 一个来源
+  - id: R14
+    field: arch.attention.head_dim_note
+    severity: imprecise
+    claim: 「QK 与 V 宽度不同：qk_nope 192 + qk_rope 64 = 256 管 QK，V 每头 256」
+    finding: >-
+      先断言两者不同，紧接着给的两个数都是 256，它们相等（config 另有
+      qk_head_dim 256 直接说明这件事，记录绕过它去绕了 nope+rope 一圈）。
+      真正不对称的只在 kv_b_proj [28672, 512] 内部：28672 = 64 × (K-nope 192
+      + V 256)，K 的 rope 64 维由 kv_a_proj_with_mqa 尾段直接产出。
+      另外按 head_dim 推 o_proj 的方向与 DeepSeek 一代相反，是低 25% 不是高 50%。
+    resolution: corrected
+    changed_to: 改写 head_dim_note，引用 qk_head_dim，并写明误推方向
+  - id: R15
+    field: infra_signals
+    severity: imprecise
+    claim: modules_to_not_convert 那条列了 22 个 indexers_proj，未解释 22 与 21 层的差
+    finding: >-
+      事实全部核实：22 条、拼写逐字一致、权重里 indexers_proj 命中 0、
+      真实张量 indexer.weights_proj 命中 22 且全 BF16。差的那 1 个是 MTP 块
+      （第 78 层），所以 22 是精确的、不是 config 多写了一个。
+      而同一份清单里 indexer.k_norm 与 k_norm.bias 的拼写都对 ——
+      错的只有 weights_proj 一项，不是「这份清单用了另一套命名」。
+      条目末句（任何按清单做精确匹配的再量化流程都会照常量化它）是推论，
+      item 级 evidence 标 derived 对它过度担保。
+    resolution: corrected
+    changed_to: 补上 22 = 21 + MTP 的解释与「只有这一项拼错」的细节，item 级 evidence 改 judgement
+  - id: R16
+    field: arch.attention.sparse.index_topk
+    severity: unsupported
+    claim: 缓存账按一个条目覆盖一个 token（1:1）计费，但没有来源也没有 open question
+    finding: >-
+      config 的 index_topk / index_topk_freq / index_skip_topk_offset 都定不了
+      存储语义，权重清单只能排除「宽度」这根轴（宽度恒 576 / 128），
+      管不了条目数这根轴。先例与机制两头都指向 1:1（本仓 V4.1 同样有
+      index_topk，全局 KV 仍按 per-token 线性计费；跨层复用选择要求全历史的
+      latent 与 index K 都在），但这是推理不是读到的。
+      本仓 V4.1 的条目数因子恰好错过一次，代价 2.5 倍。
+    resolution: open
+    changed_to: 数值不改（先例与机制支持 1:1），但补了 open question 并在 quantified 里写明这个口径没有一手来源
+  - id: R17
+    field: '-'
+    severity: wrong
+    claim: lib/dtypes.py 的 is_scale_tensor 按「含 scale」的子串判断区分 scale 容器与参数
+    finding: >-
+      两个方向都错。漏判：ds-v3 一代的叶名是 weight_scale_inv，
+      `.scale_inv` 与 `.scale_` 两条都不匹配（scale 前面是下划线不是点）、
+      dtype 是 F32 不是 FP8_E8M0，三条分支全不命中 —— 实测在 glm-5.3 / ds-v3 /
+      ds-v3.2-exp 上命中 0/59044、0/45808、0/45932，于是 scale 被算进了参数量。
+      已提交的 data/derived/ds-v3.json 的 params_total 正是含 scale 的那个值
+      （684,531,386,000，真值 684,489,845,504，多 41,540,496，+0.006%）。
+      误判：`_scale` 结尾这条把 V4 一代 mHC 的 hc_attn_scale / hc_ffn_scale /
+      hc_head_scale 当成容器排掉，它们是真参数（258–374 元素/份）。
+      Gate B 拦不住：参数总量的核对容差是 2%，而偏差是 0.006%。
+      字节口径不受影响 —— 字节本来就该含 scale。
+    resolution: corrected
+    changed_to: >-
+      改为按整段叶名白名单匹配 {scale, scale_inv, weight_scale, weight_scale_inv}；
+      全仓重跑 derive，ds-v3 与 ds-v3.2-exp 的参数量各降 41.5M / 41.6M、
+      V4 那五份各升 258–374，两份记录手写的 params 同步订正
+  - id: R18
+    field: bottlenecks
+    severity: imprecise
+    claim: KV 字节按 BF16 兜底（2 B/元素），而权重落盘是 FP8_E4M3
+    finding: >-
+      质疑不成立，记录是对的。derive.py 的兜底读的是 config 声明的基准/计算
+      dtype（GLM 这份 cfg.dtype=bfloat16），不是权重落盘 dtype；
+      这也是本仓既有惯例 —— ds-v4-flash / ds-v4-pro 同样是 quant_method fp8 的
+      FP8 发布、torch_dtype bfloat16，兜底同样取 2 B。语义上 KV cache 属激活侧，
+      权重存 FP8 不推定 KV 存 FP8。独立重算的公式路输出与记录逐位相同
+      （47616 元素、95232 B/token、93.0 GiB，且 95232 = 93×1024 为整数，没有凑整）。
+    resolution: refuted
+    changed_to: 原值保留；只在 quantified 与 open question 里写明兜底值的出处是 config dtype 而非 weights_release，免得读者以为该取 1 B
+  - id: R19
+    field: precision.quantization.subsystem_method
+    severity: imprecise
+    claim: 「全部来自完整权重清单逐项统计，非抽样」—— 本仓其余记录都是抽样，这是强断言
+    finding: >-
+      断言成立，而且比记录自己写的更硬：shapes.json 恰好 118629 个键、
+      每个都带 shape 与 dtype（缺 0 个），fetched.json 的 failed_shards 为空，
+      层索引 0–78 连续。另有一份记录当时没用上的独立对照 ——
+      repoinfo.json 里 HF 平台自己从分片头统计的 safetensors tally
+      （BF16 2,103,729,152 / F8_E4M3 751,226,191,872 / F32 19,456 /
+      total 753,329,940,480）与本仓排 scale 后的逐 dtype 求和逐位相同。
+    resolution: confirmed
+    changed_to: subsystem_method 补上「每个条目都带 shape 与 dtype、无读失败分片」的依据，counting_note 与 open question 补上 HF tally 这条交叉验证
+notes: >-
+  GLM 家族的当前旗舰（2026-10-14），model_type 为 glm_moe_dsa：MLA 配
+  DeepSeek 式 DSA 稀疏选择。本仓第一份非 DeepSeek 的稀疏注意力记录，
+  用来和 DeepSeek 线做对照 —— 两家都叫「稀疏注意力」，省的却不是同一笔账
+  （见 bottlenecks 的 kv-capacity 一条）。
+  层数、宽度、注意力几何、indexer 层集合、专家分布、MTP 块构成与逐子系统精度
+  全部对照完整权重清单核过，不是从模型卡抄的；top_k / index_topk /
+  routed_scaling_factor 这类运行期标量只有 config 一个来源，
+  清单只有名字、形状与 dtype，交叉验证不了。
+
+open_questions:
+  - >-
+    KV cache 的实际落盘精度未披露。推导按 config 声明的 dtype=bfloat16 兜底
+    （2 B/元素；这是未量化模块的落盘/计算 dtype，不是权重存储的 FP8_E4M3），
+    所以 95232 B/token 是 dtype_fallback 兜底口径，不能和 DeepSeek V4.1 那个
+    按落盘格式算出来的理论下限（890 B/token）直接比倍数 —— 两种口径不同。
+    若实际落盘是 FP8_E4M3，1M 上下文的真值是 46.5 GiB，差整整 2 倍
+  - >-
+    DSA 的 topk 是「选读」还是「选存」，config 的 index_topk / index_topk_freq /
+    index_skip_topk_offset 三个字段都定不了，要读实现。当前按 1:1 逐 token 计费，
+    依据是本仓对 V4.1 的既有口径（那份同样有 index_topk，全局 KV 仍按 per-token
+    线性计费）加机制推理（跨层复用选择要求全历史的 latent 与 index K 都在）。
+    若其实是「只存 topk 个」，这笔账要整个搬到 per_sequence 口径 ——
+    那不是折算，是账的形状变了。本仓 V4.1 的条目数因子错过一次（2.5 倍），
+    所以这一条挂着
+  - >-
+    weights_proj 为什么保持 BF16 没有来源。config 的 modules_to_not_convert 里
+    那一项拼成了 indexers_proj、匹配不上任何真实张量（见 infra_signals），
+    那就不是它保护下来的。可能是厂商量化脚本走另一套规则（比如 [32, 6144] 的
+    首维 32 不足一个 128 块），也可能这份 config 是量化之后补写的。
+    要钉死得看量化脚本或 transformers 的 FP8 量化器行为
+  - >-
+    训练精度无一手声明。config 只有 dtype=bfloat16，它描述的是未被量化的那些
+    模块的落盘 dtype（本次就是那 2.1B BF16 张量），不是训练精度；模型卡 tags
+    只有 fp8。所以 precision.training 这个字段不写，要补得读模型卡正文或论文
+  - >-
+    config 的 index_share_for_mtp_iteration=true 声称 MTP 迭代共享 index，
+    但 MTP 块（第 78 层）权重里自带一整套 indexer（wk/wq_b/weights_proj/k_norm）。
+    共享的到底是选择结果还是 K 本身，config 定不了，要读实现
+  - >-
+    shared 层复用的是哪一个 full 层的选择（最近的上游、还是固定映射），
+    以及 index_skip_topk_offset=3 在其中的作用，config 不足以确定
+  - >-
+    激活参数无任何外部值可对账，只有本仓按权重清单的统计，而且带宽口径与
+    可比官方口径是两个数（见 data/derived/）。总参数那一半已经不是孤证：
+    厂商没声明，但 HF 平台自己从 141 个分片头统计的 safetensors tally
+    （753,329,940,480，同样排 scale）与本仓逐 dtype 逐位相同
+  - >-
+    另有 FP8 之外的发布变体与否未核（模型卡 tags 只有 fp8），
+    若存在 BF16 版，其量化配置差异未对照

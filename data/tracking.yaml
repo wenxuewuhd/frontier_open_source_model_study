@@ -2,7 +2,7 @@
 # 这份清单是选取结果，不是模型记录本身 —— 双周采集时核对并更新。
 # 较小档位只在有结构对照价值时才录，并在其记录里标 lineage.track: side。
 
-updated: 2026-10-28
+updated: 2026-10-29
 policy: 每个家族追最新旗舰；较小档位仅在有结构对照价值时收录
 
 families:
@@ -25,7 +25,8 @@ families:
     flagship: GLM-5.3
     hf_repo: zai-org/GLM-5.3
     released: 2026-10-14
-    status: pending
+    model_id: glm-5.3
+    status: recorded
     note: model_type 为 glm_moe_dsa，MLA + DSA 稀疏
 
   - family: minimax
