@@ -1,7 +1,7 @@
 {
  "id": "ds-v3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T07:25:52+00:00",
+ "generated_at": "2026-10-29T10:34:23+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v3",
   "config_present": true,
@@ -80,13 +80,15 @@
   },
   "notes": [],
   "dtype_assumed": true,
-  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
+  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML",
+  "bytes_basis": "dtype_fallback"
  },
  "kv_capacity_bytes_at_context": {
   "4096": 287834112,
   "32768": 2302672896,
   "163840": 11513364480
  },
+ "kv_capacity_basis": "dtype_fallback",
  "active_params": {
   "status": "ok",
   "total": 36627792472.0,

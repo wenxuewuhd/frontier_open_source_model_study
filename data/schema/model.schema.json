@@ -53,6 +53,18 @@
       }
     },
 
+    "kv_component": {
+      "type": "object",
+      "description": "一个 KV 分量的存储格式：元素 dtype + 每 block 个元素共用一个 scale。每元素字节 = dtype 字节 + scale 字节 / block",
+      "additionalProperties": false,
+      "required": ["dtype"],
+      "properties": {
+        "dtype": { "$ref": "#/$defs/dtype" },
+        "block": { "type": "integer", "minimum": 1, "description": "几个元素共用一个 scale；不填表示无 scale" },
+        "scale_dtype": { "$ref": "#/$defs/dtype" },
+        "note": { "type": "string" }
+      }
+    },
     "dtype": {
       "description": "权重/激活的数据类型记号，沿用 safetensors 与各家量化方案的写法",
       "type": "string",
@@ -224,7 +236,8 @@
               "properties": {
                 "global_kv": { "type": "integer", "description": "全局 KV（随上下文增长）的元素数/token" },
                 "indexer": { "type": "integer", "description": "稀疏索引 K 的元素数/token" },
-                "local_window_bytes_per_sequence": { "type": "integer", "description": "滑窗局部 KV，每序列固定，不随上下文增长" },
+                "local_window_bytes_per_sequence": { "type": "integer", "description": "滑窗局部 KV，每序列固定，不随上下文增长。字节口径，按模型 dtype 兜底算的旧写法；有 precision.kv_cache_components 时改用 local_window_elems_per_sequence" },
+                "local_window_elems_per_sequence": { "type": "integer", "description": "滑窗局部 KV 的元素数/序列（层数 × 窗口 × 每位置宽度）。和 global_kv / indexer 同为元素口径，字节由 derive.py 按 precision.kv_cache_components 折算 —— 元素数实测自权重，精度另有来源，两者分开存才不会互相传染不确定性" },
                 "note": { "type": "string" }
               }
             },
@@ -469,6 +482,18 @@
         },
         "kv_cache": { "$ref": "#/$defs/dtype" },
         "kv_cache_scale": { "$ref": "#/$defs/dtype" },
+        "kv_cache_components": {
+          "type": "object",
+          "description": "KV 各分量的落盘精度。跨层共享 / 压缩的结构里三类缓存（全局 KV、index K、滑窗）常用不同格式，单值 kv_cache 装不下。键与 kv_sharing.measured_per_token 对应。derive.py 据此把元素数折成字节（含 scale）—— 结果是理论下限，不含分页与对齐粒度",
+          "additionalProperties": false,
+          "properties": {
+            "global_kv": { "$ref": "#/$defs/kv_component" },
+            "indexer": { "$ref": "#/$defs/kv_component" },
+            "local_window": { "$ref": "#/$defs/kv_component" },
+            "source": { "type": "string", "description": "精度从哪来。读实现得来的和量出来的不是一个等级，写清楚" },
+            "note": { "type": "string" }
+          }
+        },
         "quantization": {
           "type": "object",
           "additionalProperties": false,

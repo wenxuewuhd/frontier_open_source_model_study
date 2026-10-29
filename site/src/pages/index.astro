@@ -83,6 +83,8 @@ const recorded = r.families.filter((f) => f.status === 'recorded').length;
               <dd class="num">
                 {kv?.per_token_bytes ? `${kv.per_token_bytes.toLocaleString()} B/token` : '—'}
                 {kv?.per_sequence_bytes ? ` + ${fmtBytes(kv.per_sequence_bytes)}/序列` : ''}
+                {kv?.bytes_basis === 'theoretical_floor' && <span class="muted">（理论下限）</span>}
+                {kv?.bytes_basis === 'dtype_fallback' && <span class="muted">（精度兜底）</span>}
               </dd>
             </dl>
           </div>

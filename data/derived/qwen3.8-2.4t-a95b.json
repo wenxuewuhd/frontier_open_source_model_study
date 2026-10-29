@@ -1,13 +1,13 @@
 {
  "id": "qwen3.8-2.4t-a95b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-28T09:46:38+00:00",
+ "generated_at": "2026-10-29T10:34:26+00:00",
  "inputs": {
   "facts_dir": "facts/qwen3.8-2.4t-a95b",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/qwen/qwen3.8-2.4t-a95b.yaml",
-  "ep_size": 8
+  "ep_size": 1
  },
  "from_shapes": {
   "available": true,
@@ -16,8 +16,8 @@
   "params_total": 2446182725504.0,
   "params_by_subsystem": {
    "expert": 2370821947392.0,
-   "norm": 1515520.0,
-   "attention": 39895618944.0,
+   "norm": 1536128.0,
+   "attention": 39895598336.0,
    "router": 385875968.0,
    "shared_expert": 4631265280.0,
    "embed": 2034237440.0,
@@ -27,8 +27,8 @@
   "weight_bytes_total": 4892365451008.0,
   "weight_bytes_by_subsystem": {
    "expert": 4741643894784.0,
-   "norm": 3031040.0,
-   "attention": 79791237888.0,
+   "norm": 3072256.0,
+   "attention": 79791196672.0,
    "router": 771751936.0,
    "shared_expert": 9262530560.0,
    "embed": 4068474880.0,
@@ -41,6 +41,7 @@
   "experts_seen": 512,
   "expert_storage": "stacked",
   "layers_present": 92,
+  "mtp_layers_seen": [],
   "layer_index_max": 92,
   "layers_missing": [],
   "moe_layers_seen": 92,
@@ -86,13 +87,15 @@
    "线性注意力的状态布局依实现而定，此处是按常见布局的估算"
   ],
   "dtype_assumed": true,
-  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
+  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML",
+  "bytes_basis": "dtype_fallback"
  },
  "kv_capacity_bytes_at_context": {
   "4096": 966950912,
   "32768": 3668082688,
   "262144": 25277136896
  },
+ "kv_capacity_basis": "dtype_fallback",
  "active_params": {
   "status": "ok",
   "total": 93253629312.0,
@@ -123,7 +126,7 @@
  },
  "ep_communication": {
   "status": "ok",
-  "ep_size": 8,
+  "ep_size": 1,
   "moe_layers": 92,
   "bytes_per_token": 30146560,
   "bytes_per_layer": 327680,

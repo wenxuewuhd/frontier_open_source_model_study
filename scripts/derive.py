@@ -167,7 +167,34 @@ def _kv_out(comp, status, atype, kv_dtype, layers, full_layers, linear_layers, n
     }
 
 
-def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None) -> dict:
+def _component_bpe(components: dict, key: str, fallback: float):
+    """一个 KV 分量的每元素字节（含 scale）与口径。
+
+    有 precision.kv_cache_components 就按它算 —— 元素数 × 落盘精度是精确计数，
+    但不含分页、环页、对齐这些分配粒度，所以是理论下限，不是部署占用。
+    没有就退回模型 dtype 兜底，口径另记，两种数不能混着比。
+    """
+    c = (components or {}).get(key)
+    if not c:
+        return fallback, "dtype_fallback", None
+    d = dtypes.nbytes(c.get("dtype"))
+    if d == 0:
+        return fallback, "dtype_fallback", None
+    blk = c.get("block")
+    s = dtypes.nbytes(c.get("scale_dtype")) / blk if blk and c.get("scale_dtype") else 0.0
+    return d + s, "theoretical_floor", c
+
+
+# measured 是 R28 加的第三种可用状态。下游凡是判「KV 算出来了没有」的地方都要认它 ——
+# 当初只改了 kv_memory 没改这几处，实测记录的容量表、精度兜底标记、算术强度全部静默为空
+KV_USABLE = ("ok", "partial", "measured")
+
+_FLOOR_NOTE = ("字节是理论下限：元素数 × 落盘精度（含 scale）的精确计数，不含分页、环页与对齐粒度。"
+               "实际部署在它之上，不能直接当显存预算")
+
+
+def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None,
+              components: dict = None) -> dict:
     """注意力的显存模型，分两个分量返回。
 
     混合结构里这两者的增长方式根本不同，混成一个数就没法做容量规划：
@@ -182,7 +209,7 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None) -> di
     if not layers:
         return {"status": "unknown", "why": "config 里没有 num_hidden_layers"}
     b = dtypes.nbytes(kv_dtype)
-    if b == 0:
+    if b == 0 and not components:
         return {"status": "unknown", "why": f"KV 精度 {kv_dtype} 未知"}
 
     atype = (attn.get("type") or "").upper()
@@ -207,8 +234,9 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None) -> di
         notes.append(f"只有 {full_layers} 层产出 KV（共 {layers} 层），其余层跨层读取；"
                      "按总层数乘会高估")
 
-    # --- full attention：随上下文增长
-    if full_layers:
+    # --- full attention：随上下文增长。KV 精度是 MIXED 这类非单值时套不了公式，
+    # 那种记录必然带 measured_per_token，交给下面的实测分支
+    if full_layers and b:
         lora = attn.get("kv_lora_rank") or t.get("kv_lora_rank")
         rope = attn.get("qk_rope_head_dim") or t.get("qk_rope_head_dim")
         kvh = attn.get("num_kv_heads") or t.get("num_key_value_heads")
@@ -275,28 +303,47 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None) -> di
     # --- 实测优先：有完整权重清单量出来的每 token 元素数就直接用它。
     # 逐层压缩的结构（V4 一代的 compressor.ape）公式表达不了，而按未压缩宽度乘层数
     # 会高估五倍以上。量出来的数比任何通用公式都可靠，所以它一旦存在就接管。
+    # 元素数和精度分开取：元素数实测自权重，精度往往另有来源（实现、文档），
+    # 两者的可信度不同，乘出来的字节要带上精度那一侧的口径
     meas = share.get("measured_per_token") or {}
     if meas.get("global_kv") or meas.get("indexer"):
         comp.clear()
-        if meas.get("global_kv"):
-            comp["global_kv"] = {
-                "bytes_per_token": meas["global_kv"] * b,
-                "terms": {"elements_per_token": meas["global_kv"], "source": "完整权重清单实测"},
-            }
-        if meas.get("indexer"):
-            comp["indexer"] = {
-                "bytes_per_token": meas["indexer"] * b,
-                "terms": {"elements_per_token": meas["indexer"], "source": "完整权重清单实测"},
-            }
-        if meas.get("local_window_bytes_per_sequence"):
+        bases = set()
+
+        def put(key, elems, per):
+            bpe, basis, fmt = _component_bpe(components, key, b)
+            if not bpe:
+                notes.append(f"{key} 没有落盘精度、模型 dtype 也无法兜底，未计入")
+                return
+            bases.add(basis)
+            terms = {"elements" + per: elems, "bytes_per_element": bpe, "source": "完整权重清单实测"}
+            if fmt:
+                terms["storage"] = fmt
+            comp[key] = {"bytes" + per: elems * bpe, "bytes_basis": basis, "terms": terms}
+
+        for key in ("global_kv", "indexer"):
+            if meas.get(key):
+                put(key, meas[key], "_per_token")
+        if meas.get("local_window_elems_per_sequence"):
+            put("local_window", meas["local_window_elems_per_sequence"], "_per_sequence")
+            comp.get("local_window", {}).setdefault("terms", {})["note"] = "滑窗局部 KV，每序列固定，不随上下文增长"
+        elif meas.get("local_window_bytes_per_sequence"):
+            bases.add("dtype_fallback")
             comp["local_window"] = {
                 "bytes_per_sequence": meas["local_window_bytes_per_sequence"],
-                "terms": {"note": "滑窗局部 KV，每序列固定，不随上下文增长"},
+                "bytes_basis": "dtype_fallback",
+                "terms": {"note": "滑窗局部 KV，每序列固定，不随上下文增长。记录直接给的字节数，按模型 dtype 算"},
             }
         status = "measured"
         if meas.get("note"):
             notes.append(meas["note"])
-        return _kv_out(comp, status, atype, kv_dtype, layers, full_layers, linear_layers, notes)
+        out = _kv_out(comp, status, atype, kv_dtype, layers, full_layers, linear_layers, notes)
+        out["bytes_basis"] = next(iter(bases)) if len(bases) == 1 else "mixed"
+        if "theoretical_floor" in bases:
+            notes.append(_FLOOR_NOTE)
+        if out["bytes_basis"] == "mixed":
+            notes.append("各分量字节口径不一：有的按落盘精度（理论下限），有的按模型 dtype 兜底，合计不是同一种数")
+        return out
 
     # --- 稀疏注意力的 indexer 缓存：漏掉会低估
     sp = attn.get("sparse") or {}
@@ -552,12 +599,15 @@ def main():
     # 层索引 >= num_hidden_layers 的归草稿侧：V3 一代的 MTP 是「第 61 层」，
     # 名字里没有 mtp 标记，不这样分会把整层算进主干
     shp = from_shapes(shapes, logical, mtp_from=t.get("num_hidden_layers"))
-    kv = kv_memory(t, attn, kv_dtype, prec.get("kv_cache_scale"))
-    if kv_dtype_assumed and kv.get("status") in ("ok", "partial"):
+    kv = kv_memory(t, attn, kv_dtype, prec.get("kv_cache_scale"), prec.get("kv_cache_components"))
+    if kv_dtype_assumed and kv.get("status") in KV_USABLE:
         kv["dtype_assumed"] = True
         kv["dtype_assumed_note"] = (
             f"precision.kv_cache 未填，按模型 dtype {kv_dtype} 兜底。"
             "KV 精度直接决定容量结论，确认后请填进模型 YAML")
+    if kv.get("status") in KV_USABLE and not kv.get("bytes_basis"):
+        # 公式路径：字节按单一 KV dtype 算，口径取决于这个 dtype 是填的还是兜底的
+        kv["bytes_basis"] = "dtype_fallback" if kv_dtype_assumed else "declared_dtype"
     act = active_params(shp, t, attn, moe)
     comm = comm_per_token(t, moe, hidden, act_dtype, args.ep)
 
@@ -567,7 +617,7 @@ def main():
         flops["linear_per_token"] = 2 * act["total"]
         flops["note"] = "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
     intensity = {}
-    if act.get("status") == "ok" and kv.get("status") in ("ok", "partial") and shp.get("available"):
+    if act.get("status") == "ok" and kv.get("status") in KV_USABLE and shp.get("available"):
         # 搬运量按激活权重占总权重的比例折算实际字节（低位量化已体现在 shapes 里）
         frac = act["total"] / shp["params_total"] if shp["params_total"] else 0
         moved = shp["weight_bytes_total"] * frac
@@ -579,7 +629,7 @@ def main():
         }
 
     kv_at = {}
-    if kv.get("status") in ("ok", "partial"):
+    if kv.get("status") in KV_USABLE:
         if args.context_lens:
             lens = [int(x) for x in args.context_lens.split(",") if x.strip()]
         else:
@@ -607,6 +657,8 @@ def main():
         "from_shapes": shp,
         "kv_cache": kv,
         "kv_capacity_bytes_at_context": kv_at,
+        # 容量数跟着字节口径走：theoretical_floor 是下限，不是部署占用
+        "kv_capacity_basis": kv.get("bytes_basis"),
         "active_params": act,
         "flops": flops,
         "arithmetic_intensity": intensity,
@@ -643,9 +695,10 @@ def main():
         if act.get("total_with_embed", 0) > act.get("total", 0):
             print(f"激活(可比官方)   {dtypes.fmt_count(act['total_with_embed'])}"
                   f"  (含输入词表 {dtypes.fmt_count(act['excluded']['embed_tokens'])})")
-    if kv.get("status") in ("ok", "partial"):
+    if kv.get("status") in KV_USABLE:
         warn = " [精度兜底]" if kv.get("dtype_assumed") else ""
         warn += " [含估算项]" if kv.get("status") == "partial" else ""
+        warn += " [理论下限]" if kv.get("bytes_basis") == "theoretical_floor" else ""
         fa = kv.get("full_attention_layers"); la = kv.get("linear_attention_layers")
         print(f"注意力显存       {kv['per_token_bytes']:.0f} B/token"
               f" + {dtypes.fmt_bytes(kv['per_sequence_bytes'])}/序列"
@@ -653,7 +706,7 @@ def main():
         for name, c in (kv.get("components") or {}).items():
             bit = (f"{c['bytes_per_token']:.0f} B/token" if c.get("bytes_per_token")
                    else f"{dtypes.fmt_bytes(c.get('bytes_per_sequence', 0))}/序列")
-            print(f"    {name:16s} {c['layers']:>3d} 层  {bit}")
+            print(f"    {name:16s} {str(c.get('layers', '—')):>3s} 层  {bit}")
         for n in kv.get("notes") or []:
             print(f"    ! {n}")
         for L, v in kv_at.items():

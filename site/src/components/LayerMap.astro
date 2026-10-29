@@ -81,6 +81,29 @@ const cellTitle = (l: any, g: string) =>
 
 const srcLayers = cols.filter((l: any) => l.cache.global_kv || l.cache.index_k);
 const tot = L.cache_totals ?? {};
+const lw = tot.local_window;
+const kvs = L.kv_storage ?? {};
+const floor = tot.global_kv?.bytes_basis === 'theoretical_floor';
+const perTokenBytes = (tot.global_kv?.per_token_bytes_sum ?? 0) + (tot.index_k?.per_token_bytes_sum ?? 0);
+// 一条 = 一个条目（全局 KV、index K）或一个窗口位置（滑窗），宽度取任一源层 / 任一层的实测值
+const anyLayer = (key: string) => cols.find((l: any) => l.cache[key])?.cache[key]?.entry_elems;
+const storage = [
+  { key: 'global_kv', label: '全局 KV（compress_kv）' },
+  { key: 'index_k', label: 'index K' },
+  { key: 'local_window', label: '滑窗' },
+]
+  .filter((r) => kvs[r.key])
+  .map((r) => ({ ...r, s: kvs[r.key], width: anyLayer(r.key) }));
+const fmtB = (b?: number) =>
+  b === undefined || b === null ? '—' : `${Number.isInteger(b) ? b.toLocaleString() : b.toFixed(1)} B`;
+// 漂移检查：记录是折算后的每 token 元素数，和逐层的 per_token_elems_sum 比，不和未折算的条目宽比
+const drift = [
+  ['全局 KV', recorded?.global_kv, tot.global_kv?.per_token_elems_sum],
+  ['indexer', recorded?.indexer, tot.index_k?.per_token_elems_sum],
+  ['滑窗元素/序列', recorded?.local_window_elems_per_sequence, lw?.elems_per_sequence],
+]
+  .filter(([, rec, got]) => rec !== undefined && got !== undefined && rec !== got)
+  .map(([label, rec, got]) => ({ label, rec, got }));
 const mib = (b: number) => (b / 2 ** 20).toFixed(1);
 // 图例按位宽从低到高排，与调色板槽位顺序一致；表里没出现的精度不进图例
 const seen = new Set(L.classes.flatMap((c: any) => c.tensors.map((t: any) => t.logical_dtype ?? t.dtype)));
@@ -258,9 +281,10 @@ const classRoles = (c: any) => {
       <table>
         <thead>
           <tr>
-            <th>层</th><th class="num">压缩比</th><th class="num">全局 KV 条目</th><th class="num">index K 条目</th>
-            <th class="num">每 token（记录口径）</th>
-            <th class="num alt">若条目聚合（推断）</th>
+            <th>层</th><th class="num">压缩比</th>
+            <th class="num">全局 KV / token</th><th class="num">index K / token</th>
+            <th class="num">合计 / token{floor ? '（理论下限）' : ''}</th>
+            <th class="num alt">条目宽（未折算）</th>
           </tr>
         </thead>
         <tbody>
@@ -268,56 +292,88 @@ const classRoles = (c: any) => {
             <tr>
               <td>{l.label}</td>
               <td class="num">{l.compress_ratio}</td>
-              <td class="num">{l.cache.global_kv?.entry_elems ?? '—'}</td>
-              <td class="num">{l.cache.index_k?.entry_elems ?? '—'}</td>
-              <td class="num">
-                {(l.cache.global_kv?.entry_elems ?? 0) + (l.cache.index_k?.entry_elems ?? 0)} 元素
-              </td>
-              <td class="num alt">
-                {(l.cache.global_kv?.per_token_elems ?? 0) + (l.cache.index_k?.per_token_elems ?? 0)}
-              </td>
+              <td class="num">{l.cache.global_kv ? `${l.cache.global_kv.per_token_elems} 元素 · ${fmtB(l.cache.global_kv.per_token_bytes)}` : '—'}</td>
+              <td class="num">{l.cache.index_k ? `${l.cache.index_k.per_token_elems} 元素 · ${fmtB(l.cache.index_k.per_token_bytes)}` : '—'}</td>
+              <td class="num">{fmtB((l.cache.global_kv?.per_token_bytes ?? 0) + (l.cache.index_k?.per_token_bytes ?? 0))}</td>
+              <td class="num alt">{l.cache.global_kv?.entry_elems ?? '—'} + {l.cache.index_k?.entry_elems ?? '—'}</td>
             </tr>
           ))}
           <tr>
             <td><b>合计</b></td>
             <td />
-            <td class="num">{tot.global_kv?.entry_elems_sum}</td>
-            <td class="num">{tot.index_k?.entry_elems_sum}</td>
+            <td class="num">{tot.global_kv?.per_token_elems_sum} 元素 · {fmtB(tot.global_kv?.per_token_bytes_sum)}</td>
+            <td class="num">{tot.index_k?.per_token_elems_sum} 元素 · {fmtB(tot.index_k?.per_token_bytes_sum)}</td>
             <td class="num">
-              <b>{(tot.global_kv?.entry_elems_sum ?? 0) + (tot.index_k?.entry_elems_sum ?? 0)} 元素</b>
+              <b>{fmtB(perTokenBytes)}</b>{floor && <span class="muted"> 理论下限</span>}
             </td>
-            <td class="num alt">
-              {(tot.global_kv?.per_token_elems_sum ?? 0) + (tot.index_k?.per_token_elems_sum ?? 0)}
-            </td>
+            <td class="num alt">{tot.global_kv?.entry_elems_sum} + {tot.index_k?.entry_elems_sum}</td>
           </tr>
         </tbody>
       </table>
       <p class="small muted">
-        条目宽度是产出张量的输出维，实测<Evidence tag="derived" />。
-        「每 token（记录口径）」按一个条目对应一个 token 计，与记录里的
-        <code>measured_per_token</code> 一致 —— 这是<strong>上界</strong>：
-        实测到的是每条目多少元素，一个条目服务几个 token 没有实测到。
-        滑窗局部 KV 另计，全部 {nMain} 层合计每序列固定 {fmtBytes(tot.local_window_bytes_per_sequence)}，不随上下文增长。
+        元素数：条目宽度是产出张量的输出维，实测<Evidence tag="derived" />；一个条目池化 compress_ratio 个 token，
+        所以每 token = 条目宽 ÷ 压缩比（依据见核查区 <b>R30</b>：参考实现的 r:1 时序池化，
+        与权重里 L20 无 compressor.wgate、indexer.wk 输入维等于压缩器输出维两处结构一致）。
+        末列是未折算的条目宽度，只作对照。
       </p>
       <p class="small muted">
-        末列是另一种读法：把每个条目当作覆盖 compress_ratio 个 token。
-        这是<strong>推断</strong>，不是实测<Evidence tag="judgement" />，所以不进记录，也不作主值。
-        两条迹象支持它 —— 比值为 1 的 L20 恰好没有 compressor.wgate（单 token 无须加权汇聚），
-        且 indexer.wk 的输入维等于压缩器输出维（index K 也按条目生成，要折就得一起折）。
-        但本代 compressor 没有 ape 张量把比值钉死，n=4 层的结构相关定不了论。
-        留痕见下方核查区 <b>R30</b>（未解决）。
+        字节 = 元素数 × 下表的落盘格式（含 scale）。
+        {floor
+          ? <>这是<strong>理论下限</strong>：精确计数，但不含分页、环页与对齐粒度，实际部署在它之上，不能直接当显存预算（缺口见核查区 <b>R31</b>）。</>
+          : <>记录没给落盘精度，按模型 dtype 兜底，不是实际格式。</>}
       </p>
+
+      {storage.length > 0 && (
+        <table>
+          <thead>
+            <tr>
+              <th>分量</th><th>落盘格式</th><th>scale</th>
+              <th class="num">字节 / 元素</th><th class="num">一条的字节</th><th>口径</th>
+            </tr>
+          </thead>
+          <tbody>
+            {storage.map((r: any) => (
+              <tr>
+                <td>{r.label}</td>
+                <td>{r.s.dtype ? <><i class={`sw ${dtOf(r.s.dtype).cls}`}>{dtOf(r.s.dtype).short}</i>{r.s.dtype}</> : '兜底'}</td>
+                <td>{r.s.scale_dtype ? `每 ${r.s.block} 元素一个 ${r.s.scale_dtype}` : '—'}</td>
+                <td class="num">
+                  {r.s.data_bytes_per_element !== undefined
+                    ? `${r.s.data_bytes_per_element} + ${+r.s.scale_bytes_per_element.toFixed(4)}`
+                    : r.s.bytes_per_element}
+                </td>
+                <td class="num">
+                  {r.width ? `${r.width} × ${+r.s.bytes_per_element.toFixed(4)} = ${fmtB(r.width * r.s.bytes_per_element)}` : '—'}
+                  {r.width && r.s.scale_bytes_per_element ? <span class="muted">（scale 占 {fmtB(r.width * r.s.scale_bytes_per_element)}）</span> : ''}
+                </td>
+                <td>{r.s.basis === 'theoretical_floor' ? <>理论下限 <Evidence tag="judgement" /></> : '模型 dtype 兜底'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <p class="small muted">
+        落盘格式取自参考实现的读取，本项目没有直接核对代码<Evidence tag="judgement" />（核查区 <b>R21</b>）。
+        它和上面精度格子里的权重精度是两回事：产出 KV 的投影是 BF16 / FP8 的权重，
+        写进缓存的是激活量化之后的格式。格式是实现的选择，换引擎可能不同。
+      </p>
+      {lw && (
+        <p class="small muted">
+          滑窗局部 KV 另计，每序列固定、不随上下文增长：
+          主干 {lw.main?.layers} 层 {fmtBytes(lw.main?.bytes_per_sequence)}
+          {lw.mtp && <> + MTP {lw.mtp.layers} 块 {fmtBytes(lw.mtp.bytes_per_sequence)}（投机解码时常驻）</>}
+          {' '}= {fmtBytes(lw.bytes_per_sequence)}{lw.bytes_basis === 'theoretical_floor' ? '，理论下限' : '，按模型 dtype 兜底'}。
+        </p>
+      )}
       {
-        recorded &&
-          (recorded.global_kv !== tot.global_kv?.entry_elems_sum ||
-            recorded.indexer !== tot.index_k?.entry_elems_sum) && (
-            <div class="note">
-              <b>记录与逐层提取对不上。</b>记录里的 measured_per_token 是全局 KV {recorded.global_kv}、
-              indexer {recorded.indexer}，而逐层条目合计是 {tot.global_kv?.entry_elems_sum} /{' '}
-              {tot.index_k?.entry_elems_sum}。两者本该相等（同一份权重清单、同一口径），
-              不等说明记录没跟上重新提取的结果，或者提取口径变了 —— 先查清楚再引用任何一个。
-            </div>
-          )
+        drift.length > 0 && (
+          <div class="note">
+            <b>记录与逐层提取对不上。</b>
+            {drift.map((d) => <> {d.label}：记录 {d.rec}，逐层合计 {d.got}。</>)}
+            两者本该相等（同一份权重清单、同一口径），不等说明记录没跟上重新提取的结果，
+            或者提取口径变了 —— 先查清楚再引用任何一个。
+          </div>
+        )
       }
     </>
   )
@@ -348,8 +404,8 @@ const classRoles = (c: any) => {
 }
 
 <style>
-  /* 推断列：和记录值并排但不等重 —— 它没有实测支撑，不能让人顺手引用。
-     做小一号、弱一档，并用左边框把它和前面的实测列隔开。 */
+  /* 对照列：未折算的条目宽度，和主值并排但不等重 —— 它不是每 token 的量，不能让人顺手引用。
+     做小一号、弱一档，并用左边框把它和前面的主值列隔开。 */
   th.alt, td.alt {
     color: var(--ink-3);
     font-size: 12px;

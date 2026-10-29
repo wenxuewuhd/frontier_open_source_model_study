@@ -1,7 +1,7 @@
 {
  "id": "qwen3.8-27b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-28T09:46:39+00:00",
+ "generated_at": "2026-10-29T10:34:26+00:00",
  "inputs": {
   "facts_dir": "facts/qwen3.8-27b",
   "config_present": true,
@@ -15,8 +15,8 @@
   "tensor_count": 1199,
   "params_total": 27781427952.0,
   "params_by_subsystem": {
-   "norm": 660480.0,
-   "attention": 7239780864.0,
+   "norm": 674816.0,
+   "attention": 7239766528.0,
    "dense_ffn": 17112760320.0,
    "vision": 460730096.0,
    "embed": 1271398400.0,
@@ -25,8 +25,8 @@
   },
   "weight_bytes_total": 55562855904.0,
   "weight_bytes_by_subsystem": {
-   "norm": 1320960.0,
-   "attention": 14479561728.0,
+   "norm": 1349632.0,
+   "attention": 14479533056.0,
    "dense_ffn": 34225520640.0,
    "vision": 921460192.0,
    "embed": 2542796800.0,
@@ -39,6 +39,7 @@
   "experts_seen": 0,
   "expert_storage": null,
   "layers_present": 64,
+  "mtp_layers_seen": [],
   "layer_index_max": 64,
   "layers_missing": [],
   "moe_layers_seen": 0,
@@ -84,13 +85,15 @@
    "线性注意力的状态布局依实现而定，此处是按常见布局的估算"
   ],
   "dtype_assumed": true,
-  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype BF16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
+  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype BF16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML",
+  "bytes_basis": "dtype_fallback"
  },
  "kv_capacity_bytes_at_context": {
   "4096": 421003264,
   "32768": 2300051456,
   "262144": 17332436992
  },
+ "kv_capacity_basis": "dtype_fallback",
  "active_params": {
   "status": "ok",
   "total": 25624600064.0,

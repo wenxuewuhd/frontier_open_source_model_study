@@ -13,8 +13,11 @@
   * 实测量化块 = 权重形状 ÷ scale 形状，INT8 容器先把末维还原成 FP4 的逻辑宽度。
     不抄 config 的 weight_block_size。
   * 缓存贡献只把权重能证明的部分记成实测：条目宽度来自产出张量的输出维。
-    一个条目覆盖几个 token 取决于 compress_ratios，那是 config 值，
-    按它折算出的每 token 值单独标 basis，不冒充实测。
+    一个条目覆盖 compress_ratios 个 token（时序池化），比值本身是 config 值，
+    折算出的每 token 值单独标 basis，不冒充实测。
+  * 字节 = 元素数 × 落盘精度。精度读记录里的 precision.kv_cache_components，
+    来源和元素数不同，按分量各自记格式与口径；读不到才按 --kv-bytes 兜底。
+    按落盘精度算出的是理论下限，不含分页与环页粒度。
 
 只吃完整清单。零差异孪生版的 shapes.json 是空的 —— 空文件和「真的没有」长得一样，
 所以这里遇到空清单直接退出，不产出一份全是空层的文件。
@@ -24,6 +27,7 @@
 """
 import argparse
 import datetime
+import glob
 import hashlib
 import json
 import os
@@ -31,6 +35,8 @@ import re
 import sys
 from collections import defaultdict
 from math import prod
+
+import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib import dtypes  # noqa: E402
@@ -145,14 +151,49 @@ def tensor_rows(block: dict, fp4: bool, mtp_from: int):
     return rows, issues
 
 
+# 逐层图里叫 index_k，记录里叫 indexer —— 两边沿用各自已有的名字，这里对一次
+_COMPONENT_KEY = {"global_kv": "global_kv", "index_k": "indexer", "local_window": "local_window"}
+
+
+def kv_storage(model_path: str, fallback: int) -> dict:
+    """每个缓存分量的每元素字节（含 scale）与口径。"""
+    comps = {}
+    if model_path and os.path.exists(model_path):
+        prec = (yaml.safe_load(open(model_path)) or {}).get("precision") or {}
+        comps = prec.get("kv_cache_components") or {}
+    out = {}
+    for key, rec_key in _COMPONENT_KEY.items():
+        c = comps.get(rec_key)
+        d = dtypes.nbytes(c.get("dtype")) if c else 0
+        if not d:
+            out[key] = {"bytes_per_element": fallback, "basis": "dtype_fallback"}
+            continue
+        blk = c.get("block")
+        sb = dtypes.nbytes(c.get("scale_dtype")) if blk and c.get("scale_dtype") else 0
+        out[key] = {
+            "dtype": dtypes.norm(c["dtype"]), "block": blk,
+            "scale_dtype": dtypes.norm(c["scale_dtype"]) if sb else None,
+            "data_bytes_per_element": d,
+            "scale_bytes_per_element": sb / blk if sb else 0,
+            "bytes_per_element": d + (sb / blk if sb else 0),
+            "basis": "theoretical_floor",
+        }
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--id", required=True)
     ap.add_argument("--facts-dir", default="facts")
     ap.add_argument("--out-dir", default="data/derived")
     ap.add_argument("--kv-bytes", type=int, default=2,
-                    help="缓存元素字节数，默认 BF16。只影响字节换算，不影响元素数")
+                    help="记录里没有分量精度时的兜底字节数，默认 BF16。只影响字节换算，不影响元素数")
+    ap.add_argument("--model", help="模型 YAML，读 precision.kv_cache_components；缺省按 id 在 data/models 下找")
     args = ap.parse_args()
+    if not args.model:
+        hit = glob.glob(os.path.join("data", "models", "**", f"{args.id}.yaml"), recursive=True)
+        args.model = hit[0] if hit else None
+    storage = kv_storage(args.model, args.kv_bytes)
 
     fdir = os.path.join(args.facts_dir, args.id)
     sp, cp = os.path.join(fdir, "shapes.json"), os.path.join(fdir, "cfg.json")
@@ -197,7 +238,8 @@ def main():
         if lw and window:
             cache["local_window"] = {
                 "entry_elems": lw, "window": window,
-                "bytes_per_sequence": lw * window * args.kv_bytes,
+                "elems_per_sequence": lw * window,
+                "bytes_per_sequence": lw * window * storage["local_window"]["bytes_per_element"],
             }
         for key, src in (("global_kv", "attn.compressor.wkv.weight"),
                          ("index_k", "attn.indexer.wk.weight")):
@@ -207,7 +249,7 @@ def main():
             c = {"entry_elems": w, "source": src, "compress_ratio": ratio}
             if ratio:
                 c["per_token_elems"] = w / ratio
-                c["per_token_bytes"] = w / ratio * args.kv_bytes
+                c["per_token_bytes"] = w / ratio * storage[key]["bytes_per_element"]
             cache[key] = c
 
         groups = sorted({r["group"] for r in rows}, key=lambda g: [k for k, *_ in OP_GROUPS + [("other",)]].index(g))
@@ -296,11 +338,27 @@ def main():
             "layers": [l["index"] for l in src],
             "entry_elems_sum": sum(l["cache"][key]["entry_elems"] for l in src),
             "per_token_elems_sum": sum(l["cache"][key].get("per_token_elems", 0) for l in src),
-            "note": "entry_elems_sum 把每个条目当成一个 token；per_token_elems_sum 按 compress_ratio 折算",
+            "per_token_bytes_sum": sum(l["cache"][key].get("per_token_bytes", 0) for l in src),
+            "bytes_basis": storage[key]["basis"],
+            "note": "per_token_elems_sum 按 compress_ratio 折算（一个条目池化 compress_ratio 个 token）；"
+                    "entry_elems_sum 是未折算的条目宽度之和，只作对照",
         }
-    lw = [l["cache"]["local_window"]["bytes_per_sequence"] for l in main_layers if "local_window" in l["cache"]]
-    if lw:
-        totals["local_window_bytes_per_sequence"] = sum(lw)
+    # 滑窗分主干与 MTP 两段记：权重里 MTP 块也有 attn.wkv，投机解码时它们的窗口同样常驻；
+    # 只跑主干时只有前一段
+    win = {}
+    for kind in ("main", "mtp"):
+        ls = [l for l in layers if l["kind"] == kind and "local_window" in l["cache"]]
+        if ls:
+            win[kind] = {"layers": len(ls),
+                         "elems_per_sequence": sum(l["cache"]["local_window"]["elems_per_sequence"] for l in ls),
+                         "bytes_per_sequence": sum(l["cache"]["local_window"]["bytes_per_sequence"] for l in ls)}
+    if win:
+        totals["local_window"] = {
+            **win,
+            "elems_per_sequence": sum(v["elems_per_sequence"] for v in win.values()),
+            "bytes_per_sequence": sum(v["bytes_per_sequence"] for v in win.values()),
+            "bytes_basis": storage["local_window"]["basis"],
+        }
 
     extra = {}
     if t.get("dspark_target_layer_ids"):
@@ -315,16 +373,21 @@ def main():
         "inputs": {"shapes": sp, "shapes_sha256_16": sha(sp), "cfg": cp, "cfg_sha256_16": sha(cp),
                    "tensors": len(shapes)},
         "op_groups": [{"key": k, "label": lb} for k, lb, _ in OP_GROUPS],
-        "kv_elem_bytes": args.kv_bytes,
+        # 三个分量的格式各不相同，单值装不下；字节含 scale
+        "kv_storage": {**storage, "source": args.model},
         "bytes_semantics": "bytes_by_group 是存储（含 scale，全部专家）；decode_bytes_by_group 是每 token "
                            "搬运，路由专家按 top_k / 专家数折算，其余组全读",
         "cache_basis": {
             "entry_elems": "产出张量的输出维，权重实测",
-            "per_token_elems": "entry_elems ÷ compress_ratio。每条目覆盖 compress_ratio 个 token 是推断，"
-                               "不是实测 —— 依据是比值为 1 的源层恰好没有 compressor.wgate（只有 1 个 token "
-                               "时无须加权汇聚），以及 indexer.wk 的输入维等于压缩器输出维，即 index K "
-                               "也按压缩条目算",
-            "local_window": "attn.wkv 输出维（实测）× sliding_window（config），每序列固定，不随上下文增长",
+            "per_token_elems": "entry_elems ÷ compress_ratio。一个条目池化 compress_ratio 个 token —— "
+                               "参考实现的压缩器是 r:1 时序池化（比值 2 的组 compress_kv 为 L/2 条），"
+                               "与权重两处结构一致：比值为 1 的源层恰好没有 compressor.wgate（单 token "
+                               "无须加权汇聚），indexer.wk 的输入维等于压缩器输出维（index K 跟着同一个 r 折）",
+            "local_window": "attn.wkv 输出维（实测）× sliding_window（config），每序列固定，不随上下文增长。"
+                            "主干与 MTP 块分开合计",
+            "bytes": "元素数 × kv_storage 里该分量的每元素字节（含 scale）。basis=theoretical_floor 是"
+                     "精确计数的理论下限，不含分页、环页、对齐粒度，实际部署在它之上；"
+                     "basis=dtype_fallback 是记录没给精度时的兜底，两种不能混比",
         },
         "config_only_roles": extra,
         "layers": layers,

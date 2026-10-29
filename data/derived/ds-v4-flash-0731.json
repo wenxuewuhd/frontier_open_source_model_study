@@ -1,7 +1,7 @@
 {
  "id": "ds-v4-flash-0731",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T07:25:52+00:00",
+ "generated_at": "2026-10-29T10:34:23+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-flash-0731",
   "config_present": true,
@@ -24,30 +24,43 @@
   "components": {
    "global_kv": {
     "bytes_per_token": 10912,
+    "bytes_basis": "dtype_fallback",
     "terms": {
      "elements_per_token": 5456,
+     "bytes_per_element": 2,
      "source": "完整权重清单实测"
     }
    },
    "indexer": {
     "bytes_per_token": 2688,
+    "bytes_basis": "dtype_fallback",
     "terms": {
      "elements_per_token": 1344,
+     "bytes_per_element": 2,
      "source": "完整权重清单实测"
     }
    },
    "local_window": {
     "bytes_per_sequence": 5636096,
+    "bytes_basis": "dtype_fallback",
     "terms": {
-     "note": "滑窗局部 KV，每序列固定，不随上下文增长"
+     "note": "滑窗局部 KV，每序列固定，不随上下文增长。记录直接给的字节数，按模型 dtype 算"
     }
    }
   },
   "notes": [
    "按完整权重清单逐层量出来的每 token 元素数。compressor.ape 的第一维就是该层压缩比，每 token 元素 = wkv 输出宽度 / 比值（比值 4: 21 层, wkv 宽 1024, ape 有 -> 256 元素/token；比值 128: 20 层, wkv 宽 512, ape 有 -> 4 元素/token）。attn.wkv 那一份是 sliding_window 的局部 KV，每序列固定、不随上下文增长，单列在 local_window_bytes_per_sequence，不计入 per_token。按未压缩宽度乘总层数会高估五倍以上"
-  ]
+  ],
+  "bytes_basis": "dtype_fallback",
+  "dtype_assumed": true,
+  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
  },
- "kv_capacity_bytes_at_context": {},
+ "kv_capacity_bytes_at_context": {
+  "4096": 61341696,
+  "32768": 451280896,
+  "1048576": 14266269696
+ },
+ "kv_capacity_basis": "dtype_fallback",
  "active_params": {
   "status": "unknown",
   "why": "没有 shapes，无法按子系统拆分"

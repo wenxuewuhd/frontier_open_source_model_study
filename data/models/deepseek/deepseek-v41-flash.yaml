@@ -41,8 +41,15 @@ lineage:
     benefit: 既恢复了独立的 index 表示，又把 indexer 缓存压下来：V3.2 是每层都产 K， 这里只有 4 层产、另 4 层复用。按 8 层算会让 indexer 缓存高估一倍
   - axis: attention
     text: 新增跨层 KV 共享 kv_source_layer_ids [2,8,14,20]，逐层压缩比随之降到 1–2 （前代是沿层交替 4/128）—— 从「每层重压缩」换成「少数层产出、多数层共享」
-    benefit: KV 随层数增长这条被切断。按完整权重清单实测，1M 上下文下全局 KV + indexer 合计 5.0 GiB（另有 5.0 MiB/序列 的滑窗局部 KV，不随上下文增长）。
-      按通用 MLA 公式乘 40 层会算出 45 GiB —— 差 9 倍，但要注意这个倍数只对主 KV 分量成立（40 层对 4 层），不是对总量的普适结论
+    benefit: >-
+      KV 随层数增长这条被切断。和通用 MLA 公式比，结构与精度是两个因子，要分开算：
+      结构按元素数比、与精度无关 —— 公式 (512+64) × 40 层 = 23040 元素/token，
+      实测 1600（全局 KV 1280 + indexer 320，按 compress_ratio 折算），差 14.4 倍；
+      只看主 KV 是 23040 对 1280，18 倍。精度是另一个因子：同样 1600 元素按 BF16 是 3200 B，
+      按参考实现的落盘格式（FP4 + scale）是 890 B，再差 3.6 倍 —— 那是存储格式的选择，
+      不是跨层共享的功劳。按 BF16 算的 45 GiB 不能直接比 1M 下的 0.87 GiB，
+      否则约 52 倍里混进了精度收益。0.87 GiB 是理论下限（不含分页粒度），
+      另有滑窗局部 KV 每序列固定 2.71 MiB（同为下限），不随上下文增长
   - axis: moe
     text: 取消 hash 路由层：ffn.gate.tid2eid 张量退场，num_hash_layers 不再声明。 路由专家 256→384，专家中间维 2048→2304
     benefit: >-
@@ -177,23 +184,24 @@ arch:
       - 0
       - 0
       measured_per_token:
-        global_kv: 2048
-        indexer: 512
-        local_window_bytes_per_sequence: 5242880
+        global_kv: 1280
+        indexer: 320
+        local_window_elems_per_sequence: 2818048
         note: >-
-          实测的是「每个压缩条目多少元素」，逐层从完整权重清单量出来；
-          「一个条目服务几个 token」则**没有实测到**，这里按 1:1 记账，所以这组数是上界。
-          若条目按 compress_ratio 聚合（见 open_questions 里 measured_per_token 那条），
-          实际应为 global_kv 1280 / indexer 320，合计 3200 B/token。
-          字段名叫 per_token 是历史遗留，读的时候按「每条目 × 假定 1 条目 = 1 token」理解。
-          全局 KV：4 个源层各 compressor.wkv [512, 5120]，每层 512 元素。
+          元素口径：每 token 多少元素。条目宽度逐层从完整权重清单量出，再按 compress_ratio
+          折算 —— 一个条目池化 r 个 token（依据见核查 R30）。
+          全局 KV：4 个源层各 compressor.wkv [512, 5120]，每条目 512 元素；L2/L8/L14 比值 2、
+          L20 比值 1，合计 3×256 + 512 = 1280。
           是 512 而不是 512+64 —— wkv 输出总共就 512 维，且 96085 个张量里 K 侧
           没有任何 rope 投影，所以 qk_rope_head_dim 的 64 维在 latent 之内。
-          indexer：4 个源层各 indexer.wk [128, 512]，每层 128 元素。
-          attn.wkv 那一份是 sliding_window=128 的局部 KV，每序列固定 5.0 MiB、
-          不随上下文增长，单列在 local_window_bytes_per_sequence，不计入 per_token
+          indexer：同 4 层各 indexer.wk [128, 512]，每条目 128 元素，跟着同一个 r 折，
+          3×64 + 128 = 320。
+          滑窗：attn.wkv [512, 5120] 在主干 40 层与 MTP 3 块都有，sliding_window=128，
+          43 × 128 × 512 = 2818048 元素/序列（只跑主干时 40 层 2621440），不随上下文增长，不计入 per_token。
+          字节不写在这里：落盘精度另有来源、可信度不同（precision.kv_cache_components），
+          由 derive.py 折算，结果是理论下限
       note: compress_ratios 有 43 项而主干只有 40 层，末尾 3 项对应 MTP 层。 「只有 4 层产出 KV」只对全局/压缩 KV 成立：attn.wkv 与
-        kv_norm 在全部 40 层 都存在，配合 sliding_window=128，每层都有自己的局部窗口 KV（不随上下文增长）。 indexer 同理要分开看：产出 index
+        kv_norm 在全部 40 层 都存在（MTP 3 块也有），配合 sliding_window=128，每层都有自己的局部窗口 KV（不随上下文增长）。 indexer 同理要分开看：产出 index
         K 的只有 4 层（有 indexer.wk 权重）， 另外 4 层只复用已有 K 重新打分。按 8 层算会让 indexer 缓存高估一倍。
     sparse:
       mechanism: indexer 打分选块，再在选中的块上做全注意力
@@ -270,6 +278,33 @@ precision:
   - FP4
   - BF16
   - FP32
+  # KV 落盘精度。三个分量格式各不相同，单值装不下，kv_cache 记 MIXED、逐分量见下。
+  # 来源是参考实现的读取（二手），证据标 judgement，不继承 precision: official —— 见核查 R21
+  kv_cache: MIXED
+  kv_cache_components:
+    global_kv:
+      dtype: FP4
+      block: 16
+      scale_dtype: FP8_E4M3
+      note: compress_kv。e2m1 每 16 元素一个 E4M3 scale（NVFP4 式细块），每条目 512 × 0.5 + 32 = 288 B
+    indexer:
+      dtype: FP4
+      block: 32
+      scale_dtype: FP8_E8M0
+      note: index_k。e2m1 每 32 元素一个 E8M0 scale，即 OCP MXFP4，每条目 128 × 0.5 + 4 = 68 B
+    local_window:
+      dtype: FP8_E4M3
+      block: 128
+      scale_dtype: FP8_E8M0
+      note: 来源只给了「每 128 元素 1 字节 scale」，E8M0 是按 config 的 scale_fmt=ue8m0 推定的。每位置 512 + 4 = 516 B
+    source: >-
+      用户账号下的 artifact「V4.1 注意力分层图」（https://claude.ai/artifact/5Vc5TNsXt26ZZkgvvTDYaW）
+      对参考实现的读取。其精度表引了量化调用 fp4_act_quant(latent, 16, True, scale_dtype=e4m3)、
+      fp4_act_quant(k, 32, True)、act_quant(kv, fp8_block_size, …)；本项目没有直接读到这段代码
+    note: >-
+      产出 KV 的投影是权重精度（compressor.* 与 indexer.wk 为 BF16，attn.wkv 为 FP8），
+      落盘是激活量化之后的格式 —— 两件事，表上分开看。格式是实现的选择，不是模型的属性，
+      换引擎可能不同。按它折算的字节是理论下限，不含分页与环页粒度
   quantization:
     method: fp8
     activation_scheme: dynamic
@@ -344,13 +379,17 @@ bottlenecks:
 - dimension: kv-capacity
   finding: >-
     长上下文的 KV 由三部分构成，量级差得很远，容量规划要分开算。
-    全局 KV：4 个源层（第 2/8/14/20 层）各 512 元素，4096 B/token，占 80%。
-    indexer K：同样 4 个源层各 128 元素，1024 B/token，占 20% —— index K 在 32 个
-    index 头之间共享，不是逐头。另 4 层（24/28/32/36）只复用已有 K 重新打分，不占缓存。
-    滑窗局部 KV：全部 40 层都有 attn.wkv，但受 sliding_window=128 约束，
-    每序列固定 5.0 MiB，不随上下文增长。
-    合计 5120 B/token。三类的瓶颈性质不同：前两类随上下文线性增长，第三类是常量。
-  quantified: 1M 上下文单序列 5.0 GiB + 5.0 MiB 固定（按 BF16 兜底精度；实际 KV 精度未披露）
+    元素数（权重实测，按 compress_ratio 折算）：全局 KV 4 个源层（第 2/8/14/20 层）合计 1280 元素/token；
+    indexer K 同 4 层合计 320 元素/token —— index K 在 32 个 index 头之间共享，不是逐头，
+    另 4 层（24/28/32/36）只复用已有 K 重新打分，不占缓存。
+    滑窗局部 KV：主干 40 层与 MTP 3 块都有 attn.wkv，受 sliding_window=128 约束，
+    每序列固定 2818048 元素，不随上下文增长。
+    三类的落盘格式也不同（全局 KV FP4 块 16 配 E4M3 scale，index K FP4 块 32 配 E8M0，滑窗 FP8 块 128），
+    按参考实现的格式折算：全局 KV 720 B/token（81%）、indexer 170 B/token（19%），合计 890 B/token；
+    滑窗 2.71 MiB/序列。前两类随上下文线性增长，第三类是常量。
+  quantified: >-
+    理论下限：1M 上下文单序列 0.87 GiB + 2.71 MiB 固定（元素数 × 落盘格式含 scale，不含分页与环页粒度）。
+    实际部署在它之上：同一来源记录的一套部署栈实测 1224 B/token，是下限的 1.38 倍（见核查 R31）
   visibility: public
 - dimension: operator-gap
   finding: norm_eps 取 1e-20，比常见默认值小 14 个数量级。带 eps 参数的归一化算子与融合 pass 普遍以默认值或固定取值表处理 eps，若未把模型的取值显式传下去，不会报错而会静默改变数值结果；
@@ -367,9 +406,13 @@ infra_signals:
   evidence: judgement
   horizon: next-gen
   axis: retrieval
-- text: KV 容量不能再用「层数 × 每层 KV × 上下文」估算，而且要按三类对象分别建模： 全局/压缩 KV 按产出层（4 层 × 1152 B），indexer K 按产出 K 的层
-    （4 层各 128 元素，index K 在 32 个 index 头之间共享，不是逐头）， 滑窗 KV 按窗口大小常驻（40 层各自 128 窗口，不随上下文增长，合计 5.0 MiB/序列）。
-    三类的量级差得很远：全局 4096 B/token、indexer 1024 B/token、滑窗 5 MiB/序列。 只按「总层数 × 未压缩宽度」建模，三类都会错。
+- text: >-
+    KV 容量不能再用「层数 × 每层 KV × 上下文」估算，而且要按三类对象分别建模：
+    全局/压缩 KV 按产出层与压缩比（4 层，每条目 512 元素，比值 2 的层一个条目池化 2 个 token），
+    indexer K 按产出 K 的层（4 层，每条目 128 元素，同样按比值折；index K 在 32 个 index 头之间共享，不是逐头），
+    滑窗 KV 按窗口大小常驻（主干 40 层与 MTP 3 块各自 128 窗口，不随上下文增长）。
+    三类的量级差得很远，按参考实现落盘格式的理论下限：全局 720 B/token、indexer 170 B/token、滑窗 2.71 MiB/序列。
+    只按「总层数 × 未压缩宽度」建模，三类都会错；三类的落盘格式又各不相同，单一 KV dtype 也装不下。
   evidence: judgement
   horizon: now
   axis: attention
@@ -408,6 +451,9 @@ evidence:
   precision: official
   precision.quantization.packing_note: derived
   precision.quantization.block_size_note: derived
+  # 读实现得来、本项目未直接核对代码，不能跟着 precision: official 走
+  precision.kv_cache: judgement
+  precision.kv_cache_components: judgement
   arch.attention.kv_sharing.measured_per_token: derived
   arch.attention.sparse.index_kv_dim: derived
   arch.attention.sparse.index_kv_source: derived
@@ -592,9 +638,22 @@ review:
 - id: R21
   field: precision.kv_cache
   severity: unsupported
-  claim: KV 精度未填，推导按模型 dtype BF16 兜底
-  finding: 有二手材料称滑窗 KV、主 KV 与 indexer 各用不同的低位格式，均远小于 BF16， 但该材料自身存在与权重清单矛盾之处，不足采信。 当前 5120 B/token
-    与 5.0 GiB@1M 都是按 BF16 兜底算的。
+  claim: KV 精度未填，推导按模型 dtype BF16 兜底，5120 B/token、1M 下 5.0 GiB
+  finding: >-
+    三个分量的落盘格式各不相同，单值装不下，已拆进 kv_cache_components：
+    全局 KV（compress_kv）FP4 e2m1、每 16 元素一个 E4M3 scale；index K FP4、每 32 元素一个
+    E8M0 scale（即 MXFP4）；滑窗 FP8 E4M3、每 128 元素一个 1 字节 scale。
+    来源是用户账号下的 artifact「V4.1 注意力分层图」对参考实现的读取，其精度表引了量化调用
+    fp4_act_quant(latent, 16, True, scale_dtype=e4m3)、fp4_act_quant(k, 32, True)、
+    act_quant(kv, fp8_block_size, …)。
+    可信的一面：该来源的结构性陈述与权重清单逐条对得上（KV 与 index K 各 4 份、L20 无门控、
+    条目宽 512 / 128、L24/28/32/36 只重打分）；288 B/条目与 890 B/token 在来源内部闭合；
+    MXFP4 块 32 配 E8M0 严格符合 OCP MX 规范，块 16 配 E4M3 不属任何通用标准，不像是编的。
+    弱环：(1) 本项目没有直接读到那段代码，是二手；(2) 引到的是调用签名，没有 kernel 内部；
+    (3) 落盘格式是实现的选择，不是模型的属性 —— 同一份来源记录的一套部署栈就用了另一种打包
+    （FP8 + 每 32 值一个 BF16 scale），换引擎格式可能不同；
+    (4) 滑窗 scale 只给了「每 128 元素 1 字节」，E8M0 是按 config 的 scale_fmt=ue8m0 推定的。
+    所以采用但证据标 judgement，不继承 precision: official；未经原始 kernel 或显存实测确认，保持 open
   resolution: open
 - id: R22
   field: arch.attention.qk_rope_head_dim
@@ -685,33 +744,67 @@ review:
   changed_to: classify 增加 mtp_from 参数，层索引 >= num_hidden_layers 的归 draft；derive.py 传入 config 的层数
 - id: R30
   field: arch.attention.kv_sharing.measured_per_token
-  severity: unsupported
-  claim: measured_per_token 是「按完整权重清单逐层量出来的每 token 元素数，不是公式推的」
+  severity: wrong
+  claim: measured_per_token 是「按完整权重清单逐层量出来的每 token 元素数」，global_kv 2048 / indexer 512
   finding: >-
-    实测到的是「每个压缩条目 512 元素」，而「一个条目服务几个 token」没有实测到 ——
-    而后者正是 compress_ratios 可能在折算的东西。字段名把未验的假设写进了语义，
-    和早先 index_kv_dim 把「条目宽度」叫成「每 token 宽度」是同一类错（那次高估 4 倍）。
-    两条迹象支持条目按比值聚合：比值为 1 的 L20 恰好没有 compressor.wgate，
-    indexer.wk 输入维 512 等于压缩器输出维（index K 也按条目生成）。
-    若成立，global_kv 1280 + indexer 320 = 3200 B/token，当前的 5120 是上界。
-    n=4 层的结构相关定不了论，权重里也没有第二条独立证据，需查上游实现或实测。
-  resolution: open
+    量到的是「每个压缩条目多少元素」，一个条目覆盖几个 token 没有量到，按 1:1 记账算多了。
+    参考实现读取（来源与弱环见 R21）显示压缩器是 r:1 时序池化，不是通道压缩：比值 2 的组
+    compress_kv 与 index_k 各为 L/2 条、比值 1 的 L20 为 L 条，条目宽度恒为 512 / 128。
+    权重里三处结构与之吻合：(1) 四个源层 compressor.wkv 全是 [512,5120] 而比值是 2/2/2/1 ——
+    比值不作用于条目宽度；(2) compressor.wgate [512,5120] 只存在于比值为 2 的三个源层，
+    比值为 1 的 L20 没有 —— 它是把 r 个 token 折进一个条目时的逐通道加权，单 token 无须加权；
+    (3) indexer.wk 输入维 512 等于压缩器输出维 —— index K 按条目生成，跟着同一个 r 折。
+    之前只有 (2)(3) 两条迹象、n=4 定不了论；有了实现侧的 L/2 这一条，三条互相独立地指向同一结论。
+    按 r 折算后全局 KV 3×256 + 512 = 1280、indexer 3×64 + 128 = 320 元素/token
+  resolution: corrected
+  changed_to: global_kv 2048 → 1280，indexer 512 → 320；note 改写为元素口径并写明 r 折算依据。字节由 precision.kv_cache_components 另行折算（R21、R31）
+- id: R31
+  field: bottlenecks[1].quantified
+  severity: imprecise
+  claim: 1M 上下文单序列 5.0 GiB + 5.0 MiB 固定（按 BF16 兜底精度）
+  finding: >-
+    5120 B/token 是两个错假设下的上界（BF16 精度、条目 1:1 记账）；修正后的 890 B/token 是另一种数：
+    元素数 × 落盘格式含 scale 的精确计数，不含分页、环页与对齐粒度，是理论下限。
+    两者之间算倍数是口径错误，不写「原记录高估多少倍」。实际部署在下限之上：
+    同一份来源记录的一套部署栈（dsv41-kv-offload，2026-10-22）实测每 token 1224 B，是下限的 1.38 倍；
+    其中 186 B/token 来自池块几何（三个比值 2 层的压缩环页撑大了每块的格子），该栈自身的几何地板是 1038 B/token，
+    剩下 148 B/token 是该栈的打包布局与参考格式之差，来源没有逐项拆。只有这一个数据点，且是二手
+  resolution: corrected
+  changed_to: 字节结论一律带理论下限口径 —— derive.py 输出 bytes_basis=theoretical_floor 与 kv_capacity_basis，页面上数字跟着标签走；部署缺口单列 open_questions
+- id: R32
+  field: lineage.changed_from_predecessor
+  severity: wrong
+  claim: 1M 下全局 KV + indexer 合计 5.0 GiB；按通用 MLA 公式乘 40 层是 45 GiB —— 差 9 倍
+  finding: >-
+    原来两边都按 BF16，9 倍本身口径一致，错在 5.0 GiB 建在 1:1 记账上（R30）。
+    但只把 5.0 换成 0.87 会造出新错：45 GiB 是 BF16，0.87 GiB 是 FP4 + scale，
+    约 52 倍里混进了精度收益，算成了跨层共享的功劳。拆开看：结构因子按元素数比，
+    (512+64) × 40 = 23040 对 1600，14.4 倍，与精度无关；精度因子是同样 1600 元素
+    BF16 3200 B 对落盘 890 B，3.6 倍，是存储格式的选择
+  resolution: corrected
+  changed_to: benefit 改为分开写结构因子 14.4 倍（元素口径，主 KV 单看 18 倍）与精度因子 3.6 倍，0.87 GiB 标为理论下限
+- id: R33
+  field: arch.attention.kv_sharing.measured_per_token.local_window_elems_per_sequence
+  severity: imprecise
+  claim: local_window_bytes_per_sequence 5242880 = 40 层 × 128 × 512 × 2 B
+  finding: >-
+    乘式里两个因子都要改。精度：滑窗落盘是 FP8 加每 128 元素 1 字节 scale，不是 BF16（R21）。
+    层数：权重清单里 mtp.0/1/2.attn.wkv 同样存在，MTP 块有自己的窗口，投机解码时一样常驻，
+    40 层只是主干那一段。43 × 128 × 512 = 2818048 元素，按落盘格式 2840064 B（2.71 MiB，下限）；
+    只跑主干时 40 层 2641920 B。窗口宽 512 与 window 128 两个因子另行核过，没变
+  resolution: corrected
+  changed_to: 改为元素口径字段 local_window_elems_per_sequence = 2818048（含 MTP 3 块），字节由 derive.py 按落盘格式折算
 
 notes: 本记录是 P0-A 的 schema 压力测试用例：选它是因为它同时带有 MLA、细粒度 MoE、 跨层 KV 共享、稀疏选块、残差流改造、外置查表、自带草稿模型和混合精度， 字段覆盖最宽。schema
   撑不住的地方会先在这里暴露。
 open_questions:
 - 训练精度未在 config 或模型卡中披露，暂不填 precision.training
-- precision.kv_cache 未确认（核查 R21）。当前 5120 B/token 与 1M 下 5.0 GiB 都是按模型 dtype BF16 兜底算的上界，不可直接引用
-- KV cache 的实际存储精度与 scale 容器精度需查实现确认。未填时推导脚本按模型 dtype（BF16）兜底，并在输出里标注「精度兜底」—— 该值直接决定容量结论
+- >-
+  precision.kv_cache 的三个分量格式取自参考实现的读取（核查 R21），未经原始 kernel 或显存实测确认。
+  按它算的 890 B/token、1M 下 0.87 GiB 是理论下限，不是部署占用；滑窗 scale 的 E8M0 是推定的
 - released 取自 HF lastModified，不等于正式发布日，待查技术报告
 - >-
-  measured_per_token 的「一个条目 = 一个 token」是假设，不是实测（核查 R30）。
-  本代 compressor 没有 ape 张量、wkv 输出恒 512 不随比值变，所以权重里看不出
-  compress_ratios（1 与 2）在折算什么。当前按 1:1 记账，5120 B/token 是上界。
-  两条迹象支持「条目按比值聚合」：比值为 1 的 L20 恰好没有 compressor.wgate
-  （单 token 无须加权汇聚），而 indexer.wk 的输入维 512 等于压缩器输出维
-  （说明 index K 也按条目生成，要折就得和全局 KV 一起折）。
-  若成立，应为 global_kv 1280 + indexer 320 = 3200 B/token，1M 下 3.1 GiB。
-  但 n=4 层的结构相关不足以定论，需查上游实现或实测。
-  V4 一代不存在这个问题 —— 那一代 compressor.ape 的第一维就是比值（见 R28）
+  KV 理论下限与实际部署的缺口只有一个数据点（核查 R31）：同一来源记录的一套部署栈 1224 B/token，
+  下限的 1.38 倍，其中 186 B/token 归因于池块几何、148 B/token 未拆。其他引擎、其他 page size 与环页配置
+  没有数；落盘格式本身也随实现变，所以这个倍数不能推广成「部署 ≈ 下限 × 1.38」
 - hash_cols 24 由 (max_ngram 4 - 1) × n_heads 8 推得，需与实现确认

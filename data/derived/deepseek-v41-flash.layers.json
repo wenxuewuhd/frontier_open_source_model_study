@@ -75,12 +75,42 @@
    "label": "DSpark 头"
   }
  ],
- "kv_elem_bytes": 2,
+ "kv_storage": {
+  "global_kv": {
+   "dtype": "FP4",
+   "block": 16,
+   "scale_dtype": "FP8_E4M3",
+   "data_bytes_per_element": 0.5,
+   "scale_bytes_per_element": 0.0625,
+   "bytes_per_element": 0.5625,
+   "basis": "theoretical_floor"
+  },
+  "index_k": {
+   "dtype": "FP4",
+   "block": 32,
+   "scale_dtype": "FP8_E8M0",
+   "data_bytes_per_element": 0.5,
+   "scale_bytes_per_element": 0.03125,
+   "bytes_per_element": 0.53125,
+   "basis": "theoretical_floor"
+  },
+  "local_window": {
+   "dtype": "FP8_E4M3",
+   "block": 128,
+   "scale_dtype": "FP8_E8M0",
+   "data_bytes_per_element": 1,
+   "scale_bytes_per_element": 0.0078125,
+   "bytes_per_element": 1.0078125,
+   "basis": "theoretical_floor"
+  },
+  "source": "data/models/deepseek/deepseek-v41-flash.yaml"
+ },
  "bytes_semantics": "bytes_by_group 是存储（含 scale，全部专家）；decode_bytes_by_group 是每 token 搬运，路由专家按 top_k / 专家数折算，其余组全读",
  "cache_basis": {
   "entry_elems": "产出张量的输出维，权重实测",
-  "per_token_elems": "entry_elems ÷ compress_ratio。每条目覆盖 compress_ratio 个 token 是推断，不是实测 —— 依据是比值为 1 的源层恰好没有 compressor.wgate（只有 1 个 token 时无须加权汇聚），以及 indexer.wk 的输入维等于压缩器输出维，即 index K 也按压缩条目算",
-  "local_window": "attn.wkv 输出维（实测）× sliding_window（config），每序列固定，不随上下文增长"
+  "per_token_elems": "entry_elems ÷ compress_ratio。一个条目池化 compress_ratio 个 token —— 参考实现的压缩器是 r:1 时序池化（比值 2 的组 compress_kv 为 L/2 条），与权重两处结构一致：比值为 1 的源层恰好没有 compressor.wgate（单 token 无须加权汇聚），indexer.wk 的输入维等于压缩器输出维（index K 跟着同一个 r 折）",
+  "local_window": "attn.wkv 输出维（实测）× sliding_window（config），每序列固定，不随上下文增长。主干与 MTP 块分开合计",
+  "bytes": "元素数 × kv_storage 里该分量的每元素字节（含 scale）。basis=theoretical_floor 是精确计数的理论下限，不含分页、环页、对齐粒度，实际部署在它之上；basis=dtype_fallback 是记录没给精度时的兜底，两种不能混比"
  },
  "config_only_roles": {
   "dspark_target_layers": [
@@ -144,7 +174,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -206,7 +237,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -272,21 +304,22 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     },
     "global_kv": {
      "entry_elems": 512,
      "source": "attn.compressor.wkv.weight",
      "compress_ratio": 2,
      "per_token_elems": 256.0,
-     "per_token_bytes": 512.0
+     "per_token_bytes": 144.0
     },
     "index_k": {
      "entry_elems": 128,
      "source": "attn.indexer.wk.weight",
      "compress_ratio": 2,
      "per_token_elems": 64.0,
-     "per_token_bytes": 128.0
+     "per_token_bytes": 34.0
     }
    }
   },
@@ -343,7 +376,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -400,7 +434,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -457,7 +492,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -514,7 +550,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -571,7 +608,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -637,21 +675,22 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     },
     "global_kv": {
      "entry_elems": 512,
      "source": "attn.compressor.wkv.weight",
      "compress_ratio": 2,
      "per_token_elems": 256.0,
-     "per_token_bytes": 512.0
+     "per_token_bytes": 144.0
     },
     "index_k": {
      "entry_elems": 128,
      "source": "attn.indexer.wk.weight",
      "compress_ratio": 2,
      "per_token_elems": 64.0,
-     "per_token_bytes": 128.0
+     "per_token_bytes": 34.0
     }
    }
   },
@@ -708,7 +747,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -765,7 +805,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -822,7 +863,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -879,7 +921,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -936,7 +979,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -1006,21 +1050,22 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     },
     "global_kv": {
      "entry_elems": 512,
      "source": "attn.compressor.wkv.weight",
      "compress_ratio": 2,
      "per_token_elems": 256.0,
-     "per_token_bytes": 512.0
+     "per_token_bytes": 144.0
     },
     "index_k": {
      "entry_elems": 128,
      "source": "attn.indexer.wk.weight",
      "compress_ratio": 2,
      "per_token_elems": 64.0,
-     "per_token_bytes": 128.0
+     "per_token_bytes": 34.0
     }
    }
   },
@@ -1077,7 +1122,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -1134,7 +1180,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -1191,7 +1238,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -1248,7 +1296,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -1305,7 +1354,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -1372,21 +1422,22 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     },
     "global_kv": {
      "entry_elems": 512,
      "source": "attn.compressor.wkv.weight",
      "compress_ratio": 1,
      "per_token_elems": 512.0,
-     "per_token_bytes": 1024.0
+     "per_token_bytes": 288.0
     },
     "index_k": {
      "entry_elems": 128,
      "source": "attn.indexer.wk.weight",
      "compress_ratio": 1,
      "per_token_elems": 128.0,
-     "per_token_bytes": 256.0
+     "per_token_bytes": 68.0
     }
    }
   },
@@ -1443,7 +1494,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -1500,7 +1552,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -1557,7 +1610,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -1619,7 +1673,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -1676,7 +1731,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -1733,7 +1789,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -1790,7 +1847,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -1852,7 +1910,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -1909,7 +1968,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -1966,7 +2026,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -2023,7 +2084,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -2085,7 +2147,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -2142,7 +2205,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -2199,7 +2263,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -2256,7 +2321,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -2318,7 +2384,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -2375,7 +2442,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -2432,7 +2500,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -2489,7 +2558,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -2549,7 +2619,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -2606,7 +2677,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   },
@@ -2666,7 +2738,8 @@
     "local_window": {
      "entry_elems": 512,
      "window": 128,
-     "bytes_per_sequence": 131072
+     "elems_per_sequence": 65536,
+     "bytes_per_sequence": 66048.0
     }
    }
   }
@@ -6621,7 +6694,9 @@
    ],
    "entry_elems_sum": 2048,
    "per_token_elems_sum": 1280.0,
-   "note": "entry_elems_sum 把每个条目当成一个 token；per_token_elems_sum 按 compress_ratio 折算"
+   "per_token_bytes_sum": 720.0,
+   "bytes_basis": "theoretical_floor",
+   "note": "per_token_elems_sum 按 compress_ratio 折算（一个条目池化 compress_ratio 个 token）；entry_elems_sum 是未折算的条目宽度之和，只作对照"
   },
   "index_k": {
    "layers": [
@@ -6632,9 +6707,25 @@
    ],
    "entry_elems_sum": 512,
    "per_token_elems_sum": 320.0,
-   "note": "entry_elems_sum 把每个条目当成一个 token；per_token_elems_sum 按 compress_ratio 折算"
+   "per_token_bytes_sum": 170.0,
+   "bytes_basis": "theoretical_floor",
+   "note": "per_token_elems_sum 按 compress_ratio 折算（一个条目池化 compress_ratio 个 token）；entry_elems_sum 是未折算的条目宽度之和，只作对照"
   },
-  "local_window_bytes_per_sequence": 5242880
+  "local_window": {
+   "main": {
+    "layers": 40,
+    "elems_per_sequence": 2621440,
+    "bytes_per_sequence": 2641920.0
+   },
+   "mtp": {
+    "layers": 3,
+    "elems_per_sequence": 196608,
+    "bytes_per_sequence": 198144.0
+   },
+   "elems_per_sequence": 2818048,
+   "bytes_per_sequence": 2840064.0,
+   "bytes_basis": "theoretical_floor"
+  }
  },
  "checks": [
   {
