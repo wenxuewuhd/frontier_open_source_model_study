@@ -1,7 +1,7 @@
 {
  "id": "qwen3.8-2.4t-a95b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T12:03:03+00:00",
+ "generated_at": "2026-10-29T13:01:34+00:00",
  "inputs": {
   "facts_dir": "facts/qwen3.8-2.4t-a95b",
   "config_present": true,
@@ -38,6 +38,7 @@
   "weight_bytes_by_dtype": {
    "BF16": 4892365451008.0
   },
+  "weight_dtype_containers": {},
   "experts_seen": 512,
   "expert_storage": "stacked",
   "layers_present": 92,

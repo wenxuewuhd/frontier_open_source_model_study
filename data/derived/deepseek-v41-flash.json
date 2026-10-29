@@ -1,7 +1,7 @@
 {
  "id": "deepseek-v41-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T12:02:58+00:00",
+ "generated_at": "2026-10-29T13:01:28+00:00",
  "inputs": {
   "facts_dir": "facts/deepseek-v41-flash",
   "config_present": true,
@@ -50,7 +50,12 @@
    "FP32": 169229128.0,
    "FP8_E8M0": 23563015184.0,
    "FP8_E4M3": 204015223296.0,
-   "INT8": 278585671680.0
+   "FP4": 278585671680.0
+  },
+  "weight_dtype_containers": {
+   "FP4": [
+    "INT8"
+   ]
   },
   "experts_seen": 384,
   "expert_storage": "individual",

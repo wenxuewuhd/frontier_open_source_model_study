@@ -1,7 +1,7 @@
 {
  "id": "ds-v3.2-exp",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T12:02:59+00:00",
+ "generated_at": "2026-10-29T13:01:30+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v3.2-exp",
   "config_present": true,
@@ -44,6 +44,7 @@
    "FP8_E4M3": 681408069632.0,
    "FP32": 170668160.0
   },
+  "weight_dtype_containers": {},
   "experts_seen": 256,
   "expert_storage": "individual",
   "layers_present": 61,

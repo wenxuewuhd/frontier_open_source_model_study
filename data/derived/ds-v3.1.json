@@ -1,7 +1,7 @@
 {
  "id": "ds-v3.1",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T12:02:58+00:00",
+ "generated_at": "2026-10-29T13:01:29+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v3.1",
   "config_present": true,

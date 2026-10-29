@@ -1,7 +1,7 @@
 {
  "id": "ds-v4-flash-dspark",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T12:03:01+00:00",
+ "generated_at": "2026-10-29T13:01:31+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-flash-dspark",
   "config_present": true,
@@ -47,7 +47,12 @@
    "BF16": 2967134976.0,
    "FP8_E8M0": 9261408000.0,
    "FP8_E4M3": 6304038912.0,
-   "INT8": 148176371712.0
+   "FP4": 148176371712.0
+  },
+  "weight_dtype_containers": {
+   "FP4": [
+    "INT8"
+   ]
   },
   "experts_seen": 256,
   "expert_storage": "individual",

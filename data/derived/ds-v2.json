@@ -1,7 +1,7 @@
 {
  "id": "ds-v2",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T12:02:58+00:00",
+ "generated_at": "2026-10-29T13:01:29+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v2",
   "config_present": true,
@@ -38,6 +38,7 @@
   "weight_bytes_by_dtype": {
    "BF16": 471482869760.0
   },
+  "weight_dtype_containers": {},
   "experts_seen": 160,
   "expert_storage": "individual",
   "layers_present": 60,

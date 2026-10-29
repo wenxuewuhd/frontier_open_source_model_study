@@ -1,7 +1,7 @@
 {
  "id": "ds-v4-pro",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T12:03:03+00:00",
+ "generated_at": "2026-10-29T13:01:34+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-pro",
   "config_present": true,
@@ -46,8 +46,13 @@
    "FP32": 351105656.0,
    "FP8_E8M0": 49150268416.0,
    "FP8_E4M3": 23169335296.0,
-   "INT8": 786381668352.0,
+   "FP4": 786381668352.0,
    "INT64": 18616320.0
+  },
+  "weight_dtype_containers": {
+   "FP4": [
+    "INT8"
+   ]
   },
   "experts_seen": 384,
   "expert_storage": "individual",

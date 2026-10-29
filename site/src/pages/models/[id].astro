@@ -43,6 +43,9 @@ const subsystems = s?.weight_bytes_by_subsystem
   ? Object.entries(s.weight_bytes_by_subsystem as Record<string, number>)
       .sort((x, y) => y[1] - x[1])
   : [];
+/** 打包存放的精度 -> 容器类型。表上两个值要一起出现：
+    只报 FP4 会让人以为能按 4 位寻址，只报 INT8 会让人以为专家是 8 位 */
+const dtypeContainers: Record<string, string[]> = s?.weight_dtype_containers ?? {};
 const dtypeRows = s?.weight_bytes_by_dtype
   ? Object.entries(s.weight_bytes_by_dtype as Record<string, number>)
       .sort((x, y) => y[1] - x[1])
@@ -163,7 +166,15 @@ const rv = reviewStatus(m);
             <thead><tr><th>数据类型</th><th class="num">存储</th></tr></thead>
             <tbody>
               {dtypeRows.map(([k, v]) => (
-                <tr><td class="num">{k}</td><td class="num">{fmtBytes(v)}</td></tr>
+                <tr>
+                  <td class="num">
+                    {k}
+                    {dtypeContainers[k] && (
+                      <span class="small muted">（{dtypeContainers[k].join('/')} 容器）</span>
+                    )}
+                  </td>
+                  <td class="num">{fmtBytes(v)}</td>
+                </tr>
               ))}
             </tbody>
           </table>
@@ -171,7 +182,8 @@ const rv = reviewStatus(m);
             <p class="small muted">
               已按打包因子还原参数量：
               {Object.entries(s.packing_applied).map(([k, v]) => `${k} ×${v}`).join('、')}。
-              存储不还原 —— 容器就是真实存储。
+              存储不还原 —— 容器就是真实存储，但按逻辑精度归类：
+              FP4 那一行是 FP4 数据装在 INT8 容器里，不是 8 位权重。
             </p>
           )}
         </div>

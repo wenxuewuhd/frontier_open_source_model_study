@@ -48,7 +48,9 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
 
     三个口径互不混用：
       参数量  排除 scale；低位打包的按因子还原（numel 是容器数，不是参数数）
-      字节数  包含 scale；不还原打包（容器就是真实存储）
+      字节数  包含 scale；不还原打包（容器就是真实存储）。但**按什么精度报**要用
+              逻辑精度：FP4 专家打包在 INT8 容器里，报 INT8 是报了容器类型，
+              读者会以为专家是 8 位。字节不变，标签改成 FP4，容器另记
       元素数  safetensors 里的原始 numel，仅用于核对
 
     logical 给出每个子系统声明的逻辑精度（来自 precision.quantization.per_subsystem），
@@ -66,6 +68,7 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
     by_dtype = {}
     unknown_dtypes = set()
     packing_applied = {}
+    dtype_containers = {}
     packing_suspect = set()
     expert_ids, layer_ids, moe_layers = set(), set(), set()
     mtp_layer_ids = set()
@@ -80,7 +83,14 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
         sub = classify(name, mtp_from)
 
         nbytes[sub] = nbytes.get(sub, 0.0) + n * b
-        by_dtype[dt] = by_dtype.get(dt, 0.0) + n * b
+        # 字节按逻辑精度归类。scale 张量不参与：它本身就是那个精度，没有打包
+        label = dt
+        if not dtypes.is_scale_tensor(name, dt):
+            lg = dtypes.norm(logical.get(sub, ""))
+            if lg and dtypes.packing_factor(lg, dt) > 1:
+                label = lg
+                dtype_containers.setdefault(label, set()).add(dt)
+        by_dtype[label] = by_dtype.get(label, 0.0) + n * b
         if not dtypes.is_scale_tensor(name, dt):
             f = dtypes.packing_factor(logical.get(sub, ""), dt)
             if f > 1:
@@ -125,6 +135,9 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
         "weight_bytes_total": sum(nbytes.values()),
         "weight_bytes_by_subsystem": nbytes,
         "weight_bytes_by_dtype": by_dtype,
+        # 哪些精度是打包存放的，以及装在什么容器里。页面要把两个值一起显示 ——
+        # 只报 FP4 会让人以为能按 4 位寻址，只报 INT8 会让人以为专家是 8 位
+        "weight_dtype_containers": {k: sorted(v) for k, v in dtype_containers.items()},
         "experts_seen": ((max(expert_ids) + 1) if expert_ids
                          else (max(stacked_experts) if stacked_experts else 0)),
         "expert_storage": ("individual" if expert_ids

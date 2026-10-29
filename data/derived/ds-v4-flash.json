@@ -1,7 +1,7 @@
 {
  "id": "ds-v4-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T12:03:02+00:00",
+ "generated_at": "2026-10-29T13:01:32+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-flash",
   "config_present": true,
@@ -47,7 +47,12 @@
    "FP32": 144672072.0,
    "FP8_E8M0": 8858737664.0,
    "FP8_E4M3": 6023020544.0,
-   "INT8": 141733920768.0
+   "FP4": 141733920768.0
+  },
+  "weight_dtype_containers": {
+   "FP4": [
+    "INT8"
+   ]
   },
   "experts_seen": 256,
   "expert_storage": "individual",
