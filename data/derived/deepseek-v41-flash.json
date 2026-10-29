@@ -1,7 +1,7 @@
 {
  "id": "deepseek-v41-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T13:01:28+00:00",
+ "generated_at": "2026-10-29T15:14:35+00:00",
  "inputs": {
   "facts_dir": "facts/deepseek-v41-flash",
   "config_present": true,
@@ -13,20 +13,20 @@
   "available": true,
   "complete": true,
   "tensor_count": 96085,
-  "params_total": 763205315536.0,
+  "params_total": 763205315794.0,
   "params_by_subsystem": {
    "vision": 485268480.0,
    "embed": 661913600.0,
    "attention": 5064624640.0,
    "router": 78673920.0,
-   "residual": 39323520.0,
+   "residual": 39323760.0,
    "norm": 488960.0,
    "shared_expert": 1415577600.0,
    "expert": 543581798400.0,
    "compressor": 18350080.0,
    "indexer": 43515904.0,
    "lm_head": 661913600.0,
-   "draft": 14225362512.0,
+   "draft": 14225362530.0,
    "retrieval": 196928504320.0
   },
   "weight_bytes_total": 510286023000.0,
@@ -162,7 +162,7 @@
    "embed_tokens": 661913600.0,
    "retrieval_table": 196928504320.0,
    "vision": 485268480.0,
-   "draft": 14225362512.0
+   "draft": 14225362530.0
   },
   "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
  },
@@ -171,8 +171,8 @@
   "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
  },
  "arithmetic_intensity": {
-  "decode_weight_bytes_per_token": 10548385296.288256,
-  "decode_flops_per_byte": 2.9912844214273138,
+  "decode_weight_bytes_per_token": 10548385292.722395,
+  "decode_flops_per_byte": 2.9912844224385116,
   "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
  },
  "ep_communication": {
@@ -207,7 +207,7 @@
   {
    "item": "参数总量",
    "YAML 声明": 748000000000.0,
-   "shapes 实测(扣除 draft)": 748979953024.0,
+   "shapes 实测(扣除 draft)": 748979953264.0,
    "delta_pct": 0.13,
    "status": "ok"
   },

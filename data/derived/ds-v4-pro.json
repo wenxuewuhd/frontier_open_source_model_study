@@ -1,7 +1,7 @@
 {
  "id": "ds-v4-pro",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T13:01:34+00:00",
+ "generated_at": "2026-10-29T15:14:40+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-pro",
   "config_present": true,
@@ -13,19 +13,19 @@
   "available": true,
   "complete": true,
   "tensor_count": 145116,
-  "params_total": 1598839674408.0,
+  "params_total": 1598839674782.0,
   "params_by_subsystem": {
    "embed": 926679040.0,
    "attention": 18293464704.0,
    "compressor": 670097408.0,
    "router": 170252544.0,
-   "residual": 84069236.0,
+   "residual": 84069603.0,
    "norm": 1041664.0,
    "shared_expert": 4029677568.0,
    "expert": 1547396186112.0,
    "indexer": 501381120.0,
    "lm_head": 926679040.0,
-   "draft": 25840145972.0
+   "draft": 25840145979.0
   },
   "weight_bytes_total": 864704792696.0,
   "weight_bytes_by_subsystem": {
@@ -137,7 +137,7 @@
    "embed_tokens": 926679040.0,
    "retrieval_table": 0.0,
    "vision": 0.0,
-   "draft": 25840145972.0
+   "draft": 25840145979.0
   },
   "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
  },
@@ -146,8 +146,8 @@
   "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
  },
  "arithmetic_intensity": {
-  "decode_weight_bytes_per_token": 26376767883.348114,
-  "decode_flops_per_byte": 3.6980011858685193,
+  "decode_weight_bytes_per_token": 26376767877.17807,
+  "decode_flops_per_byte": 3.6980011867335545,
   "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
  },
  "ep_communication": {
@@ -182,7 +182,7 @@
   {
    "item": "参数总量",
    "YAML 声明": 1573000000000.0,
-   "shapes 实测(扣除 draft)": 1572999528436.0,
+   "shapes 实测(扣除 draft)": 1572999528803.0,
    "delta_pct": -0.0,
    "status": "ok"
   },

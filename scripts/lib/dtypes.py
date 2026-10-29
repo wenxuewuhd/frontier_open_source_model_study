@@ -76,16 +76,25 @@ def packing_factor(logical_dtype: str, container_dtype: str) -> int:
     return max(8 // bits, 1)
 
 
+# scale 容器的叶名。各代不一样：ds-v3 一代是 weight_scale_inv，V4 一代改成了 scale
+# （见 ds-v4-flash.yaml 的 lineage 条目）。另两个是旧代码按子串判断时写的变体。
+_SCALE_LEAVES = {"scale", "scale_inv", "weight_scale", "weight_scale_inv"}
+
+
 def is_scale_tensor(name: str, dtype: str) -> bool:
     """判断一个张量是 scale 容器还是模型参数本体。
 
     参数量统计要排除 scale，字节统计要包含 scale —— 两个口径不同，
     混了会让「参数量」和「权重存储」同时错。
+
+    按**整段叶名**匹配，不用「含 scale」的子串判断。子串判断两头都错过：
+    `_scale` 结尾这一条把 mHC 的 hc_attn_scale / hc_ffn_scale / hc_head_scale
+    当成容器排掉（它们是真参数），而 `.scale_inv` 这条又认不出 ds-v3 一代的
+    `weight_scale_inv`（叶名里 scale 前面是下划线不是点），于是 45808 个 scale
+    被算成了参数。新后缀出现时这里宁可漏判也不误判：漏判让参数量偏高一点点，
+    误判会把真参数整个抹掉，而后者在页面上看不出来。
     """
-    n = name.lower()
-    if n.endswith(".scale") or n.endswith("_scale") or ".scale_" in n:
-        return True
-    if n.endswith(".scale_inv") or n.endswith(".weight_scale"):
+    if name.lower().rsplit(".", 1)[-1] in _SCALE_LEAVES:
         return True
     return norm(dtype) == "FP8_E8M0"
 

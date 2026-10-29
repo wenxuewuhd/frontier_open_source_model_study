@@ -1,7 +1,7 @@
 {
  "id": "ds-v3.2-exp",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T13:01:30+00:00",
+ "generated_at": "2026-10-29T15:16:30+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v3.2-exp",
   "config_present": true,
@@ -13,18 +13,18 @@
   "available": true,
   "complete": true,
   "tensor_count": 92425,
-  "params_total": 685396921376.0,
+  "params_total": 685355329792.0,
   "params_by_subsystem": {
    "embed": 926679040.0,
-   "attention": 11414120408.0,
+   "attention": 11413422080.0,
    "norm": 1022208.0,
-   "indexer": 851559512.0,
-   "dense_ffn": 1189157760.0,
+   "indexer": 851509248.0,
+   "dense_ffn": 1189085184.0,
    "router": 106445312.0,
-   "shared_expert": 2554487040.0,
-   "expert": 653948682240.0,
+   "shared_expert": 2554331136.0,
+   "expert": 653908770816.0,
    "lm_head": 926679040.0,
-   "draft": 13478088816.0
+   "draft": 13477385728.0
   },
   "weight_bytes_total": 689471107200.0,
   "weight_bytes_by_subsystem": {
@@ -109,30 +109,30 @@
  "kv_capacity_basis": "dtype_fallback",
  "active_params": {
   "status": "ok",
-  "total": 37479367600.0,
-  "total_with_embed": 38406046640.0,
+  "total": 37477143296.0,
+  "total_with_embed": 38403822336.0,
   "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的输入词表）；total_with_embed 含输入词表，用于和各家公布的「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
-  "expert_active": 20435896320.0,
-  "expert_total": 653948682240.0,
+  "expert_active": 20434649088.0,
+  "expert_total": 653908770816.0,
   "expert_ratio": "8/256",
-  "always_active": 17043471280.0,
+  "always_active": 17042494208.0,
   "lm_head": 926679040.0,
   "dense": false,
   "excluded": {
    "embed_tokens": 926679040.0,
    "retrieval_table": 0.0,
    "vision": 0.0,
-   "draft": 13478088816.0
+   "draft": 13477385728.0
   },
   "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
  },
  "flops": {
-  "linear_per_token": 74958735200.0,
+  "linear_per_token": 74954286592.0,
   "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
  },
  "arithmetic_intensity": {
-  "decode_weight_bytes_per_token": 37702155160.61794,
-  "decode_flops_per_byte": 1.9881817068722556,
+  "decode_weight_bytes_per_token": 37702205498.02718,
+  "decode_flops_per_byte": 1.988061059078416,
   "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
  },
  "ep_communication": {
@@ -166,8 +166,8 @@
   },
   {
    "item": "参数总量",
-   "YAML 声明": 671919000000.0,
-   "shapes 实测(扣除 draft)": 671918832560.0,
+   "YAML 声明": 671878000000.0,
+   "shapes 实测(扣除 draft)": 671877944064.0,
    "delta_pct": -0.0,
    "status": "ok"
   },

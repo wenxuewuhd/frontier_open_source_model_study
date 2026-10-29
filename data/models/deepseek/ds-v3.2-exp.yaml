@@ -34,20 +34,22 @@ lineage:
     benefit: 稀疏注意力把注意力拆成打分、选块、稠密三段，中间结果的数值范围比原来宽，norm 用 FP32 权重更稳（这一步是推断，公开材料没有说明动机）。对实现的影响是实测到的那些层上
       RMSNorm 变成混合精度算子：FP32 权重配 BF16 激活。按「norm 权重与激活同 dtype」写的核会直接读错
 params:
-  total: 671919000000.0
+  total: 671878000000.0
   excludes:
   - draft
   breakdown:
-    expert: 653949000000.0
-    draft: 13478100000.0
-    attention: 12265700000.0
-    shared_expert: 2554490000.0
-    dense_ffn: 1189160000.0
+    expert: 653909000000.0
+    draft: 13477400000.0
+    attention: 11413400000.0
+    indexer: 851509000.0
+    shared_expert: 2554330000.0
+    dense_ffn: 1189090000.0
     embed: 926679000.0
     lm_head: 926679000.0
     router: 106445000.0
     norm: 1022210.0
-  counting_note: 按完整权重清单（92425 张量）逐项统计。total 不含草稿侧 13.5B；含在内的实测总量为 685.4B，权重存储 642.1 GiB。
+  counting_note: 按完整权重清单（92425 条目）逐项统计，其中 45932 条是 weight_scale_inv（FP8 的 per-block scale 容器）—— 不计入参数，只计入权重存储。indexer
+    原先并在 attention 里，现按 derive.py 的子系统归类单列。total 不含草稿侧 13.5B；含在内的实测总量为 685.4B，权重存储 642.1 GiB。
 context:
   max: 163840
   train_native: 4096

@@ -40,20 +40,21 @@ lineage:
     text: 首次带 MTP 模块（1 层）。权重借用层索引 61：eh_proj / enorm / hnorm / shared_head，没有独立命名空间 —— V4 才改掉
     benefit: 训练时多预测一个 token 提升主干质量，推理时这一层可以直接当草稿头做投机解码。但权重借用层索引 61，加载时容易被当成第 62 层误载
 params:
-  total: 671067000000.0
+  total: 671026000000.0
   excludes:
   - draft
   breakdown:
-    expert: 653949000000.0
-    draft: 13464100000.0
-    attention: 11414100000.0
-    shared_expert: 2554490000.0
-    dense_ffn: 1189160000.0
+    expert: 653909000000.0
+    draft: 13463400000.0
+    attention: 11413400000.0
+    shared_expert: 2554330000.0
+    dense_ffn: 1189090000.0
     embed: 926679000.0
     lm_head: 926679000.0
     router: 106445000.0
     norm: 1006590.0
-  counting_note: 按完整权重清单（91991 张量）逐项统计。total 不含草稿侧 13.5B；含在内的实测总量为 684.5B，权重存储 641.3 GiB。
+  counting_note: 按完整权重清单（91991 条目）逐项统计，其中 45808 条是 weight_scale_inv（FP8 的 per-block scale 容器）—— 不计入参数，只计入权重存储。total
+    不含草稿侧 13.5B；含在内的实测总量为 684.5B，权重存储 641.3 GiB。
 context:
   max: 163840
   train_native: 4096

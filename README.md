@@ -424,3 +424,21 @@ V4.1 更细：`compressor.wkv`/`norm` 在 4 个源层都有，但 `compressor.wg
 **代价说清楚**：旗舰的 `per_subsystem_scale` 是抽样读 14 个分片头得来的，原先引 `ds-v4.1-flash-1017` 这份记录作独立交叉验证。记录没了，验证还在 —— `subsystem_method` 改为直接引上游的 repo 与 sha（`DeepSeek-V4.1-Flash-1017 @ 1bae0e10`），并注明「那一版本仓不单独立记录，但这次交叉验证是实际跑过的」。`facts/` 下的取数产物保留（本来就不进版本库），要复核随时能重跑。
 
 删除后谱系链重接成 `V2 → V3 → V3.1 → V3.2-Exp → V4-Flash → DSpark → Vision-Exp → V4.1-Flash`（另有支线 V4-Pro）。`predecessor` / `successor` 悬空**不会报错** —— validate 不检查谱系引用，`successor` 站点里也没有任何地方渲染，所以这类重接只能手工核。顺带修了一个早就存在的毛病：`changeMatrix` 把家族首录也算进「字段零变化的版本」，而首录根本没有前代可比；现在要求有 `predecessor` 才进那张名单。
+
+#### scale 容器的判据漏了一整代的后缀
+
+`lib/dtypes.py` 的 `is_scale_tensor` 按「名字里含 scale」的子串判断区分 scale 容器与模型参数。参数量要排 scale、权重存储要含 scale，两个口径走同一个判据，所以它错一次就错两头。它两个方向都错了：
+
+- **漏判。** ds-v3 一代的叶名是 `weight_scale_inv`：`.scale_inv` 不匹配（scale 前面是下划线不是点）、`_scale` 结尾也不匹配（结尾是 `_inv`）、dtype 是 F32 不是 FP8_E8M0 —— 三条分支全不命中。实测命中率 `glm-5.3` 0/59044、`ds-v3` 0/45808、`ds-v3.2-exp` 0/45932，于是 scale 被整批算进了参数量。`ds-v4-flash.yaml` 的 lineage 里本来就写着「scale 张量后缀由 `weight_scale_inv` 改为 `scale`」—— 这个函数只跟上了改名之后的那一代。
+- **误判。** `_scale` 结尾这一条把 V4 一代 mHC 的 `hc_attn_scale` / `hc_ffn_scale` / `hc_head_scale` 当成容器排掉了，而它们是真参数（每份 258–374 个元素）。
+
+**已提交的数受影响**：`data/derived/ds-v3.json` 的 `params_total` 是 684,531,386,000，正是含 scale 的那个值；真值 684,489,845,504，多算 41,540,496（+0.006%）。ds-v3.2-exp 多算 41,591,584。两份记录手写的 `params.total` 与 `breakdown` 同样是虚高值 —— `total` 不是厂商声明值，而是「清单总量减草稿侧」算出来的。字节口径不受影响，字节本来就该含 scale。
+
+改成按**整段叶名**白名单匹配 `{scale, scale_inv, weight_scale, weight_scale_inv}`。全仓带 scale 的叶名只有五种，边界是闭的；新后缀出现时宁可漏判也不误判 —— 漏判让参数量偏高一点点，误判会把真参数整个抹掉，而后者在页面上看不出来。
+
+**两个闸口都拦不住它，各有原因**：
+
+- **Gate B 的容差是 2%**（`reconcile()` 里参数总量那一项 `tol=0.02`），而偏差是 0.006%。声明值本来就是取整的，容差不能收太紧 —— 所以这一级的错不该指望 Gate B。
+- **口径的两半只有一半会报。** 子系统归类错了，精度表和参数量会同时变形、看得出来；而「排 scale」这一半静默失效时，两边都还是自洽的，只是整体偏高 0.006%。小到没人会怀疑，又确实对不上任何外部口径。
+
+真正接住它的是**外部对账**：GLM-5.3 的 `repoinfo.json` 里有 HF 平台自己从 141 个分片头统计的 safetensors tally，排 scale 后与本仓逐 dtype 逐位相同。以后录新记录，这个 tally 该当成默认要对的一笔 —— 它不依赖本仓任何一行代码。
