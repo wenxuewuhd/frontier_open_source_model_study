@@ -1,0 +1,88 @@
+# 由 scripts/scaffold.py 从 config 生成，再按权重张量名清单校正。
+# 机械字段来自 config（official），跨版本差异来自 facts/*/names.json 的比对（derived）。
+id: ds-v2.5
+family: deepseek
+kind: llm
+display_name: DeepSeek-V2.5
+released: '2024-09-05'
+license: other
+visibility: public
+sources:
+- kind: modelcard
+  url: https://huggingface.co/deepseek-ai/DeepSeek-V2.5
+  locator: config.json @ c85b5ede86f2
+  accessed: '2026-10-29'
+hf:
+  repo: deepseek-ai/DeepSeek-V2.5
+  sha: c85b5ede86f2a598af339624cac5723861e557ed
+  last_modified: '2024-12-11T12:08:06.000Z'
+  pipeline_tag: text-generation
+  gated: false
+lineage:
+  track: side
+  predecessor: ds-v2
+  successor: ds-v3
+  changed_from_predecessor:
+  - axis: training
+    text: 架构与 V2 完全一致：张量名逐个相同，config 仅 RoPE 的 mscale / mscale_all_dim 由 0.707 改为 1.0（外加一个 ep_size
+      元字段）。对 infra 是零新增算子
+params:
+  counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
+    FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
+    不带 --names-only 重取。
+context:
+  max: 163840
+  train_native: 4096
+arch:
+  layers: 60
+  hidden: 5120
+  vocab: 102400
+  norm: RMSNorm
+  norm_eps: 1.0e-06
+  activation: SwiGLU（hidden_act silu，gate/up/down 三件套）
+  position: RoPE theta 10000 + YaRN 外推
+  attention:
+    type: MLA
+    num_heads: 128
+    num_kv_heads: 128
+    qk_rope_head_dim: 64
+    qk_nope_head_dim: 128
+    kv_lora_rank: 512
+    q_lora_rank: 1536
+    head_dim: 192
+  ffn:
+    type: moe
+  moe:
+    routed_experts: 160
+    top_k: 6
+    shared_experts: 2
+    intermediate: 1536
+    first_k_dense: 1
+    expert_groups: 8
+    routing: softmax 打分 / group_limited_greedy 选路
+infra_signals:
+- text: 整代发布里有相当比例只是后训练或外推参数变化，架构零差异。跟踪时先比张量名集合，相同就不必重走算子评估
+  evidence: judgement
+  horizon: settled
+  axis: precision
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: official
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  context: official
+  arch: official
+  arch.attention.type: derived
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.moe.routing: derived
+  arch.ffn.type: derived
+  infra_signals: judgement
+  notes: judgement
+notes: 合并版（Chat + Coder）。对算子清单没有任何影响，收录是为了让「哪些版本不需要 infra 动作」也能一眼看出来。

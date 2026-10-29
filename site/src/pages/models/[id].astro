@@ -4,7 +4,7 @@ import Evidence from '../../components/Evidence.astro';
 import Facts from '../../components/Facts.astro';
 import {
   allModels, modelById, url, fmtCount, fmtBytes, fmtInt, fmtSci, FAMILY_LABEL,
-  reviewStatus, SEVERITY_LABEL, RESOLUTION_LABEL,
+  reviewStatus, SEVERITY_LABEL, RESOLUTION_LABEL, HORIZON_LABEL,
 } from '../../lib/data';
 
 export function getStaticPaths() {
@@ -580,7 +580,7 @@ const rv = reviewStatus(m);
           {m.infra_signals!.map((sg: any) => (
             <div class="card">
               <div class="small muted" style="margin-bottom:4px">
-                {sg.horizon === 'now' ? '当下就要动' : sg.horizon === 'next-gen' ? '下一代要准备' : '继续观察'}
+                {HORIZON_LABEL[sg.horizon] ?? sg.horizon}
                 {sg.axis && ` · ${sg.axis}`}
                 <Evidence tag={sg.evidence} />
               </div>

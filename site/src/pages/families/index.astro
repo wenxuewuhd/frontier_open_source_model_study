@@ -1,0 +1,55 @@
+---
+import Base from '../../layouts/Base.astro';
+import { families, roster, url, reviewStatus } from '../../lib/data';
+
+const fams = families();
+const r = roster();
+const pending = r.families.filter(
+  (f) => !fams.some((x) => x.key === f.family),
+);
+---
+
+<Base
+  title="家族演进"
+  lead="每个家族一页，把各维度的逐版本变化排在一起看。矩阵内容来自各记录的 lineage 字段。"
+>
+  <table>
+    <thead>
+      <tr>
+        <th>家族</th>
+        <th class="num">已录版本</th>
+        <th class="num">已核查</th>
+        <th>时间跨度</th>
+        <th>最新</th>
+      </tr>
+    </thead>
+    <tbody>
+      {
+        fams.map((f) => {
+          const dates = f.models.map((m) => m.released).filter(Boolean).sort();
+          const latest = f.models[0];
+          return (
+            <tr>
+              <td><a href={url(`/families/${f.key}/`)}>{f.label}</a></td>
+              <td class="num">{f.models.length}</td>
+              <td class="num">{f.models.filter((m) => reviewStatus(m).reviewed).length}</td>
+              <td class="num small">
+                {dates.length ? `${dates[0]} → ${dates[dates.length - 1]}` : '—'}
+              </td>
+              <td><a href={url(`/models/${latest.id}/`)}>{latest.display_name}</a></td>
+            </tr>
+          );
+        })
+      }
+    </tbody>
+  </table>
+
+  {
+    pending.length > 0 && (
+      <p class="note" style="margin-top:14px">
+        名册里还没录的家族：{pending.map((f) => f.flagship).join('、')}。
+        旗舰选取结果见<a href={url('/')}>总览</a>的追踪名册。
+      </p>
+    )
+  }
+</Base>

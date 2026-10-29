@@ -1,0 +1,166 @@
+# 由 scripts/scaffold.py 从 config 生成，再按权重张量名清单校正。
+# 机械字段来自 config（official），跨版本差异来自 facts/*/names.json 的比对（derived）。
+id: ds-v4-flash-0731
+family: deepseek
+kind: llm
+display_name: DeepSeek-V4-Flash-0731
+released: '2026-07-31'
+license: mit
+visibility: public
+sources:
+- kind: modelcard
+  url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731
+  locator: config.json @ 7872f01b1d1f
+  accessed: '2026-10-29'
+hf:
+  repo: deepseek-ai/DeepSeek-V4-Flash-0731
+  sha: 7872f01b1d1fe23eabc4c98b48bffcef5a386062
+  last_modified: '2026-08-01T03:07:41.000Z'
+  pipeline_tag: text-generation
+  gated: false
+lineage:
+  track: side
+  predecessor: ds-v4-flash-dspark
+  successor: ds-v4-flash-vision-exp
+  changed_from_predecessor:
+  - axis: training
+    text: config 与 DSpark 版逐字段相同，张量名完全一致 —— 权重刷新，无架构变化
+params:
+  counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
+    FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
+    不带 --names-only 重取。
+context:
+  max: 1048576
+  train_native: 65536
+arch:
+  layers: 43
+  hidden: 4096
+  vocab: 129280
+  norm: RMSNorm
+  norm_eps: 1.0e-06
+  activation: SwiGLU（hidden_act silu，gate/up/down 三件套）
+  position: RoPE theta 10000 + YaRN 外推
+  attention:
+    type: MQA-latent
+    num_heads: 64
+    num_kv_heads: 1
+    qk_rope_head_dim: 64
+    q_lora_rank: 1024
+    o_lora_rank: 1024
+    o_groups: 8
+    sliding_window: 128
+    head_dim: 512
+    sparse:
+      mechanism: indexer 打分取 topk 后在选中 token 上做全注意力。与 V3.2 不同，这一代 indexer 没有独立的 wk，index K 由 attn.indexer.compressor.*
+        供给
+      index_n_heads: 64
+      index_head_dim: 128
+      index_topk: 512
+    kv_sharing:
+      compress_ratios:
+      - 0
+      - 0
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 0
+      - 0
+      - 0
+      note: 权重清单里 kv_b_proj / k_b_proj / v_b_proj 零命中，config 也不声明 kv_lora_rank：这一代没有 KV 上投影，不是 MLA。compress_ratios
+        的项数 = 主干层数 + MTP 层数。
+  ffn:
+    type: moe
+  moe:
+    routed_experts: 256
+    top_k: 6
+    shared_experts: 1
+    intermediate: 2048
+    routing: sqrtsoftplus 打分 / noaux_tc 选路
+    hash_layers:
+      count: 3
+      mapping_tensor: layers.N.ffn.gate.tid2eid
+      note: 与 V4-Flash 相同
+  residual:
+    type: mHC
+    multiplier: 4
+    note: 残差流扩成 hc_mult 份并行拷贝，每层带 hc_attn_* / hc_ffn_* 系数张量；V4 到 V4-Flash-Vision-Exp 在 lm_head 前还有一组
+      hc_head_*，V4.1 起撤掉。残差宽度乘 4 会改掉所有逐元素算子与 norm 的形状
+  decoding:
+    mtp_layers: 1
+    speculative:
+      method: DSpark
+      num_tokens: 5
+      target_layers:
+      - 40
+      - 41
+      - 42
+precision:
+  quantization:
+    method: fp8
+    activation_scheme: dynamic
+    weight_block_size:
+    - 128
+    - 128
+    scale_format: ue8m0
+    expert_dtype: FP4
+    per_subsystem:
+      expert: FP4
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: official
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  context: official
+  arch: official
+  arch.attention.type: derived
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.moe.routing: derived
+  arch.ffn.type: derived
+  precision: official
+  notes: judgement
+notes: 日期版权重刷新。零架构差异。

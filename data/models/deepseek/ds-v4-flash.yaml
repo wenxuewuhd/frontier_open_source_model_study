@@ -1,0 +1,195 @@
+# 由 scripts/scaffold.py 从 config 生成，再按权重张量名清单校正。
+# 机械字段来自 config（official），跨版本差异来自 facts/*/names.json 的比对（derived）。
+id: ds-v4-flash
+family: deepseek
+kind: llm
+display_name: DeepSeek-V4-Flash
+released: '2026-04-22'
+license: mit
+visibility: public
+sources:
+- kind: modelcard
+  url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash
+  locator: config.json @ 60d8d70770c6
+  accessed: '2026-10-29'
+hf:
+  repo: deepseek-ai/DeepSeek-V4-Flash
+  sha: 60d8d70770c6776ff598c94bb586a859a38244f1
+  last_modified: '2026-06-22T12:12:13.000Z'
+  pipeline_tag: text-generation
+  gated: false
+lineage:
+  track: main
+  predecessor: ds-v3.2
+  successor: ds-v4-flash-dspark
+  changed_from_predecessor:
+  - axis: attention
+    text: 放弃 MLA 的 KV 上投影 —— 权重清单里 kv_b_proj / k_b_proj / v_b_proj 零命中，config 也不再声明 kv_lora_rank。改为
+      1 个 KV 头直接在 512 维 latent 上做注意力，即 MQA-on-latent：省掉每步的上投影，代价是 Q 要先投到 latent 空间
+  - axis: attention
+    text: 新增 attn_sink（每层一个可学习 sink 进 softmax 分母，config 里没有这个开关）；输出投影低秩化为 wo_a / wo_b（o_lora_rank
+      1024，分 8 组）；新增滑窗 128；新增逐层 KV 压缩器 attn.compressor.*，压缩比沿层交替 4 / 128
+  - axis: attention
+    text: indexer 保留但 K 改由 compressor 路供给（没有独立的 indexer.wk），topk 2048→512
+  - axis: moe
+    text: 打分 sigmoid→sqrtsoftplus；取消 dense 前缀层，43 层全是 MoE；新增 3 个 hash 路由层，按 token id 查 ffn.gate.tid2eid
+      直接定专家，不经打分
+  - axis: residual
+    text: 新增 mHC 残差：残差流扩成 4 份并行拷贝（hc_mult 4），每层带 hc_attn_* / hc_ffn_* 系数，lm_head 前另有一组 hc_head_*
+  - axis: precision
+    text: 路由专家权重降到 FP4（expert_dtype fp4），非专家仍 FP8；scale 张量后缀由 weight_scale_inv 改为 scale
+  - axis: context
+    text: 163840 → 1048576，原生训练长度 65536
+  - axis: decoding
+    text: MTP 独立成 mtp.* 命名空间，不再借用层索引
+  - axis: scale
+    text: Flash 定位：层数 61→43，hidden 7168→4096，专家数仍 256 但中间维保持 2048
+params:
+  counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
+    FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
+    不带 --names-only 重取。
+context:
+  max: 1048576
+  train_native: 65536
+arch:
+  layers: 43
+  hidden: 4096
+  vocab: 129280
+  norm: RMSNorm
+  norm_eps: 1.0e-06
+  activation: SwiGLU（hidden_act silu，gate/up/down 三件套）
+  position: RoPE theta 10000 + YaRN 外推
+  attention:
+    type: MQA-latent
+    num_heads: 64
+    num_kv_heads: 1
+    qk_rope_head_dim: 64
+    q_lora_rank: 1024
+    o_lora_rank: 1024
+    o_groups: 8
+    sliding_window: 128
+    head_dim: 512
+    sparse:
+      mechanism: indexer 打分取 topk 后在选中 token 上做全注意力。与 V3.2 不同，这一代 indexer 没有独立的 wk，index K 由 attn.indexer.compressor.*
+        供给
+      index_n_heads: 64
+      index_head_dim: 128
+      index_topk: 512
+    kv_sharing:
+      compress_ratios:
+      - 0
+      - 0
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 128
+      - 4
+      - 0
+      note: 权重清单里 kv_b_proj / k_b_proj / v_b_proj 零命中，config 也不声明 kv_lora_rank：这一代没有 KV 上投影，不是 MLA。compress_ratios
+        的项数 = 主干层数 + MTP 层数。
+  ffn:
+    type: moe
+  moe:
+    routed_experts: 256
+    top_k: 6
+    shared_experts: 1
+    intermediate: 2048
+    routing: sqrtsoftplus 打分 / noaux_tc 选路
+    hash_layers:
+      count: 3
+      mapping_tensor: layers.N.ffn.gate.tid2eid
+      note: config 的 num_hash_layers=3 在权重里的形态就是这张 token id → expert id 查表。V4.1 起该张量退场
+  residual:
+    type: mHC
+    multiplier: 4
+    note: 残差流扩成 hc_mult 份并行拷贝，每层带 hc_attn_* / hc_ffn_* 系数张量；V4 到 V4-Flash-Vision-Exp 在 lm_head 前还有一组
+      hc_head_*，V4.1 起撤掉。残差宽度乘 4 会改掉所有逐元素算子与 norm 的形状
+  decoding:
+    mtp_layers: 1
+precision:
+  quantization:
+    method: fp8
+    activation_scheme: dynamic
+    weight_block_size:
+    - 128
+    - 128
+    scale_format: ue8m0
+    expert_dtype: FP4
+    per_subsystem:
+      expert: FP4
+infra_signals:
+- text: MLA → MQA-on-latent 是整条线上最值得注意的反转：V2 用上投影换带宽，V4 又把它去掉。沿用 MLA 的注意力算子会直接对不上权重
+  evidence: judgement
+  horizon: now
+  axis: attention
+- text: FP4 专家权重两个一字节打包，numel 是容器数。参数量、带宽账、EP 切分三处都要先解包
+  evidence: judgement
+  horizon: now
+  axis: precision
+- text: hash 路由层（tid2eid 查表）与打分路由是两条路径，融合 router 要能走旁路。V4.1 又把它去掉了，不必按长期特性投入
+  evidence: judgement
+  horizon: watch
+  axis: moe
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: official
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  context: official
+  arch: official
+  arch.attention.type: derived
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.moe.routing: derived
+  arch.ffn.type: derived
+  precision: official
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+notes: 谱系里最大的一次不连续，几乎每个维度都动了。对 infra 最要紧的是三件：KV 上投影消失（注意力算子换签名）、专家降到 FP4（打包存储，参数量不能直接求和）、mHC 把残差流宽度乘
+  4（所有逐元素算子的形状都变）。另外 attn_sink 与 hash 路由层都不在 config 里，只能从权重清单发现。
+open_questions:
+- 未取权重清单（只有张量名），参数量与 FP4 打包形态待核
+- compress_ratios 的 4 / 128 对应什么压缩实现，config 未说明

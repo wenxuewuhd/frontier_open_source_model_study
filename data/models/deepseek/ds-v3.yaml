@@ -1,0 +1,107 @@
+# 由 scripts/scaffold.py 从 config 生成，再按权重张量名清单校正。
+# 机械字段来自 config（official），跨版本差异来自 facts/*/names.json 的比对（derived）。
+id: ds-v3
+family: deepseek
+kind: llm
+display_name: DeepSeek-V3
+released: '2024-12-25'
+visibility: public
+sources:
+- kind: modelcard
+  url: https://huggingface.co/deepseek-ai/DeepSeek-V3
+  locator: config.json @ e815299b0bcb
+  accessed: '2026-10-29'
+hf:
+  repo: deepseek-ai/DeepSeek-V3
+  sha: e815299b0bcbac849fa540c768ef21845365c9eb
+  last_modified: '2025-03-27T04:01:45.000Z'
+  pipeline_tag: text-generation
+  gated: false
+lineage:
+  track: main
+  predecessor: ds-v2.5
+  successor: ds-r1
+  changed_from_predecessor:
+  - axis: scale
+    text: 61 层 / hidden 7168；专家 160→256，共享 2→1，top-6→8，专家中间维 1536→2048，词表 102400→129280；dense 前缀层
+      1→3
+  - axis: moe
+    text: 打分 softmax→sigmoid，选路 group_limited_greedy→noaux_tc，新增逐专家偏置 gate.e_score_correction_bias
+      —— 无辅助损失的负载均衡
+  - axis: precision
+    text: 首次以 FP8 块量化发布，块 [128,128]，每个量化张量配一个 weight_scale_inv
+  - axis: decoding
+    text: 首次带 MTP 模块（1 层）。权重借用层索引 61：eh_proj / enorm / hnorm / shared_head，没有独立命名空间 —— V4 才改掉
+params:
+  counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
+    FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
+    不带 --names-only 重取。
+context:
+  max: 163840
+  train_native: 4096
+arch:
+  layers: 61
+  hidden: 7168
+  vocab: 129280
+  norm: RMSNorm
+  norm_eps: 1.0e-06
+  activation: SwiGLU（hidden_act silu，gate/up/down 三件套）
+  position: RoPE theta 10000 + YaRN 外推
+  attention:
+    type: MLA
+    num_heads: 128
+    num_kv_heads: 128
+    qk_rope_head_dim: 64
+    qk_nope_head_dim: 128
+    kv_lora_rank: 512
+    q_lora_rank: 1536
+    head_dim: 192
+  ffn:
+    type: moe
+  moe:
+    routed_experts: 256
+    top_k: 8
+    shared_experts: 1
+    intermediate: 2048
+    first_k_dense: 3
+    expert_groups: 8
+    routing: sigmoid 打分 / noaux_tc 选路
+  decoding:
+    mtp_layers: 1
+precision:
+  quantization:
+    method: fp8
+    activation_scheme: dynamic
+    weight_block_size:
+    - 128
+    - 128
+    scale_format: e4m3
+infra_signals:
+- text: FP8 块量化 [128,128] + 逐张量 weight_scale_inv 成为之后所有代的底座，块大小与 scale 格式在 V3.1 和 V4.1 两次收紧
+  evidence: judgement
+  horizon: now
+  axis: precision
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: official
+  hf: official
+  lineage: judgement
+  params: derived
+  context: official
+  arch: official
+  arch.attention.type: derived
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.moe.routing: derived
+  arch.ffn.type: derived
+  precision: official
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+notes: FP8 发布与无辅助损失路由都是从这一代开始的，两者都直接改算子：前者让权重 GEMM 变成带 scale 的块量化 GEMM，后者在 router 里加一条偏置加法。
+open_questions:
+- 未取权重清单，FP8 之外有哪些张量保持 BF16 待核

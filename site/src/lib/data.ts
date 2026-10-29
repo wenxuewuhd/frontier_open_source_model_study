@@ -247,6 +247,35 @@ export function timeline(): Model[] {
 
 export const BUILD_IS_INTERNAL = Boolean(OVERLAY);
 
+/** infra 信号的时间尺度。schema 的 horizon 枚举改了这里也要改，所以只存一份。 */
+export const HORIZON_LABEL: Record<string, string> = {
+  now: '当下就要动',
+  'next-gen': '下一代要准备',
+  watch: '继续观察',
+  settled: '已定型，无需动作',
+};
+
+export const HORIZON_ORDER = ['now', 'next-gen', 'watch', 'settled'];
+
+/** 演进维度。schema 的 lineage.changed_from_predecessor[].axis 枚举，顺序固定便于逐版本对读。 */
+export const AXIS_LABEL: Record<string, string> = {
+  attention: '注意力',
+  moe: 'MoE / 路由',
+  residual: '残差',
+  retrieval: '检索',
+  precision: '量化精度',
+  context: '上下文',
+  modality: '模态',
+  decoding: '解码 / 投机',
+  scale: '规格',
+  training: '训练 / 后训练',
+};
+
+export const AXIS_ORDER = [
+  'attention', 'moe', 'residual', 'retrieval', 'precision',
+  'context', 'modality', 'decoding', 'scale', 'training',
+];
+
 export const SEVERITY_LABEL: Record<string, string> = {
   wrong: '事实错误',
   unsupported: '缺依据',
@@ -275,6 +304,32 @@ export function reviewStatus(m: Model) {
     open: findings.filter((f: any) => f.resolution === 'open').length as number,
     corrected: findings.filter((f: any) => f.resolution === 'corrected').length as number,
   };
+}
+
+/** 某家族的记录，按发布日期升序 —— 家族页要顺着读演进，和列表页的倒序相反。 */
+export function familyModels(key: string): Model[] {
+  return allModels()
+    .filter((m) => m.family === key)
+    .sort((a, b) => (a.released ?? '').localeCompare(b.released ?? ''));
+}
+
+/**
+ * 维度 × 版本矩阵。
+ *
+ * 内容全部来自各记录的 lineage.changed_from_predecessor，不另写一份表 ——
+ * 手写的表会和记录各自漂移，而记录是校验覆盖到的那一份。
+ * 返回只包含真的有内容的维度行，避免整行空白。
+ */
+export function axisMatrix(models: Model[]) {
+  const cell = (m: Model, axis: string): string[] =>
+    (m.lineage?.changed_from_predecessor ?? [])
+      .filter((c: any) => c.axis === axis)
+      .map((c: any) => c.text);
+  return AXIS_ORDER.filter((axis) => models.some((m) => cell(m, axis).length > 0)).map((axis) => ({
+    axis,
+    label: AXIS_LABEL[axis] ?? axis,
+    cells: models.map((m) => ({ model: m, texts: cell(m, axis) })),
+  }));
 }
 
 export interface RosterEntry {

@@ -294,6 +294,16 @@
             "balance": { "type": "string", "description": "aux-loss / aux-loss-free bias 等" },
             "routing_bias": { "type": "string", "description": "路由偏置的套数与用途。多套偏置会改变融合 router 的算子签名" },
             "expert_groups": { "type": "integer" },
+            "hash_layers": {
+              "type": "object",
+              "description": "按 token id 查表选专家、不经打分的层。它和打分路由是两条不同的路径，融合 router 要能走旁路",
+              "additionalProperties": false,
+              "properties": {
+                "count": { "type": "integer" },
+                "mapping_tensor": { "type": "string", "description": "承载映射的张量名，如 ffn.gate.tid2eid" },
+                "note": { "type": "string" }
+              }
+            },
             "storage_note": { "type": "string", "description": "专家是逐个独立张量还是堆叠成一个，决定 grouped GEMM 的权重布局与 EP 切分方式" }
           }
         },
@@ -558,7 +568,10 @@
         "properties": {
           "text": { "type": "string" },
           "evidence": { "$ref": "#/$defs/evidence_tag" },
-          "horizon": { "enum": ["now", "next-gen", "watch"] },
+          "horizon": {
+            "enum": ["now", "next-gen", "watch", "settled"],
+            "description": "now 当代就要做 / next-gen 下一代硬件要考虑 / watch 盯着别投入 / settled 已定型，结论是不需要新动作"
+          },
           "axis": { "type": "string" },
           "visibility": { "$ref": "#/$defs/visibility" }
         }

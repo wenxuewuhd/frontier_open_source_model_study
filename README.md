@@ -59,6 +59,8 @@ S8  简报        双周报草稿                               ◀ Gate C 人
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 .venv/bin/python scripts/fetch_hf.py <org/repo> --id <模型id>
+.venv/bin/python scripts/fetch_hf.py <org/repo> --id <模型id> --names-only   # 只要张量名，用于跨版本结构比对
+.venv/bin/python scripts/scaffold.py --id <模型id> --family <家族> --repo <org/repo>  # 从 config 生成草稿
 .venv/bin/python scripts/derive.py --id <模型id> --model data/models/<家族>/<模型id>.yaml --ep 4
 .venv/bin/python scripts/validate.py
 .venv/bin/python scripts/mk_ops_table.py <算子表.yaml>
@@ -75,7 +77,9 @@ npm run build                             # 产物在 site/dist
 
 Astro 静态站，直接读 `data/` 下的 YAML 与 derived JSON，**不另定一套 content collection schema** —— 校验是 `validate.py` 的职责，站点只负责渲染。
 
-页面：总览（追踪名册 + Infra 信号 + 时间线）、模型列表、模型详情、平台矩阵、口径说明。
+页面：总览（追踪名册 + Infra 信号 + 时间线）、家族演进、模型列表、模型详情、平台矩阵、口径说明。
+
+家族页有三块：变化矩阵（哪个维度在哪个版本动过）、逐维度演进（每个维度按版本顺序读下来）、规格对照。**三块都从记录算出来，页面不自带任何表** —— 手写的矩阵会和记录各自漂移，而记录才是 `validate.py` 覆盖的那一份。矩阵的内容来源是 `lineage.changed_from_predecessor` 的 `axis` 字段。
 
 两个要点：
 
@@ -162,7 +166,25 @@ schema 由刻意选得差异最大的几个用例撑出来，而不是从一个�
 | 权重存储 | 475 GiB | 4.45 TiB | 51.75 GiB |
 | 激活（带宽口径） | 15.8B | 93.3B | 25.6B |
 | 激活（可比官方） | 16.5B（卡称 16B） | 95.3B（名称称 95B） | 26.9B |
-| 注意力显存 | 70144 B/token | 94208 B/token + 554 MiB/序列 | 65536 B/token + 145.5 MiB/序列 |
+| 注意力显存 | 37376 B/token | 94208 B/token + 554 MiB/序列 | 65536 B/token + 145.5 MiB/序列 |
 | FFN | MoE 384×top-6 | MoE 512×top-10（堆叠） | dense |
 
 三份记录都通过 schema 校验、证据覆盖检查和交叉核对，`derive.py`、`validate.py`、`mk_ops_table.py` 均返回 0。P0 的 schema 部分到此收口。
+
+> V4.1-Flash 的注意力显存一栏原先写的是 70144 B/token，核查时发现 indexer 的 K 产出层被按 8 层算（实际 4 层），已改为 37376。核查留痕见该记录的 `review` 块 R1 / R2。
+
+### DeepSeek 谱系（13 个历史版本）
+
+把整条线补齐时多出一个取数模式：**只取张量名**。
+
+`fetch_hf.py --names-only` 从 `model.safetensors.index.json` 的 `weight_map` 一次请求拿到全部张量名，不含形状与 dtype。代价是算不了参数量，收益是「某个张量存不存在」这类结构问题能批量问 —— 而跨版本比对问的几乎全是这类问题。十几个万亿模型逐个读分片头是上千次请求，读 index 是 13 次。
+
+名字清单单独存 `facts/<id>/names.json`，**不混进 `shapes.json`**：形状为空的清单会让 `derive.py` 把参数量静默算成 0，而不是报「清单不完整」。
+
+这个模式当场纠正了脚手架的一处误判，也验证了三件 config 里看不出来的事：
+
+- **V4 起没有 KV 上投影**。脚手架按「有 `kv_lora_rank` 就是 MLA」判型，而 V4 的 config 根本不声明 `kv_lora_rank`，它改用 `head_dim: 512` + `num_key_value_heads: 1`。权重侧 `kv_b_proj` / `k_b_proj` / `v_b_proj` 在整个 V4 线零命中 —— 所以 **MLA → MQA-on-latent 的转折发生在 V4，不是 V4.1**。沿用 MLA 的注意力算子会直接对不上权重。
+- **`num_hash_layers: 3` 的权重形态是 `ffn.gate.tid2eid`**。config 只给一个数字，权重里正好 3 个 token id → expert id 的查表张量。它和打分路由是两条路径，融合 router 要能走旁路。V4.1 把它去掉了。
+- **哪些版本架构零差异**。R1 与 V3 的 config 只差一个 `transformers_version`，张量名逐个相同；V3.2 与 V3.2-Exp 的 config 逐字段相同；V4-Flash-0731 与 DSpark 版同理。**影响最大的那一代（R1），算子侧什么都没变。** 跟踪时先比张量名集合，相同就不必重走算子评估。
+
+13 份历史记录都没取形状，所以**都不报参数量** —— `params.counting_note` 直接写明原因与补取方式。有 dtype 才有可信总量，FP4 打包的专家权重尤其如此。

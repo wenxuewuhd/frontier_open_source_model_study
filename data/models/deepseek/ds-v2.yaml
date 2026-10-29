@@ -1,0 +1,96 @@
+# 由 scripts/scaffold.py 从 config 生成，再按权重张量名清单校正。
+# 机械字段来自 config（official），跨版本差异来自 facts/*/names.json 的比对（derived）。
+id: ds-v2
+family: deepseek
+kind: llm
+display_name: DeepSeek-V2
+released: '2024-04-22'
+license: other
+visibility: public
+sources:
+- kind: modelcard
+  url: https://huggingface.co/deepseek-ai/DeepSeek-V2
+  locator: config.json @ 4461458f186c
+  accessed: '2026-10-29'
+hf:
+  repo: deepseek-ai/DeepSeek-V2
+  sha: 4461458f186c35188585855f28f77af5661ad489
+  last_modified: '2024-06-08T09:13:39.000Z'
+  pipeline_tag: text-generation
+  gated: false
+lineage:
+  track: historical
+  successor: ds-v2.5
+  changed_from_predecessor:
+  - axis: attention
+    text: 家族首次用 MLA：KV 压到 512 维 latent（kv_a_proj_with_mqa 下投影 + kv_b_proj 上投影），128 头，head_dim 192
+      = nope 128 + rope 64
+  - axis: moe
+    text: 160 路由专家 + 2 共享，top-6，专家分 8 组取 3 组（group_limited_greedy），softmax 打分
+  - axis: precision
+    text: BF16 直接发布，config 里没有 quantization_config
+  - axis: context
+    text: 163840，YaRN 自 4096 原生长度外推 40 倍
+params:
+  counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
+    FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
+    不带 --names-only 重取。
+context:
+  max: 163840
+  train_native: 4096
+arch:
+  layers: 60
+  hidden: 5120
+  vocab: 102400
+  norm: RMSNorm
+  norm_eps: 1.0e-06
+  activation: SwiGLU（hidden_act silu，gate/up/down 三件套）
+  position: RoPE theta 10000 + YaRN 外推
+  attention:
+    type: MLA
+    num_heads: 128
+    num_kv_heads: 128
+    qk_rope_head_dim: 64
+    qk_nope_head_dim: 128
+    kv_lora_rank: 512
+    q_lora_rank: 1536
+    head_dim: 192
+  ffn:
+    type: moe
+  moe:
+    routed_experts: 160
+    top_k: 6
+    shared_experts: 2
+    intermediate: 1536
+    first_k_dense: 1
+    expert_groups: 8
+    routing: softmax 打分 / group_limited_greedy 选路
+infra_signals:
+- text: MLA 的 kv_b_proj 让 KV 缓存只存 512 维 latent，但每步要做一次上投影 —— 算子上是「省带宽换算力」，这个取舍一路演进到 V4 被推翻
+  evidence: judgement
+  horizon: settled
+  axis: attention
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: official
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  context: official
+  arch: official
+  arch.attention.type: derived
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.moe.routing: derived
+  arch.ffn.type: derived
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+notes: 谱系起点。MLA 的两段式（下投影存 latent、上投影复原 KV）在这里定型，一直用到 V3.2；V4 把上投影彻底去掉。
+open_questions:
+- 未取权重清单，参数量与各子系统占比待补

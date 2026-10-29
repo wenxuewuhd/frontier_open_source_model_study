@@ -98,6 +98,27 @@ def collect_shapes(repo: str, rev: str, files: list, workers: int = 8) -> dict:
     return out, failed
 
 
+def collect_names(repo: str, rev: str, files: list) -> dict:
+    """只取张量名清单，不取形状。
+
+    safetensors 的 index.json 里有 weight_map（张量名 -> 分片），一次请求就能拿全。
+    代价是没有 shape/dtype，所以参数量算不了；但「某个张量存不存在」这类结构问题
+    它就能答 —— 而这类问题恰恰是跨版本比对最常问的（有没有 KV 上投影、
+    有没有 attn_sink、indexer 落在哪些层）。
+
+    万亿模型跑一次 collect_shapes 要读几百个分片头，十几个历史版本就是上千次请求。
+    结构问题用这个模式问，参数量问题才值得去读全量头。
+    """
+    idx = next((f for f in files if f.endswith(".safetensors.index.json")), None)
+    if not idx:
+        print("  ! 没有 safetensors index，名字清单留空", file=sys.stderr)
+        return {}
+    doc = json.loads(_get(RESOLVE.format(repo=repo, rev=rev, path=idx), _token_header()))
+    wm = doc.get("weight_map") or {}
+    print(f"  {len(wm)} 个张量名（来自 {idx}）", file=sys.stderr)
+    return sorted(wm)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("repo", help="HF 仓库，如 deepseek-ai/DeepSeek-V4.1-Flash")
@@ -105,6 +126,8 @@ def main():
     ap.add_argument("--facts-dir", default="facts")
     ap.add_argument("--rev", default=None, help="指定 commit；默认用仓库当前 sha，保证可复现")
     ap.add_argument("--skip-shapes", action="store_true", help="只取 config 与元数据")
+    ap.add_argument("--names-only", action="store_true",
+                    help="从 index.json 取张量名清单（无形状，算不了参数量，但能答结构问题）")
     ap.add_argument("--workers", type=int, default=8, help="并发读分片头的线程数")
     args = ap.parse_args()
 
@@ -123,20 +146,29 @@ def main():
     else:
         print("  ! 没有 config.json", file=sys.stderr)
 
-    if args.skip_shapes:
+    names = []
+    if args.names_only or args.skip_shapes:
         shapes, failed = {}, []
+        if args.names_only:
+            names = collect_names(args.repo, rev, files)
     else:
         shapes, failed = collect_shapes(args.repo, rev, files, args.workers)
 
     for name, obj in (("repoinfo.json", info), ("cfg.json", cfg), ("shapes.json", shapes)):
         with open(os.path.join(out_dir, name), "w") as f:
             json.dump(obj, f, ensure_ascii=False, indent=1)
+    # 名字清单单独存。不混进 shapes.json：形状为空的清单会让 derive.py
+    # 把参数量静默算成 0，而不是报「清单不完整」。
+    if names:
+        with open(os.path.join(out_dir, "names.json"), "w") as f:
+            json.dump(names, f, ensure_ascii=False, indent=1)
 
     record = {
         "repo": args.repo,
         "rev": rev,
         "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "tensor_count": len(shapes),
+        "name_count": len(names),
         "shard_count": sum(1 for f in files if f.endswith(".safetensors")),
         "config_url": RESOLVE.format(repo=args.repo, rev=rev, path="config.json"),
         "failed_shards": failed,

@@ -1,0 +1,108 @@
+# 由 scripts/scaffold.py 从 config 生成，再按权重张量名清单校正。
+# 机械字段来自 config（official），跨版本差异来自 facts/*/names.json 的比对（derived）。
+id: ds-v3.2-exp
+family: deepseek
+kind: llm
+display_name: DeepSeek-V3.2-Exp
+released: '2025-09-29'
+license: mit
+visibility: public
+sources:
+- kind: modelcard
+  url: https://huggingface.co/deepseek-ai/DeepSeek-V3.2-Exp
+  locator: config.json @ 194c67e12b1b
+  accessed: '2026-10-29'
+hf:
+  repo: deepseek-ai/DeepSeek-V3.2-Exp
+  sha: 194c67e12b1b0d6df0ef373ddcf215bc84027409
+  last_modified: '2025-11-18T02:39:54.000Z'
+  pipeline_tag: text-generation
+  gated: false
+lineage:
+  track: main
+  predecessor: ds-v3.1
+  successor: ds-v3.2
+  changed_from_predecessor:
+  - axis: attention
+    text: 首次引入稀疏注意力 indexer（DSA）：每层新增 indexer.wk / wq_b / k_norm / weights_proj，64 个 index 头 × 128
+      维，topk 2048。注意力第一次变成两段式 —— 先打分选 token，再在选中的上面做全注意力
+params:
+  counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
+    FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
+    不带 --names-only 重取。
+context:
+  max: 163840
+  train_native: 4096
+arch:
+  layers: 61
+  hidden: 7168
+  vocab: 129280
+  norm: RMSNorm
+  norm_eps: 1.0e-06
+  activation: SwiGLU（hidden_act silu，gate/up/down 三件套）
+  position: RoPE theta 10000 + YaRN 外推
+  attention:
+    type: MLA
+    num_heads: 128
+    num_kv_heads: 128
+    qk_rope_head_dim: 64
+    qk_nope_head_dim: 128
+    kv_lora_rank: 512
+    q_lora_rank: 1536
+    head_dim: 192
+    sparse:
+      mechanism: indexer 逐 token 打分后取 topk，再在选中的 token 上做全注意力。indexer 自带 wk / wq_b / k_norm / weights_proj，每层都有，K
+        独立产出
+      index_n_heads: 64
+      index_head_dim: 128
+      index_topk: 2048
+  ffn:
+    type: moe
+  moe:
+    routed_experts: 256
+    top_k: 8
+    shared_experts: 1
+    intermediate: 2048
+    first_k_dense: 3
+    expert_groups: 8
+    routing: sigmoid 打分 / noaux_tc 选路
+  decoding:
+    mtp_layers: 1
+precision:
+  quantization:
+    method: fp8
+    activation_scheme: dynamic
+    weight_block_size:
+    - 128
+    - 128
+    scale_format: ue8m0
+infra_signals:
+- text: 稀疏注意力把单个 FA 算子拆成「indexer 打分 → topk → gather → 稠密 FA」四段，每段的形状都随 topk 变。这条旁路在 V4、V4.1 又各改一次
+  evidence: judgement
+  horizon: now
+  axis: attention
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: official
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  context: official
+  arch: official
+  arch.attention.type: derived
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.moe.routing: derived
+  arch.ffn.type: derived
+  precision: official
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+notes: 谱系里第一次出现「选 token 再算」的结构。它新增的不只是一个算子，而是一整条 打分 + topk + gather 的旁路，且 indexer 自己也要一份缓存。
+open_questions:
+- indexer 缓存的精度与布局未从权重清单核实

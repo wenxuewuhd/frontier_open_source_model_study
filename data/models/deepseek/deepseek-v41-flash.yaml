@@ -26,15 +26,36 @@ hf:
 
 lineage:
   track: main
+  predecessor: ds-v4-flash-vision-exp
+  successor: ds-v4.1-flash-1017
+  # 每条都对照过 facts/ds-v4-flash-vision-exp 与 facts/deepseek-v41-flash 的
+  # config 差异与张量名差异，不是从模型卡抄的
   changed_from_predecessor:
-    - axis: residual
-      text: 残差流扩成 4 份并行拷贝（mHC），整个主干的残差都是 4×hidden
     - axis: retrieval
-      text: 新增 Engram 外置查表层，装在第 1、14 层，两张表合计约 196B 参数
+      text: >-
+        新增 Engram 外置查表层（第 1、14 层）：两张各 3.84 亿行的 embedding 表 +
+        wkv 稠密投影，表合计约 196.9B 参数。前代没有任何 engram 张量
     - axis: attention
-      text: KV 只由 4 层产出、其余层跨层读取，并带逐层压缩比
+      text: >-
+        indexer 恢复独立的 wk / k_norm，但只在 4 层（2/8/14/20）产出 index K，
+        另 4 层（24/28/32/36）只复用已有 K 重新打分；index 头 64→32。
+        前代的 indexer.compressor.* 整条退场
+    - axis: attention
+      text: >-
+        新增跨层 KV 共享 kv_source_layer_ids [2,8,14,20]，逐层压缩比随之降到 1–2
+        （前代是沿层交替 4/128）—— 从「每层重压缩」换成「少数层产出、多数层共享」
+    - axis: moe
+      text: >-
+        取消 hash 路由层：ffn.gate.tid2eid 张量退场，num_hash_layers 不再声明。
+        路由专家 256→384，专家中间维 2048→2304
+    - axis: residual
+      text: mHC 从 lm_head 撤出（hc_head_* 退场），只保留层内的 hc_attn_* / hc_ffn_*
+    - axis: precision
+      text: 量化块由 [128,128] 收紧到 [32,32]；专家与 Engram 表沿 K 是 1×32，不是 32×32
     - axis: decoding
-      text: 自带 DSpark 草稿模型，有独立的 128 专家集
+      text: DSpark 的 markov_head 由 markov_w1 / markov_w2 改为 embed / head
+    - axis: scale
+      text: 层数 43→40，hidden 4096→5120，q_lora 1024→1280
 
 params:
   total: 748.0e+9

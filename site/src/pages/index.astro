@@ -3,19 +3,15 @@ import Base from '../layouts/Base.astro';
 import Evidence from '../components/Evidence.astro';
 import {
   allModels, allSignals, roster, timeline, url, fmtCount, fmtBytes, FAMILY_LABEL,
+  HORIZON_LABEL, HORIZON_ORDER,
 } from '../lib/data';
 
 const models = allModels();
 const r = roster();
 const signals = allSignals();
-const horizonLabel: Record<string, string> = {
-  now: '当下就要动',
-  'next-gen': '下一代要准备',
-  watch: '继续观察',
-};
-const byHorizon = ['now', 'next-gen', 'watch'].map((h) => ({
+const byHorizon = HORIZON_ORDER.map((h) => ({
   key: h,
-  label: horizonLabel[h],
+  label: HORIZON_LABEL[h],
   items: signals.filter((s) => s.horizon === h),
 }));
 const recorded = r.families.filter((f) => f.status === 'recorded').length;

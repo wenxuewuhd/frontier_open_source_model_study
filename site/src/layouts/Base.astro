@@ -9,6 +9,7 @@ const { title, lead } = Astro.props;
 
 const nav = [
   { href: '/', label: '总览' },
+  { href: '/families/', label: '家族演进' },
   { href: '/models/', label: '模型' },
   { href: '/platforms/', label: '平台矩阵' },
   { href: '/about/', label: '口径说明' },
@@ -157,6 +158,22 @@ const here = Astro.url.pathname.replace(/\/$/, '');
       }
       .muted { color: var(--ink-3); }
       .small { font-size: 13px; }
+
+      /* 宽表（版本横向排开）单独滚动，不要把整页撑出横向滚动条 */
+      .scroll-x { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+      .scroll-x table { font-size: 13px; }
+      .scroll-x th, .scroll-x td { white-space: nowrap; }
+      .scroll-x th:first-child, .scroll-x td:first-child {
+        position: sticky;
+        left: 0;
+        background: var(--surface);
+        border-right: 1px solid var(--line);
+      }
+      .dot { color: var(--accent); font-weight: 700; }
+      .dash { color: var(--ink-3); }
+      /* 主线与支线在表头上要分得开：支线是同代的平行版本或权重刷新 */
+      th.side, td.side { background: color-mix(in oklab, var(--warn-bg) 45%, var(--surface)); }
+      .track-mark { font-size: 10px; color: var(--ink-3); vertical-align: super; margin-left: 2px; }
       ul.plain { padding-left: 18px; margin: 6px 0; }
       ul.plain li { margin: 4px 0; }
 

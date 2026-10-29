@@ -1,0 +1,98 @@
+# 由 scripts/scaffold.py 从 config 生成，再按权重张量名清单校正。
+# 机械字段来自 config（official），跨版本差异来自 facts/*/names.json 的比对（derived）。
+id: ds-v3.1
+family: deepseek
+kind: llm
+display_name: DeepSeek-V3.1
+released: '2025-08-21'
+license: mit
+visibility: public
+sources:
+- kind: modelcard
+  url: https://huggingface.co/deepseek-ai/DeepSeek-V3.1
+  locator: config.json @ c0781d039fb7
+  accessed: '2026-10-29'
+hf:
+  repo: deepseek-ai/DeepSeek-V3.1
+  sha: c0781d039fb7a1ba2abc4add0bdc293e92d2b8db
+  last_modified: '2025-09-05T11:30:15.000Z'
+  pipeline_tag: text-generation
+  gated: false
+lineage:
+  track: main
+  predecessor: ds-r1
+  successor: ds-v3.2-exp
+  changed_from_predecessor:
+  - axis: precision
+    text: FP8 的 scale 格式显式声明为 ue8m0（2 的幂次 scale，只占指数位）。块仍 [128,128]，张量名与 R1 完全一致 —— 但反量化的乘法可以退化成指数加法
+params:
+  counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
+    FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
+    不带 --names-only 重取。
+context:
+  max: 163840
+  train_native: 4096
+arch:
+  layers: 61
+  hidden: 7168
+  vocab: 129280
+  norm: RMSNorm
+  norm_eps: 1.0e-06
+  activation: SwiGLU（hidden_act silu，gate/up/down 三件套）
+  position: RoPE theta 10000 + YaRN 外推
+  attention:
+    type: MLA
+    num_heads: 128
+    num_kv_heads: 128
+    qk_rope_head_dim: 64
+    qk_nope_head_dim: 128
+    kv_lora_rank: 512
+    q_lora_rank: 1536
+    head_dim: 192
+  ffn:
+    type: moe
+  moe:
+    routed_experts: 256
+    top_k: 8
+    shared_experts: 1
+    intermediate: 2048
+    first_k_dense: 3
+    expert_groups: 8
+    routing: sigmoid 打分 / noaux_tc 选路
+  decoding:
+    mtp_layers: 1
+precision:
+  quantization:
+    method: fp8
+    activation_scheme: dynamic
+    weight_block_size:
+    - 128
+    - 128
+    scale_format: ue8m0
+infra_signals:
+- text: ue8m0 scale 让反量化从浮点乘退化为指数加。平台若按通用 FP8 scale 实现，会白付一次乘法
+  evidence: judgement
+  horizon: now
+  axis: precision
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: official
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  context: official
+  arch: official
+  arch.attention.type: derived
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.moe.routing: derived
+  arch.ffn.type: derived
+  precision: official
+  infra_signals: judgement
+  notes: judgement
+notes: 唯一的改动是 scale 格式。它不改张量形状，却改反量化算子的实现：ue8m0 的 scale 是纯指数，乘 scale 可以变成加指数。容易被当成元数据忽略过去。
