@@ -17,6 +17,7 @@ data/
 facts/              取数缓存（不进仓库，可按 pinned sha 复现）
 scripts/
   fetch_hf.py       HF 仓库 -> facts/（只读 safetensors 头，不下权重）
+  fetch_kv_widths.py 只取产出 KV 的张量宽度与层覆盖 -> facts/<id>/kv_widths.json（没有全量清单时用）
   derive.py         config + 权重清单 -> 负载特征 + 交叉核对
   validate.py       schema + 证据覆盖 + 防泄漏
   mk_ops_table.py   算子表 YAML -> xlsx
@@ -63,6 +64,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python scripts/scaffold.py --id <模型id> --family <家族> --repo <org/repo>  # 从 config 生成草稿
 .venv/bin/python scripts/fetch_dtypes.py --id <模型id> --repo <org/repo>  # 逐子系统测精度，只读最小分片集
 .venv/bin/python scripts/apply_dtypes.py                                  # 写进记录，已有值时只比对
+.venv/bin/python scripts/fetch_kv_widths.py --id <模型id> --repo <org/repo> --rev <sha>  # KV 条目宽度，逐层读、查同类一致
 .venv/bin/python scripts/derive.py --id <模型id> --model data/models/<家族>/<模型id>.yaml --ep 4
 .venv/bin/python scripts/validate.py
 .venv/bin/python scripts/mk_ops_table.py <算子表.yaml>
