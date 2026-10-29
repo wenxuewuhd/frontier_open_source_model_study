@@ -33,6 +33,9 @@ jobs:
         run: python scripts/validate.py
       - name: 渲染算子表 fixture
         run: python scripts/mk_ops_table.py tests/fixtures/ops-table.sample.yaml -o /tmp/fixture.xlsx
+      # docs 里的缓存对照表是生成的。改了缓存数而没重生成，表会悄悄停在旧值上
+      - name: 查缓存对照表是否过期
+        run: python scripts/kv_table.py --check
 
   build:
     needs: validate

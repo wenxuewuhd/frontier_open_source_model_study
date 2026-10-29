@@ -5,6 +5,11 @@
 
 方案与分期见 [PLAN.md](PLAN.md)。当前进度：**P0-A 完成**（schema + 脚本 + 首个压力测试用例）。
 
+要动手审一个模型、核一个数、录一个新族系旗舰，先读 **`model-audit` skill**（`.claude/skills/model-audit/`）：
+取数与提问顺序、读证据的规则。约定见 [CLAUDE.md](CLAUDE.md)，缓存口径见
+[docs/kv-cache-accounting.md](docs/kv-cache-accounting.md)。本文件是**案例史** ——
+每个错数字的来龙去脉按发现顺序记在「用例」一节，规则从那里提炼，案子不要再往记录里重写一遍。
+
 ## 这个仓库是什么
 
 数据和叙述分开：数字只出现在 `data/` 的 YAML 里，可校验、可复算；分析引用数据，不复制数字。
@@ -20,6 +25,7 @@ scripts/
   fetch_kv_widths.py 只取产出 KV 的张量宽度与层覆盖 -> facts/<id>/kv_widths.json（没有全量清单时用）
   derive.py         config + 权重清单 -> 负载特征 + 交叉核对
   validate.py       schema + 证据覆盖 + 防泄漏
+  kv_table.py       tracking.yaml + derived -> docs 的缓存对照表（--check 查过期）
   mk_ops_table.py   算子表 YAML -> xlsx
 tests/fixtures/     渲染用的合成样例
 data-private/       内部 overlay（不进仓库）：算子表、自测性能、硬件相关分析
@@ -67,6 +73,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python scripts/fetch_kv_widths.py --id <模型id> --repo <org/repo> --rev <sha>  # KV 条目宽度，逐层读、查同类一致
 .venv/bin/python scripts/derive.py --id <模型id> --model data/models/<家族>/<模型id>.yaml --ep 4
 .venv/bin/python scripts/validate.py
+.venv/bin/python scripts/kv_table.py              # 改过缓存数之后重生成 docs 里的对照表
+.venv/bin/python scripts/kv_table.py --check      # 只查过期，给 CI 用
 .venv/bin/python scripts/mk_ops_table.py <算子表.yaml>
 ```
 
@@ -176,7 +184,9 @@ schema 由刻意选得差异最大的几个用例撑出来，而不是从一个�
 2. **`lm_head` 必须计入带宽，输入词表不能**。原来把两者归成一类排除掉，理由是「每 token 只触及极少行」—— 这对 embed 成立，对 lm_head 完全不成立（每步对全词表做 GEMM）。Qwen 的 248K 词表让这个 bug 显形。
 3. **官方「激活参数」≠ 带宽相关的激活参数**。前者含输入词表，后者不含；差 4% 且概念不同。现在两个数分开报，不混成一个。
 
-顺带暴露了一件原来看不见的事：重构后按分量拆解，发现 V4.1 的 **indexer 缓存 65536 B/token 是 full attention KV 的 14 倍** —— 它的 KV 压力主要来自稀疏选块的索引，不是注意力本身。
+顺带暴露了一件原来看不见的事：**一个 per_token 数表达不了混合结构**。拆成分量之后，V4.1 的 KV 压力才看得出构成 —— 现在是全局压缩 KV 720 B/token、indexer 170 B/token（占 19%）、滑窗 2.71 MiB/序列，**主要在主 KV，不在索引**。
+
+> 这一段原本的结论是反的：「indexer 缓存 65536 B/token，是 full attention KV 的 14 倍，KV 压力主要来自稀疏选块的索引」。它依赖的三个因子（层覆盖、条目宽度、条目折算）后来都在下面各自的小节里被单独改过，**而这个引用它们的结论没有跟着改**，直到两轮之后才发现它早就不成立了。修一个数字时，要连带查哪些结论引用过它。
 
 ### Qwen3.8-2.4T-A95B（家族旗舰）
 
