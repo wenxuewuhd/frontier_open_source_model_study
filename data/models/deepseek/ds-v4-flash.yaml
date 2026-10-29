@@ -273,6 +273,20 @@ evidence:
   arch.attention.attn_sink: derived
   arch.attention.kv_sharing.layer_coverage: derived
   arch.attention.sparse.mechanism: judgement
+reviewed_elsewhere:
+  record: deepseek-v41-flash
+  findings:
+  - R28
+  - R23
+  scope: >-
+    R28 推翻了本记录原先的每 token 注意力显存 71552 B：三处独立错因叠加、高估 5.2 倍
+    （indexer 按总层数 43 算而实测只在比值为 4 的 21 层；indexer 宽度没除压缩比；
+    把 sliding_window=128 的局部 KV 当全局 KV 逐 token 计费）。改出来的
+    arch.attention.kv_sharing.measured_per_token（global_kv 5456 + indexer 1344）
+    就在本记录里。R23 顺带实测了本记录的 FP4 路由专家块是 [1,32]
+    （w1 [2048,2048] I8 对 scale [2048,128]，还原打包后 4096/128=32、2048/2048=1），
+    不是 config 声明的 [128,128]。
+    只覆盖这两处：注意力显存口径与路由专家的量化块。本记录其余字段仍未核查
 notes: 谱系里最大的一次不连续，几乎每个维度都动了。对 infra 最要紧的是三件：KV 上投影消失（注意力算子换签名）、专家降到 FP4（打包存储，参数量不能直接求和）、mHC 把残差流宽度乘
   4（所有逐元素算子的形状都变）。另外 attn_sink 不在 config 里，只能从权重清单发现；hash 层的数量在 config 里（num_hash_layers=3），但它的张量形态与所在层要靠权重清单。
 open_questions:

@@ -248,6 +248,19 @@ evidence:
   arch.moe.hash_layers: derived
   arch.attention.kv_sharing.layer_coverage: derived
   arch.attention.sparse.mechanism: judgement
+reviewed_elsewhere:
+  record: deepseek-v41-flash
+  findings:
+  - R28
+  - R23
+  scope: >-
+    R28 推翻了本记录原先的每 token 注意力显存 101504 B：三处独立错因叠加、高估 5.2 倍
+    （indexer 按总层数 61 算而实测只在比值为 4 的 30 层；indexer 宽度没除压缩比；
+    把 sliding_window=128 的局部 KV 当全局 KV 逐 token 计费）。改出来的
+    arch.attention.kv_sharing.measured_per_token（global_kv 7804 + indexer 1920）
+    就在本记录里。R23 顺带实测了本记录的 FP4 路由专家块是 [1,32]
+    （w1 [3072,3584] 对 scale [3072,224]），不是 config 声明的 [128,128]。
+    只覆盖这两处：注意力显存口径与路由专家的量化块。本记录其余字段仍未核查
 notes: 张量名集合是 V4-Flash 的超集（只是层数与专家数更多），无新增算子类型。同日发布的大号版本，适合用来区分「规格变化」与「机制变化」。
 open_questions:
 - 未取权重清单，参数量待补

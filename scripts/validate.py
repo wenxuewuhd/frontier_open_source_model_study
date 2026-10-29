@@ -24,7 +24,9 @@ import sys
 
 # evidence 里不需要逐个声明的结构性键
 # 元字段：描述记录本身而非模型事实，不需要证据归属
-SKIP_KEYS = {"evidence", "sources", "visibility", "reviewed", "review"}
+SKIP_KEYS = {"evidence", "sources", "visibility", "reviewed", "review",
+             # 核查元信息，不是关于模型的事实 —— 给它贴证据类别没有意义
+             "reviewed_elsewhere"}
 # 这些字段由脚本生成，YAML 里不该出现
 GENERATED_ONLY = {"derived"}
 
@@ -133,7 +135,17 @@ def check_review(doc, path, errors, warnings):
     """
     review = doc.get("review") or []
     if not doc.get("reviewed"):
-        warnings.append(f"{path}: 还没有 reviewed 块，这份记录未经核查")
+        if doc.get("reviewed_elsewhere"):
+            # 指向别处的核查：这不等于「整份记录已核查」，只是那几个字段核过了。
+            # 仍然告警，但说清是部分覆盖 —— 指针本身由 check_review_pointers 核对
+            el = doc["reviewed_elsewhere"]
+            # 只报指到哪里，不把 scope 整段倒出来 —— 告警是索引，不是正文
+            warnings.append(
+                f"{path}: 没有自己的 reviewed 块；"
+                f"{'/'.join(el.get('findings') or [])} 的核查在 {el.get('record')}，"
+                "覆盖范围见 reviewed_elsewhere.scope，其余字段仍未核查")
+        else:
+            warnings.append(f"{path}: 还没有 reviewed 块，这份记录未经核查")
         if review:
             errors.append(f"{path}: 有 review 发现却没有 reviewed 元信息，无法判断核查范围")
         return
@@ -192,6 +204,36 @@ def check_leak(doc, path, errors, allow_internal):
         errors.append(f"{path}: 内部数据不能进公开仓 — {h}")
 
 
+def check_review_pointers(docs, errors, warnings):
+    """跨记录核对「核查在别处」的指针。
+
+    指针不核对就会悄悄烂掉：对面改了编号、删了条目，或者被指向的记录自己
+    从没被核查过 —— 而这份记录上写着「已在别处核过」。那比老实显示未核查更糟，
+    因为它让人不再去看。单份记录校验看不到这件事，只能在全部加载完之后比。
+    """
+    by_id = {doc["id"]: (p, doc) for p, doc in docs.items() if doc.get("id")}
+    for path, doc in docs.items():
+        el = doc.get("reviewed_elsewhere")
+        if not el:
+            continue
+        tgt = el.get("record")
+        if tgt == doc.get("id"):
+            errors.append(f"{path}: reviewed_elsewhere 指向自己")
+            continue
+        if tgt not in by_id:
+            errors.append(f"{path}: reviewed_elsewhere 指向的记录 {tgt} 不存在")
+            continue
+        _, tdoc = by_id[tgt]
+        if not tdoc.get("reviewed"):
+            errors.append(f"{path}: reviewed_elsewhere 指向 {tgt}，"
+                          "但那份记录自己就没有 reviewed 块，指针落在空处")
+        have = {f.get("id") for f in (tdoc.get("review") or [])}
+        missing = [x for x in (el.get("findings") or []) if x not in have]
+        if missing:
+            errors.append(f"{path}: reviewed_elsewhere 引用的 {'/'.join(missing)} "
+                          f"在 {tgt} 的 review 列表里不存在")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default="data")
@@ -209,15 +251,18 @@ def main():
     errors, warnings, judgements = [], [], []
     models = sorted(glob.glob(os.path.join(args.data_dir, "models", "**", "*.yaml"),
                               recursive=True))
+    loaded = {}
     for p in models:
         doc = load_yaml(p)
         if not isinstance(doc, dict):
             errors.append(f"{p}: 不是一个 YAML 映射")
             continue
+        loaded[p] = doc
         check_schema(doc, model_schema, p, errors)
         check_evidence(doc, p, errors, warnings, judgements)
         check_review(doc, p, errors, warnings)
         check_leak(doc, p, errors, args.allow_internal)
+    check_review_pointers(loaded, errors, warnings)
 
     ops = sorted(glob.glob(os.path.join(args.data_dir, "ops", "**", "*.yaml"), recursive=True))
     for p in ops:

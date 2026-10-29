@@ -687,6 +687,26 @@
       }
     },
 
+    "reviewed_elsewhere": {
+      "type": "object",
+      "description": "本记录的核查留痕在另一份记录里。只有当那次核查实际检验了本记录的字段、并把结论写回本记录时才能用 —— 「顺带读过本记录的权重清单」不算，「发现的是工具的缺陷」也不算。校验会去对面核对编号是否真的存在，所以指针烂掉会报错而不是悄悄失效",
+      "required": ["record", "findings", "scope"],
+      "additionalProperties": false,
+      "properties": {
+        "record": { "type": "string", "description": "承载核查留痕的记录 id" },
+        "findings": {
+          "type": "array",
+          "description": "对面 review 列表里的编号",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^R[0-9]+$" }
+        },
+        "scope": {
+          "type": "string",
+          "description": "那次核查覆盖了本记录的哪些字段。没点到的部分仍然未核查 —— 这里不是「整份记录已核查」的同义词"
+        }
+      }
+    },
+
     "review": {
       "type": "array",
       "description": "核查发现。resolution=open 的条目必须同时出现在 open_questions 里，否则问题会藏在这里没人看见",
