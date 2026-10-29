@@ -51,8 +51,8 @@ arch:
     sliding_window: 128
     head_dim: 512
     sparse:
-      mechanism: indexer 逐 token 打分后取 topk，再在选中的 token 上做全注意力。indexer 自带 wk / wq_b / k_norm / weights_proj，每层都有，K
-        独立产出（与 deepseek-v41-flash 同，详见该记录）
+      mechanism: indexer 打分选块，再在选中的块上做全注意力。产出 index K 的只有 4 层（有 indexer.wk 权重），另 4 层只复用已有 K 重新打分 ——
+        与 deepseek-v41-flash 同，详见该记录
       index_n_heads: 32
       index_head_dim: 128
       index_topk: 512
@@ -65,11 +65,12 @@ arch:
       - 8
       - 14
       - 20
-      index_source_layers:
+      index_kv_source_layers:
       - 2
       - 8
       - 14
       - 20
+      index_rescore_layers:
       - 24
       - 28
       - 32

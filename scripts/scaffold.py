@@ -103,7 +103,15 @@ def build_attention(t: dict) -> dict:
     if t.get("kv_source_layer_ids"):
         share["source_layers"] = t["kv_source_layer_ids"]
     if t.get("index_source_layer_ids"):
-        share["index_source_layers"] = t["index_source_layer_ids"]
+        # 故意不填 index_kv_source_layers：config 的这个列表把「产出 index K 的层」和
+        # 「只复用已有 K 重新打分的层」混在一起，照搬会让 indexer 缓存高估一倍。
+        # 两者只能靠权重区分（有没有 indexer.wk），脚手架没有权重，所以把问题留给人。
+        share["note"] = (
+            f"config 的 index_source_layer_ids = {t['index_source_layer_ids']}，"
+            f"但它混了两类层。{TODO}：查权重清单里哪些层有 indexer.wk，"
+            f"有的填 index_kv_source_layers，其余填 index_rescore_layers。"
+            f"照搬整个列表会让 indexer 缓存高估一倍"
+        )
     if t.get("compress_ratios"):
         share["compress_ratios"] = t["compress_ratios"]
     if share:
