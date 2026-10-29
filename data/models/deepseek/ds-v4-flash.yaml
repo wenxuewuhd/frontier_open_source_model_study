@@ -177,6 +177,11 @@ precision:
       norm: BF16
       residual: FP32
       draft: FP4
+    per_subsystem_block:
+      expert: '[1,32]'
+      shared_expert: '[128,128]'
+      attention: '[128,128]'
+      draft: '[1,32] / [128,128]'
     per_subsystem_scale:
       expert: FP8_E8M0
       shared_expert: FP8_E8M0
@@ -221,6 +226,7 @@ evidence:
   precision.quantization.per_subsystem: derived
   precision.quantization.per_subsystem_scale: derived
   precision.quantization.subsystem_method: derived
+  precision.quantization.per_subsystem_block: derived
 notes: 谱系里最大的一次不连续，几乎每个维度都动了。对 infra 最要紧的是三件：KV 上投影消失（注意力算子换签名）、专家降到 FP4（打包存储，参数量不能直接求和）、mHC 把残差流宽度乘
   4（所有逐元素算子的形状都变）。另外 attn_sink 与 hash 路由层都不在 config 里，只能从权重清单发现。
 open_questions:

@@ -457,6 +457,12 @@
               "additionalProperties": { "$ref": "#/$defs/dtype" },
               "description": "逐子系统的权重精度，键用 data/schema/subsystems.json 里的 key。由 scripts/fetch_dtypes.py 从权重头实测，不要回填 config 声明值 —— 两者经常对不上"
             },
+            "per_subsystem_block": {
+              "type": "object",
+              "additionalProperties": { "type": "string" },
+              "description": "逐子系统的实测量化块，形如 [1,32]（沿 out, 沿 in）。**不要抄 config 的 weight_block_size** —— DeepSeek V4 一代声明 [128,128]，而 FP4 路由专家实际是 [1,32]，照声明值反量化会期望 scale 行数差 128 倍，权重被静默解错。同一子系统横跨两档时用 / 分隔；末块不满的维度记作 128ceil",
+              "propertyNames": { "type": "string" }
+            },
             "per_subsystem_scale": {
               "type": "object",
               "additionalProperties": { "$ref": "#/$defs/dtype" },

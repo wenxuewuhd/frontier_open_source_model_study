@@ -154,6 +154,11 @@ precision:
       norm: BF16
       residual: FP32
       draft: FP4
+    per_subsystem_block:
+      expert: '[1,32]'
+      shared_expert: '[128,128]'
+      attention: '[128,128]'
+      draft: '[1,32] / [128,128]'
     subsystem_method: 抽样：每个子系统 6 个代表张量，共读 14 个分片头
     per_subsystem_scale:
       expert: FP8_E8M0
@@ -183,4 +188,5 @@ evidence:
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived
   precision.quantization.per_subsystem_scale: derived
+  precision.quantization.per_subsystem_block: derived
 notes: 日期版权重刷新。零架构差异。

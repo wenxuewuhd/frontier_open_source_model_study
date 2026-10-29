@@ -172,6 +172,11 @@ precision:
       residual: FP32
       draft: FP4
       vision: BF16
+    per_subsystem_block:
+      expert: '[1,32]'
+      shared_expert: '[128,128]'
+      attention: '[128,128]'
+      draft: '[1,32] / [128,128]'
     subsystem_method: 抽样：每个子系统 6 个代表张量，共读 11 个分片头
     per_subsystem_scale:
       expert: FP8_E8M0
@@ -208,6 +213,7 @@ evidence:
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived
   precision.quantization.per_subsystem_scale: derived
+  precision.quantization.per_subsystem_block: derived
 notes: 多模态入口。两个容易漏的点：视觉塔的 attention 用融合 wqkv 且带 bias（和主干不同构），以及 router 从此有两套偏置。
 open_questions:
 - 视觉 token 与文本 token 在 decode 下如何共享 router，未见公开说明

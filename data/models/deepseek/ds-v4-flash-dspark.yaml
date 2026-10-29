@@ -155,6 +155,11 @@ precision:
       norm: BF16
       residual: FP32
       draft: FP4
+    per_subsystem_block:
+      expert: '[1,32]'
+      shared_expert: '[128,128]'
+      attention: '[128,128]'
+      draft: '[1,32] / [128,128]'
     subsystem_method: 抽样：每个子系统 6 个代表张量，共读 14 个分片头
     per_subsystem_scale:
       expert: FP8_E8M0
@@ -191,6 +196,7 @@ evidence:
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived
   precision.quantization.per_subsystem_scale: derived
+  precision.quantization.per_subsystem_block: derived
 notes: 只改投机解码头。值得单列是因为 DSpark 的 markov_head 与 confidence_head 是两类新算子，而且从这一版起一路带到 V4.1 旗舰。
 open_questions:
 - DSpark 的接受率没有公开数据，草稿收益待实测

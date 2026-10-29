@@ -404,7 +404,9 @@ export const TRACKED_FIELDS: TrackedField[] = [
   //
   // scale_format 留着，因为它和实测**不一致**，而那个不一致正是要说的事：
   // V3.1 起声明 ue8m0，但 scale 张量实测到 V4 才真的变成 8 bit。
-  { key: 'quant_block', label: '量化块', axis: 'precision', group: 'precision',
+  // 标明「config 声明」：这个值对 FP4 专家是错的，实测值在下面的逐子系统行里。
+  // 不标的话两处并排显示 [128,128] 和 [1,32]，读者无从判断信哪个
+  { key: 'quant_block', label: '量化块（config 声明）', axis: 'precision', group: 'precision',
     get: (m) => {
       const b = m.precision?.quantization?.weight_block_size;
       return b ? `[${b.join(',')}]` : undefined;
@@ -433,10 +435,15 @@ function subsystemFields(): TrackedField[] {
     group: 'precision' as const,
     diff: 'both-measured' as const,
     get: (m: Model) => {
-      const w = m.precision?.quantization?.per_subsystem?.[s.key];
+      const q = m.precision?.quantization;
+      const w = q?.per_subsystem?.[s.key];
       if (!w) return undefined;
-      const sc = m.precision?.quantization?.per_subsystem_scale?.[s.key];
-      return sc ? `${w} / ${sc}` : w;
+      const sc = q?.per_subsystem_scale?.[s.key];
+      const bk = q?.per_subsystem_block?.[s.key];
+      // 三件事挤在一格，但它们必须一起看：反量化要同时知道权重精度、scale 精度和块。
+      // 少看一个就会错 —— V4 的专家是 FP4 / FP8_E8M0 / [1,32]，
+      // 照 config 的 [128,128] 去读 scale 会差 128 倍。
+      return [w, sc, bk].filter(Boolean).join(' / ');
     },
   }));
 }

@@ -203,9 +203,12 @@ const sideCls = (m: any) => (m.lineage?.track === 'side' ? 'side' : undefined);
     <code>scale 格式</code>留着是因为它和实测<strong>不一致</strong>，而那个不一致正是要说的事。
   </p>
   <p class="small muted">
-    下半部分是逐子系统的<strong>实测</strong>精度，由 <code>scripts/fetch_dtypes.py</code>
-    直接读权重头得出，不回填 config 声明值。权重精度与 scale 精度分开列 ——
-    FP4 权重配 FP8_E8M0 的 scale，只看一个会让反量化实现猜错 scale 张量的大小。
+    下半部分是逐子系统的<strong>实测</strong>值，由 <code>scripts/fetch_dtypes.py</code>
+    直接读权重头得出，不回填 config 声明值。三项一起列（权重精度 / scale 精度 / 量化块），
+    因为反量化必须同时知道这三件事。<strong>量化块尤其不能信 config</strong> ——
+    V4 一代声明 <code>[128,128]</code>，而 FP4 路由专家实测是 <code>[1,32]</code>
+    （逐输出行、沿 K 每 32 个一个 scale），照声明值去读 scale 会差 128 倍。
+    <code>128ceil</code> 表示末块不满（如 V3 的 <code>kv_a_proj_with_mqa</code> 输出维 576）。
     这些行也进变化矩阵，但只在相邻两版都测过时才比：缺值是「没测」不是「取消」。
   </p>
   <p class="small muted">
@@ -234,7 +237,7 @@ const sideCls = (m: any) => (m.lineage?.track === 'side' ? 'side' : undefined);
             {i === firstMeasured && (
               <tr class="group">
                 <td colspan={models.length + 1}>
-                  逐子系统实测（权重精度 <span class="muted">/ scale 精度</span>）
+                  逐子系统实测（权重精度 <span class="muted">/ scale 精度 / 量化块</span>）
                 </td>
               </tr>
             )}

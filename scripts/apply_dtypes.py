@@ -55,6 +55,7 @@ def main():
         per = {k: to_enum(v["dtype"]) for k, v in subs.items() if v.get("dtype")}
         per_scale = {k: to_enum(v["scale_dtype"]) for k, v in subs.items()
                      if v.get("scale_dtype") and per.get(k) in QUANTIZED}
+        per_block = {k: v["block"] for k, v in subs.items() if v.get("block")}
 
         q = doc.setdefault("precision", {}).setdefault("quantization", {})
         old = q.get("per_subsystem")
@@ -69,6 +70,21 @@ def main():
             else:
                 # 权重精度一致就不动它，但 scale 精度是新增的一项，补上不算覆盖
                 added = False
+                if per_block and not q.get("per_subsystem_block"):
+                    # 实测 block 是新增项，补上不算覆盖已有的 per_subsystem
+                    q["per_subsystem_block"] = per_block
+                    doc.setdefault("evidence", {})[
+                        "precision.quantization.per_subsystem_block"] = "derived"
+                    lines = open(path).read().splitlines(keepends=True)
+                    at = next(i for i, l in enumerate(lines)
+                              if l.rstrip() == "    per_subsystem:")
+                    at += 1
+                    while at < len(lines) and lines[at].startswith("      "):
+                        at += 1
+                    ins = (["    per_subsystem_block:\n"]
+                           + [f"      {k}: '{v}'\n" for k, v in per_block.items()])
+                    open(path, "w").write("".join(lines[:at] + ins + lines[at:]))
+                    added = True
                 if per_scale and not q.get("per_subsystem_scale"):
                     q["per_subsystem_scale"] = per_scale
                     q.setdefault("subsystem_method", meas.get("method", ""))
@@ -90,17 +106,21 @@ def main():
                     open(path, "w").write("".join(lines[:at] + ins + lines[at:]))
                     added = True
                 print(f"== {mid}: 抽样与已有记录一致（{len(per)} 项）"
-                      f"{'，补了 scale 精度' if added else ''}")
+                      f"{'，补了 scale / block' if added else ''}")
             continue
 
         q["per_subsystem"] = per
         if per_scale:
             q["per_subsystem_scale"] = per_scale
+        if per_block:
+            q["per_subsystem_block"] = per_block
         q["subsystem_method"] = meas.get("method", "")
         ev = doc.setdefault("evidence", {})
         ev["precision.quantization.per_subsystem"] = "derived"
         if per_scale:
             ev["precision.quantization.per_subsystem_scale"] = "derived"
+        if per_block:
+            ev["precision.quantization.per_subsystem_block"] = "derived"
         ev["precision.quantization.subsystem_method"] = "derived"
 
         head = "".join(l for l in open(path) if l.startswith("#"))

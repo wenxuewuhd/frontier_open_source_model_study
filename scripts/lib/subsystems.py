@@ -44,7 +44,24 @@ ORDER = [s["key"] for s in _SPEC]
 LABEL = {s["key"]: s["label"] for s in _SPEC}
 
 
-def classify(name: str) -> str:
+_LAYER_IDX = re.compile(r"layers?\.(\d+)\.", re.I)
+
+
+def classify(name: str, mtp_from: int = None) -> str:
+    """张量名 -> 子系统。
+
+    mtp_from：主干之后第一个 MTP 层的索引，传 config 的 num_hidden_layers 即可。
+
+    DeepSeek V3 一代的 MTP 借用层索引（num_hidden_layers=61，主干是 0–60，
+    MTP 是第 61 层），它的本体张量名里没有任何 mtp/draft 标记 —— 只有
+    eh_proj / enorm / hnorm / shared_head 这几个胶水张量带标记。所以光靠名字匹配，
+    第 61 层的 1536 个专家、注意力、norm、router、embed 副本会整块算进主干，
+    参数量账上凭空多一层。层索引是唯一可靠的判据，但它只能由调用方给。
+    """
+    if mtp_from is not None:
+        m = _LAYER_IDX.search(name)
+        if m and int(m.group(1)) >= mtp_from:
+            return "draft"
     for label, rx in SUBSYSTEM:
         if rx.search(name):
             return label

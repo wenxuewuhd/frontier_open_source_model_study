@@ -43,7 +43,7 @@ def numel(shape) -> float:
 
 # ---------------------------------------------------------------- shapes 路
 
-def from_shapes(shapes: dict, logical: dict = None) -> dict:
+def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dict:
     """逐张量求和。
 
     三个口径互不混用：
@@ -53,6 +53,9 @@ def from_shapes(shapes: dict, logical: dict = None) -> dict:
 
     logical 给出每个子系统声明的逻辑精度（来自 precision.quantization.per_subsystem），
     用来识别打包。没给就按不打包处理，并在 packing_suspect 里提示可疑之处。
+
+    mtp_from 传 config 的 num_hidden_layers：V3 一代的 MTP 借用层索引，
+    名字里没有 mtp 标记，不传的话那一层会整块算进主干。
     """
     logical = logical or {}
     if not shapes:
@@ -73,7 +76,7 @@ def from_shapes(shapes: dict, logical: dict = None) -> dict:
         b = dtypes.nbytes(dt)
         if b == 0.0:
             unknown_dtypes.add(meta.get("dtype"))
-        sub = classify(name)
+        sub = classify(name, mtp_from)
 
         nbytes[sub] = nbytes.get(sub, 0.0) + n * b
         by_dtype[dt] = by_dtype.get(dt, 0.0) + n * b
@@ -480,7 +483,9 @@ def main():
     act_dtype = prec.get("training") or cfg.get("dtype") or "BF16"
 
     logical = ((prec.get("quantization") or {}).get("per_subsystem") or {})
-    shp = from_shapes(shapes, logical)
+    # 层索引 >= num_hidden_layers 的归草稿侧：V3 一代的 MTP 是「第 61 层」，
+    # 名字里没有 mtp 标记，不这样分会把整层算进主干
+    shp = from_shapes(shapes, logical, mtp_from=t.get("num_hidden_layers"))
     kv = kv_memory(t, attn, kv_dtype, prec.get("kv_cache_scale"))
     if kv_dtype_assumed and kv.get("status") in ("ok", "partial"):
         kv["dtype_assumed"] = True

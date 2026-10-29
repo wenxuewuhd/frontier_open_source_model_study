@@ -41,10 +41,33 @@ CONTAINERS = {"I8", "U8", "INT8", "UINT8"}
 _DOMINANT = 0.6
 
 
-_AUX = re.compile(r"\.(scale|weight_scale_inv|scale_inv|bias|_amax)$", re.I)
+# 只匹配量化 scale。**不要把 bias 放进来**：bias 是参数不是 scale，
+# 混进去会让没量化的子系统也报出一个 scale 精度 —— router 的权重是 BF16、
+# 根本没有 scale 张量，却因为 ffn.gate.bias 是 F32 而被报成 scale=FP32，
+# 下游照这个去给 router 分配一块 FP32 scale 就错了。
+# （`_amax` 这类 TensorRT 风格的名字是 `*.weight_amax`，真要支持得另写，
+#  写成 `._amax$` 匹配不上，所以这里不留假防线。）
+_SCALE = re.compile(r"\.(scale|weight_scale_inv|scale_inv)$", re.I)
 
 
-def representatives(weight_map: dict, per_sub: int = 3) -> dict:
+def blk_dim(a: int, s: int) -> str:
+    """由「这一维长度 a」和「scale 在这一维的条数 s」反推 block 跨度。
+
+    整除时就是 a/s。不整除说明末块不满（scale 条数是 ceil(a/b)），
+    此时 b 不唯一，只知道落在 (a/s, a/(s-1)] 区间内 —— 取区间里最小的 2 的幂作为
+    代表值并标 ceil。DeepSeek V3 的 kv_a_proj_with_mqa 输出维 576 就是这种情况：
+    576 = 4×128 + 64，scale 有 5 条。按「block 一律整除」写的反量化实现会在这里错位。
+    """
+    if a % s == 0:
+        return str(a // s)
+    lo, hi = a / s, a / (s - 1) if s > 1 else a
+    b = 1
+    while b * 2 <= hi:
+        b *= 2
+    return f"{b}ceil" if lo < b <= hi else f"~{a / s:.1f}"
+
+
+def representatives(weight_map: dict, per_sub: int = 3, mtp_from: int = None) -> dict:
     """每个子系统挑代表张量，权重与 scale 分开挑。
 
     两类必须分开，否则结果会错得很安静：同一个专家既有 w1.weight（FP4 容器）
@@ -55,7 +78,7 @@ def representatives(weight_map: dict, per_sub: int = 3) -> dict:
     """
     w, s = defaultdict(list), defaultdict(list)
     for name in weight_map:
-        (s if _AUX.search(name) else w)[classify(name)].append(name)
+        (s if _SCALE.search(name) else w)[classify(name, mtp_from)].append(name)
     out = {}
     for sub in set(w) | set(s):
         for bucket, kind in ((w, "weight"), (s, "scale")):
@@ -93,7 +116,13 @@ def main():
     wm = json.loads(_get(RESOLVE.format(repo=args.repo, rev=rev, path=idx),
                          _token_header())).get("weight_map") or {}
 
-    reps = representatives(wm, args.per_subsystem)
+    # 先读 config，拿到 num_hidden_layers 用于把 MTP 层从主干里分出来
+    cfg_early = os.path.join(out_dir, "cfg.json")
+    _cfg = json.load(open(cfg_early)) if os.path.exists(cfg_early) else {}
+    _t = _cfg.get("text_config") or _cfg
+    mtp_from = _t.get("num_hidden_layers")
+
+    reps = representatives(wm, args.per_subsystem, mtp_from)
     shards = minimal_shards(reps, wm)
     print(f"  {args.id}: {len(wm)} 个张量 / {len(reps)} 个子系统，"
           f"读 {len(shards)} 个分片（全量是 {len({*wm.values()})} 个）", file=sys.stderr)
@@ -105,9 +134,7 @@ def main():
                 seen[name] = meta
 
     # config 声明的专家精度，用来判定容器里装的是什么
-    cfg_path = os.path.join(out_dir, "cfg.json")
-    cfg = json.load(open(cfg_path)) if os.path.exists(cfg_path) else {}
-    t = cfg.get("text_config") or cfg
+    cfg, t = _cfg, _t
     q = cfg.get("quantization_config") or {}
     declared_expert = (t.get("expert_dtype") or q.get("expert_dtype") or "").upper() or None
 
@@ -121,7 +148,7 @@ def main():
     # 占比不足 _DOMINANT 时记 MIXED，细节留在 samples 里。
     def profile(sub, aux):
         cands = [(n, m) for n, m in seen.items()
-                 if classify(n) == sub and bool(_AUX.search(n)) == aux]
+                 if classify(n, mtp_from) == sub and bool(_SCALE.search(n)) == aux]
         by_dtype = defaultdict(float)
         for n, m in cands:
             by_dtype[m.get("dtype")] += prod(m.get("shape") or [0])
@@ -136,27 +163,64 @@ def main():
                for n, m in cands[:args.per_subsystem]]
         return top, obs, {d: round(s, 3) for d, s in share.items()}
 
+    # 实测 block = 权重形状 ÷ 同名 scale 形状，FP4 先还原打包。
+    #
+    # 必须实测而不是抄 config 的 weight_block_size：V4 一代声明 [128,128]，
+    # 但 FP4 路由专家实际是 [1,32]（逐输出行、沿 K 每 32 个一个 scale）。
+    # 按声明值去反量化专家，会期望 scale 行数是权重行数的 1/128，差 128 倍，
+    # 权重被静默解错 —— 这类错误 config 自己看不出来，只有除一下才知道。
+    def blocks(sub):
+        out = {}
+        for n, m in seen.items():
+            if classify(n, mtp_from) != sub or not _SCALE.search(n):
+                continue
+            base = _SCALE.sub("", n)
+            w = seen.get(base + ".weight") or seen.get(base)
+            if not w or not w.get("shape") or not m.get("shape"):
+                continue
+            ws, ss = list(w["shape"]), m["shape"]
+            if len(ws) != len(ss):
+                continue
+            if w.get("dtype") in CONTAINERS and declared_expert:
+                ws[-1] *= 8 // dtypes.BITS.get(declared_expert, 8)
+            if any(b == 0 for b in ss):
+                continue
+            shape = "[" + ",".join(blk_dim(a, b) for a, b in zip(ws, ss)) + "]"
+            out[shape] = out.get(shape, 0) + prod(ws)
+        if not out:
+            return None, {}
+        total = sum(out.values())
+        ranked = sorted(out.items(), key=lambda kv: -kv[1])
+        return " / ".join(s for s, _ in ranked), {s: round(v / total, 3) for s, v in ranked}
+
     result = {}
     for sub in ORDER:
         if sub not in reps:
             continue
         w_top, w_obs, w_share = profile(sub, aux=False)
         s_top, s_obs, s_share = profile(sub, aux=True)
+        blk, blk_share = blocks(sub)
         if not w_top:
             continue
         logical, note = w_top, None
         if any(d in CONTAINERS for d in w_share) and declared_expert and sub in ("expert", "draft"):
             logical = declared_expert
+            per_byte = 8 // dtypes.BITS.get(declared_expert, 8)
             note = (f"safetensors 的 dtype 是容器 "
                     f"{'/'.join(d for d in w_share if d in CONTAINERS)}，"
-                    f"config 声明 expert_dtype={declared_expert.lower()}，"
-                    f"按 {8 // dtypes.BITS.get(declared_expert, 8)} 个一字节打包存放。"
-                    f"numel 是容器数不是参数数")
+                    f"按 {per_byte} 个一字节打包存放，numel 是容器数不是参数数。"
+                    f"**位宽是实测的**（容器末维正好是逻辑维的 1/{per_byte}，"
+                    f"同层未打包的共享专家给出逻辑维作对照）；"
+                    f"**具体是 {declared_expert} 而不是同位宽的整型，只有 config 的 "
+                    f"expert_dtype={declared_expert.lower()} 一个来源** —— "
+                    f"形状和 dtype 都区分不了 4 bit 浮点与 4 bit 整型")
         result[sub] = {
             "dtype": dtypes.norm(logical) if "/" not in logical else logical,
             "dtype_share": w_share,
             "scale_dtype": (dtypes.norm(s_top) if s_top and "/" not in s_top else s_top),
             "scale_dtype_share": s_share,
+            "block": blk,
+            "block_share": blk_share,
             "samples": w_obs + s_obs,
         }
         if note:
@@ -170,7 +234,8 @@ def main():
         json.dump(doc, f, ensure_ascii=False, indent=1)
     for sub, v in result.items():
         sc = f" scale={v['scale_dtype']}" if v.get("scale_dtype") else ""
-        print(f"    {sub:16s} {v['dtype']:12s}{sc:22s} {v['samples'][0]['tensor']}",
+        bk = f" block={v['block']}" if v.get("block") else ""
+        print(f"    {sub:16s} {v['dtype']:10s}{sc:20s}{bk:24s} {v['samples'][0]['tensor']}",
               file=sys.stderr)
     return 0
 

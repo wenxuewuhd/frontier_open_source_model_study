@@ -67,10 +67,15 @@ lineage:
         lm_head 前的 mHC 要在词表维度上付 4× 的代价，收益不足以抵消，
         撤掉后 lm_head 回到常规形状 —— 这是整条线上少见的「加了又减」
     - axis: precision
-      text: 量化块由 [128,128] 收紧到 [32,32]；专家与 Engram 表沿 K 是 1×32，不是 32×32
+      text: >-
+        FP8 子系统的量化块由 [128,128] 收紧到 [32,32]（注意力各投影、共享专家、
+        Engram 的 wkv、indexer.wq_b、MTP 对应投影、mtp.main_proj）。
+        路由专家与 Engram 嵌入表不在其列：它们实测是 [1,32]，V4 一代就已经是 [1,32]
       benefit: >-
-        更细的量化块更抗离群值，FP4 专家尤其需要。代价是 scale 张量数量大增，
-        反量化要读的 scale 量上升。注意路由专家精度没变 —— V4 起就是 FP4，这一代只收紧了块
+        更细的量化块更抗离群值。代价是 scale 张量数量大增，反量化要读的 scale 量上升。
+        两件容易弄错的事：路由专家的精度和块在这一代**都没变**（V4 起就是 FP4 + [1,32]），
+        收紧只发生在 FP8 子系统；而 config 的单一 [32,32] 对专家是错的，
+        照它实现会期望 scale 行数是权重行数的 1/32，实际是 1:1，权重会被静默解错
     - axis: decoding
       text: DSpark 的 markov_head 由 markov_w1 / markov_w2 改为 embed / head
       benefit: 草稿头从两个全连接换成 embed + head，草稿侧权重更小
@@ -212,8 +217,14 @@ precision:
     activation_scheme: dynamic
     weight_block_size: [32, 32]
     block_size_note: >-
-      config 的单一 [32,32] 只覆盖注意力与共享专家。权重清单实测路由专家与 Engram 表
-      是沿 K 的 1×32（w1 [2304,2560] 对 scale [2304,160]），按单一值实现会解错专家权重
+      config 的单一 [32,32] 只对 FP8 子系统成立：注意力五个投影、indexer.wq_b、
+      共享专家、Engram 的 wkv、MTP 的对应投影与 main_proj。
+      权重清单实测路由专家与 Engram **嵌入表**是 [1,32]（逐输出行、沿 K 每 32 个一个
+      scale）：w1 [2304,2560] I8 还原 FP4 打包后逻辑 [2304,5120]，对 scale [2304,160]
+      —— 行数 1:1，不是 32:1。注意 retrieval 这个子系统自己横跨两档：
+      engram.embed 是 [1,32]，engram.wkv 是 [32,32]。
+      按 config 的单值实现会期望专家 scale 行数 2304/32=72，实际 2304，差 32 倍，
+      权重被静默解错。逐子系统的实测值见 per_subsystem_block
     scale_format: ue8m0
     expert_dtype: FP4
     per_subsystem:
@@ -228,6 +239,12 @@ precision:
       router: BF16
       norm: BF16
       residual: FP32
+    per_subsystem_block:
+      expert: '[1,32]'
+      shared_expert: '[32,32]'
+      attention: '[32,32]'
+      retrieval: '[1,32] / [32,32]'
+      draft: '[1,32] / [32,32]'
     # scale 张量的精度和权重精度是两个值：FP4 权重配 FP8_E8M0 的 scale。
     # 只报一个会让反量化实现猜错 scale 张量的大小
     per_subsystem_scale:
@@ -358,12 +375,14 @@ evidence:
   open_questions: judgement
 
 reviewed:
-  date: 2026-10-28
+  date: 2026-10-29
   scope: [official, derived, judgement]
   reviewer: 两个独立核查代理交叉验证，全部结论由本会话按权重清单复算后才采纳
   method: >-
-    一路核查 official/derived 字段是否能在 config、权重清单与 HF 元数据里复现；
-    另一路挑战 judgement 内容是否过度推论。两路各自独立，结论互不可见。
+    第一轮（10-28）：一路核查 official/derived 字段是否能在 config、权重清单与
+    HF 元数据里复现；另一路挑战 judgement 内容是否过度推论。两路各自独立，结论互不可见。
+    第二轮（10-29）量化精度专项：一路从张量形状逐对相除重算量化块，
+    一路挑战 dtype 结论与抽样方法本身。两轮的发现都由本会话独立复算后才采纳。
     代理产出不直接采信 —— 每条改动前都用 facts/ 下的事实重算过一遍。
 
 review:
@@ -569,6 +588,60 @@ review:
       qk_rope_head_dim=64 可能是 512 维之内的一段切片而非额外维度。
       若是切片，每层应为 1024 B 而非 1152 B，当前值高约 12.5%。
     resolution: open
+
+  # —— 第二轮：量化精度专项核查（2026-10-29）
+  - id: R23
+    field: lineage.changed_from_predecessor
+    severity: wrong
+    claim: 量化块由 [128,128] 收紧到 [32,32]；路由专家精度没变，这一代只收紧了块
+    finding: >-
+      「只收紧了块」对路由专家不成立。V4 一代的 FP4 专家实测就已经是 [1,32]：
+      V4-Flash w1 [2048,2048] I8 对 scale [2048,128]，还原打包后逻辑 [2048,4096]，
+      4096/128=32、2048/2048=1；V4-Pro w1 [3072,3584] 对 [3072,224] 同样是 [1,32]。
+      V4.1 的专家仍是 [1,32] —— 精度和块都没变，收紧只发生在 FP8 子系统。
+      这句话本是为了纠正「以为专家精度又降了」而写，却在同一句里引入了新错。
+    resolution: corrected
+    changed_to: 改写为「FP8 子系统的块由 [128,128] 收紧到 [32,32]，路由专家与 Engram 嵌入表不在其列」
+
+  - id: R24
+    field: precision.quantization.block_size_note
+    severity: imprecise
+    claim: config 的单一 [32,32] 只覆盖注意力与共享专家；路由专家与 Engram 表是 1×32
+    finding: >-
+      两处都不准。32×32 的覆盖面说窄了，还包括 engram.wkv [25600,6144]÷[800,192]、
+      mtp.main_proj [5120,15360]÷[160,480]、indexer.wq_b [4096,1280]÷[128,40]
+      以及全部 MTP 注意力与共享专家投影。另一头说宽了：retrieval 子系统自己横跨两档，
+      只有 engram.embed 是 [1,32]，engram.wkv 是 [32,32]。
+    resolution: corrected
+    changed_to: note 改写并逐项列出；同时新增 per_subsystem_block 字段，逐子系统记实测块，不再靠一句话概括
+
+  - id: R25
+    field: precision.quantization.per_subsystem_scale
+    severity: wrong
+    claim: router 的 scale 精度为 FP32（见 facts 的抽样输出）
+    finding: >-
+      fetch_dtypes.py 的 _AUX 正则把 .bias 和量化 scale 归进同一个桶，
+      于是 layers.N.ffn.gate.bias（F32 路由偏置）被当成了 router 的 scale。
+      router 权重是 BF16、未量化，根本没有 scale 张量。norm 与 vision 同样受影响
+      （indexer.k_norm.bias、vision 各处 wo.bias/wqkv.bias）。
+      记录本身没有被污染 —— apply_dtypes.py 只给量化过的子系统写 scale，挡住了，
+      但那是运气，不是设计。
+    resolution: corrected
+    changed_to: _AUX 拆成只匹配 scale 的 _SCALE，bias 归回权重桶
+
+  - id: R26
+    field: params.breakdown
+    severity: wrong
+    claim: 子系统归类已处理 V3 一代 MTP 借用层索引的问题
+    finding: >-
+      subsystems.py 的注释声称 eh_proj|enorm|hnorm|shared_head 解决了这件事，
+      实际只捕到这 5 个胶水张量。V3 的 MTP 是第 61 层（num_hidden_layers=61，
+      主干 0–60），其本体张量名里没有任何 mtp 标记：实测第 61 层共 1564 个张量，
+      只有 5 个被归到 draft，其中 1536 个专家被算进了主干。
+      derive.py 按同一套归类分参数量，主干会凭空多出一层 256 个专家。
+      本记录（V4.1）用独立的 mtp.* 命名空间，不受影响，但缺陷在工具里。
+    resolution: corrected
+    changed_to: classify 增加 mtp_from 参数，层索引 >= num_hidden_layers 的归 draft；derive.py 传入 config 的层数
 
 notes: >-
   本记录是 P0-A 的 schema 压力测试用例：选它是因为它同时带有 MLA、细粒度 MoE、
