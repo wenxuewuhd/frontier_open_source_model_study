@@ -1,13 +1,13 @@
 {
  "id": "ds-v3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T06:06:08+00:00",
+ "generated_at": "2026-10-29T07:25:52+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v3",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/deepseek/ds-v3.yaml",
-  "ep_size": 4
+  "ep_size": 1
  },
  "from_shapes": {
   "available": true,
@@ -117,7 +117,7 @@
  },
  "ep_communication": {
   "status": "ok",
-  "ep_size": 4,
+  "ep_size": 1,
   "moe_layers": 58,
   "bytes_per_token": 13303808,
   "bytes_per_layer": 229376,

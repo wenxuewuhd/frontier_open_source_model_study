@@ -2,6 +2,7 @@
 import Base from '../../layouts/Base.astro';
 import Evidence from '../../components/Evidence.astro';
 import Facts from '../../components/Facts.astro';
+import LayerMap from '../../components/LayerMap.astro';
 import {
   allModels, modelById, url, fmtCount, fmtBytes, fmtInt, fmtSci, FAMILY_LABEL,
   reviewStatus, SEVERITY_LABEL, RESOLUTION_LABEL, HORIZON_LABEL, SUBSYSTEMS,
@@ -385,6 +386,15 @@ const rv = reviewStatus(m);
     {q.packing_note && <p class="small muted">{q.packing_note}<Evidence tag="derived" /></p>}
   </div>
 
+  {
+    m.layers && (
+      <>
+        <h2>逐层实现</h2>
+        <LayerMap L={m.layers} recorded={a.kv_sharing?.measured_per_token} />
+      </>
+    )
+  }
+
   <h2>推导负载</h2>
   <p class="small muted">
     本节全部由 <code>scripts/derive.py</code> 生成<Evidence tag="derived" />，不手写。
@@ -654,7 +664,9 @@ const rv = reviewStatus(m);
             </thead>
             <tbody>
               {(m as any).review.map((f: any) => (
-                <tr>
+                /* 未解决的发现不能和已改的长得一样 —— 它是「这里现在就不可靠」，
+                   不是「这里曾经错过」。底色标出来，让人引用前先看见。 */
+                <tr style={f.resolution === 'open' ? 'background: var(--warn-bg)' : undefined}>
                   <td class="num">{f.id}</td>
                   <td class="small num">{f.field}</td>
                   <td class="small">{SEVERITY_LABEL[f.severity] ?? f.severity}</td>

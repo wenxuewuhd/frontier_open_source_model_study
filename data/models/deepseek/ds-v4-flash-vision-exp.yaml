@@ -74,15 +74,14 @@ arch:
     sliding_window: 128
     head_dim: 512
     sparse:
-      mechanism: indexer 打分取 topk 后在选中 token 上做全注意力。**只在 21 / 43 层上有 indexer** —— 权重里的规律是 indexer
-        存在 ⟺ compress_ratios[l] == 4，零例外。这一代没有独立的 indexer.wk，index K 由 attn.indexer.compressor.wkv
-        产出
+      mechanism: indexer 打分取 topk 后在选中 token 上做全注意力。只在 21 / 43 层上有 indexer —— 权重里的规律是 indexer 存在 ⟺
+        compress_ratios[l] == 4，零例外。这一代没有独立的 indexer.wk，index K 由 attn.indexer.compressor.wkv 产出
       index_n_heads: 64
       index_head_dim: 128
       index_topk: 512
       index_kv_dim: 64
       index_kv_source: layers.N.attn.indexer.compressor.wkv.weight 输出维 256，但 indexer.compressor.ape
-        是 [4, 256] —— 4 个 token 共用一个 256 维条目，**每 token 实为 64 元素**。index_kv_dim 记的是每 token 值，不是条目宽度
+        是 [4, 256] —— 4 个 token 共用一个 256 维条目，每 token 实为 64 元素。index_kv_dim 记的是每 token 值，不是条目宽度
     kv_sharing:
       compress_ratios:
       - 0
@@ -200,6 +199,8 @@ precision:
       expert: FP4
       shared_expert: FP8_E4M3
       attention: FP8_E4M3
+      compressor: BF16
+      indexer: FP8_E4M3
       router: BF16
       embed: BF16
       lm_head: BF16
@@ -211,12 +212,14 @@ precision:
       expert: '[1,32]'
       shared_expert: '[128,128]'
       attention: '[128,128]'
+      indexer: '[128,128]'
       draft: '[1,32]+[128,128]'
-    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 11 个分片头
+    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 16 个分片头
     per_subsystem_scale:
       expert: FP8_E8M0
       shared_expert: FP8_E8M0
       attention: FP8_E8M0
+      indexer: FP8_E8M0
       draft: FP8_E8M0
 infra_signals:
 - text: 分模态路由偏置让 router 从「一套偏置」变成「按 token 模态选偏置」，融合实现要多带一个输入

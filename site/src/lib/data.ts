@@ -65,6 +65,8 @@ export interface Model {
   open_questions?: string[];
   /** scripts/derive.py 的产物，渲染期挂进来 */
   derived?: Record<string, any> | null;
+  /** scripts/extract_layers.py 的产物：逐层实现。只有拉过全量清单的模型才有 */
+  layers?: Record<string, any> | null;
 }
 
 export const FAMILY_LABEL: Record<string, string> = {
@@ -104,8 +106,8 @@ function merge(base: any, over: any): any {
   return over;
 }
 
-function readDerived(dir: string, id: string): Record<string, any> | null {
-  const p = path.join(dir, 'derived', `${id}.json`);
+function readDerived(dir: string, id: string, suffix = ''): Record<string, any> | null {
+  const p = path.join(dir, 'derived', `${id}${suffix}.json`);
   if (!fs.existsSync(p)) return null;
   try {
     return JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -133,6 +135,7 @@ export function allModels(): Model[] {
   for (const m of byId.values()) {
     // 推导值优先取 overlay 的（内部构建里可能含实测修正）
     m.derived = (OVERLAY && readDerived(OVERLAY, m.id)) || readDerived(DATA, m.id);
+    m.layers = (OVERLAY && readDerived(OVERLAY, m.id, '.layers')) || readDerived(DATA, m.id, '.layers');
   }
 
   _cache = [...byId.values()].sort((a, b) => {

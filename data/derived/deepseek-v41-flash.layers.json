@@ -1,0 +1,6713 @@
+{
+ "id": "deepseek-v41-flash",
+ "generated_by": "scripts/extract_layers.py",
+ "generated_at": "2026-10-29",
+ "inputs": {
+  "shapes": "facts/deepseek-v41-flash/shapes.json",
+  "shapes_sha256_16": "856b2048cc19985d",
+  "cfg": "facts/deepseek-v41-flash/cfg.json",
+  "cfg_sha256_16": "16617c17f0a46f0f",
+  "tensors": 96085
+ },
+ "op_groups": [
+  {
+   "key": "hc_attn",
+   "label": "mHC 混合 · 注意力前"
+  },
+  {
+   "key": "attn_norm",
+   "label": "attn_norm"
+  },
+  {
+   "key": "engram",
+   "label": "Engram 查表与投影"
+  },
+  {
+   "key": "q",
+   "label": "Q 路径"
+  },
+  {
+   "key": "kv_local",
+   "label": "滑窗 KV"
+  },
+  {
+   "key": "indexer",
+   "label": "稀疏索引器"
+  },
+  {
+   "key": "compressor",
+   "label": "KV 压缩器"
+  },
+  {
+   "key": "sink",
+   "label": "attention sink"
+  },
+  {
+   "key": "o",
+   "label": "输出投影"
+  },
+  {
+   "key": "hc_ffn",
+   "label": "mHC 混合 · FFN 前"
+  },
+  {
+   "key": "ffn_norm",
+   "label": "ffn_norm"
+  },
+  {
+   "key": "router",
+   "label": "路由器"
+  },
+  {
+   "key": "shared_expert",
+   "label": "共享专家"
+  },
+  {
+   "key": "expert",
+   "label": "路由专家"
+  },
+  {
+   "key": "mtp_glue",
+   "label": "MTP 拼接"
+  },
+  {
+   "key": "draft_head",
+   "label": "DSpark 头"
+  }
+ ],
+ "kv_elem_bytes": 2,
+ "bytes_semantics": "bytes_by_group 是存储（含 scale，全部专家）；decode_bytes_by_group 是每 token 搬运，路由专家按 top_k / 专家数折算，其余组全读",
+ "cache_basis": {
+  "entry_elems": "产出张量的输出维，权重实测",
+  "per_token_elems": "entry_elems ÷ compress_ratio。每条目覆盖 compress_ratio 个 token 是推断，不是实测 —— 依据是比值为 1 的源层恰好没有 compressor.wgate（只有 1 个 token 时无须加权汇聚），以及 indexer.wk 的输入维等于压缩器输出维，即 index K 也按压缩条目算",
+  "local_window": "attn.wkv 输出维（实测）× sliding_window（config），每序列固定，不随上下文增长"
+ },
+ "config_only_roles": {
+  "dspark_target_layers": [
+   37,
+   38,
+   39
+  ],
+  "candidate_source_layer": 20
+ },
+ "layers": [
+  {
+   "kind": "main",
+   "index": 0,
+   "label": "L0",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 0,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 1,
+   "label": "L1",
+   "class": "C1",
+   "roles": [
+    "engram"
+   ],
+   "compress_ratio": 0,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "engram",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "engram": 101535150272,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 108924651160,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "engram": 157528256,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 440387224,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 2,
+   "label": "L2",
+   "class": "C2",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "indexer",
+    "compressor",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "compressor": 10486784,
+    "indexer": 5707008,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7405694680,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "compressor": 10486784,
+    "indexer": 5707008,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 299052760,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    },
+    "global_kv": {
+     "entry_elems": 512,
+     "source": "attn.compressor.wkv.weight",
+     "compress_ratio": 2,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 512.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "attn.indexer.wk.weight",
+     "compress_ratio": 2,
+     "per_token_elems": 64.0,
+     "per_token_bytes": 128.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 3,
+   "label": "L3",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 4,
+   "label": "L4",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 5,
+   "label": "L5",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 6,
+   "label": "L6",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 7,
+   "label": "L7",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 8,
+   "label": "L8",
+   "class": "C2",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "indexer",
+    "compressor",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "compressor": 10486784,
+    "indexer": 5707008,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7405694680,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "compressor": 10486784,
+    "indexer": 5707008,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 299052760,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    },
+    "global_kv": {
+     "entry_elems": 512,
+     "source": "attn.compressor.wkv.weight",
+     "compress_ratio": 2,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 512.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "attn.indexer.wk.weight",
+     "compress_ratio": 2,
+     "per_token_elems": 64.0,
+     "per_token_bytes": 128.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 9,
+   "label": "L9",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 10,
+   "label": "L10",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 11,
+   "label": "L11",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 12,
+   "label": "L12",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 13,
+   "label": "L13",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 14,
+   "label": "L14",
+   "class": "C3",
+   "roles": [
+    "kv_source",
+    "index_source",
+    "engram"
+   ],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "engram",
+    "q",
+    "kv_local",
+    "indexer",
+    "compressor",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "compressor": 10486784,
+    "indexer": 5707008,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "engram": 101537925968,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 108943620648,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "compressor": 10486784,
+    "indexer": 5707008,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "engram": 157528256,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 456581016,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    },
+    "global_kv": {
+     "entry_elems": 512,
+     "source": "attn.compressor.wkv.weight",
+     "compress_ratio": 2,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 512.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "attn.indexer.wk.weight",
+     "compress_ratio": 2,
+     "per_token_elems": 64.0,
+     "per_token_bytes": 128.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 15,
+   "label": "L15",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 16,
+   "label": "L16",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 17,
+   "label": "L17",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 18,
+   "label": "L18",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 19,
+   "label": "L19",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 2,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 20,
+   "label": "L20",
+   "class": "C4",
+   "roles": [
+    "kv_source",
+    "compressor_ungated",
+    "index_source"
+   ],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "indexer",
+    "compressor",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "compressor": 5243904,
+    "indexer": 5707008,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7400451800,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "compressor": 5243904,
+    "indexer": 5707008,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 293809880,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    },
+    "global_kv": {
+     "entry_elems": 512,
+     "source": "attn.compressor.wkv.weight",
+     "compress_ratio": 1,
+     "per_token_elems": 512.0,
+     "per_token_bytes": 1024.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "attn.indexer.wk.weight",
+     "compress_ratio": 1,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 21,
+   "label": "L21",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 22,
+   "label": "L22",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 23,
+   "label": "L23",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 24,
+   "label": "L24",
+   "class": "C5",
+   "roles": [
+    "index_rescore"
+   ],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "indexer",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "indexer": 5575680,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7395076568,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "indexer": 5575680,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 288434648,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 25,
+   "label": "L25",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 26,
+   "label": "L26",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 27,
+   "label": "L27",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 28,
+   "label": "L28",
+   "class": "C5",
+   "roles": [
+    "index_rescore"
+   ],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "indexer",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "indexer": 5575680,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7395076568,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "indexer": 5575680,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 288434648,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 29,
+   "label": "L29",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 30,
+   "label": "L30",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 31,
+   "label": "L31",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 32,
+   "label": "L32",
+   "class": "C5",
+   "roles": [
+    "index_rescore"
+   ],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "indexer",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "indexer": 5575680,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7395076568,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "indexer": 5575680,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 288434648,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 33,
+   "label": "L33",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 34,
+   "label": "L34",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 35,
+   "label": "L35",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 36,
+   "label": "L36",
+   "class": "C5",
+   "roles": [
+    "index_rescore"
+   ],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "indexer",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "indexer": 5575680,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7395076568,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "indexer": 5575680,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 288434648,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 37,
+   "label": "L37",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 38,
+   "label": "L38",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 39,
+   "label": "L39",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": 1,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 7219445760,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 7389500888,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 112803840,
+    "router": 3935232,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 282858968,
+   "experts_active": "6/384",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "mtp",
+   "index": 0,
+   "label": "MTP0",
+   "class": "C6",
+   "roles": [],
+   "compress_ratio": 0,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert",
+    "mtp_glue"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 2406481920,
+    "router": 1311744,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188,
+    "mtp_glue": 78730240
+   },
+   "bytes_total": 2652643800,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 56401920,
+    "router": 1311744,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188,
+    "mtp_glue": 78730240
+   },
+   "decode_bytes_total": 302563800,
+   "experts_active": "3/128",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "mtp",
+   "index": 1,
+   "label": "MTP1",
+   "class": "C7",
+   "roles": [],
+   "compress_ratio": 0,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 2406481920,
+    "router": 1311744,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 2573913560,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "expert": 56401920,
+    "router": 1311744,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 223833560,
+   "experts_active": "3/128",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  },
+  {
+   "kind": "mtp",
+   "index": 2,
+   "label": "MTP2",
+   "class": "C8",
+   "roles": [],
+   "compress_ratio": 0,
+   "groups": [
+    "hc_attn",
+    "attn_norm",
+    "q",
+    "kv_local",
+    "sink",
+    "o",
+    "hc_ffn",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert",
+    "draft_head"
+   ],
+   "bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "draft_head": 132403712,
+    "expert": 2406481920,
+    "router": 1311744,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "bytes_total": 2706317272,
+   "decode_bytes_by_group": {
+    "sink": 256,
+    "kv_local": 2625024,
+    "q": 48546560,
+    "o": 75571200,
+    "attn_norm": 10240,
+    "draft_head": 132403712,
+    "expert": 56401920,
+    "router": 1311744,
+    "shared_expert": 35424000,
+    "ffn_norm": 10240,
+    "hc_attn": 1966188,
+    "hc_ffn": 1966188
+   },
+   "decode_bytes_total": 356237272,
+   "experts_active": "3/128",
+   "cache": {
+    "local_window": {
+     "entry_elems": 512,
+     "window": 128,
+     "bytes_per_sequence": 131072
+    }
+   }
+  }
+ ],
+ "classes": [
+  {
+   "key": "C0",
+   "layers": [
+    "L0",
+    "L3",
+    "L4",
+    "L5",
+    "L6",
+    "L7",
+    "L9",
+    "L10",
+    "L11",
+    "L12",
+    "L13",
+    "L15",
+    "L16",
+    "L17",
+    "L18",
+    "L19",
+    "L21",
+    "L22",
+    "L23",
+    "L25",
+    "L26",
+    "L27",
+    "L29",
+    "L30",
+    "L31",
+    "L33",
+    "L34",
+    "L35",
+    "L37",
+    "L38",
+    "L39"
+   ],
+   "roles": [],
+   "tensors": [
+    {
+     "tensor": "attn.attn_sink",
+     "group": "sink",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      64
+     ],
+     "dtype": "FP32",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "attn.kv_norm.weight",
+     "group": "kv_local",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      512
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "attn.q_norm.weight",
+     "group": "q",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      1280
+     ],
+     "dtype": "BF16",
+     "bytes_each": 2560
+    },
+    {
+     "tensor": "attn.wkv.weight",
+     "group": "kv_local",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      512,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      16,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 2624000
+    },
+    {
+     "tensor": "attn.wo_a.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      8192,
+      4096
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      256,
+      128
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 33587200
+    },
+    {
+     "tensor": "attn.wo_b.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      5120,
+      8192
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      256
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn.wq_a.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      1280,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      40,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 6560000
+    },
+    {
+     "tensor": "attn.wq_b.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      32768,
+      1280
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      1024,
+      40
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn_norm.weight",
+     "group": "attn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "ffn.experts.E.w1.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w2.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      5120,
+      1152
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      5120,
+      2304
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      5120,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w3.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.gate.bias",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1536
+    },
+    {
+     "tensor": "ffn.gate.bias_vl",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1536
+    },
+    {
+     "tensor": "ffn.gate.weight",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 3932160
+    },
+    {
+     "tensor": "ffn.shared_experts.w1.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w2.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      5120,
+      2304
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w3.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn_norm.weight",
+     "group": "ffn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "hc_attn_base",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_attn_fn",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_attn_scale",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    },
+    {
+     "tensor": "hc_ffn_base",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_ffn_fn",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_ffn_scale",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    }
+   ]
+  },
+  {
+   "key": "C1",
+   "layers": [
+    "L1"
+   ],
+   "roles": [
+    "engram"
+   ],
+   "tensors": [
+    {
+     "tensor": "attn.attn_sink",
+     "group": "sink",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      64
+     ],
+     "dtype": "FP32",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "attn.kv_norm.weight",
+     "group": "kv_local",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      512
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "attn.q_norm.weight",
+     "group": "q",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      1280
+     ],
+     "dtype": "BF16",
+     "bytes_each": 2560
+    },
+    {
+     "tensor": "attn.wkv.weight",
+     "group": "kv_local",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      512,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      16,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 2624000
+    },
+    {
+     "tensor": "attn.wo_a.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      8192,
+      4096
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      256,
+      128
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 33587200
+    },
+    {
+     "tensor": "attn.wo_b.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      5120,
+      8192
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      256
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn.wq_a.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      1280,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      40,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 6560000
+    },
+    {
+     "tensor": "attn.wq_b.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      32768,
+      1280
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      1024,
+      40
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn_norm.weight",
+     "group": "attn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "engram.embed.weight",
+     "group": "engram",
+     "subsystem": "retrieval",
+     "count": 1,
+     "shape": [
+      384006168,
+      256
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      384006168,
+      8
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 101377628352
+    },
+    {
+     "tensor": "engram.k_weight",
+     "group": "engram",
+     "subsystem": "retrieval",
+     "count": 1,
+     "shape": [
+      4,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 40960
+    },
+    {
+     "tensor": "engram.q_weight",
+     "group": "engram",
+     "subsystem": "retrieval",
+     "count": 1,
+     "shape": [
+      4,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 40960
+    },
+    {
+     "tensor": "engram.wkv.weight",
+     "group": "engram",
+     "subsystem": "retrieval",
+     "count": 1,
+     "shape": [
+      25600,
+      6144
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      800,
+      192
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 157440000
+    },
+    {
+     "tensor": "ffn.experts.E.w1.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w2.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      5120,
+      1152
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      5120,
+      2304
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      5120,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w3.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.gate.bias",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1536
+    },
+    {
+     "tensor": "ffn.gate.bias_vl",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1536
+    },
+    {
+     "tensor": "ffn.gate.weight",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 3932160
+    },
+    {
+     "tensor": "ffn.shared_experts.w1.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w2.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      5120,
+      2304
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w3.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn_norm.weight",
+     "group": "ffn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "hc_attn_base",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_attn_fn",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_attn_scale",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    },
+    {
+     "tensor": "hc_ffn_base",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_ffn_fn",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_ffn_scale",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    }
+   ]
+  },
+  {
+   "key": "C2",
+   "layers": [
+    "L2",
+    "L8"
+   ],
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "tensors": [
+    {
+     "tensor": "attn.attn_sink",
+     "group": "sink",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      64
+     ],
+     "dtype": "FP32",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "attn.compressor.norm.weight",
+     "group": "compressor",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      512
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "attn.compressor.wgate.weight",
+     "group": "compressor",
+     "subsystem": "compressor",
+     "count": 1,
+     "shape": [
+      512,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 5242880
+    },
+    {
+     "tensor": "attn.compressor.wkv.weight",
+     "group": "compressor",
+     "subsystem": "compressor",
+     "count": 1,
+     "shape": [
+      512,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 5242880
+    },
+    {
+     "tensor": "attn.indexer.k_norm.weight",
+     "group": "indexer",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "BF16",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "attn.indexer.weights_proj.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      32,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 327680
+    },
+    {
+     "tensor": "attn.indexer.wk.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      128,
+      512
+     ],
+     "dtype": "BF16",
+     "bytes_each": 131072
+    },
+    {
+     "tensor": "attn.indexer.wq_b.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      4096,
+      1280
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      128,
+      40
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 5248000
+    },
+    {
+     "tensor": "attn.kv_norm.weight",
+     "group": "kv_local",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      512
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "attn.q_norm.weight",
+     "group": "q",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      1280
+     ],
+     "dtype": "BF16",
+     "bytes_each": 2560
+    },
+    {
+     "tensor": "attn.wkv.weight",
+     "group": "kv_local",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      512,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      16,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 2624000
+    },
+    {
+     "tensor": "attn.wo_a.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      8192,
+      4096
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      256,
+      128
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 33587200
+    },
+    {
+     "tensor": "attn.wo_b.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      5120,
+      8192
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      256
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn.wq_a.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      1280,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      40,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 6560000
+    },
+    {
+     "tensor": "attn.wq_b.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      32768,
+      1280
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      1024,
+      40
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn_norm.weight",
+     "group": "attn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "ffn.experts.E.w1.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w2.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      5120,
+      1152
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      5120,
+      2304
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      5120,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w3.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.gate.bias",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1536
+    },
+    {
+     "tensor": "ffn.gate.bias_vl",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1536
+    },
+    {
+     "tensor": "ffn.gate.weight",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 3932160
+    },
+    {
+     "tensor": "ffn.shared_experts.w1.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w2.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      5120,
+      2304
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w3.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn_norm.weight",
+     "group": "ffn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "hc_attn_base",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_attn_fn",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_attn_scale",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    },
+    {
+     "tensor": "hc_ffn_base",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_ffn_fn",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_ffn_scale",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    }
+   ]
+  },
+  {
+   "key": "C3",
+   "layers": [
+    "L14"
+   ],
+   "roles": [
+    "kv_source",
+    "index_source",
+    "engram"
+   ],
+   "tensors": [
+    {
+     "tensor": "attn.attn_sink",
+     "group": "sink",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      64
+     ],
+     "dtype": "FP32",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "attn.compressor.norm.weight",
+     "group": "compressor",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      512
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "attn.compressor.wgate.weight",
+     "group": "compressor",
+     "subsystem": "compressor",
+     "count": 1,
+     "shape": [
+      512,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 5242880
+    },
+    {
+     "tensor": "attn.compressor.wkv.weight",
+     "group": "compressor",
+     "subsystem": "compressor",
+     "count": 1,
+     "shape": [
+      512,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 5242880
+    },
+    {
+     "tensor": "attn.indexer.k_norm.weight",
+     "group": "indexer",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "BF16",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "attn.indexer.weights_proj.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      32,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 327680
+    },
+    {
+     "tensor": "attn.indexer.wk.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      128,
+      512
+     ],
+     "dtype": "BF16",
+     "bytes_each": 131072
+    },
+    {
+     "tensor": "attn.indexer.wq_b.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      4096,
+      1280
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      128,
+      40
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 5248000
+    },
+    {
+     "tensor": "attn.kv_norm.weight",
+     "group": "kv_local",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      512
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "attn.q_norm.weight",
+     "group": "q",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      1280
+     ],
+     "dtype": "BF16",
+     "bytes_each": 2560
+    },
+    {
+     "tensor": "attn.wkv.weight",
+     "group": "kv_local",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      512,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      16,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 2624000
+    },
+    {
+     "tensor": "attn.wo_a.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      8192,
+      4096
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      256,
+      128
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 33587200
+    },
+    {
+     "tensor": "attn.wo_b.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      5120,
+      8192
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      256
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn.wq_a.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      1280,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      40,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 6560000
+    },
+    {
+     "tensor": "attn.wq_b.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      32768,
+      1280
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      1024,
+      40
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn_norm.weight",
+     "group": "attn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "engram.embed.weight",
+     "group": "engram",
+     "subsystem": "retrieval",
+     "count": 1,
+     "shape": [
+      384016682,
+      256
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      384016682,
+      8
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 101380404048
+    },
+    {
+     "tensor": "engram.k_weight",
+     "group": "engram",
+     "subsystem": "retrieval",
+     "count": 1,
+     "shape": [
+      4,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 40960
+    },
+    {
+     "tensor": "engram.q_weight",
+     "group": "engram",
+     "subsystem": "retrieval",
+     "count": 1,
+     "shape": [
+      4,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 40960
+    },
+    {
+     "tensor": "engram.wkv.weight",
+     "group": "engram",
+     "subsystem": "retrieval",
+     "count": 1,
+     "shape": [
+      25600,
+      6144
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      800,
+      192
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 157440000
+    },
+    {
+     "tensor": "ffn.experts.E.w1.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w2.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      5120,
+      1152
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      5120,
+      2304
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      5120,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w3.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.gate.bias",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1536
+    },
+    {
+     "tensor": "ffn.gate.bias_vl",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1536
+    },
+    {
+     "tensor": "ffn.gate.weight",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 3932160
+    },
+    {
+     "tensor": "ffn.shared_experts.w1.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w2.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      5120,
+      2304
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w3.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn_norm.weight",
+     "group": "ffn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "hc_attn_base",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_attn_fn",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_attn_scale",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    },
+    {
+     "tensor": "hc_ffn_base",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_ffn_fn",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_ffn_scale",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    }
+   ]
+  },
+  {
+   "key": "C4",
+   "layers": [
+    "L20"
+   ],
+   "roles": [
+    "kv_source",
+    "compressor_ungated",
+    "index_source"
+   ],
+   "tensors": [
+    {
+     "tensor": "attn.attn_sink",
+     "group": "sink",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      64
+     ],
+     "dtype": "FP32",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "attn.compressor.norm.weight",
+     "group": "compressor",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      512
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "attn.compressor.wkv.weight",
+     "group": "compressor",
+     "subsystem": "compressor",
+     "count": 1,
+     "shape": [
+      512,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 5242880
+    },
+    {
+     "tensor": "attn.indexer.k_norm.weight",
+     "group": "indexer",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "BF16",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "attn.indexer.weights_proj.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      32,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 327680
+    },
+    {
+     "tensor": "attn.indexer.wk.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      128,
+      512
+     ],
+     "dtype": "BF16",
+     "bytes_each": 131072
+    },
+    {
+     "tensor": "attn.indexer.wq_b.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      4096,
+      1280
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      128,
+      40
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 5248000
+    },
+    {
+     "tensor": "attn.kv_norm.weight",
+     "group": "kv_local",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      512
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "attn.q_norm.weight",
+     "group": "q",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      1280
+     ],
+     "dtype": "BF16",
+     "bytes_each": 2560
+    },
+    {
+     "tensor": "attn.wkv.weight",
+     "group": "kv_local",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      512,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      16,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 2624000
+    },
+    {
+     "tensor": "attn.wo_a.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      8192,
+      4096
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      256,
+      128
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 33587200
+    },
+    {
+     "tensor": "attn.wo_b.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      5120,
+      8192
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      256
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn.wq_a.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      1280,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      40,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 6560000
+    },
+    {
+     "tensor": "attn.wq_b.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      32768,
+      1280
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      1024,
+      40
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn_norm.weight",
+     "group": "attn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "ffn.experts.E.w1.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w2.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      5120,
+      1152
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      5120,
+      2304
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      5120,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w3.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.gate.bias",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1536
+    },
+    {
+     "tensor": "ffn.gate.bias_vl",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1536
+    },
+    {
+     "tensor": "ffn.gate.weight",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 3932160
+    },
+    {
+     "tensor": "ffn.shared_experts.w1.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w2.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      5120,
+      2304
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w3.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn_norm.weight",
+     "group": "ffn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "hc_attn_base",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_attn_fn",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_attn_scale",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    },
+    {
+     "tensor": "hc_ffn_base",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_ffn_fn",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_ffn_scale",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    }
+   ]
+  },
+  {
+   "key": "C5",
+   "layers": [
+    "L24",
+    "L28",
+    "L32",
+    "L36"
+   ],
+   "roles": [
+    "index_rescore"
+   ],
+   "tensors": [
+    {
+     "tensor": "attn.attn_sink",
+     "group": "sink",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      64
+     ],
+     "dtype": "FP32",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "attn.indexer.weights_proj.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      32,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 327680
+    },
+    {
+     "tensor": "attn.indexer.wq_b.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      4096,
+      1280
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      128,
+      40
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 5248000
+    },
+    {
+     "tensor": "attn.kv_norm.weight",
+     "group": "kv_local",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      512
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "attn.q_norm.weight",
+     "group": "q",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      1280
+     ],
+     "dtype": "BF16",
+     "bytes_each": 2560
+    },
+    {
+     "tensor": "attn.wkv.weight",
+     "group": "kv_local",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      512,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      16,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 2624000
+    },
+    {
+     "tensor": "attn.wo_a.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      8192,
+      4096
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      256,
+      128
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 33587200
+    },
+    {
+     "tensor": "attn.wo_b.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      5120,
+      8192
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      256
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn.wq_a.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      1280,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      40,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 6560000
+    },
+    {
+     "tensor": "attn.wq_b.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      32768,
+      1280
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      1024,
+      40
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn_norm.weight",
+     "group": "attn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "ffn.experts.E.w1.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w2.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      5120,
+      1152
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      5120,
+      2304
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      5120,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w3.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 384,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.gate.bias",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1536
+    },
+    {
+     "tensor": "ffn.gate.bias_vl",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1536
+    },
+    {
+     "tensor": "ffn.gate.weight",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      384,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 3932160
+    },
+    {
+     "tensor": "ffn.shared_experts.w1.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w2.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      5120,
+      2304
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w3.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn_norm.weight",
+     "group": "ffn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "hc_attn_base",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_attn_fn",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_attn_scale",
+     "group": "hc_attn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    },
+    {
+     "tensor": "hc_ffn_base",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_ffn_fn",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_ffn_scale",
+     "group": "hc_ffn",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    }
+   ]
+  },
+  {
+   "key": "C6",
+   "layers": [
+    "MTP0"
+   ],
+   "roles": [],
+   "tensors": [
+    {
+     "tensor": "attn.attn_sink",
+     "group": "sink",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      64
+     ],
+     "dtype": "FP32",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "attn.kv_norm.weight",
+     "group": "kv_local",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      512
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "attn.q_norm.weight",
+     "group": "q",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      1280
+     ],
+     "dtype": "BF16",
+     "bytes_each": 2560
+    },
+    {
+     "tensor": "attn.wkv.weight",
+     "group": "kv_local",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      512,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      16,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 2624000
+    },
+    {
+     "tensor": "attn.wo_a.weight",
+     "group": "o",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      8192,
+      4096
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      256,
+      128
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 33587200
+    },
+    {
+     "tensor": "attn.wo_b.weight",
+     "group": "o",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      5120,
+      8192
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      256
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn.wq_a.weight",
+     "group": "q",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      1280,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      40,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 6560000
+    },
+    {
+     "tensor": "attn.wq_b.weight",
+     "group": "q",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      32768,
+      1280
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      1024,
+      40
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn_norm.weight",
+     "group": "attn_norm",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "ffn.experts.E.w1.weight",
+     "group": "expert",
+     "subsystem": "draft",
+     "count": 128,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w2.weight",
+     "group": "expert",
+     "subsystem": "draft",
+     "count": 128,
+     "shape": [
+      5120,
+      1152
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      5120,
+      2304
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      5120,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w3.weight",
+     "group": "expert",
+     "subsystem": "draft",
+     "count": 128,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.gate.bias",
+     "group": "router",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "FP32",
+     "bytes_each": 512
+    },
+    {
+     "tensor": "ffn.gate.bias_vl",
+     "group": "router",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "FP32",
+     "bytes_each": 512
+    },
+    {
+     "tensor": "ffn.gate.weight",
+     "group": "router",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      128,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1310720
+    },
+    {
+     "tensor": "ffn.shared_experts.w1.weight",
+     "group": "shared_expert",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w2.weight",
+     "group": "shared_expert",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      5120,
+      2304
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w3.weight",
+     "group": "shared_expert",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn_norm.weight",
+     "group": "ffn_norm",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "hc_attn_base",
+     "group": "hc_attn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_attn_fn",
+     "group": "hc_attn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_attn_scale",
+     "group": "hc_attn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    },
+    {
+     "tensor": "hc_ffn_base",
+     "group": "hc_ffn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_ffn_fn",
+     "group": "hc_ffn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_ffn_scale",
+     "group": "hc_ffn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    },
+    {
+     "tensor": "main_norm.weight",
+     "group": "mtp_glue",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "main_proj.weight",
+     "group": "mtp_glue",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      5120,
+      15360
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      480
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 78720000
+    }
+   ]
+  },
+  {
+   "key": "C7",
+   "layers": [
+    "MTP1"
+   ],
+   "roles": [],
+   "tensors": [
+    {
+     "tensor": "attn.attn_sink",
+     "group": "sink",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      64
+     ],
+     "dtype": "FP32",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "attn.kv_norm.weight",
+     "group": "kv_local",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      512
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "attn.q_norm.weight",
+     "group": "q",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      1280
+     ],
+     "dtype": "BF16",
+     "bytes_each": 2560
+    },
+    {
+     "tensor": "attn.wkv.weight",
+     "group": "kv_local",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      512,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      16,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 2624000
+    },
+    {
+     "tensor": "attn.wo_a.weight",
+     "group": "o",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      8192,
+      4096
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      256,
+      128
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 33587200
+    },
+    {
+     "tensor": "attn.wo_b.weight",
+     "group": "o",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      5120,
+      8192
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      256
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn.wq_a.weight",
+     "group": "q",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      1280,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      40,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 6560000
+    },
+    {
+     "tensor": "attn.wq_b.weight",
+     "group": "q",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      32768,
+      1280
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      1024,
+      40
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn_norm.weight",
+     "group": "attn_norm",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "ffn.experts.E.w1.weight",
+     "group": "expert",
+     "subsystem": "draft",
+     "count": 128,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w2.weight",
+     "group": "expert",
+     "subsystem": "draft",
+     "count": 128,
+     "shape": [
+      5120,
+      1152
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      5120,
+      2304
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      5120,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w3.weight",
+     "group": "expert",
+     "subsystem": "draft",
+     "count": 128,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.gate.bias",
+     "group": "router",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "FP32",
+     "bytes_each": 512
+    },
+    {
+     "tensor": "ffn.gate.bias_vl",
+     "group": "router",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "FP32",
+     "bytes_each": 512
+    },
+    {
+     "tensor": "ffn.gate.weight",
+     "group": "router",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      128,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1310720
+    },
+    {
+     "tensor": "ffn.shared_experts.w1.weight",
+     "group": "shared_expert",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w2.weight",
+     "group": "shared_expert",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      5120,
+      2304
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w3.weight",
+     "group": "shared_expert",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn_norm.weight",
+     "group": "ffn_norm",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "hc_attn_base",
+     "group": "hc_attn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_attn_fn",
+     "group": "hc_attn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_attn_scale",
+     "group": "hc_attn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    },
+    {
+     "tensor": "hc_ffn_base",
+     "group": "hc_ffn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_ffn_fn",
+     "group": "hc_ffn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_ffn_scale",
+     "group": "hc_ffn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    }
+   ]
+  },
+  {
+   "key": "C8",
+   "layers": [
+    "MTP2"
+   ],
+   "roles": [],
+   "tensors": [
+    {
+     "tensor": "attn.attn_sink",
+     "group": "sink",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      64
+     ],
+     "dtype": "FP32",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "attn.kv_norm.weight",
+     "group": "kv_local",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      512
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "attn.q_norm.weight",
+     "group": "q",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      1280
+     ],
+     "dtype": "BF16",
+     "bytes_each": 2560
+    },
+    {
+     "tensor": "attn.wkv.weight",
+     "group": "kv_local",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      512,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      16,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 2624000
+    },
+    {
+     "tensor": "attn.wo_a.weight",
+     "group": "o",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      8192,
+      4096
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      256,
+      128
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 33587200
+    },
+    {
+     "tensor": "attn.wo_b.weight",
+     "group": "o",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      5120,
+      8192
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      256
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn.wq_a.weight",
+     "group": "q",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      1280,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      40,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 6560000
+    },
+    {
+     "tensor": "attn.wq_b.weight",
+     "group": "q",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      32768,
+      1280
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      1024,
+      40
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 41984000
+    },
+    {
+     "tensor": "attn_norm.weight",
+     "group": "attn_norm",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "confidence_head.proj.weight",
+     "group": "draft_head",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      1,
+      5376
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10752
+    },
+    {
+     "tensor": "ffn.experts.E.w1.weight",
+     "group": "expert",
+     "subsystem": "draft",
+     "count": 128,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w2.weight",
+     "group": "expert",
+     "subsystem": "draft",
+     "count": 128,
+     "shape": [
+      5120,
+      1152
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      5120,
+      2304
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      5120,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.experts.E.w3.weight",
+     "group": "expert",
+     "subsystem": "draft",
+     "count": 128,
+     "shape": [
+      2304,
+      2560
+     ],
+     "dtype": "INT8",
+     "logical_shape": [
+      2304,
+      5120
+     ],
+     "logical_dtype": "FP4",
+     "scale_shape": [
+      2304,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[1,32]",
+     "bytes_each": 6266880
+    },
+    {
+     "tensor": "ffn.gate.bias",
+     "group": "router",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "FP32",
+     "bytes_each": 512
+    },
+    {
+     "tensor": "ffn.gate.bias_vl",
+     "group": "router",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "FP32",
+     "bytes_each": 512
+    },
+    {
+     "tensor": "ffn.gate.weight",
+     "group": "router",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      128,
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1310720
+    },
+    {
+     "tensor": "ffn.shared_experts.w1.weight",
+     "group": "shared_expert",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w2.weight",
+     "group": "shared_expert",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      5120,
+      2304
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      160,
+      72
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn.shared_experts.w3.weight",
+     "group": "shared_expert",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      2304,
+      5120
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      72,
+      160
+     ],
+     "scale_dtype": "FP8_E8M0",
+     "block": "[32,32]",
+     "bytes_each": 11808000
+    },
+    {
+     "tensor": "ffn_norm.weight",
+     "group": "ffn_norm",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    },
+    {
+     "tensor": "hc_attn_base",
+     "group": "hc_attn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_attn_fn",
+     "group": "hc_attn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_attn_scale",
+     "group": "hc_attn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    },
+    {
+     "tensor": "hc_ffn_base",
+     "group": "hc_ffn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      24
+     ],
+     "dtype": "FP32",
+     "bytes_each": 96
+    },
+    {
+     "tensor": "hc_ffn_fn",
+     "group": "hc_ffn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      24,
+      20480
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1966080
+    },
+    {
+     "tensor": "hc_ffn_scale",
+     "group": "hc_ffn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      3
+     ],
+     "dtype": "FP32",
+     "bytes_each": 12
+    },
+    {
+     "tensor": "markov_head.embed.weight",
+     "group": "draft_head",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      129280,
+      256
+     ],
+     "dtype": "BF16",
+     "bytes_each": 66191360
+    },
+    {
+     "tensor": "markov_head.head.weight",
+     "group": "draft_head",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      129280,
+      256
+     ],
+     "dtype": "BF16",
+     "bytes_each": 66191360
+    },
+    {
+     "tensor": "norm.weight",
+     "group": "draft_head",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      5120
+     ],
+     "dtype": "BF16",
+     "bytes_each": 10240
+    }
+   ]
+  }
+ ],
+ "cache_totals": {
+  "global_kv": {
+   "layers": [
+    2,
+    8,
+    14,
+    20
+   ],
+   "entry_elems_sum": 2048,
+   "per_token_elems_sum": 1280.0,
+   "note": "entry_elems_sum 把每个条目当成一个 token；per_token_elems_sum 按 compress_ratio 折算"
+  },
+  "index_k": {
+   "layers": [
+    2,
+    8,
+    14,
+    20
+   ],
+   "entry_elems_sum": 512,
+   "per_token_elems_sum": 320.0,
+   "note": "entry_elems_sum 把每个条目当成一个 token；per_token_elems_sum 按 compress_ratio 折算"
+  },
+  "local_window_bytes_per_sequence": 5242880
+ },
+ "checks": [
+  {
+   "item": "kv_source_layer_ids",
+   "config": [
+    2,
+    8,
+    14,
+    20
+   ],
+   "weights": [
+    2,
+    8,
+    14,
+    20
+   ],
+   "status": "ok"
+  },
+  {
+   "item": "index_source_layer_ids",
+   "config": [
+    2,
+    8,
+    14,
+    20,
+    24,
+    28,
+    32,
+    36
+   ],
+   "weights": [
+    2,
+    8,
+    14,
+    20,
+    24,
+    28,
+    32,
+    36
+   ],
+   "status": "ok",
+   "note": "config 一份列表；权重分两类：产出 index K [2, 8, 14, 20]，只重打分 [24, 28, 32, 36]。按 config 当 8 层都产出会把 indexer 缓存算成两倍"
+  },
+  {
+   "item": "engram_layer_ids",
+   "config": [
+    1,
+    14
+   ],
+   "weights": [
+    1,
+    14
+   ],
+   "status": "ok"
+  },
+  {
+   "item": "compress_ratios 长度",
+   "config": 43,
+   "weights": 43,
+   "status": "ok",
+   "note": "末尾几项对应 MTP 块"
+  },
+  {
+   "item": "压缩器无门控的源层",
+   "config": [
+    "L20:1"
+   ],
+   "weights": [
+    "L20"
+   ],
+   "status": "ok",
+   "note": "权重列是缺 compressor.wgate 的源层，config 列是这些层的 compress_ratio；应恰好都是 1"
+  }
+ ],
+ "issues": []
+}

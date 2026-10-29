@@ -316,10 +316,10 @@ const sideCls = (m: any) => (m.lineage?.track === 'side' ? 'side' : undefined);
   .chg + .chg {
     border-top: 1px dashed var(--line);
   }
+  /* 旧值不加删除线：这是「从什么变成什么」的事实陈述，不是修订稿。
+     删除线会让整张表读起来像一份带痕迹的改动记录，而页面要呈现的是结论。 */
   .from {
     color: var(--ink-3);
-    text-decoration: line-through;
-    text-decoration-color: var(--ink-3);
   }
   .arrow {
     color: var(--ink-3);

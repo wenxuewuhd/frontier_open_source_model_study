@@ -1,13 +1,13 @@
 {
  "id": "ds-v4-pro",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T06:06:11+00:00",
+ "generated_at": "2026-10-29T07:25:55+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-pro",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/deepseek/ds-v4-pro.yaml",
-  "ep_size": 4
+  "ep_size": 1
  },
  "from_shapes": {
   "available": true,
@@ -16,24 +16,28 @@
   "params_total": 1598839674408.0,
   "params_by_subsystem": {
    "embed": 926679040.0,
-   "attention": 19464943232.0,
+   "attention": 18293464704.0,
+   "compressor": 670097408.0,
    "router": 170252544.0,
    "residual": 84069236.0,
    "norm": 1041664.0,
    "shared_expert": 4029677568.0,
    "expert": 1547396186112.0,
+   "indexer": 501381120.0,
    "lm_head": 926679040.0,
    "draft": 25840145972.0
   },
   "weight_bytes_total": 864704792696.0,
   "weight_bytes_by_subsystem": {
    "embed": 1853358080.0,
-   "attention": 20264467840.0,
+   "attention": 18294604672.0,
+   "compressor": 1344503808.0,
    "router": 354511872.0,
    "residual": 336278412.0,
    "norm": 2083328.0,
    "expert": 822054223872.0,
    "shared_expert": 4029923520.0,
+   "indexer": 625359360.0,
    "lm_head": 1853358080.0,
    "draft": 13956587692.0
   },
@@ -122,7 +126,7 @@
  "arithmetic_intensity": {},
  "ep_communication": {
   "status": "ok",
-  "ep_size": 4,
+  "ep_size": 1,
   "moe_layers": 61,
   "bytes_per_token": 10493952,
   "bytes_per_layer": 172032,

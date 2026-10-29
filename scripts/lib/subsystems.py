@@ -30,7 +30,14 @@ SUBSYSTEM = [
     # 名字里带 attn / ffn / kv / q，按那两条先匹配会把归一化算成注意力或 FFN 权重。
     # 带 norm 的就是归一化，没有例外，所以提前判定是安全的
     ("norm", re.compile(r"norm|\bln\b|layernorm", re.I)),
-    ("attention", re.compile(r"attn|\bwq|\bwk|\bwv|\bwo\b|q_proj|k_proj|v_proj|o_proj|kv_[ab]|q_[ab]|indexer", re.I)),
+    # indexer / compressor 必须排在 attention 之前：它们挂在 attn. 下，名字带 attn，
+    # 但精度和注意力主投影不同 —— DeepSeek V4 一代主投影是 FP8，压缩器整条与
+    # indexer.wk 却是 BF16，并成一桶后表上只剩 FP8，看不出 BF16 那一截。
+    # indexer 又必须排在 compressor 之前：attn.indexer.compressor.* 是 indexer
+    # 自己产出 index K 的投影，归 indexer，不归产出全局 KV 的压缩器
+    ("indexer", re.compile(r"indexer", re.I)),
+    ("compressor", re.compile(r"compressor", re.I)),
+    ("attention", re.compile(r"attn|\bwq|\bwk|\bwv|\bwo\b|q_proj|k_proj|v_proj|o_proj|kv_[ab]|q_[ab]", re.I)),
     ("dense_ffn", re.compile(r"mlp|ffn|gate_proj|up_proj|down_proj|w1|w2|w3", re.I)),
 ]
 

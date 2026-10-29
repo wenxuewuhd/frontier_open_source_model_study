@@ -1,13 +1,13 @@
 {
  "id": "ds-v4-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T06:06:10+00:00",
+ "generated_at": "2026-10-29T07:25:54+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-flash",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/deepseek/ds-v4-flash.yaml",
-  "ep_size": 4
+  "ep_size": 1
  },
  "from_shapes": {
   "available": true,
@@ -17,11 +17,13 @@
   "params_by_subsystem": {
    "embed": 529530880.0,
    "router": 47426048.0,
-   "attention": 5086228160.0,
+   "attention": 4599057088.0,
    "residual": 33884180.0,
    "norm": 446080.0,
    "shared_expert": 1082130432.0,
    "expert": 277025390592.0,
+   "compressor": 261443584.0,
+   "indexer": 225727488.0,
    "lm_head": 529530880.0,
    "draft": 6610048884.0
   },
@@ -29,11 +31,13 @@
   "weight_bytes_by_subsystem": {
    "embed": 1059061760.0,
    "router": 108834816.0,
-   "attention": 5400374656.0,
+   "attention": 4599346048.0,
    "residual": 135537756.0,
    "norm": 892160.0,
    "expert": 147169738752.0,
    "shared_expert": 1082196480.0,
+   "compressor": 525680640.0,
+   "indexer": 275347968.0,
    "lm_head": 1059061760.0,
    "draft": 3593787756.0
   },
@@ -122,7 +126,7 @@
  "arithmetic_intensity": {},
  "ep_communication": {
   "status": "ok",
-  "ep_size": 4,
+  "ep_size": 1,
   "moe_layers": 43,
   "bytes_per_token": 4227072,
   "bytes_per_layer": 98304,

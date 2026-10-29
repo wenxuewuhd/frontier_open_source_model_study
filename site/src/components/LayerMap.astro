@@ -1,0 +1,432 @@
+---
+/**
+ * 逐层实现图：行是层内算子组，列是主干层与 MTP 块，格子按权重精度着色。
+ * 数据全部来自 scripts/extract_layers.py 的产物，这里只做排版，不推导。
+ *
+ * 颜色只编码精度（类别），每个格子同时印上精度缩写 —— 浅色模式下 BF16 / FP32
+ * 两档对页面底色不足 3:1，字母是必须的辅助编码，不是装饰。
+ */
+import Evidence from './Evidence.astro';
+import { fmtBytes } from '../lib/data';
+
+interface Props {
+  L: Record<string, any>;
+  /** 记录里手写的 measured_per_token，用来和逐层合计对读 */
+  recorded?: Record<string, any>;
+}
+const { L, recorded } = Astro.props;
+
+const DT: Record<string, { short: string; cls: string }> = {
+  FP4: { short: '4', cls: 'dt-fp4' },
+  FP8_E4M3: { short: '8', cls: 'dt-fp8' },
+  BF16: { short: 'B', cls: 'dt-bf16' },
+  FP32: { short: '32', cls: 'dt-fp32' },
+};
+const dtOf = (d: string) => DT[d] ?? { short: '?', cls: 'dt-other' };
+
+const ROLE: Record<string, { mark: string; label: string; config?: boolean }> = {
+  kv_source: { mark: 'K', label: '产出全局 KV' },
+  compressor_ungated: { mark: 'g', label: '压缩器无门控' },
+  index_source: { mark: 'I', label: '产出 index K' },
+  index_rescore: { mark: 'R', label: '只重打分' },
+  engram: { mark: 'E', label: 'Engram' },
+  dspark_target: { mark: 'D', label: 'DSpark 目标层（config）', config: true },
+};
+
+const classes: Record<string, any> = Object.fromEntries(L.classes.map((c: any) => [c.key, c]));
+const groupLabel: Record<string, string> = Object.fromEntries(
+  L.op_groups.map((g: any) => [g.key, g.label]),
+);
+groupLabel.other = '其他';
+
+// 每个结构类里，每个算子组按存储字节排出精度构成（逻辑精度：INT8 容器记 FP4）
+const mix: Record<string, Record<string, { dtype: string; bytes: number }[]>> = {};
+for (const c of L.classes) {
+  const g: Record<string, Record<string, number>> = {};
+  for (const t of c.tensors) {
+    const d = t.logical_dtype ?? t.dtype;
+    (g[t.group] ??= {})[d] = (g[t.group][d] ?? 0) + t.bytes_each * t.count;
+  }
+  mix[c.key] = Object.fromEntries(
+    Object.entries(g).map(([k, v]) => [
+      k,
+      Object.entries(v)
+        .map(([dtype, bytes]) => ({ dtype, bytes }))
+        .sort((a, b) => b.bytes - a.bytes),
+    ]),
+  );
+}
+
+const dspark: number[] = L.config_only_roles?.dspark_target_layers ?? [];
+const cols = L.layers.map((l: any) => ({
+  ...l,
+  roles: [...l.roles, ...(l.kind === 'main' && dspark.includes(l.index) ? ['dspark_target'] : [])],
+}));
+const groupKeys = [...L.op_groups.map((g: any) => g.key), 'other'].filter((k: string) =>
+  cols.some((l: any) => l.groups.includes(k)),
+);
+const maxDecode = Math.max(...cols.map((l: any) => l.decode_bytes_total));
+const nMain = cols.filter((l: any) => l.kind === 'main').length;
+
+const cellTitle = (l: any, g: string) =>
+  classes[l.class].tensors
+    .filter((t: any) => t.group === g)
+    .map(
+      (t: any) =>
+        `${t.tensor} [${(t.logical_shape ?? t.shape).join(',')}] ${t.logical_dtype ?? t.dtype}` +
+        (t.scale_dtype ? ` · scale ${t.scale_dtype} 块 ${t.block}` : '') +
+        (t.count > 1 ? ` ×${t.count}` : ''),
+    )
+    .join('\n');
+
+const srcLayers = cols.filter((l: any) => l.cache.global_kv || l.cache.index_k);
+const tot = L.cache_totals ?? {};
+const mib = (b: number) => (b / 2 ** 20).toFixed(1);
+// 图例按位宽从低到高排，与调色板槽位顺序一致；表里没出现的精度不进图例
+const seen = new Set(L.classes.flatMap((c: any) => c.tensors.map((t: any) => t.logical_dtype ?? t.dtype)));
+const usedDtypes = [...Object.keys(DT).filter((d) => seen.has(d)), ...[...seen].filter((d: any) => !DT[d])] as string[];
+
+// MTP 块没有主干意义上的角色，按它多出来的算子组描述
+const classRoles = (c: any) => {
+  if (!c.layers[0].startsWith('MTP')) return c.roles.map((r: string) => ROLE[r]?.label ?? r).join('，') || '普通层';
+  const g = new Set(c.tensors.map((t: any) => t.group));
+  return ['MTP 块', g.has('mtp_glue') && '带 MTP 拼接', g.has('draft_head') && '带 DSpark 头'].filter(Boolean).join('，');
+};
+---
+
+<p class="small muted">
+  由 <code>scripts/extract_layers.py</code> 从完整权重清单（{L.inputs.tensors.toLocaleString()} 张量）逐层提取<Evidence
+    tag="derived"
+  />。层的角色按权重判定（有无 compressor.wkv / indexer.wk / engram.*），config 只用来比对；
+  唯一例外是 D（DSpark 目标层），权重上看不出，取自 config。悬停格子看该组张量的形状与量化块。
+</p>
+
+<div class="lm-legend small">
+  {
+    usedDtypes.map((d) => (
+      <span>
+        <i class={`sw ${dtOf(d).cls}`}>{dtOf(d).short}</i>
+        {d}
+      </span>
+    ))
+  }
+  <span class="muted">· 格子分两段＝该组含两种精度，宽度按存储占比</span>
+</div>
+<div class="lm-legend small">
+  {
+    Object.entries(ROLE).map(([, r]) => (
+      <span>
+        <b class="role">{r.mark}</b>
+        {r.label}
+      </span>
+    ))
+  }
+</div>
+
+<div class="scroll-x lm-wrap">
+  <div class="lm" style={`--n:${cols.length};--main:${nMain}`}>
+    <div class="lm-h lm-row-label">算子组 \ 层</div>
+    {cols.map((l: any) => <div class={`lm-h ${l.kind === 'mtp' ? 'mtp' : ''}`}>{l.kind === 'main' ? l.index : `M${l.index}`}</div>)}
+
+    <div class="lm-row-label">角色</div>
+    {
+      cols.map((l: any) => (
+        <div class={`lm-roles ${l.kind === 'mtp' ? 'mtp' : ''}`} title={l.roles.map((r: string) => ROLE[r]?.label ?? r).join('，')}>
+          {l.roles.map((r: string) => (
+            <b class={`role ${ROLE[r]?.config ? 'cfg' : ''}`}>{ROLE[r]?.mark ?? '?'}</b>
+          ))}
+        </div>
+      ))
+    }
+
+    {
+      groupKeys.map((g: string) => (
+        <>
+          <div class="lm-row-label">{groupLabel[g] ?? g}</div>
+          {cols.map((l: any) => {
+            const parts = mix[l.class][g];
+            if (!parts) return <div class={`lm-cell empty ${l.kind === 'mtp' ? 'mtp' : ''}`} />;
+            const total = parts.reduce((s, p) => s + p.bytes, 0);
+            const shown = parts.filter((p) => p.bytes / total >= 0.02).slice(0, 2);
+            return (
+              <div class={`lm-cell ${l.kind === 'mtp' ? 'mtp' : ''}`} title={`L${l.index} ${groupLabel[g]}\n${cellTitle(l, g)}`}>
+                {shown.map((p) => (
+                  <span class={dtOf(p.dtype).cls} style={`flex:${Math.max(p.bytes / total, 0.35)}`}>
+                    {dtOf(p.dtype).short}
+                  </span>
+                ))}
+              </div>
+            );
+          })}
+        </>
+      ))
+    }
+
+    <div class="lm-row-label">压缩比</div>
+    {cols.map((l: any) => <div class={`lm-num ${l.kind === 'mtp' ? 'mtp' : ''}`}>{l.compress_ratio ?? ''}</div>)}
+
+    <div class="lm-row-label">全局 KV 条目</div>
+    {cols.map((l: any) => <div class={`lm-num ${l.kind === 'mtp' ? 'mtp' : ''}`}>{l.cache.global_kv?.entry_elems ?? ''}</div>)}
+
+    <div class="lm-row-label">index K 条目</div>
+    {cols.map((l: any) => <div class={`lm-num ${l.kind === 'mtp' ? 'mtp' : ''}`}>{l.cache.index_k?.entry_elems ?? ''}</div>)}
+
+    <div class="lm-row-label">decode 搬运 / token</div>
+    {
+      cols.map((l: any) => (
+        <div class={`lm-bar ${l.kind === 'mtp' ? 'mtp' : ''}`} title={`${l.label}：${mib(l.decode_bytes_total)} MiB（路由专家 ${l.experts_active}）`}>
+          <i style={`height:${(l.decode_bytes_total / maxDecode) * 100}%`} />
+        </div>
+      ))
+    }
+  </div>
+</div>
+<p class="small muted" style="margin-top:6px">
+  decode 搬运是每 token 读的权重字节（含 scale）：路由专家只计 top_k 份，Engram 嵌入表只计 gather 的行，其余全读。
+  柱高按本模型最大一层归一，数值见悬停或下表。
+</p>
+
+<h3>结构类</h3>
+<p class="small muted">
+  {nMain} 个主干层与 {cols.length - nMain} 个 MTP 块按张量签名（名字、形状、精度、scale 形状）归成
+  {L.classes.length} 类；同类的层算子表可以共用一套，不同类必须分开排。
+</p>
+<table>
+  <thead>
+    <tr><th>类</th><th>层</th><th>角色</th><th class="num">存储 / 层</th><th class="num">decode / token</th></tr>
+  </thead>
+  <tbody>
+    {
+      L.classes.map((c: any) => {
+        const l0 = cols.find((l: any) => l.class === c.key);
+        return (
+          <tr>
+            <td class="num">{c.key}</td>
+            <td>{c.layers.join(' ')}</td>
+            <td>{classRoles(c)}</td>
+            <td class="num">{fmtBytes(l0.bytes_total)}</td>
+            <td class="num">{mib(l0.decode_bytes_total)} MiB</td>
+          </tr>
+        );
+      })
+    }
+  </tbody>
+</table>
+
+{
+  L.classes.map((c: any) => (
+    <details class="lm-class">
+      <summary>
+        <b>{c.key}</b> · {c.layers.join(' ')} · {c.tensors.length} 种张量
+      </summary>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>张量</th><th>算子组</th><th>形状</th><th>权重</th><th>scale</th><th>实测块</th><th class="num">份数</th>
+            </tr>
+          </thead>
+          <tbody>
+            {c.tensors.map((t: any) => (
+              <tr>
+                <td><code>{t.tensor}</code></td>
+                <td>{groupLabel[t.group] ?? t.group}</td>
+                <td class="num">
+                  [{(t.logical_shape ?? t.shape).join(', ')}]
+                  {t.logical_shape && <span class="muted"> 容器 [{t.shape.join(', ')}]</span>}
+                </td>
+                <td>
+                  <i class={`sw ${dtOf(t.logical_dtype ?? t.dtype).cls}`}>{dtOf(t.logical_dtype ?? t.dtype).short}</i>
+                  {t.logical_dtype ? `${t.logical_dtype}（${t.dtype} 容器）` : t.dtype}
+                </td>
+                <td>{t.scale_dtype ? `${t.scale_dtype} [${t.scale_shape.join(', ')}]` : '—'}</td>
+                <td class="num">{t.block ?? '—'}</td>
+                <td class="num">{t.count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  ))
+}
+
+{
+  srcLayers.length > 0 && (
+    <>
+      <h3>每 token 缓存贡献</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>层</th><th class="num">压缩比</th><th class="num">全局 KV 条目</th><th class="num">index K 条目</th>
+            <th class="num">每 token（记录口径）</th>
+            <th class="num alt">若条目聚合（推断）</th>
+          </tr>
+        </thead>
+        <tbody>
+          {srcLayers.map((l: any) => (
+            <tr>
+              <td>{l.label}</td>
+              <td class="num">{l.compress_ratio}</td>
+              <td class="num">{l.cache.global_kv?.entry_elems ?? '—'}</td>
+              <td class="num">{l.cache.index_k?.entry_elems ?? '—'}</td>
+              <td class="num">
+                {(l.cache.global_kv?.entry_elems ?? 0) + (l.cache.index_k?.entry_elems ?? 0)} 元素
+              </td>
+              <td class="num alt">
+                {(l.cache.global_kv?.per_token_elems ?? 0) + (l.cache.index_k?.per_token_elems ?? 0)}
+              </td>
+            </tr>
+          ))}
+          <tr>
+            <td><b>合计</b></td>
+            <td />
+            <td class="num">{tot.global_kv?.entry_elems_sum}</td>
+            <td class="num">{tot.index_k?.entry_elems_sum}</td>
+            <td class="num">
+              <b>{(tot.global_kv?.entry_elems_sum ?? 0) + (tot.index_k?.entry_elems_sum ?? 0)} 元素</b>
+            </td>
+            <td class="num alt">
+              {(tot.global_kv?.per_token_elems_sum ?? 0) + (tot.index_k?.per_token_elems_sum ?? 0)}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="small muted">
+        条目宽度是产出张量的输出维，实测<Evidence tag="derived" />。
+        「每 token（记录口径）」按一个条目对应一个 token 计，与记录里的
+        <code>measured_per_token</code> 一致 —— 这是<strong>上界</strong>：
+        实测到的是每条目多少元素，一个条目服务几个 token 没有实测到。
+        滑窗局部 KV 另计，全部 {nMain} 层合计每序列固定 {fmtBytes(tot.local_window_bytes_per_sequence)}，不随上下文增长。
+      </p>
+      <p class="small muted">
+        末列是另一种读法：把每个条目当作覆盖 compress_ratio 个 token。
+        这是<strong>推断</strong>，不是实测<Evidence tag="judgement" />，所以不进记录，也不作主值。
+        两条迹象支持它 —— 比值为 1 的 L20 恰好没有 compressor.wgate（单 token 无须加权汇聚），
+        且 indexer.wk 的输入维等于压缩器输出维（index K 也按条目生成，要折就得一起折）。
+        但本代 compressor 没有 ape 张量把比值钉死，n=4 层的结构相关定不了论。
+        留痕见下方核查区 <b>R30</b>（未解决）。
+      </p>
+      {
+        recorded &&
+          (recorded.global_kv !== tot.global_kv?.entry_elems_sum ||
+            recorded.indexer !== tot.index_k?.entry_elems_sum) && (
+            <div class="note">
+              <b>记录与逐层提取对不上。</b>记录里的 measured_per_token 是全局 KV {recorded.global_kv}、
+              indexer {recorded.indexer}，而逐层条目合计是 {tot.global_kv?.entry_elems_sum} /{' '}
+              {tot.index_k?.entry_elems_sum}。两者本该相等（同一份权重清单、同一口径），
+              不等说明记录没跟上重新提取的结果，或者提取口径变了 —— 先查清楚再引用任何一个。
+            </div>
+          )
+      }
+    </>
+  )
+}
+
+{
+  L.checks?.length > 0 && (
+    <>
+      <h3>config 与权重比对</h3>
+      <table>
+        <thead><tr><th>项</th><th>config</th><th>权重</th><th>结论</th></tr></thead>
+        <tbody>
+          {L.checks.map((c: any) => (
+            <tr>
+              <td>
+                {c.item}
+                {c.note && <div class="small muted">{c.note}</div>}
+              </td>
+              <td class="num">{Array.isArray(c.config) ? c.config.join(',') : c.config}</td>
+              <td class="num">{Array.isArray(c.weights) ? c.weights.join(',') : c.weights}</td>
+              <td>{c.status === 'ok' ? '一致' : <b>不一致</b>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  )
+}
+
+<style>
+  /* 推断列：和记录值并排但不等重 —— 它没有实测支撑，不能让人顺手引用。
+     做小一号、弱一档，并用左边框把它和前面的实测列隔开。 */
+  th.alt, td.alt {
+    color: var(--ink-3);
+    font-size: 12px;
+    border-left: 1px dashed var(--line);
+  }
+
+  /* 精度类别色：默认调色板 1–4 号槽位，浅深两档各自校验过 CVD 与正常视觉间距 */
+  .lm-wrap, .lm-legend, .lm-class {
+    --dt-fp4: #2a78d6;
+    --dt-fp8: #eb6834;
+    --dt-bf16: #1baf7a;
+    --dt-fp32: #eda100;
+    --dt-ink: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) :is(.lm-wrap, .lm-legend, .lm-class) {
+      --dt-fp4: #3987e5;
+      --dt-fp8: #d95926;
+      --dt-bf16: #199e70;
+      --dt-fp32: #c98500;
+    }
+  }
+  :root[data-theme='dark'] :is(.lm-wrap, .lm-legend, .lm-class) {
+    --dt-fp4: #3987e5;
+    --dt-fp8: #d95926;
+    --dt-bf16: #199e70;
+    --dt-fp32: #c98500;
+  }
+  .dt-fp4 { background: var(--dt-fp4); }
+  .dt-fp8 { background: var(--dt-fp8); }
+  .dt-bf16 { background: var(--dt-bf16); }
+  .dt-fp32 { background: var(--dt-fp32); }
+  .dt-other { background: var(--ink-3); }
+
+  .lm-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 8px 0; color: var(--ink-2); }
+  .lm-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .sw {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 16px; padding: 0 3px; border-radius: 3px;
+    font: 600 10px/1 var(--mono); font-style: normal; color: var(--dt-ink); margin-right: 4px;
+  }
+  .role {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 15px; height: 15px; border-radius: 3px; font: 700 10px/1 var(--mono);
+    border: 1px solid var(--ink-2); color: var(--ink);
+  }
+  .role.cfg { border-style: dashed; color: var(--ink-2); }
+
+  .lm-wrap { padding: 10px 8px 8px 0; }
+  .lm {
+    display: grid;
+    grid-template-columns: 132px repeat(var(--main), minmax(20px, 1fr)) repeat(calc(var(--n) - var(--main)), minmax(24px, 1fr));
+    gap: 2px;
+    min-width: calc(132px + var(--n) * 22px);
+    font-size: 11px;
+  }
+  .lm-row-label {
+    position: sticky; left: 0; z-index: 1; background: var(--surface);
+    padding: 0 8px; color: var(--ink-2); white-space: nowrap; display: flex; align-items: center; font-size: 12px;
+  }
+  .lm-h { text-align: center; color: var(--ink-3); font-family: var(--mono); padding-bottom: 2px; }
+  .lm-h.lm-row-label { justify-content: flex-start; }
+  .mtp { margin-left: 0; }
+  .lm-h.mtp { color: var(--judgement); }
+  .lm-roles { display: flex; flex-direction: column; align-items: center; gap: 1px; min-height: 18px; }
+  .lm-cell { display: flex; height: 20px; gap: 1px; border-radius: 3px; overflow: hidden; }
+  .lm-cell span {
+    display: flex; align-items: center; justify-content: center; min-width: 0;
+    font: 600 9.5px/1 var(--mono); color: var(--dt-ink);
+  }
+  .lm-cell.empty { background: color-mix(in oklab, var(--line) 45%, transparent); }
+  .lm-num { text-align: center; font-family: var(--mono); color: var(--ink-2); font-size: 10.5px; }
+  .lm-bar { height: 34px; display: flex; align-items: flex-end; }
+  .lm-bar i { display: block; width: 100%; background: var(--ink-3); border-radius: 3px 3px 0 0; min-height: 1px; }
+  .lm-cell.mtp, .lm-num.mtp, .lm-bar.mtp, .lm-roles.mtp, .lm-h.mtp { opacity: 0.85; }
+
+  details.lm-class { margin: 6px 0; }
+  details.lm-class summary { cursor: pointer; font-size: 13.5px; padding: 4px 0; }
+  details.lm-class .scroll-x { margin-top: 6px; }
+</style>

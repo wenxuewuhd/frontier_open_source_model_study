@@ -389,7 +389,7 @@ def active_params(shp: dict, t: dict, attn: dict, moe: dict) -> dict:
     # 每 token 全量搬运的部分。lm_head 必须计入：它对整个词表做全量 GEMM，
     # 不是「只触及少量行」—— 大词表模型里这一项可观。
     always = sum(p.get(k, 0.0) for k in
-                 ("attention", "dense_ffn", "shared_expert", "router", "norm",
+                 ("attention", "compressor", "indexer", "dense_ffn", "shared_expert", "router", "norm",
                   "lm_head", "other"))
     embed = p.get("embed", 0.0)
     return {

@@ -50,9 +50,9 @@ arch:
     q_lora_rank: 1536
     head_dim: 192
     v_head_dim: 128
-    head_dim_note: head_dim 192 = qk_nope 128 + qk_rope 64，**只适用于 QK 路径**。V 的每头维度是 v_head_dim 128，所以
-      o_proj 入口宽度是 128 头 × 128 = 16384（权重实测 [hidden, 16384]），不是 128 × 192 = 24576。按单一 head_dim 推 o_proj
-      会高 50%
+    head_dim_note: head_dim 192 = qk_nope 128 + qk_rope 64，只适用于 QK 路径。V 的每头维度是 v_head_dim 128，所以 o_proj
+      入口宽度是 128 头 × 128 = 16384（权重实测 [hidden, 16384]），不是 128 × 192 = 24576。按单一 head_dim 推 o_proj 会高
+      50%
   ffn:
     type: moe
     layer_pattern: 第 0–0 层稠密（intermediate 12288），其余为 MoE。稠密层的 FFN 比单个专家宽 8 倍，是全模型最宽的单个 GEMM

@@ -190,6 +190,8 @@ precision:
       expert: FP4
       shared_expert: FP8_E4M3
       attention: FP8_E4M3
+      compressor: BF16
+      indexer: FP8_E4M3
       retrieval: FP8_E4M3
       router: BF16
       embed: BF16
@@ -202,13 +204,15 @@ precision:
       expert: '[1,32]'
       shared_expert: '[32,32]'
       attention: '[32,32]'
+      indexer: '[32,32]'
       retrieval: '[1,32]+[32,32]'
       draft: '[1,32]+[32,32]'
-    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 14 个分片头
+    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 19 个分片头
     per_subsystem_scale:
       expert: FP8_E8M0
       shared_expert: FP8_E8M0
       attention: FP8_E8M0
+      indexer: FP8_E8M0
       retrieval: FP8_E8M0
       draft: FP8_E8M0
 evidence:

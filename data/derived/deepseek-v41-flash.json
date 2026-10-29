@@ -1,13 +1,13 @@
 {
  "id": "deepseek-v41-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T06:06:13+00:00",
+ "generated_at": "2026-10-29T07:25:50+00:00",
  "inputs": {
   "facts_dir": "facts/deepseek-v41-flash",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/deepseek/deepseek-v41-flash.yaml",
-  "ep_size": 4
+  "ep_size": 1
  },
  "from_shapes": {
   "available": true,
@@ -17,12 +17,14 @@
   "params_by_subsystem": {
    "vision": 485268480.0,
    "embed": 661913600.0,
-   "attention": 5126490624.0,
+   "attention": 5064624640.0,
    "router": 78673920.0,
    "residual": 39323520.0,
    "norm": 488960.0,
    "shared_expert": 1415577600.0,
    "expert": 543581798400.0,
+   "compressor": 18350080.0,
+   "indexer": 43515904.0,
    "lm_head": 661913600.0,
    "draft": 14225362512.0,
    "retrieval": 196928504320.0
@@ -31,12 +33,14 @@
   "weight_bytes_by_subsystem": {
    "vision": 970536960.0,
    "embed": 1323827200.0,
-   "attention": 5151408128.0,
+   "attention": 5069578240.0,
    "router": 157409280.0,
    "residual": 157295040.0,
    "norm": 977920.0,
    "expert": 288777830400.0,
    "shared_expert": 1416960000.0,
+   "compressor": 36700160.0,
+   "indexer": 45129728.0,
    "lm_head": 1323827200.0,
    "draft": 7932874632.0,
    "retrieval": 203073076240.0
@@ -96,7 +100,7 @@
   },
   "notes": [
    "只有 4 层产出 KV（共 40 层），其余层跨层读取；按总层数乘会高估",
-   "按完整权重清单逐层量出来的每 token 元素数，不是公式推的。 全局 KV：4 个源层各 compressor.wkv [512, 5120]，每层 512 元素 —— 是 512 不是 576， 因为 wkv 输出总共就 512 维、全模型没有任何 K 侧 rope 投影， qk_rope_head_dim 的 64 维在 latent 之内（这一条关掉了核查 R22）。 indexer：4 个源层各 indexer.wk [128, 512]，每层 128 元素。 attn.wkv 那一份是 sliding_window=128 的局部 KV，每序列固定 5.0 MiB、 不随上下文增长，单列在 local_window_bytes_per_sequence，不计入 per_token"
+   "按完整权重清单逐层量出来的每 token 元素数，不是公式推的。 全局 KV：4 个源层各 compressor.wkv [512, 5120]，每层 512 元素。 是 512 而不是 512+64 —— wkv 输出总共就 512 维，且 96085 个张量里 K 侧 没有任何 rope 投影，所以 qk_rope_head_dim 的 64 维在 latent 之内。 indexer：4 个源层各 indexer.wk [128, 512]，每层 128 元素。 attn.wkv 那一份是 sliding_window=128 的局部 KV，每序列固定 5.0 MiB、 不随上下文增长，单列在 local_window_bytes_per_sequence，不计入 per_token"
   ]
  },
  "kv_capacity_bytes_at_context": {},
@@ -126,7 +130,7 @@
  "arithmetic_intensity": {},
  "ep_communication": {
   "status": "ok",
-  "ep_size": 4,
+  "ep_size": 1,
   "moe_layers": 40,
   "bytes_per_token": 4915200,
   "bytes_per_layer": 122880,

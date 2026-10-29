@@ -40,7 +40,7 @@ lineage:
     benefit: K 投影没有消失，是换了形态并被压过：条目宽 256、4 个 token 共用一个，每 token 64 元素，相比 V3.2 每层 128 元素 × 62 层是大幅下降。真正省下来的是「层数减半
       + 条目聚合」两件事，不是「不再自带 K 投影」
   - axis: moe
-    text: 打分 sigmoid→sqrtsoftplus；**top-k 8→6**；取消专家分组（n_group/topk_group 不再声明，noaux_tc 少了 group 维度，已不是同一个算子）；config
+    text: 打分 sigmoid→sqrtsoftplus；top-k 8→6；取消专家分组（n_group/topk_group 不再声明，noaux_tc 少了 group 维度，已不是同一个算子）；config
       不再有 first_k_dense_replace，43 层每一层都有完整的 ffn.experts.*；第 0/1/2 层额外带一张 ffn.gate.tid2eid [129280,
       6] 查表，但打分投影仍在
     benefit: dense 前缀不是被「取消」而是被原地换掉：3 个查表层正好落在 V3 一代 first_k_dense_replace=3 占的那三个槽位。top-k 8→6 配合分组取消，每
@@ -100,15 +100,14 @@ arch:
     sliding_window: 128
     head_dim: 512
     sparse:
-      mechanism: indexer 打分取 topk 后在选中 token 上做全注意力。**只在 21 / 43 层上有 indexer** —— 权重里的规律是 indexer
-        存在 ⟺ compress_ratios[l] == 4，零例外。这一代没有独立的 indexer.wk，index K 由 attn.indexer.compressor.wkv
-        产出
+      mechanism: indexer 打分取 topk 后在选中 token 上做全注意力。只在 21 / 43 层上有 indexer —— 权重里的规律是 indexer 存在 ⟺
+        compress_ratios[l] == 4，零例外。这一代没有独立的 indexer.wk，index K 由 attn.indexer.compressor.wkv 产出
       index_n_heads: 64
       index_head_dim: 128
       index_topk: 512
       index_kv_dim: 64
       index_kv_source: layers.N.attn.indexer.compressor.wkv.weight 输出维 256，但 indexer.compressor.ape
-        是 [4, 256] —— 4 个 token 共用一个 256 维条目，**每 token 实为 64 元素**。index_kv_dim 记的是每 token 值，不是条目宽度
+        是 [4, 256] —— 4 个 token 共用一个 256 维条目，每 token 实为 64 元素。index_kv_dim 记的是每 token 值，不是条目宽度
     kv_sharing:
       compress_ratios:
       - 0
@@ -179,7 +178,7 @@ arch:
       count: 3
       mapping_tensor: layers.{0,1,2}.ffn.gate.tid2eid
       note: config 的 num_hash_layers=3 对应第 0/1/2 层各一张 ffn.gate.tid2eid [129280, 6]（词表大小 × top_k），即每个
-        token id 映到 6 个专家。但这三层**同时还有和其余层一样的完整打分投影** gate.weight [256, 4096]，缺的是 gate.bias（第 3 层起才有）。所以不能说它们「不算
+        token id 映到 6 个专家。但这三层同时还有和其余层一样的完整打分投影 gate.weight [256, 4096]，缺的是 gate.bias（第 3 层起才有）。所以不能说它们「不算
         router」——查表与打分各自承担什么，形状定不了，需看实现。V4.1 起 tid2eid 退场
     storage_note: 逐专家独立张量（layers.N.ffn.experts.<n>.w{1,2,3}），不是堆叠。grouped GEMM 因此吃 2 维权重列表而非 3 维张量，EP
       切分是切张量列表
@@ -205,6 +204,8 @@ precision:
       expert: FP4
       shared_expert: FP8_E4M3
       attention: FP8_E4M3
+      compressor: BF16
+      indexer: FP8_E4M3
       router: BF16
       embed: BF16
       lm_head: BF16
@@ -215,13 +216,15 @@ precision:
       expert: '[1,32]'
       shared_expert: '[128,128]'
       attention: '[128,128]'
+      indexer: '[128,128]'
       draft: '[1,32]+[128,128]'
     per_subsystem_scale:
       expert: FP8_E8M0
       shared_expert: FP8_E8M0
       attention: FP8_E8M0
+      indexer: FP8_E8M0
       draft: FP8_E8M0
-    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 12 个分片头
+    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 14 个分片头
 infra_signals:
 - text: MLA → MQA-on-latent 是整条线上最值得注意的反转：V2 用上投影换带宽，V4 又把它去掉。沿用 MLA 的注意力算子会直接对不上权重
   evidence: judgement
@@ -271,7 +274,7 @@ evidence:
   arch.attention.kv_sharing.layer_coverage: derived
   arch.attention.sparse.mechanism: judgement
 notes: 谱系里最大的一次不连续，几乎每个维度都动了。对 infra 最要紧的是三件：KV 上投影消失（注意力算子换签名）、专家降到 FP4（打包存储，参数量不能直接求和）、mHC 把残差流宽度乘
-  4（所有逐元素算子的形状都变）。另外 attn_sink 不在 config 里，只能从权重清单发现；hash 层的**数量**在 config 里（num_hash_layers=3），但它的张量形态与所在层要靠权重清单。
+  4（所有逐元素算子的形状都变）。另外 attn_sink 不在 config 里，只能从权重清单发现；hash 层的数量在 config 里（num_hash_layers=3），但它的张量形态与所在层要靠权重清单。
 open_questions:
 - 未取权重清单（只有张量名），参数量与 FP4 打包形态待核
 - tid2eid [129280, 6] 与同层的 gate.weight 如何配合（查表定专家集、打分定组合权重？）形状定不了，需看上游实现

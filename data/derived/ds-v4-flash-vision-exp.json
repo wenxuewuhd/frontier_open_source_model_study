@@ -1,13 +1,13 @@
 {
  "id": "ds-v4-flash-vision-exp",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T06:06:12+00:00",
+ "generated_at": "2026-10-29T07:25:53+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-flash-vision-exp",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/deepseek/ds-v4-flash-vision-exp.yaml",
-  "ep_size": 4
+  "ep_size": 1
  },
  "from_shapes": {
   "available": true,
@@ -16,7 +16,9 @@
   "params_total": 304646823848.0,
   "params_by_subsystem": {
    "router": 47437824.0,
-   "attention": 5086228160.0,
+   "attention": 4599057088.0,
+   "compressor": 261443584.0,
+   "indexer": 225727488.0,
    "residual": 33884180.0,
    "norm": 446080.0,
    "shared_expert": 1082130432.0,
@@ -29,7 +31,9 @@
   "weight_bytes_total": 167811372792.0,
   "weight_bytes_by_subsystem": {
    "router": 108881920.0,
-   "attention": 5400374656.0,
+   "attention": 4599346048.0,
+   "compressor": 525680640.0,
+   "indexer": 275347968.0,
    "residual": 135537756.0,
    "norm": 892160.0,
    "expert": 147169738752.0,
@@ -124,7 +128,7 @@
  "arithmetic_intensity": {},
  "ep_communication": {
   "status": "ok",
-  "ep_size": 4,
+  "ep_size": 1,
   "moe_layers": 43,
   "bytes_per_token": 4227072,
   "bytes_per_layer": 98304,

@@ -77,9 +77,9 @@ arch:
       index_kv_dim: 128
       index_kv_source: model.layers.N.self_attn.indexer.wk.weight [128, 7168]，输出维 128（62 层都有）
     v_head_dim: 128
-    head_dim_note: head_dim 192 = qk_nope 128 + qk_rope 64，**只适用于 QK 路径**。V 的每头维度是 v_head_dim 128，所以
-      o_proj 入口宽度是 128 头 × 128 = 16384（权重实测 [hidden, 16384]），不是 128 × 192 = 24576。按单一 head_dim 推 o_proj
-      会高 50%
+    head_dim_note: head_dim 192 = qk_nope 128 + qk_rope 64，只适用于 QK 路径。V 的每头维度是 v_head_dim 128，所以 o_proj
+      入口宽度是 128 头 × 128 = 16384（权重实测 [hidden, 16384]），不是 128 × 192 = 24576。按单一 head_dim 推 o_proj 会高
+      50%
   ffn:
     type: moe
     layer_pattern: 第 0–2 层稠密（intermediate 18432），其余为 MoE。稠密层的 FFN 比单个专家宽 9 倍，是全模型最宽的单个 GEMM
@@ -109,6 +109,7 @@ precision:
       expert: FP8_E4M3
       shared_expert: FP8_E4M3
       attention: FP8_E4M3
+      indexer: FP8_E4M3
       dense_ffn: FP8_E4M3
       router: BF16
       embed: BF16
@@ -119,6 +120,7 @@ precision:
       expert: FP32
       shared_expert: FP32
       attention: FP32
+      indexer: FP32
       dense_ffn: FP32
       draft: FP32
     subsystem_method: 抽样：每个子系统 6 个代表张量，共读 10 个分片头
@@ -126,6 +128,7 @@ precision:
       expert: '[128,128]'
       shared_expert: '[128,128]'
       attention: '[128,128]+[128ceil,128]'
+      indexer: '[128,128]'
       dense_ffn: '[128,128]'
       draft: '[128,128]+[128ceil,128]'
 infra_signals:

@@ -4,6 +4,8 @@
     { "key": "expert", "label": "路由专家" },
     { "key": "shared_expert", "label": "共享专家" },
     { "key": "attention", "label": "注意力" },
+    { "key": "compressor", "label": "KV 压缩器" },
+    { "key": "indexer", "label": "稀疏索引器" },
     { "key": "retrieval", "label": "检索表" },
     { "key": "dense_ffn", "label": "稠密 FFN" },
     { "key": "router", "label": "路由器" },

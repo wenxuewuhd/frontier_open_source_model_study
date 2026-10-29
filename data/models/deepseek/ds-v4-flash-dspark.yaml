@@ -24,8 +24,8 @@ lineage:
   successor: ds-v4-flash-0731
   changed_from_predecessor:
   - axis: decoding
-    text: 草稿侧从 1 个 MTP 块扩到 **3 个**（mtp.0/1/2，张量数 1575→4705），每块都是完整的 transformer + 256 专家 MoE；mtp.2
-      上另加 markov_head 与 confidence_head。一次出 5 个 token（dspark_block_size 5）。config 的 num_nextn_predict_layers
+    text: 草稿侧从 1 个 MTP 块扩到 3 个（mtp.0/1/2，张量数 1575→4705），每块都是完整的 transformer + 256 专家 MoE；mtp.2 上另加
+      markov_head 与 confidence_head。一次出 5 个 token（dspark_block_size 5）。config 的 num_nextn_predict_layers
       仍写 1，与权重不符
     benefit: 草稿更长，投机的接受窗口更大。代价是草稿侧权重涨到约 3 倍 （6.6B→19.8B），而且每块都带自己的 MoE —— 对 EP 切分是实打实的大项。markov_head
       与 confidence_head 是附加头，不是对 transformer 块的替换
@@ -67,15 +67,14 @@ arch:
     sliding_window: 128
     head_dim: 512
     sparse:
-      mechanism: indexer 打分取 topk 后在选中 token 上做全注意力。**只在 21 / 43 层上有 indexer** —— 权重里的规律是 indexer
-        存在 ⟺ compress_ratios[l] == 4，零例外。这一代没有独立的 indexer.wk，index K 由 attn.indexer.compressor.wkv
-        产出
+      mechanism: indexer 打分取 topk 后在选中 token 上做全注意力。只在 21 / 43 层上有 indexer —— 权重里的规律是 indexer 存在 ⟺
+        compress_ratios[l] == 4，零例外。这一代没有独立的 indexer.wk，index K 由 attn.indexer.compressor.wkv 产出
       index_n_heads: 64
       index_head_dim: 128
       index_topk: 512
       index_kv_dim: 64
       index_kv_source: layers.N.attn.indexer.compressor.wkv.weight 输出维 256，但 indexer.compressor.ape
-        是 [4, 256] —— 4 个 token 共用一个 256 维条目，**每 token 实为 64 元素**。index_kv_dim 记的是每 token 值，不是条目宽度
+        是 [4, 256] —— 4 个 token 共用一个 256 维条目，每 token 实为 64 元素。index_kv_dim 记的是每 token 值，不是条目宽度
     kv_sharing:
       compress_ratios:
       - 0
@@ -185,6 +184,8 @@ precision:
       expert: FP4
       shared_expert: FP8_E4M3
       attention: FP8_E4M3
+      compressor: BF16
+      indexer: FP8_E4M3
       router: BF16
       embed: BF16
       lm_head: BF16
@@ -195,12 +196,14 @@ precision:
       expert: '[1,32]'
       shared_expert: '[128,128]'
       attention: '[128,128]'
+      indexer: '[128,128]'
       draft: '[1,32]+[128,128]'
-    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 14 个分片头
+    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 16 个分片头
     per_subsystem_scale:
       expert: FP8_E8M0
       shared_expert: FP8_E8M0
       attention: FP8_E8M0
+      indexer: FP8_E8M0
       draft: FP8_E8M0
 infra_signals:
 - text: DSpark 把草稿头从「再跑一层 transformer」换成 markov head + 置信度门控，一次出 5 个 token。草稿侧的算子与主干不同构，要单独排
