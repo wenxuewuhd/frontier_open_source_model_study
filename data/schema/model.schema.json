@@ -205,7 +205,18 @@
                 "index_source_layers": { "type": "array", "items": { "type": "integer" }, "description": "已废弃，改用下面两个 —— 它把产出层和重打分层混在一起，会让 indexer 缓存高估一倍" },
                 "index_kv_source_layers": { "type": "array", "items": { "type": "integer" }, "description": "真正产出 index K 的层（有 indexer.wk 权重）。indexer 缓存只按这些层算" },
                 "index_rescore_layers": { "type": "array", "items": { "type": "integer" }, "description": "只复用已有 index K 重新打分、不产出 K 的层（有 wq_b/weights_proj 但无 wk）" },
+                "measured_per_token": {
+              "type": "object",
+              "description": "从完整权重清单量出来的每 token 缓存元素数，逐层求和。公式建模不了逐层压缩时用它 —— V4 一代的 compressor.ape 第一维就是该层压缩比，每 token 元素 = wkv 输出宽度 / 比值，比值 4 的层 256、比值 128 的层只有 4。按未压缩宽度乘层数会高估五倍以上",
+              "additionalProperties": false,
+              "properties": {
+                "global_kv": { "type": "integer", "description": "全局 KV（随上下文增长）的元素数/token" },
+                "indexer": { "type": "integer", "description": "稀疏索引 K 的元素数/token" },
+                "local_window_bytes_per_sequence": { "type": "integer", "description": "滑窗局部 KV，每序列固定，不随上下文增长" },
                 "note": { "type": "string" }
+              }
+            },
+            "note": { "type": "string" }
               }
             },
             "layer_pattern": { "type": "string", "description": "混合注意力的层分布，如 3:1 linear:full" },
@@ -356,6 +367,10 @@
           "additionalProperties": false,
           "properties": {
             "mtp_layers": { "type": "integer" },
+            "mtp_layers_note": {
+              "type": "string",
+              "description": "config 声明与权重实测不一致时写明以哪边为准。DeepSeek V4-Flash-DSpark/0731 的 num_nextn_predict_layers 写 1，权重里却有 3 个完整 MTP 块"
+            },
             "speculative": {
               "type": "object",
               "additionalProperties": false,

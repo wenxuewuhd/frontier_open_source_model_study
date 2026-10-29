@@ -55,7 +55,11 @@ def main():
         per = {k: to_enum(v["dtype"]) for k, v in subs.items() if v.get("dtype")}
         per_scale = {k: to_enum(v["scale_dtype"]) for k, v in subs.items()
                      if v.get("scale_dtype") and per.get(k) in QUANTIZED}
-        per_block = {k: v["block"] for k, v in subs.items() if v.get("block")}
+        # 同一子系统里出现多种块布局时用 + 连接，不用 / ——
+        # 格子里「权重精度 / scale 精度 / 块」已经用 / 分隔三个字段，
+        # 块本身再用 / 就读不出「FP4 / FP8_E8M0 / [1,32] / [32,32]」的后两项都是块
+        per_block = {k: "+".join(v["block_share"]) if v.get("block_share") else v["block"]
+                     for k, v in subs.items() if v.get("block")}
 
         q = doc.setdefault("precision", {}).setdefault("quantization", {})
         old = q.get("per_subsystem")

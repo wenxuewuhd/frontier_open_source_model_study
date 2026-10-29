@@ -1,7 +1,7 @@
 {
  "id": "ds-v4.1-flash-1017",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T05:08:34+00:00",
+ "generated_at": "2026-10-29T05:16:54+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4.1-flash-1017",
   "config_present": true,
@@ -13,49 +13,42 @@
   "available": false
  },
  "kv_cache": {
-  "status": "partial",
+  "status": "measured",
   "attention_type": "MQA-LATENT",
   "kv_dtype": "bfloat16",
   "layers": 40,
   "full_attention_layers": 4,
   "linear_attention_layers": 0,
-  "per_token_bytes": 5632,
-  "per_sequence_bytes": 0,
+  "per_token_bytes": 5120,
+  "per_sequence_bytes": 5242880,
   "components": {
-   "full_attention": {
-    "layers": 4,
-    "bytes_per_layer": 1152,
-    "bytes_per_token": 4608,
-    "dtype": "bfloat16",
+   "global_kv": {
+    "bytes_per_token": 4096,
     "terms": {
-     "latent_from": "num_kv_heads(1) * head_dim(512)",
-     "rope_caveat": "qk_rope_head_dim 是否在 latent 维之内未确认。若在其内，每层应为 latent*bytes 而非 (latent+rope)*bytes，当前取值为上界",
-     "latent": 512,
-     "qk_rope_head_dim": 64,
-     "formula": "(latent + qk_rope_head_dim) * bytes"
+     "elements_per_token": 2048,
+     "source": "完整权重清单实测"
     }
    },
    "indexer": {
-    "layers": 4,
-    "width": 128,
     "bytes_per_token": 1024,
     "terms": {
-     "formula": "index_kv_dim(128)，实测自 layers.N.attn.indexer.wk.weight [128, 512]，输出维 128（仅第 2/8/14/20 层） * bytes * index_kv_source_layers(4)"
+     "elements_per_token": 512,
+     "source": "完整权重清单实测"
+    }
+   },
+   "local_window": {
+    "bytes_per_sequence": 5242880,
+    "terms": {
+     "note": "滑窗局部 KV，每序列固定，不随上下文增长"
     }
    }
   },
   "notes": [
    "只有 4 层产出 KV（共 40 层），其余层跨层读取；按总层数乘会高估",
-   "存在逐层压缩比（compress_ratios），本公式未建模；per_token 只是未压缩上界，真实值以官方披露或实测为准"
-  ],
-  "dtype_assumed": true,
-  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
+   "按完整权重清单逐层量出来的每 token 元素数。compressor.ape 的第一维就是该层压缩比，每 token 元素 = wkv 输出宽度 / 比值（比值 1: 1 层, wkv 宽 512, ape 无 -> 512 元素/token；比值 2: 3 层, wkv 宽 512, ape 无 -> 512 元素/token）。attn.wkv 那一份是 sliding_window 的局部 KV，每序列固定、不随上下文增长，单列在 local_window_bytes_per_sequence，不计入 per_token。按未压缩宽度乘总层数会高估五倍以上"
+  ]
  },
- "kv_capacity_bytes_at_context": {
-  "4096": 23068672,
-  "32768": 184549376,
-  "1048576": 5905580032
- },
+ "kv_capacity_bytes_at_context": {},
  "active_params": {
   "status": "unknown",
   "why": "没有 shapes，无法按子系统拆分"

@@ -25,11 +25,14 @@ lineage:
   - axis: scale
     text: 61 层 / hidden 7168；专家 160→256，共享 2→1，top-6→8，专家中间维 1536→2048，词表 102400→129280；dense 前缀层
       1→3
-    benefit: 专家更多更细（160→256，中间维 1536→2048）配合 top-k 6→8，在激活参数增幅可控的前提下把容量提上去；dense 前缀层 1→3 让最靠前的几层避开路由抖动
+    benefit: 专家数 160→256，但**单专家也变大了**：3×1536×5120 = 23.6M → 3×2048×7168 = 44.0M（1.87 倍）。所谓「更细」只在「中间维
+      / hidden」这个比值上成立（0.300→0.286），绝对尺寸是变粗的。代价要说清楚：每层激活的 FFN 参数 188.7M→396.4M（2.10 倍），主干路由容量 222.7B→653.9B（2.94
+      倍），稀疏度仅由 3.75% 改善到 3.12% ——激活几乎跟着容量一起涨，不是「增幅可控」
   - axis: moe
     text: 打分 softmax→sigmoid，选路 group_limited_greedy→noaux_tc，新增逐专家偏置 gate.e_score_correction_bias
       —— 无辅助损失的负载均衡
-    benefit: 去掉辅助损失后不再有「均衡 vs 质量」的梯度冲突，负载均衡改由一个不参与梯度的偏置在线调节。对 infra 的意义是 router 多一条逐专家偏置加法，且推理时这个偏置是常量，可以折进打分
+    benefit: 去掉辅助损失后不再有「均衡 vs 质量」的梯度冲突，负载均衡改由一个不参与梯度的偏置在线调节。对 infra 的意义是 router 多一条逐专家偏置加法。**注意这个偏置只参与
+      top-k 选择，组合权重用的是未加偏置的分数** —— 把它折进 gating weight 会让输出错，这是融合 router 最容易做错的一处。（此条为实现层面的判断，权重清单只能证明偏置张量存在，不含语义）
   - axis: precision
     text: 首次以 FP8 块量化发布，块 [128,128]，每个量化张量配一个 weight_scale_inv
     benefit: 权重带宽与显存对半砍（BF16→FP8），块量化把 scale 粒度限制在 128×128，比逐张量更抗离群值。代价是每个 GEMM 都要带 scale，反量化进了内循环
@@ -81,6 +84,8 @@ arch:
     first_k_dense: 3
     expert_groups: 8
     routing: sigmoid 打分 / noaux_tc 选路
+    storage_note: 逐专家独立张量，不是堆叠。grouped GEMM 因此吃 2 维权重列表而非 3 维张量，EP 切分是切张量列表
+    balance: 无辅助损失，靠逐专家偏置 mlp.gate.e_score_correction_bias 调节（第 3 层起，59 个）
   decoding:
     mtp_layers: 1
 precision:
@@ -111,9 +116,9 @@ precision:
     per_subsystem_block:
       expert: '[128,128]'
       shared_expert: '[128,128]'
-      attention: '[128,128] / [128ceil,128]'
+      attention: '[128,128]+[128ceil,128]'
       dense_ffn: '[128,128]'
-      draft: '[128,128] / [128ceil,128]'
+      draft: '[128,128]+[128ceil,128]'
 infra_signals:
 - text: FP8 块量化 [128,128] + 逐张量 weight_scale_inv 成为之后所有代的底座，块大小与 scale 格式在 V3.1 和 V4.1 两次收紧
   evidence: judgement
@@ -144,6 +149,8 @@ evidence:
   precision.quantization.per_subsystem_scale: derived
   precision.quantization.subsystem_method: derived
   precision.quantization.per_subsystem_block: derived
+  arch.moe.storage_note: derived
+  arch.moe.balance: derived
 notes: FP8 发布与无辅助损失路由都是从这一代开始的，两者都直接改算子：前者让权重 GEMM 变成带 scale 的块量化 GEMM，后者在 router 里加一条偏置加法。
 open_questions:
 - 未取权重清单，FP8 之外有哪些张量保持 BF16 待核

@@ -37,10 +37,11 @@ lineage:
     text: indexer 保留但 K 改由 compressor 路供给（没有独立的 indexer.wk），topk 2048→512
     benefit: indexer 不再自带 K 投影，省掉每层一份独立的 index K 权重与缓存；topk 2048→512 进一步把 gather 量降到四分之一
   - axis: moe
-    text: 打分 sigmoid→sqrtsoftplus；取消 dense 前缀层，43 层全是 MoE；新增 3 个 hash 路由层，按 token id 查 ffn.gate.tid2eid
-      直接定专家，不经打分
-    benefit: 取消 dense 前缀层让全部 43 层都参与 MoE，容量利用更充分；hash 路由层按 token id 直接定专家，这几层完全不算 router —— 省掉打分与
-      topk
+    text: 打分 sigmoid→sqrtsoftplus；**top-k 8→6**；取消专家分组（n_group/topk_group 不再声明，noaux_tc 少了 group 维度，已不是同一个算子）；config
+      不再有 first_k_dense_replace，43 层每一层都有完整的 ffn.experts.*；第 0/1/2 层额外带一张 ffn.gate.tid2eid [129280,
+      6] 查表，但打分投影仍在
+    benefit: dense 前缀不是被「取消」而是被原地换掉：3 个查表层正好落在 V3 一代 first_k_dense_replace=3 占的那三个槽位。top-k 8→6 配合分组取消，每
+      token 的 all-to-all 载荷从 13.30 MB 降到 4.23 MB（2·top_k·hidden·bytes·层数，BF16 口径）—— 这是 V4 对 EP 通信最大的一笔节省，比任何路由机制改动都直接
   - axis: residual
     text: 新增 mHC 残差：残差流扩成 4 份并行拷贝（hc_mult 4），每层带 hc_attn_* / hc_ffn_* 系数，lm_head 前另有一组 hc_head_*
     benefit: 残差流变 4 份，等效加深信息通路而不加层数。代价对 infra 非常直接：所有逐元素算子、norm、残差加法的形状都乘 4，激活显存同步放大
@@ -151,6 +152,13 @@ arch:
       - 0
       note: 权重清单里 kv_b_proj / k_b_proj / v_b_proj 零命中，config 也不声明 kv_lora_rank：这一代没有 KV 上投影，不是 MLA。compress_ratios
         的项数 = 主干层数 + MTP 层数。
+      measured_per_token:
+        global_kv: 5456
+        indexer: 1344
+        local_window_bytes_per_sequence: 5636096
+        note: '按完整权重清单逐层量出来的每 token 元素数。compressor.ape 的第一维就是该层压缩比，每 token 元素 = wkv 输出宽度 / 比值（比值 4:
+          21 层, wkv 宽 1024, ape 有 -> 256 元素/token；比值 128: 20 层, wkv 宽 512, ape 有 -> 4 元素/token）。attn.wkv
+          那一份是 sliding_window 的局部 KV，每序列固定、不随上下文增长，单列在 local_window_bytes_per_sequence，不计入 per_token。按未压缩宽度乘总层数会高估五倍以上'
     attn_sink: 每头一个可学习 sink（layers.N.attn.attn_sink，全部层及 MTP 层）。它进 softmax 分母，改变算子签名；config 里没有这个开关，只能从权重清单发现
   ffn:
     type: moe
@@ -162,8 +170,13 @@ arch:
     routing: sqrtsoftplus 打分 / noaux_tc 选路
     hash_layers:
       count: 3
-      mapping_tensor: layers.N.ffn.gate.tid2eid
-      note: config 的 num_hash_layers=3 在权重里的形态就是这张 token id → expert id 查表。V4.1 起该张量退场
+      mapping_tensor: layers.{0,1,2}.ffn.gate.tid2eid
+      note: config 的 num_hash_layers=3 对应第 0/1/2 层各一张 ffn.gate.tid2eid [129280, 6]（词表大小 × top_k），即每个
+        token id 映到 6 个专家。但这三层**同时还有和其余层一样的完整打分投影** gate.weight [256, 4096]，缺的是 gate.bias（第 3 层起才有）。所以不能说它们「不算
+        router」——查表与打分各自承担什么，形状定不了，需看实现。V4.1 起 tid2eid 退场
+    storage_note: 逐专家独立张量（layers.N.ffn.experts.<n>.w{1,2,3}），不是堆叠。grouped GEMM 因此吃 2 维权重列表而非 3 维张量，EP
+      切分是切张量列表
+    balance: 无辅助损失，靠逐专家可学习偏置 ffn.gate.bias 调节（第 3 层起，共 41 个）
   residual:
     type: mHC
     multiplier: 4
@@ -195,7 +208,7 @@ precision:
       expert: '[1,32]'
       shared_expert: '[128,128]'
       attention: '[128,128]'
-      draft: '[1,32] / [128,128]'
+      draft: '[1,32]+[128,128]'
     per_subsystem_scale:
       expert: FP8_E8M0
       shared_expert: FP8_E8M0
@@ -243,8 +256,13 @@ evidence:
   precision.quantization.per_subsystem_block: derived
   arch.attention.sparse.index_kv_dim: derived
   arch.attention.sparse.index_kv_source: derived
+  arch.attention.kv_sharing.measured_per_token: derived
+  arch.moe.hash_layers: derived
+  arch.moe.storage_note: derived
+  arch.moe.balance: derived
+  arch.attention.attn_sink: derived
 notes: 谱系里最大的一次不连续，几乎每个维度都动了。对 infra 最要紧的是三件：KV 上投影消失（注意力算子换签名）、专家降到 FP4（打包存储，参数量不能直接求和）、mHC 把残差流宽度乘
-  4（所有逐元素算子的形状都变）。另外 attn_sink 与 hash 路由层都不在 config 里，只能从权重清单发现。
+  4（所有逐元素算子的形状都变）。另外 attn_sink 不在 config 里，只能从权重清单发现；hash 层的**数量**在 config 里（num_hash_layers=3），但它的张量形态与所在层要靠权重清单。
 open_questions:
 - 未取权重清单（只有张量名），参数量与 FP4 打包形态待核
-- compress_ratios 的 4 / 128 对应什么压缩实现，config 未说明
+- tid2eid [129280, 6] 与同层的 gate.weight 如何配合（查表定专家集、打分定组合权重？）形状定不了，需看上游实现

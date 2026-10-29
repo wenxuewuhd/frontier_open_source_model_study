@@ -1,7 +1,7 @@
 {
  "id": "deepseek-v41-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T05:08:35+00:00",
+ "generated_at": "2026-10-29T05:19:53+00:00",
  "inputs": {
   "facts_dir": "facts/deepseek-v41-flash",
   "config_present": true,
@@ -64,49 +64,42 @@
   "incomplete_note": null
  },
  "kv_cache": {
-  "status": "partial",
+  "status": "measured",
   "attention_type": "MQA-LATENT",
   "kv_dtype": "bfloat16",
   "layers": 40,
   "full_attention_layers": 4,
   "linear_attention_layers": 0,
-  "per_token_bytes": 5632,
-  "per_sequence_bytes": 0,
+  "per_token_bytes": 5120,
+  "per_sequence_bytes": 5242880,
   "components": {
-   "full_attention": {
-    "layers": 4,
-    "bytes_per_layer": 1152,
-    "bytes_per_token": 4608,
-    "dtype": "bfloat16",
+   "global_kv": {
+    "bytes_per_token": 4096,
     "terms": {
-     "latent_from": "num_kv_heads(1) * head_dim(512)",
-     "rope_caveat": "qk_rope_head_dim 是否在 latent 维之内未确认。若在其内，每层应为 latent*bytes 而非 (latent+rope)*bytes，当前取值为上界",
-     "latent": 512,
-     "qk_rope_head_dim": 64,
-     "formula": "(latent + qk_rope_head_dim) * bytes"
+     "elements_per_token": 2048,
+     "source": "完整权重清单实测"
     }
    },
    "indexer": {
-    "layers": 4,
-    "width": 128,
     "bytes_per_token": 1024,
     "terms": {
-     "formula": "index_kv_dim(128)，实测自 layers.N.attn.indexer.wk.weight [128, 512]，输出维 128（仅第 2/8/14/20 层）。 index K 在 32 个 index 头之间共享，只有查询侧 indexer.wq_b [4096, 1280] 是逐头的 （4096 = 32×128）。k_norm [128] 也只有一份，佐证同一结论 * bytes * index_kv_source_layers(4)"
+     "elements_per_token": 512,
+     "source": "完整权重清单实测"
+    }
+   },
+   "local_window": {
+    "bytes_per_sequence": 5242880,
+    "terms": {
+     "note": "滑窗局部 KV，每序列固定，不随上下文增长"
     }
    }
   },
   "notes": [
    "只有 4 层产出 KV（共 40 层），其余层跨层读取；按总层数乘会高估",
-   "存在逐层压缩比（compress_ratios），本公式未建模；per_token 只是未压缩上界，真实值以官方披露或实测为准"
-  ],
-  "dtype_assumed": true,
-  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
+   "按完整权重清单逐层量出来的每 token 元素数，不是公式推的。 全局 KV：4 个源层各 compressor.wkv [512, 5120]，每层 512 元素 —— 是 512 不是 576， 因为 wkv 输出总共就 512 维、全模型没有任何 K 侧 rope 投影， qk_rope_head_dim 的 64 维在 latent 之内（这一条关掉了核查 R22）。 indexer：4 个源层各 indexer.wk [128, 512]，每层 128 元素。 attn.wkv 那一份是 sliding_window=128 的局部 KV，每序列固定 5.0 MiB、 不随上下文增长，单列在 local_window_bytes_per_sequence，不计入 per_token"
+  ]
  },
- "kv_capacity_bytes_at_context": {
-  "4096": 23068672,
-  "32768": 184549376,
-  "1048576": 5905580032
- },
+ "kv_capacity_bytes_at_context": {},
  "active_params": {
   "status": "ok",
   "total": 15776610304.0,
@@ -130,11 +123,7 @@
   "linear_per_token": 31553220608.0,
   "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
  },
- "arithmetic_intensity": {
-  "decode_weight_bytes_per_token": 10548385296.288256,
-  "decode_flops_per_byte": 2.9912844214273138,
-  "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
- },
+ "arithmetic_intensity": {},
  "ep_communication": {
   "status": "ok",
   "ep_size": 4,

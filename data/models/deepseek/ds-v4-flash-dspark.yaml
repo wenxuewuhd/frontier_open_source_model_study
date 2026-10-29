@@ -24,9 +24,11 @@ lineage:
   successor: ds-v4-flash-0731
   changed_from_predecessor:
   - axis: decoding
-    text: MTP 头换成 DSpark：e_proj / h_proj / enorm / hnorm 退场，改为 main_proj / main_norm + markov_head.markov_w1,w2
-      + confidence_head.proj，一次出 5 个 token（dspark_block_size 5）。主干 43 层与 V4-Flash 完全一致
-    benefit: 草稿头不再是「再跑一层 transformer」：markov head 加置信度门控一次出 5 个 token，草稿成本远低于主干层。代价是草稿侧算子与主干不同构，要单独排一套
+    text: 草稿侧从 1 个 MTP 块扩到 **3 个**（mtp.0/1/2，张量数 1575→4705），每块都是完整的 transformer + 256 专家 MoE；mtp.2
+      上另加 markov_head 与 confidence_head。一次出 5 个 token（dspark_block_size 5）。config 的 num_nextn_predict_layers
+      仍写 1，与权重不符
+    benefit: 草稿更长，投机的接受窗口更大。代价是草稿侧权重涨到约 3 倍 （6.6B→19.8B），而且每块都带自己的 MoE —— 对 EP 切分是实打实的大项。markov_head
+      与 confidence_head 是附加头，不是对 transformer 块的替换
 params:
   total: 284335000000.0
   excludes:
@@ -122,6 +124,13 @@ arch:
       - 0
       note: 权重清单里 kv_b_proj / k_b_proj / v_b_proj 零命中，config 也不声明 kv_lora_rank：这一代没有 KV 上投影，不是 MLA。compress_ratios
         的项数 = 主干层数 + MTP 层数。
+      measured_per_token:
+        global_kv: 5456
+        indexer: 1344
+        local_window_bytes_per_sequence: 5636096
+        note: '按完整权重清单逐层量出来的每 token 元素数。compressor.ape 的第一维就是该层压缩比，每 token 元素 = wkv 输出宽度 / 比值（比值 4:
+          21 层, wkv 宽 1024, ape 有 -> 256 元素/token；比值 128: 20 层, wkv 宽 512, ape 有 -> 4 元素/token）。attn.wkv
+          那一份是 sliding_window 的局部 KV，每序列固定、不随上下文增长，单列在 local_window_bytes_per_sequence，不计入 per_token。按未压缩宽度乘总层数会高估五倍以上'
     attn_sink: 每头一个可学习 sink（layers.N.attn.attn_sink，全部层及 MTP 层）。它进 softmax 分母，改变算子签名；config 里没有这个开关，只能从权重清单发现
   ffn:
     type: moe
@@ -135,13 +144,15 @@ arch:
       count: 3
       mapping_tensor: layers.N.ffn.gate.tid2eid
       note: 与 V4-Flash 相同
+    storage_note: 逐专家独立张量，不是堆叠。grouped GEMM 因此吃 2 维权重列表而非 3 维张量，EP 切分是切张量列表
+    balance: 无辅助损失，靠逐专家偏置 ffn.gate.bias 调节
   residual:
     type: mHC
     multiplier: 4
     note: 残差流扩成 hc_mult 份并行拷贝，每层带 hc_attn_* / hc_ffn_* 系数张量；V4 到 V4-Flash-Vision-Exp 在 lm_head 前还有一组
       hc_head_*，V4.1 起撤掉。残差宽度乘 4 会改掉所有逐元素算子与 norm 的形状
   decoding:
-    mtp_layers: 1
+    mtp_layers: 3
     speculative:
       method: DSpark
       num_tokens: 5
@@ -149,6 +160,8 @@ arch:
       - 40
       - 41
       - 42
+    mtp_layers_note: config 的 num_nextn_predict_layers 声明 1，但权重里有 3 个完整 MTP 块 （mtp.0/1/2，各带完整 attn.*
+      与 256 专家的 MoE），compress_ratios 也是 46 = 43+3。以权重为准。vision-exp 那一代 config 才把这个字段改成 3，追认既有权重
 precision:
   quantization:
     method: fp8
@@ -173,7 +186,7 @@ precision:
       expert: '[1,32]'
       shared_expert: '[128,128]'
       attention: '[128,128]'
-      draft: '[1,32] / [128,128]'
+      draft: '[1,32]+[128,128]'
     subsystem_method: 抽样：每个子系统 6 个代表张量，共读 14 个分片头
     per_subsystem_scale:
       expert: FP8_E8M0
@@ -213,6 +226,13 @@ evidence:
   precision.quantization.per_subsystem_block: derived
   arch.attention.sparse.index_kv_dim: derived
   arch.attention.sparse.index_kv_source: derived
+  arch.attention.kv_sharing.measured_per_token: derived
+  arch.moe.storage_note: derived
+  arch.moe.balance: derived
+  arch.attention.attn_sink: derived
+  arch.moe.hash_layers: derived
+  arch.decoding.mtp_layers: derived
+  arch.decoding.mtp_layers_note: derived
 notes: 只改投机解码头。值得单列是因为 DSpark 的 markov_head 与 confidence_head 是两类新算子，而且从这一版起一路带到 V4.1 旗舰。
 open_questions:
 - DSpark 的接受率没有公开数据，草稿收益待实测

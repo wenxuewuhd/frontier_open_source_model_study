@@ -29,7 +29,9 @@ lineage:
       64），约 71 倍。代价是每步要做一次上投影复原 KV —— 用算力换带宽，而且上投影在 TP 下不能跟着 KV 切，要全量复制
   - axis: moe
     text: 160 路由专家 + 2 共享，top-6，专家分 8 组取 3 组（group_limited_greedy），softmax 打分
-    benefit: 分组选路把 all-to-all 的目标限制在 8 组里的 3 组，EP 下跨设备通信按组数收缩；共享专家承接通用能力，省得每个路由专家都学一遍
+    benefit: group-limited routing 约束的是**目的地设备数的上界**：不分组时一个 token 最多落到 min(top_k 6, n_group 8) = 6
+      组，分组后最多 topk_group = 3 组，2 倍。**载荷字节数不变** —— 每 token 的 all-to-all 量 = 2·top_k·hidden·bytes，与分组无关（59
+      个 MoE 层、BF16 下恒为 7.25 MB/token）。省的是连接数与同步面，不是带宽。共享专家承接通用能力，省得每个路由专家都学一遍
   - axis: precision
     text: BF16 直接发布，config 里没有 quantization_config
     benefit: 不量化，部署最简单，但权重带宽按 BF16 全额付 —— 这是后面几代持续压缩的起点
@@ -80,6 +82,8 @@ arch:
     first_k_dense: 1
     expert_groups: 8
     routing: softmax 打分 / group_limited_greedy 选路
+    storage_note: 逐专家独立张量，不是堆叠。grouped GEMM 因此吃 2 维权重列表而非 3 维张量，EP 切分是切张量列表
+    balance: 辅助损失（aux_loss_alpha 0.001，seq_aux）
 infra_signals:
 - text: MLA 的 kv_b_proj 让 KV 缓存只存 512 维 latent，但每步要做一次上投影 —— 算子上是「省带宽换算力」，这个取舍一路演进到 V4 被推翻
   evidence: judgement
@@ -108,6 +112,8 @@ evidence:
   open_questions: judgement
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived
+  arch.moe.storage_note: derived
+  arch.moe.balance: derived
 notes: 谱系起点。MLA 的两段式（下投影存 latent、上投影复原 KV）在这里定型，一直用到 V3.2；V4 把上投影彻底去掉。
 open_questions:
 - 未取权重清单，参数量与各子系统占比待补

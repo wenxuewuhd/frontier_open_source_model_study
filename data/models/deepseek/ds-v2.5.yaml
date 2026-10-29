@@ -59,6 +59,8 @@ arch:
     first_k_dense: 1
     expert_groups: 8
     routing: softmax 打分 / group_limited_greedy 选路
+    storage_note: 逐专家独立张量，不是堆叠。grouped GEMM 因此吃 2 维权重列表而非 3 维张量，EP 切分是切张量列表
+    balance: 辅助损失（aux_loss_alpha 0.001，seq_aux）
 infra_signals:
 - text: 整代发布里有相当比例只是后训练或外推参数变化，架构零差异。跟踪时先比张量名集合，相同就不必重走算子评估
   evidence: judgement
@@ -86,6 +88,8 @@ evidence:
   notes: judgement
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived
+  arch.moe.storage_note: derived
+  arch.moe.balance: derived
 notes: 合并版（Chat + Coder）。对算子清单没有任何影响，收录是为了让「哪些版本不需要 infra 动作」也能一眼看出来。
 precision:
   quantization:

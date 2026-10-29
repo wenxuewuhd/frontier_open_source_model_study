@@ -191,7 +191,7 @@ def main():
             return None, {}
         total = sum(out.values())
         ranked = sorted(out.items(), key=lambda kv: -kv[1])
-        return " / ".join(s for s, _ in ranked), {s: round(v / total, 3) for s, v in ranked}
+        return "+".join(s for s, _ in ranked), {s: round(v / total, 3) for s, v in ranked}
 
     result = {}
     for sub in ORDER:

@@ -123,6 +123,13 @@ arch:
       - 0
       note: 权重清单里 kv_b_proj / k_b_proj / v_b_proj 零命中，config 也不声明 kv_lora_rank：这一代没有 KV 上投影，不是 MLA。compress_ratios
         的项数 = 主干层数 + MTP 层数。
+      measured_per_token:
+        global_kv: 2048
+        indexer: 512
+        local_window_bytes_per_sequence: 5242880
+        note: '按完整权重清单逐层量出来的每 token 元素数。compressor.ape 的第一维就是该层压缩比，每 token 元素 = wkv 输出宽度 / 比值（比值 1:
+          1 层, wkv 宽 512, ape 无 -> 512 元素/token；比值 2: 3 层, wkv 宽 512, ape 无 -> 512 元素/token）。attn.wkv
+          那一份是 sliding_window 的局部 KV，每序列固定、不随上下文增长，单列在 local_window_bytes_per_sequence，不计入 per_token。按未压缩宽度乘总层数会高估五倍以上'
     attn_sink: 每头一个可学习 sink（layers.N.attn.attn_sink，全部层及 MTP 层）。它进 softmax 分母，改变算子签名；config 里没有这个开关，只能从权重清单发现
   ffn:
     type: moe
@@ -132,6 +139,8 @@ arch:
     shared_experts: 1
     intermediate: 2304
     routing: sqrtsoftplus 打分 / noaux_tc 选路
+    storage_note: 逐专家独立张量，不是堆叠。grouped GEMM 因此吃 2 维权重列表而非 3 维张量，EP 切分是切张量列表
+    balance: 无辅助损失，靠逐专家偏置 ffn.gate.bias 调节
   residual:
     type: mHC
     multiplier: 4
@@ -193,8 +202,8 @@ precision:
       expert: '[1,32]'
       shared_expert: '[32,32]'
       attention: '[32,32]'
-      retrieval: '[1,32] / [32,32]'
-      draft: '[1,32] / [32,32]'
+      retrieval: '[1,32]+[32,32]'
+      draft: '[1,32]+[32,32]'
     subsystem_method: 抽样：每个子系统 6 个代表张量，共读 14 个分片头
     per_subsystem_scale:
       expert: FP8_E8M0
@@ -228,4 +237,8 @@ evidence:
   precision.quantization.per_subsystem_block: derived
   arch.attention.sparse.index_kv_dim: derived
   arch.attention.sparse.index_kv_source: derived
+  arch.attention.kv_sharing.measured_per_token: derived
+  arch.moe.storage_note: derived
+  arch.moe.balance: derived
+  arch.attention.attn_sink: derived
 notes: V4.1-Flash 的日期版。架构零差异，算子表可直接套用旗舰那份。

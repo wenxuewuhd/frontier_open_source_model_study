@@ -31,8 +31,9 @@ lineage:
     text: 新增第二套路由偏置 ffn.gate.bias_vl，视觉 token 走独立偏置 —— 融合 router 的算子签名因此改变，config 里看不到
     benefit: 视觉与文本 token 走不同的路由偏置，避免两种模态抢同一批专家。代价是融合 router 要多带一个模态输入，算子签名因此改变
   - axis: decoding
-    text: MTP 层 1→3
-    benefit: 草稿更长，投机的接受窗口更大；代价是草稿侧的权重与计算都乘 3
+    text: config 的 num_nextn_predict_layers 由 1 改为 3 —— 追认 dspark 那一代权重里就已经存在的 3 个 MTP 块。本版草稿侧实际只多了
+      3 个张量（mtp.{0,1,2}.ffn.gate.bias_vl），4705→4708
+    benefit: 对 infra 没有新增成本：3 块 MTP 在前一代就已经在算了，这一版只是 config 追上权重
 params:
   total: 284801000000.0
   excludes:
@@ -129,6 +130,13 @@ arch:
       - 0
       note: 权重清单里 kv_b_proj / k_b_proj / v_b_proj 零命中，config 也不声明 kv_lora_rank：这一代没有 KV 上投影，不是 MLA。compress_ratios
         的项数 = 主干层数 + MTP 层数。
+      measured_per_token:
+        global_kv: 5456
+        indexer: 1344
+        local_window_bytes_per_sequence: 5636096
+        note: '按完整权重清单逐层量出来的每 token 元素数。compressor.ape 的第一维就是该层压缩比，每 token 元素 = wkv 输出宽度 / 比值（比值 4:
+          21 层, wkv 宽 1024, ape 有 -> 256 元素/token；比值 128: 20 层, wkv 宽 512, ape 有 -> 4 元素/token）。attn.wkv
+          那一份是 sliding_window 的局部 KV，每序列固定、不随上下文增长，单列在 local_window_bytes_per_sequence，不计入 per_token。按未压缩宽度乘总层数会高估五倍以上'
     attn_sink: 每头一个可学习 sink（layers.N.attn.attn_sink，全部层及 MTP 层）。它进 softmax 分母，改变算子签名；config 里没有这个开关，只能从权重清单发现
   ffn:
     type: moe
@@ -142,6 +150,8 @@ arch:
       count: 3
       mapping_tensor: layers.N.ffn.gate.tid2eid
       note: 与 V4-Flash 相同
+    storage_note: 逐专家独立张量，不是堆叠。grouped GEMM 因此吃 2 维权重列表而非 3 维张量，EP 切分是切张量列表
+    balance: 无辅助损失，靠逐专家偏置 ffn.gate.bias 调节
   residual:
     type: mHC
     multiplier: 4
@@ -191,7 +201,7 @@ precision:
       expert: '[1,32]'
       shared_expert: '[128,128]'
       attention: '[128,128]'
-      draft: '[1,32] / [128,128]'
+      draft: '[1,32]+[128,128]'
     subsystem_method: 抽样：每个子系统 6 个代表张量，共读 11 个分片头
     per_subsystem_scale:
       expert: FP8_E8M0
@@ -231,6 +241,11 @@ evidence:
   precision.quantization.per_subsystem_block: derived
   arch.attention.sparse.index_kv_dim: derived
   arch.attention.sparse.index_kv_source: derived
+  arch.attention.kv_sharing.measured_per_token: derived
+  arch.moe.storage_note: derived
+  arch.moe.balance: derived
+  arch.attention.attn_sink: derived
+  arch.moe.hash_layers: derived
 notes: 多模态入口。两个容易漏的点：视觉塔的 attention 用融合 wqkv 且带 bias（和主干不同构），以及 router 从此有两套偏置。
 open_questions:
 - 视觉 token 与文本 token 在 decode 下如何共享 router，未见公开说明

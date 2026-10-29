@@ -156,6 +156,17 @@ def text_cfg(cfg: dict) -> dict:
     return t
 
 
+def _kv_out(comp, status, atype, kv_dtype, layers, full_layers, linear_layers, notes):
+    return {
+        "status": status, "attention_type": atype, "kv_dtype": kv_dtype,
+        "layers": layers, "full_attention_layers": full_layers,
+        "linear_attention_layers": linear_layers,
+        "per_token_bytes": sum(c.get("bytes_per_token", 0) for c in comp.values()),
+        "per_sequence_bytes": sum(c.get("bytes_per_sequence", 0) for c in comp.values()),
+        "components": comp, "notes": notes,
+    }
+
+
 def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None) -> dict:
     """注意力的显存模型，分两个分量返回。
 
@@ -261,6 +272,32 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None) -> di
         status = "partial"
         notes.append(f"有 {linear_layers} 层线性注意力但缺少 linear_* 字段，其状态未计入")
 
+    # --- 实测优先：有完整权重清单量出来的每 token 元素数就直接用它。
+    # 逐层压缩的结构（V4 一代的 compressor.ape）公式表达不了，而按未压缩宽度乘层数
+    # 会高估五倍以上。量出来的数比任何通用公式都可靠，所以它一旦存在就接管。
+    meas = share.get("measured_per_token") or {}
+    if meas.get("global_kv") or meas.get("indexer"):
+        comp.clear()
+        if meas.get("global_kv"):
+            comp["global_kv"] = {
+                "bytes_per_token": meas["global_kv"] * b,
+                "terms": {"elements_per_token": meas["global_kv"], "source": "完整权重清单实测"},
+            }
+        if meas.get("indexer"):
+            comp["indexer"] = {
+                "bytes_per_token": meas["indexer"] * b,
+                "terms": {"elements_per_token": meas["indexer"], "source": "完整权重清单实测"},
+            }
+        if meas.get("local_window_bytes_per_sequence"):
+            comp["local_window"] = {
+                "bytes_per_sequence": meas["local_window_bytes_per_sequence"],
+                "terms": {"note": "滑窗局部 KV，每序列固定，不随上下文增长"},
+            }
+        status = "measured"
+        if meas.get("note"):
+            notes.append(meas["note"])
+        return _kv_out(comp, status, atype, kv_dtype, layers, full_layers, linear_layers, notes)
+
     # --- 稀疏注意力的 indexer 缓存：漏掉会低估
     sp = attn.get("sparse") or {}
     inh = sp.get("index_n_heads") or t.get("index_n_heads")
@@ -308,15 +345,7 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None) -> di
                 "why": f"注意力类型 {atype or '未声明'} 缺少必要字段",
                 "note": "混合结构请在 YAML 的 attention.hybrid / linear_state 里显式给出"}
 
-    per_token = sum(c.get("bytes_per_token", 0) for c in comp.values())
-    per_seq = sum(c.get("bytes_per_sequence", 0) for c in comp.values())
-    out = {
-        "status": status, "attention_type": atype, "kv_dtype": kv_dtype,
-        "layers": layers, "full_attention_layers": full_layers,
-        "linear_attention_layers": linear_layers,
-        "per_token_bytes": per_token, "per_sequence_bytes": per_seq,
-        "components": comp, "notes": notes,
-    }
+    out = _kv_out(comp, status, atype, kv_dtype, layers, full_layers, linear_layers, notes)
     if scale_dtype:
         out["scale_note"] = (
             f"scale 容器声明为 {scale_dtype}；实现若用了更宽的类型，每 token 会多一份，"

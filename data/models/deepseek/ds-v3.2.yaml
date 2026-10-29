@@ -66,6 +66,8 @@ arch:
     first_k_dense: 3
     expert_groups: 8
     routing: sigmoid 打分 / noaux_tc 选路
+    storage_note: 逐专家独立张量，不是堆叠。grouped GEMM 因此吃 2 维权重列表而非 3 维张量，EP 切分是切张量列表
+    balance: 无辅助损失，靠逐专家偏置 mlp.gate.e_score_correction_bias 调节（第 3 层起，59 个）
   decoding:
     mtp_layers: 1
 precision:
@@ -97,9 +99,9 @@ precision:
     per_subsystem_block:
       expert: '[128,128]'
       shared_expert: '[128,128]'
-      attention: '[128,128] / [128ceil,128]'
+      attention: '[128,128]+[128ceil,128]'
       dense_ffn: '[128,128]'
-      draft: '[128,128] / [128ceil,128]'
+      draft: '[128,128]+[128ceil,128]'
 evidence:
   id: official
   family: official
@@ -126,4 +128,6 @@ evidence:
   precision.quantization.per_subsystem_block: derived
   arch.attention.sparse.index_kv_dim: derived
   arch.attention.sparse.index_kv_source: derived
+  arch.moe.storage_note: derived
+  arch.moe.balance: derived
 notes: Exp 转正。零架构差异。
