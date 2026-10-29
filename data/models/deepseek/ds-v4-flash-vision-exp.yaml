@@ -20,7 +20,7 @@ hf:
   gated: false
 lineage:
   track: main
-  predecessor: ds-v4-flash-0731
+  predecessor: ds-v4-flash-dspark
   successor: deepseek-v41-flash
   changed_from_predecessor:
   - axis: modality

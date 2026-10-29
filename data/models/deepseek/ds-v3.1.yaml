@@ -20,11 +20,11 @@ hf:
   gated: false
 lineage:
   track: main
-  predecessor: ds-r1
+  predecessor: ds-v3
   successor: ds-v3.2-exp
   changed_from_predecessor:
   - axis: precision
-    text: config 声明 FP8 的 scale 格式为 ue8m0（2 的幂次 scale）。块仍 [128,128]，张量名与 R1 完全一致。但实测 scale 张量仍以 FP32
+    text: config 声明 FP8 的 scale 格式为 ue8m0（2 的幂次 scale）。块仍 [128,128]，张量名与 V3 完全一致。但实测 scale 张量仍以 FP32
       存放 —— ue8m0 在这一代约束的是取值不是容器
     benefit: scale 是纯 2 的幂次，反量化从浮点乘退化成指数加。但要注意声明与存储是两步走的：这一代 scale 张量还是 FP32，到 V4 才真的换成 8 bit 的 F8_E8M0。按「声明
       ue8m0 就是 8 bit 存储」去算 scale 张量大小，这一代会算小 4 倍

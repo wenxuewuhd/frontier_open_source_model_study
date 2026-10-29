@@ -406,7 +406,21 @@ V4.1 更细：`compressor.wkv`/`norm` 在 4 个源层都有，但 `compressor.wg
 
 两头一起改：
 
-- `derive.py` 的每个随上下文增长的分量都带上 `elements_per_token`，合计成 `kv_cache.per_token_elems`。公式路径里层数或宽度只是上界的（V3.2 的 indexer 按全部 61 层计、宽度用头数乘积），标 `per_token_elems_bound: upper_bound`，页面上显示成 `≤ 42,944`。任一分量缺元素数就不报合计 —— 少算一项还印成精确值比不印更糟。
+- `derive.py` 的每个随上下文增长的分量都带上 `elements_per_token`，合计成 `kv_cache.per_token_elems`。公式路径里层数或宽度只是上界的（V3.2-Exp 的 indexer 按全部 61 层计、宽度用头数乘积），标 `per_token_elems_bound: upper_bound`，页面上显示成 `≤ 42,944`。任一分量缺元素数就不报合计 —— 少算一项还印成精确值比不印更糟。
 - `data.ts` 的 `TRACKED_FIELDS` 新增 `diff: 'same-basis'` 守卫，和既有的 `'both-measured'` 并列。KV 字节行挂这个守卫，两侧 `bytes_basis` 不同（或任一侧是 `mixed`）就不出 from→to；出得来的也把口径写在数字旁边（`13,600 B（精度兜底）`）。跨代的结构比较改由新的「KV 元素 / token」行承担，它与精度无关。
 
 **没有去查 V4 的实际落盘精度。** 那份实现分析是 V4.1 专有的，V4 没有对应来源；按元素口径写，这个未知就不影响结论。`dtype_fallback` 这个标签本身是诚实的，`cache_basis` 里也早写明两种 basis 不能混比 —— 问题只在页面上已经在混比。
+
+#### 零结构差异的权重刷新不再单独立记录
+
+删掉五份：`ds-v2.5`、`ds-r1`、`ds-v3.2`、`ds-v4-flash-0731`、`ds-v4.1-flash-1017`。它们相对前代**连一个规格字段都没动** —— config 逐字段相同（或只差 `transformers_version` 这类元字段），张量名集合逐个相同，逐子系统精度也一致。能力变化全部来自后训练或权重刷新。
+
+**删掉的不是结论，是重复的载体。** 这五份当初是作为论据收进来的，论点本身仍然成立，所以写在这里：
+
+> **能力跃迁与 infra 工作量不是一回事。** 影响最大的那一代（R1）算子侧什么都没变 —— 已经支持 V3 的平台，支持 R1 不需要任何算子工作。跟踪一个新版本时**先比张量名集合**，相同就不必重走算子评估。
+
+这条判据比那五份记录本身有用得多，而维护五份「和前代逐字段相同」的 YAML 只是把同一个事实存了五遍 —— 每次改口径（比如这轮的 KV 元素口径）都要同步五处，而它们本来就该和前代一样。
+
+**代价说清楚**：旗舰的 `per_subsystem_scale` 是抽样读 14 个分片头得来的，原先引 `ds-v4.1-flash-1017` 这份记录作独立交叉验证。记录没了，验证还在 —— `subsystem_method` 改为直接引上游的 repo 与 sha（`DeepSeek-V4.1-Flash-1017 @ 1bae0e10`），并注明「那一版本仓不单独立记录，但这次交叉验证是实际跑过的」。`facts/` 下的取数产物保留（本来就不进版本库），要复核随时能重跑。
+
+删除后谱系链重接成 `V2 → V3 → V3.1 → V3.2-Exp → V4-Flash → DSpark → Vision-Exp → V4.1-Flash`（另有支线 V4-Pro）。`predecessor` / `successor` 悬空**不会报错** —— validate 不检查谱系引用，`successor` 站点里也没有任何地方渲染，所以这类重接只能手工核。顺带修了一个早就存在的毛病：`changeMatrix` 把家族首录也算进「字段零变化的版本」，而首录根本没有前代可比；现在要求有 `predecessor` 才进那张名单。

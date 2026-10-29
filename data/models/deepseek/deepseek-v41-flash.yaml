@@ -26,7 +26,6 @@ hf:
 lineage:
   track: main
   predecessor: ds-v4-flash-vision-exp
-  successor: ds-v4.1-flash-1017
   # 每条都对照过 facts/ds-v4-flash-vision-exp 与 facts/deepseek-v41-flash 的
   # config 差异与张量名差异，不是从模型卡抄的
   changed_from_predecessor:
@@ -354,8 +353,13 @@ precision:
       indexer: FP8_E8M0
       retrieval: FP8_E8M0
       draft: FP8_E8M0
-    subsystem_method: per_subsystem 来自完整权重清单（48 分片 96085 张量）逐项核对； per_subsystem_scale 由 fetch_dtypes.py
-      抽样读 14 个分片头得出， 与 ds-v4.1-flash-1017（config 逐字段相同的日期版）独立测得的 13 项完全一致
+    subsystem_method: >-
+      per_subsystem 来自完整权重清单（48 分片 96085 张量）逐项核对；
+      per_subsystem_scale 由 fetch_dtypes.py 抽样读 14 个分片头得出，
+      并与上游的日期版刷新 deepseek-ai/DeepSeek-V4.1-Flash-1017
+      （sha 1bae0e1088993b9b82de08f59de5be5a34e42170，config 与本版逐字段相同、
+      张量名集合 96085 个逐个相同）独立测得的 13 项完全一致。
+      那一版本仓不单独立记录（零结构差异的权重刷新一律不收），但这次交叉验证是实际跑过的
     packing_note: FP4 权重打包进 INT8 容器，每字节两个。工具据 per_subsystem 的逻辑精度 与实际容器类型自动还原参数量；字节数不还原，容器就是真实存储。
 platforms:
 - engine: vLLM

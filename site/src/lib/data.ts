@@ -553,7 +553,12 @@ export function changeMatrix(models: Model[]) {
       changes: changes.get(m.id)!.filter((c) => c.field.axis === axis),
     })),
   }));
-  return { cols, rows, unchanged: models.filter((m) => (changes.get(m.id) ?? []).length === 0) };
+  // 「零变化」只对有前代的版本成立。家族首录没有前代可比，changesFor 同样返回空，
+  // 混进来会让页面把它说成「相对前代一个字段都没动」—— 它根本没有前代
+  const unchanged = models.filter(
+    (m) => m.lineage?.predecessor && (changes.get(m.id) ?? []).length === 0,
+  );
+  return { cols, rows, unchanged };
 }
 
 export interface RosterEntry {

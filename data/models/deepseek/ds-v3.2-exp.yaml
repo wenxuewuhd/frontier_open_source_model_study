@@ -21,7 +21,7 @@ hf:
 lineage:
   track: main
   predecessor: ds-v3.1
-  successor: ds-v3.2
+  successor: ds-v4-flash
   changed_from_predecessor:
   - axis: attention
     text: 首次引入稀疏注意力 indexer（DSA）：每层新增 indexer.wk / wq_b / k_norm / weights_proj，64 个 index 头 × 128

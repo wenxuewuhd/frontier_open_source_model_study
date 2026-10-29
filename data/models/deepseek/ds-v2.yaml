@@ -20,7 +20,7 @@ hf:
   gated: false
 lineage:
   track: historical
-  successor: ds-v2.5
+  successor: ds-v3
   changed_from_predecessor:
   - axis: attention
     text: 家族首次用 MLA：KV 压到 512 维 latent（kv_a_proj_with_mqa 下投影 + kv_b_proj 上投影），128 头，head_dim 192
@@ -37,7 +37,7 @@ lineage:
     benefit: 不量化，部署最简单，但权重带宽按 BF16 全额付 —— 这是后面几代持续压缩的起点
   - axis: context
     text: 163840，YaRN 自 4096 原生长度外推 40 倍
-    benefit: 不重训就把 4K 原生长度外推 40 倍。代价是外推段质量和 mscale 调参强相关，V2.5 改的正是这个参数
+    benefit: 不重训就把 4K 原生长度外推 40 倍。代价是外推段质量和 mscale 调参强相关，上游随后的 V2.5 刷新改的正是这个参数（零结构差异，本仓不单独立记录）
 params:
   total: 235741000000.0
   excludes:

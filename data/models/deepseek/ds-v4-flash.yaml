@@ -20,7 +20,7 @@ hf:
   gated: false
 lineage:
   track: main
-  predecessor: ds-v3.2
+  predecessor: ds-v3.2-exp
   successor: ds-v4-flash-dspark
   changed_from_predecessor:
   - axis: attention

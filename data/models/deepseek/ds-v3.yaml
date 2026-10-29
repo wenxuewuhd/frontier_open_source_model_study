@@ -19,8 +19,8 @@ hf:
   gated: false
 lineage:
   track: main
-  predecessor: ds-v2.5
-  successor: ds-r1
+  predecessor: ds-v2
+  successor: ds-v3.1
   changed_from_predecessor:
   - axis: scale
     text: 61 层 / hidden 7168；专家 160→256，共享 2→1，top-6→8，专家中间维 1536→2048，词表 102400→129280；dense 前缀层

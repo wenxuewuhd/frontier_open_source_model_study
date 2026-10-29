@@ -29,8 +29,8 @@ config 里的 head_dim / index_head_dim 都不是缓存宽度（见下面第一�
 张量这个假设就不成立，此时宽度记 None，会让同类「宽度一致」判定失败并报出来。
 
 用法:
-  python3 scripts/fetch_kv_widths.py --id ds-v4.1-flash-1017 \\
-      --repo deepseek-ai/DeepSeek-V4.1-Flash-1017
+  python3 scripts/fetch_kv_widths.py --id deepseek-v41-flash \\
+      --repo deepseek-ai/DeepSeek-V4.1-Flash
 
   # 别的族系张量名不同，按需追加（可重复）
   python3 scripts/fetch_kv_widths.py --id glm-5.3 --repo ... \\
