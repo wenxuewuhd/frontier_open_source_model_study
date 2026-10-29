@@ -115,7 +115,12 @@ evidence:
   precision: official
   infra_signals: judgement
   notes: judgement
+  open_questions: judgement
   precision.quantization.per_subsystem: derived
   precision.quantization.per_subsystem_scale: derived
   precision.quantization.subsystem_method: derived
 notes: 唯一的改动是 scale 格式。它不改张量形状，却改反量化算子的实现：ue8m0 的 scale 是纯指数，乘 scale 可以变成加指数。容易被当成元数据忽略过去。
+open_questions:
+- scale_fmt 的 ue8m0 管不管激活 scale，config 没说。它和 fmt、weight_block_size 并列， 字面像是只管权重侧；但激活用 dynamic 量化、scale
+  是运行时现算的，如果不同样取 2 的幂次， 「反量化退化成指数加」这条优化就只能用在权重一边。权重清单查不到运行时产物， 要看上游实现（vLLM / SGLang 的 per_token_group_quant_fp8
+  有没有做 pow2 对齐）才能定。 这个口径决定反量化要不要留浮点乘，对算子表是实的

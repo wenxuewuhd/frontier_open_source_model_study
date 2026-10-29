@@ -72,6 +72,52 @@ const tagDesc: Record<string, string> = {
     用来和各家公布的「激活参数」对比。两者差几个百分点，且概念不同，做带宽估算要用前者。
   </p>
 
+  <h2>激活量化：static 与 dynamic</h2>
+  <p class="small">
+    权重是离线量化好的，scale 存在 checkpoint 里。激活是运行时才产生的，
+    它的 scale 只能二选一 —— 这就是记录里 <code>activation_scheme</code> 那一项：
+  </p>
+  <table>
+    <thead>
+      <tr><th>取值</th><th>scale 哪来</th><th>算子图里多出什么</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>static</code></td>
+        <td>离线拿校准集跑出来，当常量烤进 checkpoint</td>
+        <td>什么都不多。量化折进前一个算子的 epilogue，一次常量乘法</td>
+      </tr>
+      <tr>
+        <td><code>dynamic</code></td>
+        <td>运行时按当前这块数据现算 amax，<code>scale = amax / 448</code></td>
+        <td>每个量化 GEMM 前面多一个<strong>带归约</strong>的量化算子</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="small muted">
+    所以这一项不是精度信息，是<strong>算子图信息</strong> —— 它决定图里存不存在
+    <code>per_token_group_quant</code> 这一类算子，而这件事从 dtype 上看不出来。
+    精度表里它和逐子系统实测并列，不重复。
+  </p>
+  <p class="small">粒度决定 dynamic 贵不贵，差别很大：</p>
+  <ul class="plain small">
+    <li>
+      <strong>per-tensor dynamic</strong> —— 要对整个激活张量做全局归约，
+      等于多走一遍激活，还要全局同步。
+    </li>
+    <li>
+      <strong>分组 dynamic</strong>（per-token × 沿 K 每 N 个元素，与权重分块配对）——
+      归约范围就是马上要加载的那一组，数据还在寄存器里，天然能融进上一个算子的 epilogue。
+      细粒度把 dynamic 从「多一遍访存」降成「多一条归约指令」。
+    </li>
+  </ul>
+  <p class="small muted">
+    顺带一个容易想错的点：<strong>反量化也不在 epilogue</strong>。沿 K 分块意味着每段 K 的
+    scale 对都不同，必须在主循环里逐块乘 scale 再升精度累加，而不是最后统一乘一次。
+    所以「量化块」收紧会直接增加 K 方向的 rescale 点 —— 这是那一行真正的代价。
+    也正因为 rescale 点密，<code>ue8m0</code> 这种能把浮点乘换成指数加的 scale 格式才值钱。
+  </p>
+
   <h2>注意力显存分两个分量</h2>
   <p class="small">
     混合结构里这两者的增长方式根本不同，混成一个数就没法做容量规划：

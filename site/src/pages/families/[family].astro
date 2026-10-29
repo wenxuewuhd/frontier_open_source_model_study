@@ -208,6 +208,13 @@ const sideCls = (m: any) => (m.lineage?.track === 'side' ? 'side' : undefined);
     FP4 权重配 FP8_E8M0 的 scale，只看一个会让反量化实现猜错 scale 张量的大小。
     这些行也进变化矩阵，但只在相邻两版都测过时才比：缺值是「没测」不是「取消」。
   </p>
+  <p class="small muted">
+    <strong>「激活量化 dynamic」不是精度信息，是算子图信息。</strong>
+    它说的是激活的 scale 在运行时现算（而不是离线校准成常量），因此每个量化 GEMM 前面
+    都要有一个带归约的量化算子 —— 换成 <code>static</code> 这个算子就不存在了。
+    这件事从 dtype 上看不出来，所以它和下面的实测行不重复。
+    细节与「反量化为什么不在 epilogue」见<a href={url('/about/')}>口径说明</a>。
+  </p>
   <div class="scroll-x">
     <table>
       <thead>
