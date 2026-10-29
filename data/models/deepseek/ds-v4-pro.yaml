@@ -25,8 +25,10 @@ lineage:
   - axis: scale
     text: 与 V4-Flash 同架构同算子的放大版：61 层 / hidden 7168 / 384 专家 / 专家中间维 3072 / 128 头 / o_groups 16 / q_lora
       1536；index topk 512→1024，routed_scaling_factor 1.5→2.5
+    benefit: 同一套算子直接放大，算子表可共用、只换形状参数 —— 对 infra 是最省事的一类变化，值得和「机制变化」分开记
   - axis: attention
     text: 首两层的压缩比由 0 改为 128 —— Flash 的前两层不建压缩 KV，Pro 建
+    benefit: Pro 层数多，前两层也建压缩 KV 才划算；Flash 层少，前两层留全量换精度
 params:
   counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
     FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
@@ -124,6 +126,7 @@ arch:
       - 0
       note: 权重清单里 kv_b_proj / k_b_proj / v_b_proj 零命中，config 也不声明 kv_lora_rank：这一代没有 KV 上投影，不是 MLA。compress_ratios
         的项数 = 主干层数 + MTP 层数。
+    attn_sink: 每头一个可学习 sink（layers.N.attn.attn_sink，全部层及 MTP 层）。它进 softmax 分母，改变算子签名；config 里没有这个开关，只能从权重清单发现
   ffn:
     type: moe
   moe:
@@ -150,10 +153,9 @@ precision:
     weight_block_size:
     - 128
     - 128
+    weight_format: e4m3
     scale_format: ue8m0
     expert_dtype: FP4
-    per_subsystem:
-      expert: FP4
 infra_signals:
 - text: 同代 Flash / Pro 只差规格不差算子。算子表可共用，只换形状参数
   evidence: judgement

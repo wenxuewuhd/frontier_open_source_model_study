@@ -26,6 +26,8 @@ lineage:
   - axis: attention
     text: 首次引入稀疏注意力 indexer（DSA）：每层新增 indexer.wk / wq_b / k_norm / weights_proj，64 个 index 头 × 128
       维，topk 2048。注意力第一次变成两段式 —— 先打分选 token，再在选中的上面做全注意力
+    benefit: 长上下文下注意力从 O(L²) 降到 O(L·topk)。但 topk 2048 要到 128K 以上才真正省，短序列反而是净亏 —— 多一条打分 + topk + gather
+      的旁路，indexer 自己还要一份缓存
 params:
   counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
     FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
@@ -75,6 +77,7 @@ precision:
     weight_block_size:
     - 128
     - 128
+    weight_format: e4m3
     scale_format: ue8m0
 infra_signals:
 - text: 稀疏注意力把单个 FA 算子拆成「indexer 打分 → topk → gather → 稠密 FA」四段，每段的形状都随 topk 变。这条旁路在 V4、V4.1 又各改一次

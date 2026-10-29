@@ -26,6 +26,7 @@ lineage:
   - axis: decoding
     text: MTP 头换成 DSpark：e_proj / h_proj / enorm / hnorm 退场，改为 main_proj / main_norm + markov_head.markov_w1,w2
       + confidence_head.proj，一次出 5 个 token（dspark_block_size 5）。主干 43 层与 V4-Flash 完全一致
+    benefit: 草稿头不再是「再跑一层 transformer」：markov head 加置信度门控一次出 5 个 token，草稿成本远低于主干层。代价是草稿侧算子与主干不同构，要单独排一套
 params:
   counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
     FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
@@ -107,6 +108,7 @@ arch:
       - 0
       note: 权重清单里 kv_b_proj / k_b_proj / v_b_proj 零命中，config 也不声明 kv_lora_rank：这一代没有 KV 上投影，不是 MLA。compress_ratios
         的项数 = 主干层数 + MTP 层数。
+    attn_sink: 每头一个可学习 sink（layers.N.attn.attn_sink，全部层及 MTP 层）。它进 softmax 分母，改变算子签名；config 里没有这个开关，只能从权重清单发现
   ffn:
     type: moe
   moe:
@@ -140,10 +142,9 @@ precision:
     weight_block_size:
     - 128
     - 128
+    weight_format: e4m3
     scale_format: ue8m0
     expert_dtype: FP4
-    per_subsystem:
-      expert: FP4
 infra_signals:
 - text: DSpark 把草稿头从「再跑一层 transformer」换成 markov head + 置信度门控，一次出 5 个 token。草稿侧的算子与主干不同构，要单独排
   evidence: judgement

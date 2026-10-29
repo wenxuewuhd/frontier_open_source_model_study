@@ -2,18 +2,20 @@
 /**
  * 家族页：一个家族在各维度上的逐版本演进。
  *
- * 三块内容，都从记录里算出来，页面不自带任何表：
- *   1. 变化矩阵   哪个维度在哪个版本动过（来自 lineage.changed_from_predecessor 的 axis）
- *   2. 逐维度演进 每个维度按版本顺序读下来（同一来源的 text）
- *   3. 规格对照   各版本的关键规格（来自 arch / context / precision，官方口径）
+ * 四块内容，都从记录里算出来，页面不自带任何表：
+ *   1. 变化矩阵   维度 × 版本，格子里是「字段：旧值 → 新值」。由 changesFor 逐字段比出来，
+ *                 不经过任何人写的文字，所以不会和记录漂移
+ *   2. 逐维度演进 每个维度按版本顺序读下来：改了什么（text）+ 为什么改（benefit）
+ *   3. 规格对照   各版本的关键规格
+ *   4. 精度对照   量化是独立于规格的一条演进线，混在规格表里看不出节奏，所以单拉一张
  *
- * 为什么不手写一张矩阵表：手写表会和记录各自漂移，而记录才是 validate.py 覆盖的那份。
+ * 为什么不手写矩阵：手写表会和记录各自漂移，而记录才是 validate.py 覆盖的那份。
  */
 import Base from '../../layouts/Base.astro';
 import Evidence from '../../components/Evidence.astro';
 import {
-  familyModels, axisMatrix, allModels, url, fmtInt, fmtSci,
-  FAMILY_LABEL, FAMILY_ORDER, HORIZON_LABEL, reviewStatus,
+  familyModels, axisMatrix, changeMatrix, allModels, url, fmtSci,
+  TRACKED_FIELDS, FAMILY_LABEL, FAMILY_ORDER, HORIZON_LABEL, reviewStatus,
 } from '../../lib/data';
 
 export function getStaticPaths() {
@@ -24,124 +26,71 @@ export function getStaticPaths() {
 const { family } = Astro.params;
 const label = FAMILY_LABEL[family!] ?? family!;
 const models = familyModels(family!);
-const rows = axisMatrix(models);
+const narrative = axisMatrix(models);
+const matrix = changeMatrix(models);
 
 /** 表头用短名。家族前缀对每一列都一样，占着宽度不提供信息。 */
 const short = (m: any) =>
   m.display_name.replace(new RegExp(`^${label}[-_ ]?`, 'i'), '') || m.display_name;
 
-/** 规格对照的行定义。取值一律从记录里读，读不到就留空，不回退到猜测。 */
-const specRows: { label: string; get: (m: any) => string | number | undefined }[] = [
-  { label: '发布', get: (m) => m.released },
-  { label: '谱系', get: (m) => (m.lineage?.track === 'main' ? '主线' : m.lineage?.track === 'side' ? '支线' : '历史') },
-  { label: '层数', get: (m) => m.arch?.layers },
-  { label: 'hidden', get: (m) => m.arch?.hidden },
-  { label: '注意力', get: (m) => m.arch?.attention?.type },
-  { label: '头数 / KV 头', get: (m) => {
-      const a = m.arch?.attention;
-      return a?.num_heads ? `${a.num_heads} / ${a.num_kv_heads ?? '—'}` : undefined;
-    } },
-  { label: 'head_dim', get: (m) => m.arch?.attention?.head_dim },
-  { label: 'KV latent 秩', get: (m) => m.arch?.attention?.kv_lora_rank },
-  { label: '输出低秩 / 组', get: (m) => {
-      const a = m.arch?.attention;
-      return a?.o_lora_rank ? `${a.o_lora_rank} / ${a.o_groups ?? '—'}` : undefined;
-    } },
-  { label: '滑窗', get: (m) => m.arch?.attention?.sliding_window },
-  { label: '稀疏 index 头 / topk', get: (m) => {
-      const s = m.arch?.attention?.sparse;
-      return s?.index_n_heads ? `${s.index_n_heads} / ${s.index_topk ?? '—'}` : undefined;
-    } },
-  { label: '产出 KV 的层', get: (m) => {
-      const k = m.arch?.attention?.kv_sharing?.source_layers;
-      return k ? `${k.length} 层` : undefined;
-    } },
-  { label: '路由专家 / top-k', get: (m) => {
-      const mo = m.arch?.moe;
-      return mo?.routed_experts ? `${mo.routed_experts} / ${mo.top_k ?? '—'}` : undefined;
-    } },
-  { label: '共享专家', get: (m) => m.arch?.moe?.shared_experts },
-  { label: '专家中间维', get: (m) => m.arch?.moe?.intermediate },
-  { label: 'dense 前缀层', get: (m) => m.arch?.moe?.first_k_dense },
-  { label: 'hash 路由层', get: (m) => m.arch?.moe?.hash_layers?.count },
-  { label: '残差', get: (m) => {
-      const r = m.arch?.residual;
-      return r?.type ? `${r.type}${r.multiplier ? ` ×${r.multiplier}` : ''}` : undefined;
-    } },
-  { label: '检索层', get: (m) => {
-      const r = m.arch?.retrieval?.layers;
-      return r ? `第 ${r.join('、')} 层` : undefined;
-    } },
-  { label: 'MTP 层', get: (m) => m.arch?.decoding?.mtp_layers },
-  { label: '投机方法', get: (m) => m.arch?.decoding?.speculative?.method },
-  { label: '视觉塔', get: (m) => (m.arch?.vision ? `${m.arch.vision.layers ?? '?'} 层` : undefined) },
-  { label: '上下文 / 原生', get: (m) => {
-      const c = m.context;
-      return c?.max ? `${fmtInt(c.max)} / ${c.train_native ? fmtInt(c.train_native) : '—'}` : undefined;
-    } },
-  { label: '量化', get: (m) => {
-      const q = m.precision?.quantization;
-      if (!q) return undefined;
-      const blk = q.weight_block_size ? `[${q.weight_block_size.join(',')}]` : '';
-      return `${q.method ?? ''} ${blk}`.trim();
-    } },
-  { label: 'scale 格式', get: (m) => m.precision?.quantization?.scale_format },
-  { label: '专家精度', get: (m) => m.precision?.quantization?.expert_dtype },
-  { label: 'norm_eps', get: (m) => fmtSci(m.arch?.norm_eps) },
-];
-
-const visibleSpecRows = specRows.filter((r) => models.some((m) => r.get(m) !== undefined));
-
-/** 「架构零差异」的版本：只有 training 轴的变化。这类版本对 infra 不需要动作。 */
-const noOpVersions = models.filter((m) => {
-  const ch = m.lineage?.changed_from_predecessor ?? [];
-  return ch.length > 0 && ch.every((c: any) => c.axis === 'training');
-});
+const specFields = TRACKED_FIELDS.filter((f) => f.group === 'spec');
+const precFields = TRACKED_FIELDS.filter((f) => f.group === 'precision');
+const visible = (fs: typeof TRACKED_FIELDS) =>
+  fs.filter((f) => models.some((m) => f.get(m) !== undefined));
 
 const signals = models.flatMap((m) =>
   (m.infra_signals ?? []).map((s: any) => ({ ...s, model: m })),
 );
 const reviewed = models.filter((m) => reviewStatus(m).reviewed).length;
+const sideCls = (m: any) => (m.lineage?.track === 'side' ? 'side' : undefined);
 ---
 
 <Base
   title={`${label} 谱系`}
-  lead={`${models.length} 个版本，按发布顺序。矩阵与叙述都来自各记录的 lineage 字段，不另存一份表。`}
+  lead={`${models.length} 个版本，按发布顺序。矩阵逐字段比出来，叙述来自各记录的 lineage 字段，都不另存一份表。`}
 >
   <p class="small muted">
-    已核查 {reviewed} / {models.length} 份记录。
-    规格对照来自 config（官方口径）；维度演进是跨版本比对的结论（config 差异 + 权重张量名差异），
-    标为计算推导。
+    已核查 {reviewed} / {models.length} 份记录。规格与精度取自 config（官方口径）；
+    变化矩阵是两份记录的字段差（计算推导）；「为什么改」是解释判断。
   </p>
 
-  <h2>变化矩阵</h2>
+  <h2>变化矩阵 <Evidence tag="derived" /></h2>
   <p class="small muted">
-    ● 表示该版本在该维度相对前代有变化。只有「训练 / 后训练」一行的版本，是架构零差异的版本。
+    每格是「字段：旧值 → 新值」，和前代（<code>lineage.predecessor</code>）比，不是和时间上的前一个比 ——
+    支线的前代不是时间前一个。只列出有字段变化的版本。
   </p>
   <div class="scroll-x">
-    <table>
+    <table class="matrix">
       <thead>
         <tr>
           <th>维度</th>
-          {models.map((m) => (
-            <th class={m.lineage?.track === 'side' ? 'side' : undefined} title={m.display_name}>
+          {matrix.cols.map((m) => (
+            <th class={sideCls(m)} title={m.display_name}>
               <a href={url(`/models/${m.id}/`)}>{short(m)}</a>
               {m.lineage?.track === 'side' && <span class="track-mark" title="支线">支</span>}
+              <div class="small muted" style="font-weight:400">{m.released}</div>
             </th>
           ))}
         </tr>
       </thead>
       <tbody>
-        {rows.map((r) => (
+        {matrix.rows.map((r) => (
           <tr>
             <td>{r.label}</td>
             {r.cells.map((c) => (
-              <td
-                class={c.model.lineage?.track === 'side' ? 'side' : undefined}
-                style="text-align:center"
-                title={c.texts.join('\n')}
-              >
-                {c.texts.length > 0 ? <span class="dot">●</span> : <span class="dash">·</span>}
+              <td class={sideCls(c.model)}>
+                {c.changes.length === 0 ? (
+                  <span class="dash">·</span>
+                ) : (
+                  c.changes.map((ch) => (
+                    <div class="chg">
+                      <span class="muted">{ch.field.label}</span>{' '}
+                      <span class="from">{ch.from ?? '无'}</span>
+                      <span class="arrow"> → </span>
+                      <span class="to">{ch.to ?? '取消'}</span>
+                    </div>
+                  ))
+                )}
               </td>
             ))}
           </tr>
@@ -151,46 +100,51 @@ const reviewed = models.filter((m) => reviewStatus(m).reviewed).length;
   </div>
 
   {
-    noOpVersions.length > 0 && (
+    matrix.unchanged.length > 0 && (
       <p class="note" style="margin-top:12px">
-        架构零差异的版本（{noOpVersions.length} 个）：
-        {noOpVersions.map((m, i) => (
+        字段零变化的版本（{matrix.unchanged.length} 个）：
+        {matrix.unchanged.map((m, i) => (
           <>
             {i > 0 && '、'}
             <a href={url(`/models/${m.id}/`)}>{short(m)}</a>
           </>
         ))}
-        。这些版本的能力变化来自后训练或权重刷新，算子清单可直接沿用前代 ——
-        跟踪时先比张量名集合，相同就不必重走算子评估。
+        。这些版本相对前代连一个规格字段都没动，能力变化来自后训练或权重刷新，
+        算子清单可直接沿用前代 —— 跟踪时先比张量名集合，相同就不必重走算子评估。
       </p>
     )
   }
 
   <h2>逐维度演进</h2>
+  <p class="small muted">
+    「改了什么」要能对照 config 或权重清单复核；「为什么改」是从公开材料与结构本身读出来的判断。
+  </p>
   {
-    rows.map((r) => (
+    narrative.map((r) => (
       <>
-        <h3>{r.label} <Evidence tag="derived" /></h3>
+        <h3>{r.label}</h3>
         <table>
           <tbody>
             {r.cells
-              .filter((c) => c.texts.length > 0)
+              .filter((c) => c.entries.length > 0)
               .map((c) => (
                 <tr>
-                  <td style="width:150px">
+                  <td style="width:140px">
                     <a href={url(`/models/${c.model.id}/`)}>{short(c.model)}</a>
                     <div class="small muted">{c.model.released}</div>
                   </td>
                   <td>
-                    {c.texts.length === 1 ? (
-                      c.texts[0]
-                    ) : (
-                      <ul class="plain">
-                        {c.texts.map((t) => (
-                          <li>{t}</li>
-                        ))}
-                      </ul>
-                    )}
+                    {c.entries.map((e: any) => (
+                      <div class="evo">
+                        <div>{e.text} <Evidence tag="derived" /></div>
+                        {e.benefit && (
+                          <div class="benefit">
+                            <span class="muted">收益 ·</span> {e.benefit}
+                            <Evidence tag="judgement" />
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </td>
                 </tr>
               ))}
@@ -200,7 +154,7 @@ const reviewed = models.filter((m) => reviewStatus(m).reviewed).length;
     ))
   }
 
-  <h2>规格对照</h2>
+  <h2>规格对照 <Evidence tag="official" /></h2>
   <p class="small muted">
     空白表示该版本没有这一项（不是缺数据）。参数量不在这里 ——
     只有取过完整权重清单（含 dtype）的版本才报总量，见各记录的「参数量口径」。
@@ -211,7 +165,7 @@ const reviewed = models.filter((m) => reviewStatus(m).reviewed).length;
         <tr>
           <th>规格</th>
           {models.map((m) => (
-            <th class={m.lineage?.track === 'side' ? 'side' : undefined}>
+            <th class={sideCls(m)}>
               <a href={url(`/models/${m.id}/`)}>{short(m)}</a>
               {m.lineage?.track === 'side' && <span class="track-mark" title="支线">支</span>}
             </th>
@@ -219,22 +173,72 @@ const reviewed = models.filter((m) => reviewStatus(m).reviewed).length;
         </tr>
       </thead>
       <tbody>
-        {visibleSpecRows.map((r) => (
+        {visible(specFields).map((f) => (
           <tr>
-            <td>{r.label}</td>
+            <td>{f.label}</td>
             {models.map((m) => {
-              const v = r.get(m);
-              return (
-                <td class={m.lineage?.track === 'side' ? 'side' : undefined}>
-                  {v === undefined ? <span class="dash">—</span> : v}
-                </td>
-              );
+              const v = f.get(m);
+              return <td class={sideCls(m)}>{v === undefined ? <span class="dash">—</span> : v}</td>;
+            })}
+          </tr>
+        ))}
+        <tr>
+          <td>norm_eps</td>
+          {models.map((m) => (
+            <td class={sideCls(m)}>{fmtSci(m.arch?.norm_eps) ?? <span class="dash">—</span>}</td>
+          ))}
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>精度对照 <Evidence tag="official" /></h2>
+  <p class="small muted">
+    量化是独立于规格的一条线，单拉一张表才看得出节奏。<strong>空白一律表示「config 没声明」，
+    不表示「和主干相同」</strong> —— 后者是推论，不该当成记录值。所以「路由专家精度」只在
+    config 单独声明 <code>expert_dtype</code> 时才有值：DeepSeek 从 V4 起才声明（FP4），
+    V3 一代整体是 FP8、专家不单列。标「实测」的两行有无取决于取没取过含 dtype 的权重清单，
+    是调研进度不是模型差异，因此不进变化矩阵。
+  </p>
+  <div class="scroll-x">
+    <table>
+      <thead>
+        <tr>
+          <th>精度</th>
+          {models.map((m) => (
+            <th class={sideCls(m)}>
+              <a href={url(`/models/${m.id}/`)}>{short(m)}</a>
+              {m.lineage?.track === 'side' && <span class="track-mark" title="支线">支</span>}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {visible(precFields).map((f) => (
+          <tr>
+            <td>{f.label}</td>
+            {models.map((m) => {
+              const v = f.get(m);
+              return <td class={sideCls(m)}>{v === undefined ? <span class="dash">—</span> : v}</td>;
             })}
           </tr>
         ))}
       </tbody>
     </table>
   </div>
+  {
+    models.some((m) => m.precision?.quantization?.block_size_note) && (
+      <p class="note" style="margin-top:10px">
+        {models
+          .filter((m) => m.precision?.quantization?.block_size_note)
+          .map((m) => (
+            <>
+              <strong>{short(m)}</strong>：{m.precision!.quantization.block_size_note}
+            </>
+          ))}
+      </p>
+    )
+  }
 
   {
     signals.length > 0 && (
@@ -259,3 +263,50 @@ const reviewed = models.filter((m) => reviewStatus(m).reviewed).length;
     )
   }
 </Base>
+
+<style>
+  /* 变化矩阵的格子里是多行「旧 → 新」，不能按普通表格那样不换行 */
+  .matrix td,
+  .matrix th {
+    white-space: normal;
+    min-width: 168px;
+    max-width: 230px;
+  }
+  .matrix td:first-child,
+  .matrix th:first-child {
+    min-width: 76px;
+    white-space: nowrap;
+  }
+  .chg {
+    font-size: 12.5px;
+    line-height: 1.5;
+    padding: 2px 0;
+  }
+  .chg + .chg {
+    border-top: 1px dashed var(--line);
+  }
+  .from {
+    color: var(--ink-3);
+    text-decoration: line-through;
+    text-decoration-color: var(--ink-3);
+  }
+  .arrow {
+    color: var(--ink-3);
+  }
+  .to {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .evo + .evo {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line);
+  }
+  .benefit {
+    font-size: 13px;
+    color: var(--ink-2);
+    margin-top: 3px;
+    padding-left: 10px;
+    border-left: 2px solid var(--line);
+  }
+</style>

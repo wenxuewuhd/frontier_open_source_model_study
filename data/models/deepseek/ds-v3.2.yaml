@@ -25,6 +25,7 @@ lineage:
   changed_from_predecessor:
   - axis: training
     text: config 与 V3.2-Exp 逐字段相同，张量名完全一致 —— 实验版转正式版，无架构变化
+    benefit: 对 infra 零成本：算子清单、EP 切分、量化配置都不用动。这类版本值得在流程里尽早识别出来 —— 先比张量名集合，相同就不必重走评估。实验版结构被原样保留，说明稀疏注意力这条路已经定型，可以按长期特性投入
 params:
   counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
     FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
@@ -74,6 +75,7 @@ precision:
     weight_block_size:
     - 128
     - 128
+    weight_format: e4m3
     scale_format: ue8m0
 evidence:
   id: official

@@ -24,6 +24,8 @@ lineage:
   changed_from_predecessor:
   - axis: training
     text: config 与 V4.1-Flash 逐字段相同，张量名完全一致（96085 个），仅仓库与 sha 不同 —— 权重刷新，无架构变化
+    benefit: 对 infra 零成本：算子清单、EP 切分、量化配置都不用动。这类版本值得在流程里尽早识别出来 —— 先比张量名集合，相同就不必重走评估。config 与 V4.1-Flash
+      逐字段相同，算子表可直接套用旗舰那份
 params:
   counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
     FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
@@ -121,6 +123,7 @@ arch:
       - 0
       note: 权重清单里 kv_b_proj / k_b_proj / v_b_proj 零命中，config 也不声明 kv_lora_rank：这一代没有 KV 上投影，不是 MLA。compress_ratios
         的项数 = 主干层数 + MTP 层数。
+    attn_sink: 每头一个可学习 sink（layers.N.attn.attn_sink，全部层及 MTP 层）。它进 softmax 分母，改变算子签名；config 里没有这个开关，只能从权重清单发现
   ffn:
     type: moe
   moe:
@@ -174,8 +177,6 @@ precision:
     - 32
     scale_format: ue8m0
     expert_dtype: FP4
-    per_subsystem:
-      expert: FP4
 evidence:
   id: official
   family: official

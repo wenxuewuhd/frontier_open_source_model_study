@@ -26,10 +26,13 @@ lineage:
   - axis: modality
     text: 加视觉塔：vision.blocks.* 的 ViT（wqkv 融合 QKV、带 bias）+ patch_embed + 两层 aligner，并引入 image_start
       / image_end / image_newline / image_pad 特殊 token
+    benefit: 多模态入口。代价是视觉塔的注意力用融合 wqkv 且带 bias，与主干不同构，要单独一套算子，不能复用主干的注意力实现
   - axis: moe
     text: 新增第二套路由偏置 ffn.gate.bias_vl，视觉 token 走独立偏置 —— 融合 router 的算子签名因此改变，config 里看不到
+    benefit: 视觉与文本 token 走不同的路由偏置，避免两种模态抢同一批专家。代价是融合 router 要多带一个模态输入，算子签名因此改变
   - axis: decoding
     text: MTP 层 1→3
+    benefit: 草稿更长，投机的接受窗口更大；代价是草稿侧的权重与计算都乘 3
 params:
   counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
     FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
@@ -111,6 +114,7 @@ arch:
       - 0
       note: 权重清单里 kv_b_proj / k_b_proj / v_b_proj 零命中，config 也不声明 kv_lora_rank：这一代没有 KV 上投影，不是 MLA。compress_ratios
         的项数 = 主干层数 + MTP 层数。
+    attn_sink: 每头一个可学习 sink（layers.N.attn.attn_sink，全部层及 MTP 层）。它进 softmax 分母，改变算子签名；config 里没有这个开关，只能从权重清单发现
   ffn:
     type: moe
   moe:
@@ -154,10 +158,9 @@ precision:
     weight_block_size:
     - 128
     - 128
+    weight_format: e4m3
     scale_format: ue8m0
     expert_dtype: FP4
-    per_subsystem:
-      expert: FP4
 infra_signals:
 - text: 分模态路由偏置让 router 从「一套偏置」变成「按 token 模态选偏置」，融合实现要多带一个输入
   evidence: judgement

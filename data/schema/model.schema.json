@@ -119,7 +119,11 @@
             "additionalProperties": false,
             "properties": {
               "axis": { "enum": ["attention", "moe", "residual", "retrieval", "precision", "context", "modality", "decoding", "scale", "training"] },
-              "text": { "type": "string" }
+              "text": { "type": "string", "description": "改了什么。要能对照 config 或权重清单复核" },
+              "benefit": {
+                "type": "string",
+                "description": "为什么改：解决了什么问题、换来什么收益、代价是什么。只写公开材料支持得住的，推测归 judgement"
+              }
             }
           }
         }
@@ -437,7 +441,14 @@
             "method": { "type": "string" },
             "activation_scheme": { "enum": ["static", "dynamic"] },
             "weight_block_size": { "type": "array", "items": { "type": "integer" } },
-            "scale_format": { "type": "string" },
+            "weight_format": {
+              "type": "string",
+              "description": "量化权重的元素格式（config 的 fmt，如 e4m3）。和 scale_format 是两回事，混用会凭空造出一次格式迁移"
+            },
+            "scale_format": {
+              "type": "string",
+              "description": "scale 张量的格式（config 的 scale_fmt，如 ue8m0）。缺省表示未声明，不等于和 weight_format 相同"
+            },
             "block_size_note": { "type": "string", "description": "config 的单一 block 取值常常只覆盖部分子系统，实际粒度以权重清单为准" },
             "expert_dtype": { "$ref": "#/$defs/dtype" },
             "packing_note": { "type": "string", "description": "亚字节权重打包进整型容器时说明清楚：numel 是容器数不是参数数" },

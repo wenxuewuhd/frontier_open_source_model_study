@@ -35,27 +35,49 @@ lineage:
       text: >-
         新增 Engram 外置查表层（第 1、14 层）：两张各 3.84 亿行的 embedding 表 +
         wkv 稠密投影，表合计约 196.9B 参数。前代没有任何 engram 张量
+      benefit: >-
+        把一部分知识从权重挪到外置查表，主干可以更小而总容量更大。但账要分开算：
+        表本身 196.9B 参数常驻显存，而 embed 每 token 只 gather 少数行、不进激活带宽 ——
+        一个算总量、一个不算。注意 engram 的 wkv 是稠密投影，这一项每 token 要全量读
     - axis: attention
       text: >-
         indexer 恢复独立的 wk / k_norm，但只在 4 层（2/8/14/20）产出 index K，
         另 4 层（24/28/32/36）只复用已有 K 重新打分；index 头 64→32。
         前代的 indexer.compressor.* 整条退场
+      benefit: >-
+        既恢复了独立的 index 表示，又把 indexer 缓存压下来：V3.2 是每层都产 K，
+        这里只有 4 层产、另 4 层复用。按 8 层算会让 indexer 缓存高估一倍
     - axis: attention
       text: >-
         新增跨层 KV 共享 kv_source_layer_ids [2,8,14,20]，逐层压缩比随之降到 1–2
         （前代是沿层交替 4/128）—— 从「每层重压缩」换成「少数层产出、多数层共享」
+      benefit: >-
+        KV 随层数增长这条被切断。1M 上下文下注意力显存 36.5 GiB，
+        而按通用 MLA 公式乘 40 层会算出十倍的数
     - axis: moe
       text: >-
         取消 hash 路由层：ffn.gate.tid2eid 张量退场，num_hash_layers 不再声明。
         路由专家 256→384，专家中间维 2048→2304
+      benefit: >-
+        去掉 hash 查表这条旁路，router 回到单一路径，融合实现不必再留旁路分支；
+        专家更多更细把容量补回来
     - axis: residual
       text: mHC 从 lm_head 撤出（hc_head_* 退场），只保留层内的 hc_attn_* / hc_ffn_*
+      benefit: >-
+        lm_head 前的 mHC 要在词表维度上付 4× 的代价，收益不足以抵消，
+        撤掉后 lm_head 回到常规形状 —— 这是整条线上少见的「加了又减」
     - axis: precision
       text: 量化块由 [128,128] 收紧到 [32,32]；专家与 Engram 表沿 K 是 1×32，不是 32×32
+      benefit: >-
+        更细的量化块更抗离群值，FP4 专家尤其需要。代价是 scale 张量数量大增，
+        反量化要读的 scale 量上升。注意路由专家精度没变 —— V4 起就是 FP4，这一代只收紧了块
     - axis: decoding
       text: DSpark 的 markov_head 由 markov_w1 / markov_w2 改为 embed / head
+      benefit: 草稿头从两个全连接换成 embed + head，草稿侧权重更小
     - axis: scale
       text: 层数 43→40，hidden 4096→5120，q_lora 1024→1280
+      benefit: >-
+        更宽更浅：每层算得更满，对 TP 更友好，同时降低对流水段数的要求
 
 params:
   total: 748.0e+9

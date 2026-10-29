@@ -25,12 +25,17 @@ lineage:
   - axis: attention
     text: 家族首次用 MLA：KV 压到 512 维 latent（kv_a_proj_with_mqa 下投影 + kv_b_proj 上投影），128 头，head_dim 192
       = nope 128 + rope 64
+    benefit: KV 缓存每层每 token 从 MHA 的 40960 个元素（K 128×192 + V 128×128）压到 576 个（latent 512 + 解耦 RoPE
+      64），约 71 倍。代价是每步要做一次上投影复原 KV —— 用算力换带宽，而且上投影在 TP 下不能跟着 KV 切，要全量复制
   - axis: moe
     text: 160 路由专家 + 2 共享，top-6，专家分 8 组取 3 组（group_limited_greedy），softmax 打分
+    benefit: 分组选路把 all-to-all 的目标限制在 8 组里的 3 组，EP 下跨设备通信按组数收缩；共享专家承接通用能力，省得每个路由专家都学一遍
   - axis: precision
     text: BF16 直接发布，config 里没有 quantization_config
+    benefit: 不量化，部署最简单，但权重带宽按 BF16 全额付 —— 这是后面几代持续压缩的起点
   - axis: context
     text: 163840，YaRN 自 4096 原生长度外推 40 倍
+    benefit: 不重训就把 4K 原生长度外推 40 倍。代价是外推段质量和 mscale 调参强相关，V2.5 改的正是这个参数
 params:
   counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
     FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py

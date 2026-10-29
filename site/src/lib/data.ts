@@ -306,6 +306,139 @@ export function reviewStatus(m: Model) {
   };
 }
 
+/**
+ * 跨版本跟踪的字段。
+ *
+ * 每个字段挂一个演进维度（axis）和一张表（group），家族页的「变化矩阵」「规格对照」
+ * 「精度对照」三块都由这一份定义驱动 —— 加一行只改这里，不用动三个页面。
+ *
+ * 取值一律从记录里读，读不到返回 undefined。**不回退到猜测**：空白表示该版本没有这一项，
+ * 和「有但没录」要能分开，所以取不到就是取不到。
+ */
+export interface TrackedField {
+  key: string;
+  label: string;
+  axis: string;
+  group: 'spec' | 'precision';
+  /** false 表示不进变化矩阵：自由文本（措辞差异不是变化），
+   *  或有无取决于调研进度而非模型本身的字段（取没取过权重清单）。 */
+  diff?: boolean;
+  get: (m: Model) => string | number | undefined;
+}
+
+const dtype = (v: unknown) => (typeof v === 'string' ? v.toUpperCase() : undefined);
+
+export const TRACKED_FIELDS: TrackedField[] = [
+  { key: 'layers', label: '层数', axis: 'scale', group: 'spec', get: (m) => m.arch?.layers },
+  { key: 'hidden', label: 'hidden', axis: 'scale', group: 'spec', get: (m) => m.arch?.hidden },
+  { key: 'vocab', label: '词表', axis: 'scale', group: 'spec', get: (m) => m.arch?.vocab },
+  { key: 'attn_type', label: '注意力类型', axis: 'attention', group: 'spec', get: (m) => m.arch?.attention?.type },
+  { key: 'heads', label: '头数 / KV 头', axis: 'attention', group: 'spec',
+    get: (m) => (m.arch?.attention?.num_heads
+      ? `${m.arch.attention.num_heads} / ${m.arch.attention.num_kv_heads ?? '—'}` : undefined) },
+  { key: 'head_dim', label: 'head_dim', axis: 'attention', group: 'spec', get: (m) => m.arch?.attention?.head_dim },
+  { key: 'kv_lora', label: 'KV latent 秩', axis: 'attention', group: 'spec', get: (m) => m.arch?.attention?.kv_lora_rank },
+  { key: 'q_lora', label: 'Q 低秩', axis: 'attention', group: 'spec', get: (m) => m.arch?.attention?.q_lora_rank },
+  { key: 'o_lora', label: '输出低秩 / 组', axis: 'attention', group: 'spec',
+    get: (m) => (m.arch?.attention?.o_lora_rank
+      ? `${m.arch.attention.o_lora_rank} / ${m.arch.attention.o_groups ?? '—'}` : undefined) },
+  { key: 'swa', label: '滑窗', axis: 'attention', group: 'spec', get: (m) => m.arch?.attention?.sliding_window },
+  { key: 'sink', label: 'attention sink', axis: 'attention', group: 'spec',
+    get: (m) => (m.arch?.attention?.attn_sink ? '有' : undefined) },
+  { key: 'sparse', label: '稀疏 index 头 / topk', axis: 'attention', group: 'spec',
+    get: (m) => (m.arch?.attention?.sparse?.index_n_heads
+      ? `${m.arch.attention.sparse.index_n_heads} / ${m.arch.attention.sparse.index_topk ?? '—'}` : undefined) },
+  { key: 'kv_src', label: '产出 KV 的层', axis: 'attention', group: 'spec',
+    get: (m) => {
+      const k = m.arch?.attention?.kv_sharing?.source_layers;
+      return k ? `${k.length} / ${m.arch?.layers ?? '?'} 层` : undefined;
+    } },
+  { key: 'idx_src', label: '产出 index K 的层', axis: 'attention', group: 'spec',
+    get: (m) => {
+      const k = m.arch?.attention?.kv_sharing?.index_kv_source_layers;
+      return k ? `${k.length} 层` : undefined;
+    } },
+  { key: 'experts', label: '路由专家 / top-k', axis: 'moe', group: 'spec',
+    get: (m) => (m.arch?.moe?.routed_experts
+      ? `${m.arch.moe.routed_experts} / ${m.arch.moe.top_k ?? '—'}` : undefined) },
+  { key: 'shared', label: '共享专家', axis: 'moe', group: 'spec', get: (m) => m.arch?.moe?.shared_experts },
+  { key: 'moe_inter', label: '专家中间维', axis: 'moe', group: 'spec', get: (m) => m.arch?.moe?.intermediate },
+  { key: 'dense_k', label: 'dense 前缀层', axis: 'moe', group: 'spec', get: (m) => m.arch?.moe?.first_k_dense },
+  // 自由文本，措辞差异不是架构变化 —— 路由的实际改动由逐维度演进的叙述承担
+  { key: 'routing', label: '打分 / 选路', axis: 'moe', group: 'spec', diff: false,
+    get: (m) => m.arch?.moe?.routing },
+  { key: 'hash', label: 'hash 路由层', axis: 'moe', group: 'spec', get: (m) => m.arch?.moe?.hash_layers?.count },
+  { key: 'residual', label: '残差', axis: 'residual', group: 'spec',
+    get: (m) => (m.arch?.residual?.type
+      ? `${m.arch.residual.type}${m.arch.residual.multiplier ? ` ×${m.arch.residual.multiplier}` : ''}` : undefined) },
+  { key: 'retrieval', label: '检索层', axis: 'retrieval', group: 'spec',
+    get: (m) => (m.arch?.retrieval?.layers ? `第 ${m.arch.retrieval.layers.join('、')} 层` : undefined) },
+  { key: 'mtp', label: 'MTP 层', axis: 'decoding', group: 'spec', get: (m) => m.arch?.decoding?.mtp_layers },
+  { key: 'spec_method', label: '投机方法', axis: 'decoding', group: 'spec',
+    get: (m) => m.arch?.decoding?.speculative?.method },
+  { key: 'vision', label: '视觉塔', axis: 'modality', group: 'spec',
+    get: (m) => (m.arch?.vision ? `${m.arch.vision.layers ?? '?'} 层 / hidden ${m.arch.vision.hidden ?? '?'}` : undefined) },
+  { key: 'ctx', label: '上下文 / 原生', axis: 'context', group: 'spec',
+    get: (m) => (m.context?.max
+      ? `${fmtInt(m.context.max)} / ${m.context.train_native ? fmtInt(m.context.train_native) : '—'}` : undefined) },
+
+  // —— 精度：单拉一组。量化是独立于规格的一条演进线，混在规格表里会看不出节奏。
+  //
+  // 这里的 getter **不做任何回退推断**。「config 没单独声明专家精度」和「专家精度等于主干」
+  // 是两件事：前者是事实，后者是推论。getter 里回退会把推论当成记录值放进变化矩阵，
+  // 造出记录里根本没有的「变化」。空白的含义由表下的脚注说明。
+  { key: 'quant_method', label: '整体权重量化', axis: 'precision', group: 'precision',
+    get: (m) => (m.precision?.quantization?.method
+      ? dtype(m.precision.quantization.method) : '无（BF16 直发）') },
+  { key: 'quant_block', label: '量化块', axis: 'precision', group: 'precision',
+    get: (m) => {
+      const b = m.precision?.quantization?.weight_block_size;
+      return b ? `[${b.join(',')}]` : undefined;
+    } },
+  { key: 'weight_fmt', label: '权重元素格式（config fmt）', axis: 'precision', group: 'precision',
+    get: (m) => m.precision?.quantization?.weight_format },
+  { key: 'scale_fmt', label: 'scale 格式', axis: 'precision', group: 'precision',
+    get: (m) => m.precision?.quantization?.scale_format },
+  { key: 'act_scheme', label: '激活量化', axis: 'precision', group: 'precision',
+    get: (m) => m.precision?.quantization?.activation_scheme },
+  { key: 'expert_dtype', label: '路由专家精度（单独声明时）', axis: 'precision', group: 'precision',
+    get: (m) => dtype(m.precision?.quantization?.expert_dtype) },
+  // 以下两项的有无取决于「取没取过含 dtype 的权重清单」，不取决于模型本身。
+  // 放进变化矩阵会把调研进度显示成模型变化，所以 diff: false。
+  { key: 'per_sub', label: '子系统精度（实测）', axis: 'precision', group: 'precision', diff: false,
+    get: (m) => {
+      const ps = m.precision?.quantization?.per_subsystem;
+      if (!ps) return undefined;
+      return Object.entries(ps).map(([k, v]) => `${k} ${v}`).join('；');
+    } },
+  { key: 'release_dtypes', label: '发布含的精度（实测）', axis: 'precision', group: 'precision', diff: false,
+    get: (m) => (m.precision?.weights_release ?? []).join(' / ') || undefined },
+  { key: 'kv_dtype', label: 'KV 缓存精度', axis: 'precision', group: 'precision',
+    get: (m) => dtype(m.precision?.kv_cache) },
+];
+
+/**
+ * 逐版本的字段级变化：拿每份记录和它 lineage.predecessor 指的那份比。
+ *
+ * 用 predecessor 而不是「发布顺序的上一个」，是因为支线（V4-Pro、日期版）的前代
+ * 不是时间上的前一个 —— 按时间比会把支线和主线串成一条假链。
+ */
+export interface FieldChange {
+  field: TrackedField;
+  from: string | number | undefined;
+  to: string | number | undefined;
+}
+
+export function changesFor(m: Model): FieldChange[] {
+  const prevId = m.lineage?.predecessor;
+  if (!prevId) return [];
+  const prev = modelById(prevId);
+  if (!prev) return [];
+  return TRACKED_FIELDS.filter((f) => f.diff !== false)
+    .map((f) => ({ field: f, from: f.get(prev), to: f.get(m) }))
+    .filter((c) => String(c.from ?? '') !== String(c.to ?? ''));
+}
+
 /** 某家族的记录，按发布日期升序 —— 家族页要顺着读演进，和列表页的倒序相反。 */
 export function familyModels(key: string): Model[] {
   return allModels()
@@ -321,15 +454,36 @@ export function familyModels(key: string): Model[] {
  * 返回只包含真的有内容的维度行，避免整行空白。
  */
 export function axisMatrix(models: Model[]) {
-  const cell = (m: Model, axis: string): string[] =>
-    (m.lineage?.changed_from_predecessor ?? [])
-      .filter((c: any) => c.axis === axis)
-      .map((c: any) => c.text);
+  const cell = (m: Model, axis: string) =>
+    (m.lineage?.changed_from_predecessor ?? []).filter((c: any) => c.axis === axis);
   return AXIS_ORDER.filter((axis) => models.some((m) => cell(m, axis).length > 0)).map((axis) => ({
     axis,
     label: AXIS_LABEL[axis] ?? axis,
-    cells: models.map((m) => ({ model: m, texts: cell(m, axis) })),
+    cells: models.map((m) => ({ model: m, entries: cell(m, axis) })),
   }));
+}
+
+/**
+ * 字段级的变化矩阵：维度 × 版本，格子里是「字段：旧值 → 新值」。
+ *
+ * 和 axisMatrix 的区别是来源：这里的每一格都由 changesFor 从两份记录的字段值算出来，
+ * 不经过任何人写的文字，所以不会和记录漂移；axisMatrix 给的是叙述与收益。
+ * 只保留真的有字段变化的版本做列 —— 纯后训练版本在这张表上整列空白，没有信息。
+ */
+export function changeMatrix(models: Model[]) {
+  const changes = new Map<string, FieldChange[]>(models.map((m) => [m.id, changesFor(m)]));
+  const cols = models.filter((m) => (changes.get(m.id) ?? []).length > 0);
+  const rows = AXIS_ORDER.filter((axis) =>
+    cols.some((m) => changes.get(m.id)!.some((c) => c.field.axis === axis)),
+  ).map((axis) => ({
+    axis,
+    label: AXIS_LABEL[axis] ?? axis,
+    cells: cols.map((m) => ({
+      model: m,
+      changes: changes.get(m.id)!.filter((c) => c.field.axis === axis),
+    })),
+  }));
+  return { cols, rows, unchanged: models.filter((m) => (changes.get(m.id) ?? []).length === 0) };
 }
 
 export interface RosterEntry {

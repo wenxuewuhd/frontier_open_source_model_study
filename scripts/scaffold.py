@@ -221,12 +221,19 @@ def build_record(cfg: dict, info: dict, mid: str, family: str, repo: str) -> dic
                          ("weight_block_size", "weight_block_size")]:
             if q.get(src) is not None:
                 qq[key] = q[src]
-        if q.get("scale_fmt") or q.get("fmt"):
-            qq["scale_format"] = q.get("scale_fmt") or q.get("fmt")
+        # fmt 是量化权重的元素格式，scale_fmt 是 scale 张量的格式 —— 两个不同的东西。
+        # 用 `scale_fmt or fmt` 兜底会把 fmt 写进 scale_format，凭空造出一次格式迁移
+        # （DeepSeek V3 没声明 scale_fmt，V3.1 才加；兜底会让它看起来是 e4m3 → ue8m0）
+        if q.get("fmt"):
+            qq["weight_format"] = q["fmt"]
+        if q.get("scale_fmt"):
+            qq["scale_format"] = q["scale_fmt"]
         exp = t.get("expert_dtype") or q.get("expert_dtype")
         if exp:
+            # 只写 expert_dtype（config 的声明值）。per_subsystem 留给权重清单实测的结果 ——
+            # 把 config 值回填进去会让「声明」冒充「实测」，而两者经常对不上
+            # （V4.1 的 config 说块是 [32,32]，实测专家是沿 K 的 1×32）
             qq["expert_dtype"] = exp.upper()
-            qq["per_subsystem"] = {"expert": exp.upper()}
         prec["quantization"] = qq
     dt = (raw.get("dtype") or raw.get("torch_dtype") or "").upper().replace("BFLOAT16", "BF16")
     if dt:

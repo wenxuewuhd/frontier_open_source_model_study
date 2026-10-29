@@ -25,6 +25,8 @@ lineage:
   changed_from_predecessor:
   - axis: precision
     text: FP8 的 scale 格式显式声明为 ue8m0（2 的幂次 scale，只占指数位）。块仍 [128,128]，张量名与 R1 完全一致 —— 但反量化的乘法可以退化成指数加法
+    benefit: scale 是纯 2 的幂次，反量化从浮点乘退化成指数加；8 bit 指数位的格式也和 MXFP 系的 E8M0 对齐，硬件原生支持的路径更宽。代价是 scale 精度变粗。平台若按通用
+      FP8 scale 实现，会白付一次乘法
 params:
   counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
     FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
@@ -68,6 +70,7 @@ precision:
     weight_block_size:
     - 128
     - 128
+    weight_format: e4m3
     scale_format: ue8m0
 infra_signals:
 - text: ue8m0 scale 让反量化从浮点乘退化为指数加。平台若按通用 FP8 scale 实现，会白付一次乘法

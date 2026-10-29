@@ -25,13 +25,17 @@ lineage:
   - axis: scale
     text: 61 层 / hidden 7168；专家 160→256，共享 2→1，top-6→8，专家中间维 1536→2048，词表 102400→129280；dense 前缀层
       1→3
+    benefit: 专家更多更细（160→256，中间维 1536→2048）配合 top-k 6→8，在激活参数增幅可控的前提下把容量提上去；dense 前缀层 1→3 让最靠前的几层避开路由抖动
   - axis: moe
     text: 打分 softmax→sigmoid，选路 group_limited_greedy→noaux_tc，新增逐专家偏置 gate.e_score_correction_bias
       —— 无辅助损失的负载均衡
+    benefit: 去掉辅助损失后不再有「均衡 vs 质量」的梯度冲突，负载均衡改由一个不参与梯度的偏置在线调节。对 infra 的意义是 router 多一条逐专家偏置加法，且推理时这个偏置是常量，可以折进打分
   - axis: precision
     text: 首次以 FP8 块量化发布，块 [128,128]，每个量化张量配一个 weight_scale_inv
+    benefit: 权重带宽与显存对半砍（BF16→FP8），块量化把 scale 粒度限制在 128×128，比逐张量更抗离群值。代价是每个 GEMM 都要带 scale，反量化进了内循环
   - axis: decoding
     text: 首次带 MTP 模块（1 层）。权重借用层索引 61：eh_proj / enorm / hnorm / shared_head，没有独立命名空间 —— V4 才改掉
+    benefit: 训练时多预测一个 token 提升主干质量，推理时这一层可以直接当草稿头做投机解码。但权重借用层索引 61，加载时容易被当成第 62 层误载
 params:
   counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
     FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
@@ -75,7 +79,7 @@ precision:
     weight_block_size:
     - 128
     - 128
-    scale_format: e4m3
+    weight_format: e4m3
 infra_signals:
 - text: FP8 块量化 [128,128] + 逐张量 weight_scale_inv 成为之后所有代的底座，块大小与 scale 格式在 V3.1 和 V4.1 两次收紧
   evidence: judgement
