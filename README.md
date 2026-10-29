@@ -348,6 +348,24 @@ V4.1 的 5632→5120 顺带关掉了 R22：`attn.wkv` 输出恒 512，而全量�
 
 补上了 14/14 全缺的 `storage_note`（全系都是逐专家独立张量，grouped GEMM 因此吃 2 维列表而非 3 维张量）和 13/14 缺的 `balance`。
 
+#### 补完 missing 项时又多出两条
+
+**`head_dim: 192` 只管 QK。** V2–V3.2 的 config 另有 `v_head_dim: 128`，14 份记录一份都没记。实害可验证：`o_proj` 实测 `[hidden, 16384]`，16384 = 128 头 × **128**，而按单一 `head_dim 192` 去推会得到 24576 —— **高 50%**。新增 `v_head_dim` 与 `head_dim_note` 两个字段。
+
+**三类覆盖面不同，不能混着说「逐层」。** V4 一代的权重里：
+
+```
+compressor 在 41/43 层（Flash，L0/L1 没有）   存在 ⟺ compress_ratios[l] != 0
+indexer    在 21/43 层                        存在 ⟺ compress_ratios[l] == 4
+attn.wkv   在 43/43 层（滑窗局部 KV）
+```
+
+V4.1 更细：`compressor.wkv`/`norm` 在 4 个源层都有，但 `compressor.wgate` **只在 3 层** —— 比值为 1 的那个源层不带门控，源层之间不同构。新增 `kv_sharing.layer_coverage` 专记这件事，因为「逐层」这个词正是上一轮 5.2 倍高估的源头。
+
+顺带把 `derive.py` 里一段死代码修了：`src_kind` 赋值两次却从不读取，那句「未区分产出/重打分，可能高估」的警告**永远不会出现在任何输出里**，formula 字符串也恒印 `index_source_layers`。现在没有产出层声明时会明确标 `partial` 并说明按全部层计是上界。
+
+还有一处 evidence 口径：`attn_sink` / `hash_layers` / `routing_bias` 这些**内容来自权重清单**的字段，在五份 V4 记录里继承了 `arch: official`，于是永远不会出现在 `--list-judgements` 里，绕过了 Gate C 的人工复核。`attn_sink` 尤其刺眼 —— 字段正文自己写着「config 里没有这个开关」，口径却是 official。修完判断类字段从 112 条涨到 126 条。
+
 #### 两件只有 dtype 看得见的事
 
 **一、`scale_fmt: ue8m0` 不等于 scale 存成 8 bit。** 声明从 V3.1 开始，但 scale 张量实测**仍是 FP32**，连着三个发布都是；到 V4-Flash 才真的换成 8 bit 的 `F8_E8M0`：

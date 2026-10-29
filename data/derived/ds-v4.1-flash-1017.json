@@ -1,7 +1,7 @@
 {
  "id": "ds-v4.1-flash-1017",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T05:16:54+00:00",
+ "generated_at": "2026-10-29T06:06:13+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4.1-flash-1017",
   "config_present": true,

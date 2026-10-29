@@ -1,7 +1,7 @@
 {
  "id": "ds-v3.2-exp",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T05:09:26+00:00",
+ "generated_at": "2026-10-29T06:06:09+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v3.2-exp",
   "config_present": true,
@@ -57,7 +57,7 @@
   "incomplete_note": null
  },
  "kv_cache": {
-  "status": "ok",
+  "status": "partial",
   "attention_type": "MLA",
   "kv_dtype": "bfloat16",
   "layers": 61,
@@ -82,11 +82,13 @@
     "width": 128,
     "bytes_per_token": 15616,
     "terms": {
-     "formula": "index_kv_dim(128)，实测自 model.layers.N.self_attn.indexer.wk.weight [128, 7168]，输出维 128（62 层都有） * bytes * layers(61)"
+     "formula": "index_kv_dim(128)，实测自 model.layers.N.self_attn.indexer.wk.weight [128, 7168]，输出维 128（62 层都有） * bytes * layers(全部层，未声明产出层)(61)"
     }
    }
   },
-  "notes": [],
+  "notes": [
+   "没有任何 index 产出层声明，indexer 按全部 61 层计 —— 这是上界。实测 indexer 往往只在部分层上（DeepSeek V4 一代只在 compress_ratios==4 的层，约一半）"
+  ],
   "dtype_assumed": true,
   "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
  },

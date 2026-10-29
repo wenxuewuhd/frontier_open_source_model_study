@@ -28,7 +28,8 @@ lineage:
       / image_end / image_newline / image_pad 特殊 token
     benefit: 多模态入口。代价是视觉塔的注意力用融合 wqkv 且带 bias，与主干不同构，要单独一套算子，不能复用主干的注意力实现
   - axis: moe
-    text: 新增第二套路由偏置 ffn.gate.bias_vl，视觉 token 走独立偏置 —— 融合 router 的算子签名因此改变，config 里看不到
+    text: 新增第二套路由偏置 ffn.gate.bias_vl，视觉 token 走独立偏置 —— 融合 router 的算子签名因此改变，config 里看不到；同时给第 0/1/2
+      层（hash 路由层）补上了此前缺失的 ffn.gate.bias —— gate.bias 的层数由 40 增至 43，这三层此前只有 gate.weight 没有偏置
     benefit: 视觉与文本 token 走不同的路由偏置，避免两种模态抢同一批专家。代价是融合 router 要多带一个模态输入，算子签名因此改变
   - axis: decoding
     text: config 的 num_nextn_predict_layers 由 1 改为 3 —— 追认 dspark 那一代权重里就已经存在的 3 个 MTP 块。本版草稿侧实际只多了
@@ -73,13 +74,15 @@ arch:
     sliding_window: 128
     head_dim: 512
     sparse:
-      mechanism: indexer 打分取 topk 后在选中 token 上做全注意力。与 V3.2 不同，这一代 indexer 没有独立的 wk，index K 由 attn.indexer.compressor.*
-        供给
+      mechanism: indexer 打分取 topk 后在选中 token 上做全注意力。**只在 21 / 43 层上有 indexer** —— 权重里的规律是 indexer
+        存在 ⟺ compress_ratios[l] == 4，零例外。这一代没有独立的 indexer.wk，index K 由 attn.indexer.compressor.wkv
+        产出
       index_n_heads: 64
       index_head_dim: 128
       index_topk: 512
-      index_kv_dim: 256
-      index_kv_source: layers.N.attn.indexer.compressor.wkv.weight [256, 4096]，输出维 256（无独立 indexer.wk）
+      index_kv_dim: 64
+      index_kv_source: layers.N.attn.indexer.compressor.wkv.weight 输出维 256，但 indexer.compressor.ape
+        是 [4, 256] —— 4 个 token 共用一个 256 维条目，**每 token 实为 64 元素**。index_kv_dim 记的是每 token 值，不是条目宽度
     kv_sharing:
       compress_ratios:
       - 0
@@ -137,6 +140,8 @@ arch:
         note: '按完整权重清单逐层量出来的每 token 元素数。compressor.ape 的第一维就是该层压缩比，每 token 元素 = wkv 输出宽度 / 比值（比值 4:
           21 层, wkv 宽 1024, ape 有 -> 256 元素/token；比值 128: 20 层, wkv 宽 512, ape 有 -> 4 元素/token）。attn.wkv
           那一份是 sliding_window 的局部 KV，每序列固定、不随上下文增长，单列在 local_window_bytes_per_sequence，不计入 per_token。按未压缩宽度乘总层数会高估五倍以上'
+      layer_coverage: compressor 在 41 / 43 层（存在 ⟺ compress_ratios[l] != 0）；indexer 在 21 / 43 层（存在
+        ⟺ compress_ratios[l] == 4）。attn.wkv 与 attn_sink 则在全部 43 层。三者覆盖面不同，不能混着说「逐层」
     attn_sink: 每头一个可学习 sink（layers.N.attn.attn_sink，全部层及 MTP 层）。它进 softmax 分母，改变算子签名；config 里没有这个开关，只能从权重清单发现
   ffn:
     type: moe
@@ -149,7 +154,7 @@ arch:
     hash_layers:
       count: 3
       mapping_tensor: layers.N.ffn.gate.tid2eid
-      note: 与 V4-Flash 相同
+      note: 与 V4-Flash 相同 本版起这三层也有了 ffn.gate.bias（前代没有）。
     storage_note: 逐专家独立张量，不是堆叠。grouped GEMM 因此吃 2 维权重列表而非 3 维张量，EP 切分是切张量列表
     balance: 无辅助损失，靠逐专家偏置 ffn.gate.bias 调节
   residual:
@@ -166,6 +171,11 @@ arch:
       - 40
       - 41
       - 42
+      own_moe:
+        routed_experts: 256
+        top_k: 6
+    mtp_layers_note: 每个 MTP 块自带一套与主干同尺寸的 256 专家 MoE（权重实测 mtp.N.ffn.experts.0..255），草稿侧路由专家合计 3×256
+      = 768 —— 对 EP 切分与权重账都是大项。V4.1 起缩到 128 专家 / top-3。
   vision:
     encoder: 自研 ViT：vision.blocks.* 用融合 wqkv 且带 bias，与主干注意力不同构
     layers: 32
@@ -246,6 +256,10 @@ evidence:
   arch.moe.balance: derived
   arch.attention.attn_sink: derived
   arch.moe.hash_layers: derived
+  arch.attention.kv_sharing.layer_coverage: derived
+  arch.decoding.speculative: derived
+  arch.attention.sparse.mechanism: judgement
+  arch.decoding.mtp_layers_note: derived
 notes: 多模态入口。两个容易漏的点：视觉塔的 attention 用融合 wqkv 且带 bias（和主干不同构），以及 router 从此有两套偏置。
 open_questions:
 - 视觉 token 与文本 token 在 decode 下如何共享 router，未见公开说明

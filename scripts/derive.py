@@ -310,7 +310,21 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None) -> di
         src_kind = "index_kv_source_layers"
         if not isrc:
             isrc = share.get("index_source_layers") or t.get("index_source_layer_ids")
-            src_kind = "index_source_layers(未区分产出/重打分，可能高估)"
+            if isrc:
+                src_kind = "index_source_layers"
+                status = "partial"
+                notes.append(
+                    "indexer 层数取自 index_source_layers，它没区分「产出 index K」与"
+                    "「只复用已有 K 重新打分」两类层，可能高估一倍。"
+                    "查权重清单里哪些层有 indexer.wk，拆成 index_kv_source_layers 与 "
+                    "index_rescore_layers")
+            else:
+                src_kind = "layers(全部层，未声明产出层)"
+                status = "partial"
+                notes.append(
+                    f"没有任何 index 产出层声明，indexer 按全部 {layers} 层计 —— 这是上界。"
+                    "实测 indexer 往往只在部分层上（DeepSeek V4 一代只在 compress_ratios==4 "
+                    "的层，约一半）")
         ilayers = len(isrc) if isrc else layers
 
         # 宽度必须用实测的 index_kv_dim。index K 在各 index 头之间共享（MQA 式），
@@ -329,8 +343,7 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None) -> di
                 "indexer.compressor.wkv）的输出维，填进 sparse.index_kv_dim")
         comp["indexer"] = {
             "layers": ilayers, "width": width, "bytes_per_token": width * b * ilayers,
-            "terms": {"formula": f"{wsrc} * bytes * "
-                                 f"{src_kind if isrc else 'layers'}({ilayers})"},
+            "terms": {"formula": f"{wsrc} * bytes * {src_kind}({ilayers})"},
         }
 
     # --- 逐层压缩比表达不了，降级而不是替人折算

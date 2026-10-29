@@ -241,4 +241,5 @@ evidence:
   arch.moe.storage_note: derived
   arch.moe.balance: derived
   arch.attention.attn_sink: derived
+  arch.attention.sparse.mechanism: judgement
 notes: V4.1-Flash 的日期版。架构零差异，算子表可直接套用旗舰那份。

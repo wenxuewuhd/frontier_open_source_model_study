@@ -187,6 +187,14 @@
             "num_heads": { "type": "integer" },
             "num_kv_heads": { "type": "integer" },
             "head_dim": { "type": "integer" },
+            "v_head_dim": {
+              "type": "integer",
+              "description": "V 的每头维度。MLA 一代的 head_dim（nope+rope）只管 QK，V 另有宽度；o_proj 的入口宽度由它决定，用 head_dim 去推会高 50%"
+            },
+            "head_dim_note": {
+              "type": "string",
+              "description": "head_dim 的适用范围。QK 与 V 维度不同时必须写明，否则下游会拿一个数去推两条路径"
+            },
             "qk_rope_head_dim": { "type": "integer" },
             "qk_nope_head_dim": { "type": "integer" },
             "kv_lora_rank": { "type": "integer" },
@@ -205,7 +213,11 @@
                 "index_source_layers": { "type": "array", "items": { "type": "integer" }, "description": "已废弃，改用下面两个 —— 它把产出层和重打分层混在一起，会让 indexer 缓存高估一倍" },
                 "index_kv_source_layers": { "type": "array", "items": { "type": "integer" }, "description": "真正产出 index K 的层（有 indexer.wk 权重）。indexer 缓存只按这些层算" },
                 "index_rescore_layers": { "type": "array", "items": { "type": "integer" }, "description": "只复用已有 index K 重新打分、不产出 K 的层（有 wq_b/weights_proj 但无 wk）" },
-                "measured_per_token": {
+                "layer_coverage": {
+              "type": "string",
+              "description": "压缩器 / indexer / 全量 KV 各自覆盖哪些层。三者覆盖面常常不同，写成「逐层」会让 KV 账按总层数乘"
+            },
+            "measured_per_token": {
               "type": "object",
               "description": "从完整权重清单量出来的每 token 缓存元素数，逐层求和。公式建模不了逐层压缩时用它 —— V4 一代的 compressor.ape 第一维就是该层压缩比，每 token 元素 = wkv 输出宽度 / 比值，比值 4 的层 256、比值 128 的层只有 4。按未压缩宽度乘层数会高估五倍以上",
               "additionalProperties": false,

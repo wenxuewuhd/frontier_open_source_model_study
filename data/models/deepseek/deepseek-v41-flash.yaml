@@ -75,7 +75,7 @@ params:
     分片 96085 张量）： 主干 552.05B、Engram 196.93B，另有 draft 侧 14.2B 参数（7.39 GiB 存储）不计入声明值。 与声明的 0.13% 缺口几乎全部集中在
     Engram 表一项（196.93 vs 196.0），不是均摊。 注意路由专家以 FP4 两个一字节打包存放，safetensors 里的 numel 是容器数， 直接求和会把参数量少算一半。
     Engram 表每 token 只读取极少行，计入总参数但不计入激活参数。 注意「激活参数」有两个口径：带宽口径 15.8B（每 token 真正搬运的线性权重， 不含只 gather 一行的输入词表）、可比官方口径
-    16.5B（含输入词表）， 后者对应模型卡声明的 decode 激活 16B。做带宽估算要用前者。
+    16.4B（含输入词表）， 后者对应模型卡声明的 decode 激活 16B。做带宽估算要用前者。
 context:
   max: 1048576
   train_native: 65536
@@ -93,6 +93,11 @@ arch:
     num_heads: 64
     num_kv_heads: 1
     head_dim: 512
+    head_dim_note: >-
+      head_dim 512 与「kv_lora_rank 字段消失」是同一件事的两种写法。
+      V2–V3.2 用 kv_lora_rank=512 + num_key_value_heads=128 描述「压到 512 再升回 128 头」；
+      V4 起改用 head_dim=512 + num_key_value_heads=1 描述「64 个 query 头共读一个 512 维 KV 头」。
+      权重两边都对得上：wkv [512, 5120] 只有下投影，wq_b [32768, 1280] = 64×512
     qk_rope_head_dim: 64
     q_lora_rank: 1280
     o_lora_rank: 1024
@@ -100,6 +105,12 @@ arch:
     sliding_window: 128
     attn_sink: 每头一个可学习 sink（[64] FP32，全部 40 层及 MTP 层）。它进 softmax 分母， 改变算子签名；config 里没有这个开关，只能从权重清单发现
     kv_sharing:
+      layer_coverage: >-
+        compressor.wkv 与 compressor.norm 在 4 个源层 [2,8,14,20] 都有，但 compressor.wgate
+        **只在 [2,8,14] 三层** —— 对照 compress_ratios，L2–19 比值 2、L20–39 比值 1，
+        比值 1 的那个源层不带门控，源层之间不同构，算子表要分开排。
+        attn.wkv 与 attn_sink 在全部 40 层（滑窗局部 KV），indexer.wk 在 4 层、
+        重打分在另 4 层 —— 四类覆盖面都不同，不能混着说「逐层」
       source_layers:
       - 2
       - 8
@@ -372,6 +383,8 @@ evidence:
   arch.attention.kv_sharing.measured_per_token: derived
   arch.attention.sparse.index_kv_dim: derived
   arch.attention.sparse.index_kv_source: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.kv_sharing.layer_coverage: derived
   arch.attention.attn_sink: derived
   arch.attention.kv_sharing.index_kv_source_layers: derived
   arch.attention.kv_sharing.index_rescore_layers: derived

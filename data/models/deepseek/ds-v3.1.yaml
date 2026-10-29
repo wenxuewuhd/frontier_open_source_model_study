@@ -50,8 +50,13 @@ arch:
     kv_lora_rank: 512
     q_lora_rank: 1536
     head_dim: 192
+    v_head_dim: 128
+    head_dim_note: head_dim 192 = qk_nope 128 + qk_rope 64，**只适用于 QK 路径**。V 的每头维度是 v_head_dim 128，所以
+      o_proj 入口宽度是 128 头 × 128 = 16384（权重实测 [hidden, 16384]），不是 128 × 192 = 24576。按单一 head_dim 推 o_proj
+      会高 50%
   ffn:
     type: moe
+    layer_pattern: 第 0–2 层稠密（intermediate 18432），其余为 MoE。稠密层的 FFN 比单个专家宽 9 倍，是全模型最宽的单个 GEMM
   moe:
     routed_experts: 256
     top_k: 8
@@ -62,6 +67,7 @@ arch:
     routing: sigmoid 打分 / noaux_tc 选路
     storage_note: 逐专家独立张量，不是堆叠。grouped GEMM 因此吃 2 维权重列表而非 3 维张量，EP 切分是切张量列表
     balance: 无辅助损失，靠逐专家偏置 mlp.gate.e_score_correction_bias 调节（第 3 层起，59 个）
+    dense_intermediate: 18432
   decoding:
     mtp_layers: 1
 precision:
@@ -129,6 +135,10 @@ evidence:
   precision.quantization.per_subsystem_block: derived
   arch.moe.storage_note: derived
   arch.moe.balance: derived
+  arch.attention.v_head_dim: official
+  arch.attention.head_dim_note: derived
+  arch.moe.dense_intermediate: official
+  arch.ffn.layer_pattern: derived
 notes: 唯一的改动是 scale 格式。它不改张量形状，却改反量化算子的实现：ue8m0 的 scale 是纯指数，乘 scale 可以变成加指数。容易被当成元数据忽略过去。
 open_questions:
 - scale_fmt 的 ue8m0 管不管激活 scale，config 没说。它和 fmt、weight_block_size 并列， 字面像是只管权重侧；但激活用 dynamic 量化、scale

@@ -170,6 +170,14 @@ def build_record(cfg: dict, info: dict, mid: str, family: str, repo: str) -> dic
         sf, tm = t.get("scoring_func"), t.get("topk_method")
         if sf or tm:
             moe["routing"] = f"{sf or '?'} 打分 / {tm or '?'} 选路"
+        # dense 前缀层的 FFN 宽度也要记：它往往是全模型最宽的单个 GEMM
+        # （DeepSeek V3 的 18432 是专家宽度 2048 的 9 倍），而早先这里写成 elif，
+        # MoE 模型永远取不到 intermediate_size，这个大头就一直是空的
+        if t.get("first_k_dense_replace") and t.get("intermediate_size"):
+            moe["dense_intermediate"] = t["intermediate_size"]
+            arch["ffn"]["layer_pattern"] = (
+                f"第 0–{t['first_k_dense_replace'] - 1} 层稠密（intermediate "
+                f"{t['intermediate_size']}），其余为 MoE")
         arch["moe"] = moe
     elif t.get("intermediate_size"):
         arch["ffn"] = {"type": "dense", "intermediate": t["intermediate_size"]}
