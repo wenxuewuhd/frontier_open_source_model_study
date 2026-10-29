@@ -14,8 +14,9 @@
 import Base from '../../layouts/Base.astro';
 import Evidence from '../../components/Evidence.astro';
 import {
-  familyModels, axisMatrix, changeMatrix, allModels, url, fmtSci, subsystemRows,
-  TRACKED_FIELDS, FAMILY_LABEL, FAMILY_ORDER, HORIZON_LABEL, reviewStatus,
+  familyModels, axisMatrix, changeMatrix, allModels, url, fmtSci,
+  TRACKED_FIELDS, SUBSYSTEM_FIELD_PREFIX, FAMILY_LABEL, FAMILY_ORDER,
+  HORIZON_LABEL, reviewStatus,
 } from '../../lib/data';
 
 export function getStaticPaths() {
@@ -37,7 +38,9 @@ const specFields = TRACKED_FIELDS.filter((f) => f.group === 'spec');
 const precFields = TRACKED_FIELDS.filter((f) => f.group === 'precision');
 const visible = (fs: typeof TRACKED_FIELDS) =>
   fs.filter((f) => models.some((m) => f.get(m) !== undefined));
-const subRows = subsystemRows(models);
+const visiblePrec = visible(precFields);
+/** 分组行插在第一条实测行之前，把 config 声明和实测分开 */
+const firstMeasured = visiblePrec.findIndex((f) => f.key.startsWith(SUBSYSTEM_FIELD_PREFIX));
 
 const signals = models.flatMap((m) =>
   (m.infra_signals ?? []).map((s: any) => ({ ...s, model: m })),
@@ -195,15 +198,15 @@ const sideCls = (m: any) => (m.lineage?.track === 'side' ? 'side' : undefined);
 
   <h2>精度对照 <Evidence tag="official" /></h2>
   <p class="small muted">
-    上半部分是 config 的声明值。<strong>空白一律表示「config 没声明」，不表示「和主干相同」</strong> ——
-    后者是推论，不该当成记录值。所以「路由专家精度」只在 config 单独声明
-    <code>expert_dtype</code> 时才有值。
+    上半部分只留 <strong>dtype 看不出来的</strong> config 声明项。整体量化方法、权重元素格式、
+    单独声明的专家精度三项已被下面的实测行覆盖，留着是同一件事说两遍。
+    <code>scale 格式</code>留着是因为它和实测<strong>不一致</strong>，而那个不一致正是要说的事。
   </p>
   <p class="small muted">
     下半部分是逐子系统的<strong>实测</strong>精度，由 <code>scripts/fetch_dtypes.py</code>
-    直接读权重头得出，不回填 config 声明值 —— 两者经常对不上。
-    权重精度与 scale 精度分开列（FP4 权重配 FP8_E8M0 的 scale，只看一个会让反量化实现猜错）。
-    这几行的有无取决于取没取过 dtype 抽样，是调研进度不是模型差异，因此不进变化矩阵。
+    直接读权重头得出，不回填 config 声明值。权重精度与 scale 精度分开列 ——
+    FP4 权重配 FP8_E8M0 的 scale，只看一个会让反量化实现猜错 scale 张量的大小。
+    这些行也进变化矩阵，但只在相邻两版都测过时才比：缺值是「没测」不是「取消」。
   </p>
   <div class="scroll-x">
     <table>
@@ -219,38 +222,27 @@ const sideCls = (m: any) => (m.lineage?.track === 'side' ? 'side' : undefined);
         </tr>
       </thead>
       <tbody>
-        {visible(precFields).map((f) => (
-          <tr>
-            <td>{f.label}</td>
-            {models.map((m) => {
-              const v = f.get(m);
-              return <td class={sideCls(m)}>{v === undefined ? <span class="dash">—</span> : v}</td>;
-            })}
-          </tr>
-        ))}
-        {subRows.length > 0 && (
-          <tr class="group">
-            <td colspan={models.length + 1}>
-              逐子系统实测（权重精度 <span class="muted">/ scale 精度</span>）
-            </td>
-          </tr>
-        )}
-        {subRows.map((r) => (
-          <tr>
-            <td>{r.label}</td>
-            {r.cells.map((c) => (
-              <td class={sideCls(c.model)}>
-                {c.dtype === undefined ? (
-                  <span class="dash">—</span>
-                ) : (
-                  <>
-                    {c.dtype}
-                    {c.scale && <span class="muted"> / {c.scale}</span>}
-                  </>
-                )}
-              </td>
-            ))}
-          </tr>
+        {visiblePrec.map((f, i) => (
+          <>
+            {i === firstMeasured && (
+              <tr class="group">
+                <td colspan={models.length + 1}>
+                  逐子系统实测（权重精度 <span class="muted">/ scale 精度</span>）
+                </td>
+              </tr>
+            )}
+            <tr>
+              <td>{f.label.replace('（实测）', '')}</td>
+              {models.map((m) => {
+                const v = f.get(m);
+                return (
+                  <td class={sideCls(m)}>
+                    {v === undefined ? <span class="dash">—</span> : v}
+                  </td>
+                );
+              })}
+            </tr>
+          </>
         ))}
       </tbody>
     </table>

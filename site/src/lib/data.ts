@@ -315,14 +315,27 @@ export function reviewStatus(m: Model) {
  * 取值一律从记录里读，读不到返回 undefined。**不回退到猜测**：空白表示该版本没有这一项，
  * 和「有但没录」要能分开，所以取不到就是取不到。
  */
+/**
+ * 子系统的顺序与中文名，和 scripts/lib/subsystems.py 读同一个文件。
+ * 在两种语言里各写一份，迟早会在加子系统时只改一边。
+ */
+export const SUBSYSTEMS: { key: string; label: string }[] = JSON.parse(
+  fs.readFileSync(path.join(DATA, 'schema', 'subsystems.json'), 'utf8'),
+).subsystems;
+
 export interface TrackedField {
   key: string;
   label: string;
   axis: string;
   group: 'spec' | 'precision';
-  /** false 表示不进变化矩阵：自由文本（措辞差异不是变化），
-   *  或有无取决于调研进度而非模型本身的字段（取没取过权重清单）。 */
-  diff?: boolean;
+  /**
+   * 进不进变化矩阵：
+   *   true / 省略      照常比
+   *   false            不比。自由文本（措辞差异不是架构变化）
+   *   'both-measured'  只在两边都测过时才比。实测字段缺值是「没测」不是「取消」，
+   *                    照常比会把调研进度显示成模型变化
+   */
+  diff?: boolean | 'both-measured';
   get: (m: Model) => string | number | undefined;
 }
 
@@ -384,67 +397,53 @@ export const TRACKED_FIELDS: TrackedField[] = [
 
   // —— 精度：单拉一组。量化是独立于规格的一条演进线，混在规格表里会看不出节奏。
   //
-  // 这里的 getter **不做任何回退推断**。「config 没单独声明专家精度」和「专家精度等于主干」
-  // 是两件事：前者是事实，后者是推论。getter 里回退会把推论当成记录值放进变化矩阵，
-  // 造出记录里根本没有的「变化」。空白的含义由表下的脚注说明。
-  { key: 'quant_method', label: '整体权重量化', axis: 'precision', group: 'precision',
-    get: (m) => (m.precision?.quantization?.method
-      ? dtype(m.precision.quantization.method) : '无（BF16 直发）') },
+  // 这里只留 **dtype 看不出来的** config 声明项。
+  // quant_method（整体 FP8）、weight_format（fmt e4m3）、expert_dtype（FP4）三项
+  // 都被下面的逐子系统实测覆盖了，留着是同一件事说两遍；其中 weight_format 还会
+  // 在 V4.1 显示成「e4m3 → 取消」（config 不再声明这个键），读起来像放弃了 E4M3。
+  //
+  // scale_format 留着，因为它和实测**不一致**，而那个不一致正是要说的事：
+  // V3.1 起声明 ue8m0，但 scale 张量实测到 V4 才真的变成 8 bit。
   { key: 'quant_block', label: '量化块', axis: 'precision', group: 'precision',
     get: (m) => {
       const b = m.precision?.quantization?.weight_block_size;
       return b ? `[${b.join(',')}]` : undefined;
     } },
-  { key: 'weight_fmt', label: '权重元素格式（config fmt）', axis: 'precision', group: 'precision',
-    get: (m) => m.precision?.quantization?.weight_format },
-  { key: 'scale_fmt', label: 'scale 格式', axis: 'precision', group: 'precision',
+  { key: 'scale_fmt', label: 'scale 格式（config 声明）', axis: 'precision', group: 'precision',
     get: (m) => m.precision?.quantization?.scale_format },
   { key: 'act_scheme', label: '激活量化', axis: 'precision', group: 'precision',
     get: (m) => m.precision?.quantization?.activation_scheme },
-  { key: 'expert_dtype', label: '路由专家精度（单独声明时）', axis: 'precision', group: 'precision',
-    get: (m) => dtype(m.precision?.quantization?.expert_dtype) },
   { key: 'kv_dtype', label: 'KV 缓存精度', axis: 'precision', group: 'precision',
     get: (m) => dtype(m.precision?.kv_cache) },
+  ...subsystemFields(),
 ];
 
 /**
- * 子系统的顺序与中文名，和 scripts/lib/subsystems.py 读同一个文件。
- * 在两种语言里各写一份，迟早会在加子系统时只改一边。
- */
-export const SUBSYSTEMS: { key: string; label: string }[] = JSON.parse(
-  fs.readFileSync(path.join(DATA, 'schema', 'subsystems.json'), 'utf8'),
-).subsystems;
-
-/**
- * 逐子系统的实测精度行。
+ * 逐子系统的实测精度，每个子系统一行，格子里是「权重精度 / scale 精度」。
  *
- * 和 TRACKED_FIELDS 分开，因为这些行的有无取决于「取没取过 dtype 抽样」，
- * 不取决于模型本身 —— 放进变化矩阵会把调研进度显示成模型变化。
- * 只返回至少有一个版本测到过的子系统，避免整行空白。
+ * 和上面的 config 声明项并列进同一组，所以它们也能进变化矩阵 ——
+ * 「路由专家 FP8_E4M3 / FP32 → FP4 / FP8_E8M0」比「路由专家精度 无 → FP4」说得清楚得多。
+ * 但只在两边都测过时才比（diff: 'both-measured'）：没测过的版本缺值是调研进度，不是模型变化。
  */
-export function subsystemRows(models: Model[]) {
-  const val = (m: Model, key: string) => m.precision?.quantization?.per_subsystem?.[key];
-  return SUBSYSTEMS.filter((s) => models.some((m) => val(m, s.key) !== undefined)).map((s) => ({
-    ...s,
-    cells: models.map((m) => ({
-      model: m,
-      dtype: val(m, s.key) as string | undefined,
-      scale: m.precision?.quantization?.per_subsystem_scale?.[s.key] as string | undefined,
-    })),
+function subsystemFields(): TrackedField[] {
+  return SUBSYSTEMS.map((s) => ({
+    key: `sub_${s.key}`,
+    label: `${s.label}（实测）`,
+    axis: 'precision',
+    group: 'precision' as const,
+    diff: 'both-measured' as const,
+    get: (m: Model) => {
+      const w = m.precision?.quantization?.per_subsystem?.[s.key];
+      if (!w) return undefined;
+      const sc = m.precision?.quantization?.per_subsystem_scale?.[s.key];
+      return sc ? `${w} / ${sc}` : w;
+    },
   }));
 }
 
-/**
- * 逐版本的字段级变化：拿每份记录和它 lineage.predecessor 指的那份比。
- *
- * 用 predecessor 而不是「发布顺序的上一个」，是因为支线（V4-Pro、日期版）的前代
- * 不是时间上的前一个 —— 按时间比会把支线和主线串成一条假链。
- */
-export interface FieldChange {
-  field: TrackedField;
-  from: string | number | undefined;
-  to: string | number | undefined;
-}
+/** 子系统行的 key 前缀，页面用它在「config 声明」与「实测」之间插分组行。 */
+export const SUBSYSTEM_FIELD_PREFIX = 'sub_';
+
 
 export function changesFor(m: Model): FieldChange[] {
   const prevId = m.lineage?.predecessor;
@@ -453,7 +452,14 @@ export function changesFor(m: Model): FieldChange[] {
   if (!prev) return [];
   return TRACKED_FIELDS.filter((f) => f.diff !== false)
     .map((f) => ({ field: f, from: f.get(prev), to: f.get(m) }))
-    .filter((c) => String(c.from ?? '') !== String(c.to ?? ''));
+    .filter((c) => {
+      // 实测字段缺值是「这一版没测」，不是「这一版取消了」。
+      // 两边都有值才算得上变化，否则矩阵会把调研进度显示成模型变化。
+      if (c.field.diff === 'both-measured' && (c.from === undefined || c.to === undefined)) {
+        return false;
+      }
+      return String(c.from ?? '') !== String(c.to ?? '');
+    });
 }
 
 /** 某家族的记录，按发布日期升序 —— 家族页要顺着读演进，和列表页的倒序相反。 */
