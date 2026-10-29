@@ -124,12 +124,23 @@ arch:
       note: 权重清单里 kv_b_proj / k_b_proj / v_b_proj 零命中，config 也不声明 kv_lora_rank：这一代没有 KV 上投影，不是 MLA。compress_ratios
         的项数 = 主干层数 + MTP 层数。
       measured_per_token:
-        global_kv: 2048
-        indexer: 512
-        local_window_bytes_per_sequence: 5242880
-        note: '按完整权重清单逐层量出来的每 token 元素数。compressor.ape 的第一维就是该层压缩比，每 token 元素 = wkv 输出宽度 / 比值（比值 1:
-          1 层, wkv 宽 512, ape 无 -> 512 元素/token；比值 2: 3 层, wkv 宽 512, ape 无 -> 512 元素/token）。attn.wkv
-          那一份是 sliding_window 的局部 KV，每序列固定、不随上下文增长，单列在 local_window_bytes_per_sequence，不计入 per_token。按未压缩宽度乘总层数会高估五倍以上'
+        global_kv: 1280
+        indexer: 320
+        local_window_elems_per_sequence: 2818048
+        note: >-
+          元素口径，与 deepseek-v41-flash 同构，但宽度是本版自己的权重量的：本版没有全量形状清单
+          （shapes.json 为空），产出 KV 的张量另按分片头逐个读过，见 facts/ds-v4.1-flash-1017/kv_widths.json
+          （rev 1bae0e10，读了 43 个分片头）。张量名集合 96085 个与旗舰逐个相同，config 逐字段相同。
+          全局 KV：compressor.wkv 只在 L2/8/14/20，四层均 BF16 [512, 5120]，每条目 512 元素；
+          一个条目池化 compress_ratio 个 token（L2/8/14 比值 2、L20 比值 1），3×256 + 512 = 1280。
+          compressor.wgate 只在 L2/8/14，L20 没有 —— 和旗舰一样对上「比值 1 无须加权汇聚」。
+          indexer：indexer.wk 同 4 层，均 BF16 [128, 512]，跟着同一个 r 折，3×64 + 128 = 320；
+          L24/28/32/36 只有 wq_b，只重打分、不占缓存。
+          滑窗：attn.wkv 在主干 40 层与 MTP 3 块都有，均 FP8 [512, 5120]，sliding_window=128，
+          43 × 128 × 512 = 2818048 元素/序列（只跑主干时 40 层 2621440），不计入 per_token。
+          这一代没有 compressor.ape，不能按 V4 一代「ape 第一维即比值」的规律读 —— 早先按那条规律
+          把比值 2 的层也记成 512 元素/token，等于 1:1 记账（同旗舰核查 R28 的适用范围、R30）。
+          字节不写在这里，由 derive.py 按 precision.kv_cache_components 折算，结果是理论下限
     attn_sink: 每头一个可学习 sink（layers.N.attn.attn_sink，全部层及 MTP 层）。它进 softmax 分母，改变算子签名；config 里没有这个开关，只能从权重清单发现
   ffn:
     type: moe
@@ -178,6 +189,33 @@ arch:
     fusion: 两层 MLP aligner（aligner.w1/w2，带 bias）把视觉特征投到主干 hidden，再以 image_start / image_end / image_newline
       特殊 token 拼进文本序列
 precision:
+  # KV 落盘精度。和旗舰同一套参考实现、同一套产出张量（宽度与精度已按本版分片头核过），
+  # 落盘格式是实现的选择、不随权重刷新变，所以沿用旗舰那份读取。二手，证据标 judgement
+  kv_cache: MIXED
+  kv_cache_components:
+    global_kv:
+      dtype: FP4
+      block: 16
+      scale_dtype: FP8_E4M3
+      note: compress_kv。e2m1 每 16 元素一个 E4M3 scale，每条目 512 × 0.5 + 32 = 288 B
+    indexer:
+      dtype: FP4
+      block: 32
+      scale_dtype: FP8_E8M0
+      note: index_k。e2m1 每 32 元素一个 E8M0 scale，即 OCP MXFP4，每条目 128 × 0.5 + 4 = 68 B
+    local_window:
+      dtype: FP8_E4M3
+      block: 128
+      scale_dtype: FP8_E8M0
+      note: 来源只给了「每 128 元素 1 字节 scale」，E8M0 是按 config 的 scale_fmt=ue8m0 推定的。每位置 512 + 4 = 516 B
+    source: >-
+      沿用 deepseek-v41-flash 的 kv_cache_components（核查 R21）：用户账号下的 artifact
+      「V4.1 注意力分层图」（https://claude.ai/artifact/5Vc5TNsXt26ZZkgvvTDYaW）对参考实现的读取。
+      沿用的依据：本版与旗舰 config 逐字段相同、张量名集合相同、产出 KV 的张量宽度与精度按本版分片头逐个相同，
+      只动了权重数值。本项目没有直接读到量化代码
+    note: >-
+      产出 KV 的投影是权重精度（compressor.* 与 indexer.wk 为 BF16，attn.wkv 为 FP8），
+      落盘是激活量化之后的格式 —— 两件事。换引擎格式可能不同。按它折算的字节是理论下限，不含分页与环页粒度
   quantization:
     method: fp8
     activation_scheme: dynamic
@@ -242,8 +280,19 @@ evidence:
   arch.attention.sparse.index_kv_dim: derived
   arch.attention.sparse.index_kv_source: derived
   arch.attention.kv_sharing.measured_per_token: derived
+  # 读实现得来、本项目未直接核对代码，不能跟着 precision: official 走
+  precision.kv_cache: judgement
+  precision.kv_cache_components: judgement
+  open_questions: judgement
   arch.moe.storage_note: derived
   arch.moe.balance: derived
   arch.attention.attn_sink: derived
   arch.attention.sparse.mechanism: judgement
 notes: V4.1-Flash 的日期版。架构零差异，算子表可直接套用旗舰那份。
+open_questions:
+- >-
+  precision.kv_cache 的三个分量格式沿用旗舰那份参考实现读取（deepseek-v41-flash 核查 R21），
+  未经原始 kernel 或显存实测确认。按它算的 890 B/token、1M 下 0.87 GiB 是理论下限，不是部署占用
+- >-
+  理论下限与实际部署的缺口只有旗舰记录里的一个数据点（核查 R31：一套部署栈 1224 B/token，下限的 1.38 倍），
+  本版没有单独测过；同一份代码路径下应当相同，但没有数
