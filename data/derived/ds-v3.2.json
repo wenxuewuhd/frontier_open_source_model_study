@@ -1,0 +1,76 @@
+{
+ "id": "ds-v3.2",
+ "generated_by": "scripts/derive.py",
+ "generated_at": "2026-10-29T05:08:31+00:00",
+ "inputs": {
+  "facts_dir": "facts/ds-v3.2",
+  "config_present": true,
+  "shapes_present": false,
+  "model_yaml": "data/models/deepseek/ds-v3.2.yaml",
+  "ep_size": 4
+ },
+ "from_shapes": {
+  "available": false
+ },
+ "kv_cache": {
+  "status": "ok",
+  "attention_type": "MLA",
+  "kv_dtype": "bfloat16",
+  "layers": 61,
+  "full_attention_layers": 61,
+  "linear_attention_layers": 0,
+  "per_token_bytes": 85888,
+  "per_sequence_bytes": 0,
+  "components": {
+   "full_attention": {
+    "layers": 61,
+    "bytes_per_layer": 1152,
+    "bytes_per_token": 70272,
+    "dtype": "bfloat16",
+    "terms": {
+     "latent": 512,
+     "qk_rope_head_dim": 64,
+     "formula": "(latent + qk_rope_head_dim) * bytes"
+    }
+   },
+   "indexer": {
+    "layers": 61,
+    "width": 128,
+    "bytes_per_token": 15616,
+    "terms": {
+     "formula": "index_kv_dim(128)，实测自 model.layers.N.self_attn.indexer.wk.weight [128, 7168]，输出维 128（62 层都有） * bytes * layers(61)"
+    }
+   }
+  },
+  "notes": [],
+  "dtype_assumed": true,
+  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
+ },
+ "kv_capacity_bytes_at_context": {
+  "4096": 351797248,
+  "32768": 2814377984,
+  "163840": 14071889920
+ },
+ "active_params": {
+  "status": "unknown",
+  "why": "没有 shapes，无法按子系统拆分"
+ },
+ "flops": {},
+ "arithmetic_intensity": {},
+ "ep_communication": {
+  "status": "ok",
+  "ep_size": 4,
+  "moe_layers": 58,
+  "bytes_per_token": 13303808,
+  "bytes_per_layer": 229376,
+  "formula": "2(dispatch+combine) * top_k * hidden * bytes * moe_layers",
+  "note": "EP=1 时为 0；跨机时该量按互联带宽折算成时间，是 decode 尾延迟的主因之一"
+ },
+ "reconciliation": [
+  {
+   "item": "全部",
+   "status": "skip",
+   "why": "没有 shapes.json，只有 config 单路"
+  }
+ ]
+}

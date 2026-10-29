@@ -27,9 +27,7 @@ lineage:
     benefit: 对 infra 零成本：算子清单、EP 切分、量化配置都不用动。这类版本值得在流程里尽早识别出来 —— 先比张量名集合，相同就不必重走评估。config 与 V4.1-Flash
       逐字段相同，算子表可直接套用旗舰那份
 params:
-  counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
-    FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
-    不带 --names-only 重取。
+  counting_note: 未单独取全量权重清单：本版张量名集合与 deepseek-v41-flash 逐个相同、逐子系统 dtype 也一致，参数量必然相同，见该记录。重复取一遍只是把同一个数算两遍。
 context:
   max: 1048576
   train_native: 65536
@@ -61,6 +59,8 @@ arch:
       candidate_source_layer: 20
       candidate_topk_blocks: 2048
       candidate_block_size: 8
+      index_kv_dim: 128
+      index_kv_source: layers.N.attn.indexer.wk.weight [128, 512]，输出维 128（仅第 2/8/14/20 层）
     kv_sharing:
       source_layers:
       - 2
@@ -226,4 +226,6 @@ evidence:
   precision.quantization.subsystem_method: derived
   precision.quantization.per_subsystem_scale: derived
   precision.quantization.per_subsystem_block: derived
+  arch.attention.sparse.index_kv_dim: derived
+  arch.attention.sparse.index_kv_source: derived
 notes: V4.1-Flash 的日期版。架构零差异，算子表可直接套用旗舰那份。

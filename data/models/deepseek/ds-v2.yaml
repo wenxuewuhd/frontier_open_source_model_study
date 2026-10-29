@@ -37,9 +37,19 @@ lineage:
     text: 163840，YaRN 自 4096 原生长度外推 40 倍
     benefit: 不重训就把 4K 原生长度外推 40 倍。代价是外推段质量和 mscale 调参强相关，V2.5 改的正是这个参数
 params:
-  counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
-    FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
-    不带 --names-only 重取。
+  total: 235741000000.0
+  excludes:
+  - draft
+  breakdown:
+    expert: 222718000000.0
+    attention: 8953530000.0
+    shared_expert: 2783970000.0
+    embed: 524288000.0
+    lm_head: 524288000.0
+    dense_ffn: 188744000.0
+    router: 48332800.0
+    norm: 742400.0
+  counting_note: 按完整权重清单（29102 张量）逐项统计。total 不含草稿侧 0.0B；含在内的实测总量为 235.7B，权重存储 439.1 GiB。
 context:
   max: 163840
   train_native: 4096

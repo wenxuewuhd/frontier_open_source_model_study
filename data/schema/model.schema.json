@@ -245,6 +245,14 @@
                 "mechanism": { "type": "string", "description": "如 indexer 选块、滑窗、NSA/MoBA 式" },
                 "index_n_heads": { "type": "integer" },
                 "index_head_dim": { "type": "integer" },
+                "index_kv_dim": {
+                  "type": "integer",
+                  "description": "每层每 token 真正缓存的 index K 宽度，取产出 index K 那个张量的输出维（indexer.wk 或 indexer.compressor.wkv）。**不要用 index_n_heads × index_head_dim** —— index K 在各 index 头之间共享（MQA 式），只有查询侧是逐头的；按乘积算会把 indexer 缓存放大几十倍"
+                },
+                "index_kv_source": {
+                  "type": "string",
+                  "description": "index K 由哪个张量产出，写明张量名与输出维，供复核"
+                },
                 "block_size": { "type": "integer" },
                 "selected_blocks": { "type": "integer" },
                 "index_topk": { "type": "integer" },

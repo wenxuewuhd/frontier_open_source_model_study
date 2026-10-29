@@ -119,6 +119,19 @@ def collect_names(repo: str, rev: str, files: list) -> dict:
     return sorted(wm)
 
 
+def _write_atomic(path: str, obj) -> None:
+    """先写临时文件再 rename。
+
+    万亿模型的 shapes.json 有几十 MB，直接覆写时如果中断或被并发读到，
+    留下的是半个 JSON —— 下游解析失败还算好的，更坏的是被当成「清单不完整」处理。
+    rename 在同一文件系统内是原子的，读到的要么是旧的完整文件要么是新的。
+    """
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("repo", help="HF 仓库，如 deepseek-ai/DeepSeek-V4.1-Flash")
@@ -155,13 +168,11 @@ def main():
         shapes, failed = collect_shapes(args.repo, rev, files, args.workers)
 
     for name, obj in (("repoinfo.json", info), ("cfg.json", cfg), ("shapes.json", shapes)):
-        with open(os.path.join(out_dir, name), "w") as f:
-            json.dump(obj, f, ensure_ascii=False, indent=1)
+        _write_atomic(os.path.join(out_dir, name), obj)
     # 名字清单单独存。不混进 shapes.json：形状为空的清单会让 derive.py
     # 把参数量静默算成 0，而不是报「清单不完整」。
     if names:
-        with open(os.path.join(out_dir, "names.json"), "w") as f:
-            json.dump(names, f, ensure_ascii=False, indent=1)
+        _write_atomic(os.path.join(out_dir, "names.json"), names)
 
     record = {
         "repo": args.repo,
@@ -173,8 +184,7 @@ def main():
         "config_url": RESOLVE.format(repo=args.repo, rev=rev, path="config.json"),
         "failed_shards": failed,
     }
-    with open(os.path.join(out_dir, "fetched.json"), "w") as f:
-        json.dump(record, f, ensure_ascii=False, indent=1)
+    _write_atomic(os.path.join(out_dir, "fetched.json"), record)
 
     print(f"==> {out_dir}: config {'有' if cfg else '无'}, {len(shapes)} 个张量, rev={rev[:12]}",
           file=sys.stderr)

@@ -1,0 +1,81 @@
+{
+ "id": "ds-v4.1-flash-1017",
+ "generated_by": "scripts/derive.py",
+ "generated_at": "2026-10-29T05:08:34+00:00",
+ "inputs": {
+  "facts_dir": "facts/ds-v4.1-flash-1017",
+  "config_present": true,
+  "shapes_present": false,
+  "model_yaml": "data/models/deepseek/ds-v4.1-flash-1017.yaml",
+  "ep_size": 4
+ },
+ "from_shapes": {
+  "available": false
+ },
+ "kv_cache": {
+  "status": "partial",
+  "attention_type": "MQA-LATENT",
+  "kv_dtype": "bfloat16",
+  "layers": 40,
+  "full_attention_layers": 4,
+  "linear_attention_layers": 0,
+  "per_token_bytes": 5632,
+  "per_sequence_bytes": 0,
+  "components": {
+   "full_attention": {
+    "layers": 4,
+    "bytes_per_layer": 1152,
+    "bytes_per_token": 4608,
+    "dtype": "bfloat16",
+    "terms": {
+     "latent_from": "num_kv_heads(1) * head_dim(512)",
+     "rope_caveat": "qk_rope_head_dim 是否在 latent 维之内未确认。若在其内，每层应为 latent*bytes 而非 (latent+rope)*bytes，当前取值为上界",
+     "latent": 512,
+     "qk_rope_head_dim": 64,
+     "formula": "(latent + qk_rope_head_dim) * bytes"
+    }
+   },
+   "indexer": {
+    "layers": 4,
+    "width": 128,
+    "bytes_per_token": 1024,
+    "terms": {
+     "formula": "index_kv_dim(128)，实测自 layers.N.attn.indexer.wk.weight [128, 512]，输出维 128（仅第 2/8/14/20 层） * bytes * index_kv_source_layers(4)"
+    }
+   }
+  },
+  "notes": [
+   "只有 4 层产出 KV（共 40 层），其余层跨层读取；按总层数乘会高估",
+   "存在逐层压缩比（compress_ratios），本公式未建模；per_token 只是未压缩上界，真实值以官方披露或实测为准"
+  ],
+  "dtype_assumed": true,
+  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
+ },
+ "kv_capacity_bytes_at_context": {
+  "4096": 23068672,
+  "32768": 184549376,
+  "1048576": 5905580032
+ },
+ "active_params": {
+  "status": "unknown",
+  "why": "没有 shapes，无法按子系统拆分"
+ },
+ "flops": {},
+ "arithmetic_intensity": {},
+ "ep_communication": {
+  "status": "ok",
+  "ep_size": 4,
+  "moe_layers": 40,
+  "bytes_per_token": 4915200,
+  "bytes_per_layer": 122880,
+  "formula": "2(dispatch+combine) * top_k * hidden * bytes * moe_layers",
+  "note": "EP=1 时为 0；跨机时该量按互联带宽折算成时间，是 decode 尾延迟的主因之一"
+ },
+ "reconciliation": [
+  {
+   "item": "全部",
+   "status": "skip",
+   "why": "没有 shapes.json，只有 config 单路"
+  }
+ ]
+}

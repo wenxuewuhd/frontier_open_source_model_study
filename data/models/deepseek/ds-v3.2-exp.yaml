@@ -34,9 +34,20 @@ lineage:
     benefit: 稀疏注意力把注意力拆成打分、选块、稠密三段，中间结果的数值范围比原来宽，norm 用 FP32 权重更稳（这一步是推断，公开材料没有说明动机）。对实现的影响是实测到的那些层上
       RMSNorm 变成混合精度算子：FP32 权重配 BF16 激活。按「norm 权重与激活同 dtype」写的核会直接读错
 params:
-  counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
-    FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
-    不带 --names-only 重取。
+  total: 671919000000.0
+  excludes:
+  - draft
+  breakdown:
+    expert: 653949000000.0
+    draft: 13478100000.0
+    attention: 12265700000.0
+    shared_expert: 2554490000.0
+    dense_ffn: 1189160000.0
+    embed: 926679000.0
+    lm_head: 926679000.0
+    router: 106445000.0
+    norm: 1022210.0
+  counting_note: 按完整权重清单（92425 张量）逐项统计。total 不含草稿侧 13.5B；含在内的实测总量为 685.4B，权重存储 642.1 GiB。
 context:
   max: 163840
   train_native: 4096
@@ -63,6 +74,8 @@ arch:
       index_n_heads: 64
       index_head_dim: 128
       index_topk: 2048
+      index_kv_dim: 128
+      index_kv_source: model.layers.N.self_attn.indexer.wk.weight [128, 7168]，输出维 128（62 层都有）
   ffn:
     type: moe
   moe:
@@ -138,6 +151,8 @@ evidence:
   precision.quantization.per_subsystem_scale: derived
   precision.quantization.subsystem_method: derived
   precision.quantization.per_subsystem_block: derived
+  arch.attention.sparse.index_kv_dim: derived
+  arch.attention.sparse.index_kv_source: derived
 notes: 谱系里第一次出现「选 token 再算」的结构。它新增的不只是一个算子，而是一整条 打分 + topk + gather 的旁路，且 indexer 自己也要一份缓存。
 open_questions:
 - indexer 缓存的精度与布局未从权重清单核实

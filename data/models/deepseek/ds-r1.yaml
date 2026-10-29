@@ -28,9 +28,7 @@ lineage:
     benefit: 对 infra 零成本：算子清单、EP 切分、量化配置都不用动。这类版本值得在流程里尽早识别出来 —— 先比张量名集合，相同就不必重走评估。能力跃迁与 infra 工作量解耦得最彻底的一个例子：已经支持
       V3 的平台，支持 R1 不需要任何算子工作
 params:
-  counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
-    FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
-    不带 --names-only 重取。
+  counting_note: 未单独取全量权重清单：本版张量名集合与 ds-v3 逐个相同、逐子系统 dtype 也一致，参数量必然相同，见该记录。重复取一遍只是把同一个数算两遍。
 context:
   max: 163840
   train_native: 4096

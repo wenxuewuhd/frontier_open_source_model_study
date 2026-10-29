@@ -30,9 +30,21 @@ lineage:
     text: 首两层的压缩比由 0 改为 128 —— Flash 的前两层不建压缩 KV，Pro 建
     benefit: Pro 层数多，前两层也建压缩 KV 才划算；Flash 层少，前两层留全量换精度
 params:
-  counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
-    FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
-    不带 --names-only 重取。
+  total: 1573000000000.0
+  excludes:
+  - draft
+  breakdown:
+    expert: 1547400000000.0
+    draft: 25840100000.0
+    attention: 19464900000.0
+    shared_expert: 4029680000.0
+    embed: 926679000.0
+    lm_head: 926679000.0
+    router: 170253000.0
+    residual: 84069200.0
+    norm: 1041660.0
+  counting_note: 按完整权重清单（145116 张量）逐项统计。total 不含草稿侧 25.8B；含在内的实测总量为 1598.8B，权重存储 805.3 GiB。注意路由专家以
+    FP4 两个一字节打包存放，safetensors 的 numel 是容器数，已按 per_subsystem 的逻辑精度还原；直接求和会把专家参数少算一半。
 context:
   max: 1048576
   train_native: 65536
@@ -60,6 +72,8 @@ arch:
       index_n_heads: 64
       index_head_dim: 128
       index_topk: 1024
+      index_kv_dim: 256
+      index_kv_source: layers.N.attn.indexer.compressor.wkv.weight [256, 7168]，输出维 256（无独立 indexer.wk）
     kv_sharing:
       compress_ratios:
       - 128
@@ -208,6 +222,8 @@ evidence:
   precision.quantization.per_subsystem_scale: derived
   precision.quantization.subsystem_method: derived
   precision.quantization.per_subsystem_block: derived
+  arch.attention.sparse.index_kv_dim: derived
+  arch.attention.sparse.index_kv_source: derived
 notes: 张量名集合是 V4-Flash 的超集（只是层数与专家数更多），无新增算子类型。同日发布的大号版本，适合用来区分「规格变化」与「机制变化」。
 open_questions:
 - 未取权重清单，参数量待补

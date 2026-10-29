@@ -1,0 +1,176 @@
+{
+ "id": "ds-v4-pro",
+ "generated_by": "scripts/derive.py",
+ "generated_at": "2026-10-29T05:09:27+00:00",
+ "inputs": {
+  "facts_dir": "facts/ds-v4-pro",
+  "config_present": true,
+  "shapes_present": true,
+  "model_yaml": "data/models/deepseek/ds-v4-pro.yaml",
+  "ep_size": 4
+ },
+ "from_shapes": {
+  "available": true,
+  "complete": true,
+  "tensor_count": 145116,
+  "params_total": 1598839674408.0,
+  "params_by_subsystem": {
+   "embed": 926679040.0,
+   "attention": 19464943232.0,
+   "router": 170252544.0,
+   "residual": 84069236.0,
+   "norm": 1041664.0,
+   "shared_expert": 4029677568.0,
+   "expert": 1547396186112.0,
+   "lm_head": 926679040.0,
+   "draft": 25840145972.0
+  },
+  "weight_bytes_total": 864704792696.0,
+  "weight_bytes_by_subsystem": {
+   "embed": 1853358080.0,
+   "attention": 20264467840.0,
+   "router": 354511872.0,
+   "residual": 336278412.0,
+   "norm": 2083328.0,
+   "expert": 822054223872.0,
+   "shared_expert": 4029923520.0,
+   "lm_head": 1853358080.0,
+   "draft": 13956587692.0
+  },
+  "weight_bytes_by_dtype": {
+   "BF16": 5633798656.0,
+   "FP32": 351105656.0,
+   "FP8_E8M0": 49150268416.0,
+   "FP8_E4M3": 23169335296.0,
+   "INT8": 786381668352.0,
+   "INT64": 18616320.0
+  },
+  "experts_seen": 384,
+  "expert_storage": "individual",
+  "layers_present": 61,
+  "mtp_layers_seen": [],
+  "layer_index_max": 61,
+  "layers_missing": [],
+  "moe_layers_seen": 61,
+  "unknown_dtypes": [],
+  "packing_applied": {
+   "expert": 2,
+   "draft": 2
+  },
+  "packing_suspect": [],
+  "incomplete_note": null
+ },
+ "kv_cache": {
+  "status": "partial",
+  "attention_type": "MQA-LATENT",
+  "kv_dtype": "bfloat16",
+  "layers": 61,
+  "full_attention_layers": 61,
+  "linear_attention_layers": 0,
+  "per_token_bytes": 101504,
+  "per_sequence_bytes": 0,
+  "components": {
+   "full_attention": {
+    "layers": 61,
+    "bytes_per_layer": 1152,
+    "bytes_per_token": 70272,
+    "dtype": "bfloat16",
+    "terms": {
+     "latent_from": "num_kv_heads(1) * head_dim(512)",
+     "rope_caveat": "qk_rope_head_dim 是否在 latent 维之内未确认。若在其内，每层应为 latent*bytes 而非 (latent+rope)*bytes，当前取值为上界",
+     "latent": 512,
+     "qk_rope_head_dim": 64,
+     "formula": "(latent + qk_rope_head_dim) * bytes"
+    }
+   },
+   "indexer": {
+    "layers": 61,
+    "width": 256,
+    "bytes_per_token": 31232,
+    "terms": {
+     "formula": "index_kv_dim(256)，实测自 layers.N.attn.indexer.compressor.wkv.weight [256, 7168]，输出维 256（无独立 indexer.wk） * bytes * layers(61)"
+    }
+   }
+  },
+  "notes": [
+   "存在逐层压缩比（compress_ratios），本公式未建模；per_token 只是未压缩上界，真实值以官方披露或实测为准"
+  ],
+  "dtype_assumed": true,
+  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
+ },
+ "kv_capacity_bytes_at_context": {
+  "4096": 415760384,
+  "32768": 3326083072,
+  "1048576": 106434658304
+ },
+ "active_params": {
+  "status": "ok",
+  "total": 48770659456.0,
+  "total_with_embed": 49697338496.0,
+  "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的输入词表）；total_with_embed 含输入词表，用于和各家公布的「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
+  "expert_active": 24178065408.0,
+  "expert_total": 1547396186112.0,
+  "expert_ratio": "6/384",
+  "always_active": 24592594048.0,
+  "lm_head": 926679040.0,
+  "dense": false,
+  "excluded": {
+   "embed_tokens": 926679040.0,
+   "retrieval_table": 0.0,
+   "vision": 0.0,
+   "draft": 25840145972.0
+  },
+  "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
+ },
+ "flops": {
+  "linear_per_token": 97541318912.0,
+  "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
+ },
+ "arithmetic_intensity": {
+  "decode_weight_bytes_per_token": 26376767883.348114,
+  "decode_flops_per_byte": 3.6980011858685193,
+  "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
+ },
+ "ep_communication": {
+  "status": "ok",
+  "ep_size": 4,
+  "moe_layers": 61,
+  "bytes_per_token": 10493952,
+  "bytes_per_layer": 172032,
+  "formula": "2(dispatch+combine) * top_k * hidden * bytes * moe_layers",
+  "note": "EP=1 时为 0；跨机时该量按互联带宽折算成时间，是 decode 尾延迟的主因之一"
+ },
+ "reconciliation": [
+  {
+   "item": "路由专家数",
+   "config": 384.0,
+   "shapes": 384.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "专家存储布局",
+   "status": "ok",
+   "why": "individual（逐专家独立张量）"
+  },
+  {
+   "item": "层数",
+   "config": 61.0,
+   "shapes": 61.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "参数总量",
+   "YAML 声明": 1573000000000.0,
+   "shapes 实测(扣除 draft)": 1572999528436.0,
+   "delta_pct": -0.0,
+   "status": "ok"
+  },
+  {
+   "item": "口径说明",
+   "status": "ok",
+   "why": "声明值不含 draft；含在内的实测总量为 1598.8B"
+  }
+ ]
+}

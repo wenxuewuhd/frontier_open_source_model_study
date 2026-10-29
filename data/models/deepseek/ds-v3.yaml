@@ -37,9 +37,20 @@ lineage:
     text: 首次带 MTP 模块（1 层）。权重借用层索引 61：eh_proj / enorm / hnorm / shared_head，没有独立命名空间 —— V4 才改掉
     benefit: 训练时多预测一个 token 提升主干质量，推理时这一层可以直接当草稿头做投机解码。但权重借用层索引 61，加载时容易被当成第 62 层误载
 params:
-  counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
-    FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
-    不带 --names-only 重取。
+  total: 671067000000.0
+  excludes:
+  - draft
+  breakdown:
+    expert: 653949000000.0
+    draft: 13464100000.0
+    attention: 11414100000.0
+    shared_expert: 2554490000.0
+    dense_ffn: 1189160000.0
+    embed: 926679000.0
+    lm_head: 926679000.0
+    router: 106445000.0
+    norm: 1006590.0
+  counting_note: 按完整权重清单（91991 张量）逐项统计。total 不含草稿侧 13.5B；含在内的实测总量为 684.5B，权重存储 641.3 GiB。
 context:
   max: 163840
   train_native: 4096

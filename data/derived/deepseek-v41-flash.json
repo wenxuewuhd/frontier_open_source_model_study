@@ -1,7 +1,7 @@
 {
  "id": "deepseek-v41-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T04:25:58+00:00",
+ "generated_at": "2026-10-29T05:08:35+00:00",
  "inputs": {
   "facts_dir": "facts/deepseek-v41-flash",
   "config_present": true,
@@ -51,6 +51,7 @@
   "experts_seen": 384,
   "expert_storage": "individual",
   "layers_present": 40,
+  "mtp_layers_seen": [],
   "layer_index_max": 40,
   "layers_missing": [],
   "moe_layers_seen": 40,
@@ -69,7 +70,7 @@
   "layers": 40,
   "full_attention_layers": 4,
   "linear_attention_layers": 0,
-  "per_token_bytes": 37376,
+  "per_token_bytes": 5632,
   "per_sequence_bytes": 0,
   "components": {
    "full_attention": {
@@ -87,9 +88,10 @@
    },
    "indexer": {
     "layers": 4,
-    "bytes_per_token": 32768,
+    "width": 128,
+    "bytes_per_token": 1024,
     "terms": {
-     "formula": "index_n_heads(32) * index_head_dim(128) * bytes * index_source_layers(4)"
+     "formula": "index_kv_dim(128)，实测自 layers.N.attn.indexer.wk.weight [128, 512]，输出维 128（仅第 2/8/14/20 层）。 index K 在 32 个 index 头之间共享，只有查询侧 indexer.wq_b [4096, 1280] 是逐头的 （4096 = 32×128）。k_norm [128] 也只有一份，佐证同一结论 * bytes * index_kv_source_layers(4)"
     }
    }
   },
@@ -101,9 +103,9 @@
   "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
  },
  "kv_capacity_bytes_at_context": {
-  "4096": 153092096,
-  "32768": 1224736768,
-  "1048576": 39191576576
+  "4096": 23068672,
+  "32768": 184549376,
+  "1048576": 5905580032
  },
  "active_params": {
   "status": "ok",

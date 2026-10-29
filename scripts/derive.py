@@ -68,6 +68,7 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
     packing_applied = {}
     packing_suspect = set()
     expert_ids, layer_ids, moe_layers = set(), set(), set()
+    mtp_layer_ids = set()
     stacked_experts = set()
 
     for name, meta in shapes.items():
@@ -99,9 +100,15 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
             stacked_experts.add(meta["shape"][0])
         m = _LAYER_IDX.search(name)
         if m:
-            layer_ids.add(int(m.group(1)))
-            if sub in ("expert", "shared_expert"):
-                moe_layers.add(int(m.group(1)))
+            idx = int(m.group(1))
+            # MTP 层不算主干层。V3 一代的 MTP 借用层索引（第 61 层，而主干是 0–60），
+            # 算进去会让「层数」比 config 多一层，看起来像清单出了问题，其实是口径问题。
+            if mtp_from is None or idx < mtp_from:
+                layer_ids.add(idx)
+                if sub in ("expert", "shared_expert"):
+                    moe_layers.add(idx)
+            else:
+                mtp_layer_ids.add(idx)
 
     # 抽样快照检测：层索引稀疏说明只读了部分 shard。
     # 做算子表只要形状，抽样够用；拿来算参数总量会静默少算一大截，必须拦住。
@@ -123,6 +130,7 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
         "expert_storage": ("individual" if expert_ids
                            else "stacked" if stacked_experts else None),
         "layers_present": len(layer_ids),
+        "mtp_layers_seen": sorted(mtp_layer_ids),
         "layer_index_max": layer_max,
         "layers_missing": missing[:20],
         "moe_layers_seen": len(moe_layers),
@@ -257,7 +265,8 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None) -> di
     sp = attn.get("sparse") or {}
     inh = sp.get("index_n_heads") or t.get("index_n_heads")
     ihd = sp.get("index_head_dim") or t.get("index_head_dim")
-    if inh and ihd:
+    ikv = sp.get("index_kv_dim")
+    if (inh and ihd) or ikv:
         # 只有真正产出 index K 的层才占缓存；只重打分的层复用已有 K。
         # 把两者混在一起会让 indexer 缓存高估一倍 —— 而它往往是 KV 的大头。
         isrc = share.get("index_kv_source_layers")
@@ -266,10 +275,25 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None) -> di
             isrc = share.get("index_source_layers") or t.get("index_source_layer_ids")
             src_kind = "index_source_layers(未区分产出/重打分，可能高估)"
         ilayers = len(isrc) if isrc else layers
+
+        # 宽度必须用实测的 index_kv_dim。index K 在各 index 头之间共享（MQA 式），
+        # 产出它的张量输出维就是缓存宽度：V4.1 的 indexer.wk 是 [128, 512]，
+        # 而 index_n_heads × index_head_dim = 32×128 = 4096 —— 差 32 倍。
+        # 乘积只是上界，拿不到实测值时用它，但要标出来。
+        if ikv:
+            width, wsrc = ikv, f"index_kv_dim({ikv})，实测自 {sp.get('index_kv_source') or '产出张量输出维'}"
+        else:
+            width = inh * ihd
+            wsrc = f"index_n_heads({inh}) * index_head_dim({ihd}) —— 上界，未填 index_kv_dim"
+            status = "partial"
+            notes.append(
+                "indexer 缓存按 index_n_heads × index_head_dim 估，这是上界不是实际值："
+                "index K 通常在各 index 头之间共享，实际宽度要取产出张量（indexer.wk 或 "
+                "indexer.compressor.wkv）的输出维，填进 sparse.index_kv_dim")
         comp["indexer"] = {
-            "layers": ilayers, "bytes_per_token": inh * ihd * b * ilayers,
-            "terms": {"formula": f"index_n_heads({inh}) * index_head_dim({ihd}) * bytes * "
-                                 f"{'index_source_layers' if isrc else 'layers'}({ilayers})"},
+            "layers": ilayers, "width": width, "bytes_per_token": width * b * ilayers,
+            "terms": {"formula": f"{wsrc} * bytes * "
+                                 f"{src_kind if isrc else 'layers'}({ilayers})"},
         }
 
     # --- 逐层压缩比表达不了，降级而不是替人折算

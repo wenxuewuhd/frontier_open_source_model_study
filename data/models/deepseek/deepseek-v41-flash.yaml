@@ -52,7 +52,7 @@ lineage:
         新增跨层 KV 共享 kv_source_layer_ids [2,8,14,20]，逐层压缩比随之降到 1–2
         （前代是沿层交替 4/128）—— 从「每层重压缩」换成「少数层产出、多数层共享」
       benefit: >-
-        KV 随层数增长这条被切断。1M 上下文下注意力显存 36.5 GiB，
+        KV 随层数增长这条被切断。1M 上下文下注意力显存 5.5 GiB，
         而按通用 MLA 公式乘 40 层会算出十倍的数
     - axis: moe
       text: >-
@@ -147,6 +147,11 @@ arch:
       mechanism: indexer 打分选块，再在选中的块上做全注意力
       index_n_heads: 32
       index_head_dim: 128
+      index_kv_dim: 128
+      index_kv_source: >-
+        layers.N.attn.indexer.wk.weight [128, 512]，输出维 128（仅第 2/8/14/20 层）。
+        index K 在 32 个 index 头之间共享，只有查询侧 indexer.wq_b [4096, 1280] 是逐头的
+        （4096 = 32×128）。k_norm [128] 也只有一份，佐证同一结论
       index_topk: 512
       candidate_source_layer: 20
       candidate_topk_blocks: 2048
@@ -288,9 +293,9 @@ bottlenecks:
     finding: >-
       长上下文的 KV 大头不是注意力本身，而是稀疏选块的索引缓存。
       主 KV 由 4 层产出并跨层复用，仅 4608 B/token；indexer K 由另外 4 层产出，
-      32768 B/token，占每 token 总量 37376 B 的 88%。
+      1024 B/token（4 层 × 128 维 × 2 B），占每 token 总量 5632 B 的 18%。
       容量规划要盯 index_kv_source_layers，而不是 kv_source_layers。
-    quantified: 1M 上下文单序列约 36.5 GiB（按 BF16 兜底精度算的上界；实际 KV 精度未披露）
+    quantified: 1M 上下文单序列约 5.5 GiB（按 BF16 兜底精度算的上界；实际 KV 精度未披露）
     visibility: public
   - dimension: operator-gap
     finding: >-
@@ -361,6 +366,8 @@ evidence:
   precision: official
   precision.quantization.packing_note: derived
   precision.quantization.block_size_note: derived
+  arch.attention.sparse.index_kv_dim: derived
+  arch.attention.sparse.index_kv_source: derived
   arch.attention.attn_sink: derived
   arch.attention.kv_sharing.index_kv_source_layers: derived
   arch.attention.kv_sharing.index_rescore_layers: derived
@@ -442,11 +449,11 @@ review:
     severity: unsupported
     claim: 跨层 KV 共享叠加逐层压缩把 1M 上下文的 KV 压到可接受范围
     finding: >-
-      功劳归错对象。修正后每 token 37376 B 里，indexer K 占 32768 B（88%），
+      功劳归错对象。（后续 R27 又把 indexer 宽度修正了 32 倍：每 token 实为 5632 B，indexer 占 1024 B。）
       而它既不受 kv_source_layers 影响也不在 compress_ratios 作用域内。
       另外「可接受范围」没有数值，是把需要前提的判断写成了结论。
     resolution: corrected
-    changed_to: 改为指出容量瓶颈在 index_kv_source_layers，并给出 1M 下约 36.5 GiB 的数
+    changed_to: 改为指出容量瓶颈在 index_kv_source_layers；其中的绝对数后由 R27 再次修正
   - id: R7
     field: bottlenecks[2]
     severity: unsupported
@@ -577,7 +584,7 @@ review:
     finding: >-
       有二手材料称滑窗 KV、主 KV 与 indexer 各用不同的低位格式，均远小于 BF16，
       但该材料自身存在与权重清单矛盾之处，不足采信。
-      当前 37376 B/token 与 36.5 GiB@1M 都是按 BF16 兜底算的上界。
+      当前 5632 B/token 与 5.5 GiB@1M 都是按 BF16 兜底算的上界。
     resolution: open
   - id: R22
     field: arch.attention.qk_rope_head_dim
@@ -588,6 +595,26 @@ review:
       qk_rope_head_dim=64 可能是 512 维之内的一段切片而非额外维度。
       若是切片，每层应为 1024 B 而非 1152 B，当前值高约 12.5%。
     resolution: open
+
+  # —— 第三轮：注意力专项核查（2026-10-29，全量权重清单到手后）
+  - id: R27
+    field: arch.attention.sparse.index_kv_dim
+    severity: wrong
+    claim: 每 token 注意力显存 37376 B（其中 indexer 4 层 32768 B），1M 上下文 36.5 GiB
+    finding: >-
+      indexer 缓存宽度按 index_n_heads × index_head_dim = 32×128 = 4096 算，
+      但 index K 在各 index 头之间共享：产出它的 indexer.wk.weight 是 [128, 512]，
+      输出维只有 128；k_norm 也只有一份 [128]。逐头的是查询侧
+      indexer.wq_b [4096, 1280]（4096 = 32×128）。
+      indexer 实际是 4 层 × 128 × 2 B = 1024 B/token，不是 32768 —— 高估 32 倍。
+      全量：4608（全注意力 4 层 × 576 × 2）+ 1024 = 5632 B/token，1M 上下文 5.5 GiB。
+      R1/R2 那一轮改对了「哪些层产出 K」（8→4），却没质疑每层的宽度，
+      所以 37376 这个数本身仍然高 6.6 倍。同一个公式查两遍，第一遍只看了一个因子。
+    resolution: corrected
+    changed_to: >-
+      新增 sparse.index_kv_dim（实测宽度）与 index_kv_source（出处），
+      derive.py 优先用实测值；拿不到时才用乘积上界并标 partial。
+      per_token_bytes 37376 -> 5632
 
   # —— 第二轮：量化精度专项核查（2026-10-29）
   - id: R23
@@ -651,7 +678,7 @@ notes: >-
 open_questions:
   - 训练精度未在 config 或模型卡中披露，暂不填 precision.training
   - >-
-    precision.kv_cache 未确认（核查 R21）。当前 37376 B/token 与 1M 下 36.5 GiB
+    precision.kv_cache 未确认（核查 R21）。当前 5632 B/token 与 1M 下 5.5 GiB
     都是按模型 dtype BF16 兜底算的上界，不可直接引用
   - >-
     arch.attention.qk_rope_head_dim 是否在 latent 512 维之内尚未确认（核查 R22）。

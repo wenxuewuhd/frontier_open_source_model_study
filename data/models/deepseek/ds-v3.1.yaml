@@ -29,9 +29,7 @@ lineage:
     benefit: scale 是纯 2 的幂次，反量化从浮点乘退化成指数加。但要注意声明与存储是两步走的：这一代 scale 张量还是 FP32，到 V4 才真的换成 8 bit 的 F8_E8M0。按「声明
       ue8m0 就是 8 bit 存储」去算 scale 张量大小，这一代会算小 4 倍
 params:
-  counting_note: 本记录未取权重清单（facts 下只有张量名、没有形状与 dtype），所以不报参数量。DeepSeek 自 V3 起以 FP8 块量化发布、V4 起路由专家再降到
-    FP4 两个一字节打包，按 safetensors 的 numel 直接求和会把参数量少算一半 —— 没有 dtype 就没有可信总量。要出总量需用 scripts/fetch_hf.py
-    不带 --names-only 重取。
+  counting_note: 未单独取全量权重清单：本版张量名集合与 ds-v3 逐个相同、逐子系统 dtype 也一致，参数量必然相同，见该记录。重复取一遍只是把同一个数算两遍。
 context:
   max: 163840
   train_native: 4096
