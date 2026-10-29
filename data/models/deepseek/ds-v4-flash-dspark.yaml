@@ -145,6 +145,22 @@ precision:
     weight_format: e4m3
     scale_format: ue8m0
     expert_dtype: FP4
+    per_subsystem:
+      expert: FP4
+      shared_expert: FP8_E4M3
+      attention: FP8_E4M3
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+      residual: FP32
+      draft: FP4
+    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 14 个分片头
+    per_subsystem_scale:
+      expert: FP8_E8M0
+      shared_expert: FP8_E8M0
+      attention: FP8_E8M0
+      draft: FP8_E8M0
 infra_signals:
 - text: DSpark 把草稿头从「再跑一层 transformer」换成 markov head + 置信度门控，一次出 5 个 token。草稿侧的算子与主干不同构，要单独排
   evidence: judgement
@@ -172,6 +188,9 @@ evidence:
   infra_signals: judgement
   notes: judgement
   open_questions: judgement
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  precision.quantization.per_subsystem_scale: derived
 notes: 只改投机解码头。值得单列是因为 DSpark 的 markov_head 与 confidence_head 是两类新算子，而且从这一版起一路带到 V4.1 旗舰。
 open_questions:
 - DSpark 的接受率没有公开数据，草稿收益待实测

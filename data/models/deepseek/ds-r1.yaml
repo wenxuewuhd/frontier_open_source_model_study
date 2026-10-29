@@ -71,6 +71,22 @@ precision:
     - 128
     - 128
     weight_format: e4m3
+    per_subsystem:
+      expert: FP8_E4M3
+      shared_expert: FP8_E4M3
+      attention: FP8_E4M3
+      dense_ffn: FP8_E4M3
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+      draft: BF16
+    per_subsystem_scale:
+      expert: FP32
+      shared_expert: FP32
+      attention: FP32
+      dense_ffn: FP32
+    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 9 个分片头
 evidence:
   id: official
   family: official
@@ -91,4 +107,7 @@ evidence:
   arch.ffn.type: derived
   precision: official
   notes: judgement
+  precision.quantization.per_subsystem: derived
+  precision.quantization.per_subsystem_scale: derived
+  precision.quantization.subsystem_method: derived
 notes: 影响最大的一代里，算子侧什么都没变。这条记录的用处正在于此 —— 能力跃迁与 infra 工作量不是一回事。

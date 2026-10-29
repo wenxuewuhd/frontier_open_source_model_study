@@ -455,7 +455,16 @@
             "per_subsystem": {
               "type": "object",
               "additionalProperties": { "$ref": "#/$defs/dtype" },
-              "description": "不同子系统精度不同时逐个写，如 expert / retrieval_table / attention"
+              "description": "逐子系统的权重精度，键用 data/schema/subsystems.json 里的 key。由 scripts/fetch_dtypes.py 从权重头实测，不要回填 config 声明值 —— 两者经常对不上"
+            },
+            "per_subsystem_scale": {
+              "type": "object",
+              "additionalProperties": { "$ref": "#/$defs/dtype" },
+              "description": "对应子系统的 scale 张量精度。和权重精度是两个值：V4 的专家权重是 FP4、scale 是 FP8_E8M0，只报一个会让反量化实现猜错"
+            },
+            "subsystem_method": {
+              "type": "string",
+              "description": "这组实测值是怎么来的（全量清单 / 抽样读了几个分片）。抽样只能回答精度，不能用于参数量统计"
             }
           }
         },

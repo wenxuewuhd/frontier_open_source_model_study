@@ -26,31 +26,15 @@ from math import prod
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib import dtypes  # noqa: E402
+from lib.subsystems import classify  # noqa: E402
 
-# 张量名 -> 子系统。顺序有意义，先匹配到的赢。
-SUBSYSTEM = [
-    ("retrieval", re.compile(r"engram|memory_table|retriev", re.I)),
-    ("vision", re.compile(r"vision|visual|vit\.|aligner|image_", re.I)),
-    ("audio", re.compile(r"audio|speech|whisper", re.I)),
-    ("draft", re.compile(r"mtp|draft|dspark|eagle", re.I)),
-    ("expert", re.compile(r"\.experts?\.\d+\.|\bexperts\.", re.I)),
-    ("shared_expert", re.compile(r"shared_expert", re.I)),
-    ("router", re.compile(r"\bgate\b|router|e_score|expert_bias", re.I)),
-    ("lm_head", re.compile(r"\blm_head\b|output_layer|^head\.weight$", re.I)),
-    ("embed", re.compile(r"embed_tokens|\bwte\b|embed_in|^embed\.weight$", re.I)),
-    ("attention", re.compile(r"attn|\bwq|\bwk|\bwv|\bwo\b|q_proj|k_proj|v_proj|o_proj|kv_[ab]|q_[ab]|indexer", re.I)),
-    ("dense_ffn", re.compile(r"mlp|ffn|gate_proj|up_proj|down_proj|w1|w2|w3", re.I)),
-    ("norm", re.compile(r"norm|\bln\b|layernorm", re.I)),
-]
+# 张量名 -> 子系统的归类在 lib/subsystems.py，fetch_dtypes.py 共用同一份 ——
+# 两边用不同的归类会让「参数量里的 expert」和「精度表里的 expert」指的不是同一批张量。
+
 _EXPERT_IDX = re.compile(r"experts?\.(\d+)\.", re.I)
 _LAYER_IDX = re.compile(r"layers?\.(\d+)\.", re.I)
 
 
-def classify(name: str) -> str:
-    for label, rx in SUBSYSTEM:
-        if rx.search(name):
-            return label
-    return "other"
 
 
 def numel(shape) -> float:

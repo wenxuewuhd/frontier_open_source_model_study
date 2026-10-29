@@ -403,19 +403,36 @@ export const TRACKED_FIELDS: TrackedField[] = [
     get: (m) => m.precision?.quantization?.activation_scheme },
   { key: 'expert_dtype', label: '路由专家精度（单独声明时）', axis: 'precision', group: 'precision',
     get: (m) => dtype(m.precision?.quantization?.expert_dtype) },
-  // 以下两项的有无取决于「取没取过含 dtype 的权重清单」，不取决于模型本身。
-  // 放进变化矩阵会把调研进度显示成模型变化，所以 diff: false。
-  { key: 'per_sub', label: '子系统精度（实测）', axis: 'precision', group: 'precision', diff: false,
-    get: (m) => {
-      const ps = m.precision?.quantization?.per_subsystem;
-      if (!ps) return undefined;
-      return Object.entries(ps).map(([k, v]) => `${k} ${v}`).join('；');
-    } },
-  { key: 'release_dtypes', label: '发布含的精度（实测）', axis: 'precision', group: 'precision', diff: false,
-    get: (m) => (m.precision?.weights_release ?? []).join(' / ') || undefined },
   { key: 'kv_dtype', label: 'KV 缓存精度', axis: 'precision', group: 'precision',
     get: (m) => dtype(m.precision?.kv_cache) },
 ];
+
+/**
+ * 子系统的顺序与中文名，和 scripts/lib/subsystems.py 读同一个文件。
+ * 在两种语言里各写一份，迟早会在加子系统时只改一边。
+ */
+export const SUBSYSTEMS: { key: string; label: string }[] = JSON.parse(
+  fs.readFileSync(path.join(DATA, 'schema', 'subsystems.json'), 'utf8'),
+).subsystems;
+
+/**
+ * 逐子系统的实测精度行。
+ *
+ * 和 TRACKED_FIELDS 分开，因为这些行的有无取决于「取没取过 dtype 抽样」，
+ * 不取决于模型本身 —— 放进变化矩阵会把调研进度显示成模型变化。
+ * 只返回至少有一个版本测到过的子系统，避免整行空白。
+ */
+export function subsystemRows(models: Model[]) {
+  const val = (m: Model, key: string) => m.precision?.quantization?.per_subsystem?.[key];
+  return SUBSYSTEMS.filter((s) => models.some((m) => val(m, s.key) !== undefined)).map((s) => ({
+    ...s,
+    cells: models.map((m) => ({
+      model: m,
+      dtype: val(m, s.key) as string | undefined,
+      scale: m.precision?.quantization?.per_subsystem_scale?.[s.key] as string | undefined,
+    })),
+  }));
+}
 
 /**
  * 逐版本的字段级变化：拿每份记录和它 lineage.predecessor 指的那份比。

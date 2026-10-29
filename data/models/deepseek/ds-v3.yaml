@@ -80,6 +80,22 @@ precision:
     - 128
     - 128
     weight_format: e4m3
+    per_subsystem:
+      expert: FP8_E4M3
+      shared_expert: FP8_E4M3
+      attention: FP8_E4M3
+      dense_ffn: FP8_E4M3
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+      draft: BF16
+    per_subsystem_scale:
+      expert: FP32
+      shared_expert: FP32
+      attention: FP32
+      dense_ffn: FP32
+    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 9 个分片头
 infra_signals:
 - text: FP8 块量化 [128,128] + 逐张量 weight_scale_inv 成为之后所有代的底座，块大小与 scale 格式在 V3.1 和 V4.1 两次收紧
   evidence: judgement
@@ -106,6 +122,9 @@ evidence:
   infra_signals: judgement
   notes: judgement
   open_questions: judgement
+  precision.quantization.per_subsystem: derived
+  precision.quantization.per_subsystem_scale: derived
+  precision.quantization.subsystem_method: derived
 notes: FP8 发布与无辅助损失路由都是从这一代开始的，两者都直接改算子：前者让权重 GEMM 变成带 scale 的块量化 GEMM，后者在 router 里加一条偏置加法。
 open_questions:
 - 未取权重清单，FP8 之外有哪些张量保持 BF16 待核

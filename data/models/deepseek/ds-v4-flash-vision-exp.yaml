@@ -161,6 +161,23 @@ precision:
     weight_format: e4m3
     scale_format: ue8m0
     expert_dtype: FP4
+    per_subsystem:
+      expert: FP4
+      shared_expert: FP8_E4M3
+      attention: FP8_E4M3
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+      residual: FP32
+      draft: FP4
+      vision: BF16
+    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 11 个分片头
+    per_subsystem_scale:
+      expert: FP8_E8M0
+      shared_expert: FP8_E8M0
+      attention: FP8_E8M0
+      draft: FP8_E8M0
 infra_signals:
 - text: 分模态路由偏置让 router 从「一套偏置」变成「按 token 模态选偏置」，融合实现要多带一个输入
   evidence: judgement
@@ -188,6 +205,9 @@ evidence:
   infra_signals: judgement
   notes: judgement
   open_questions: judgement
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  precision.quantization.per_subsystem_scale: derived
 notes: 多模态入口。两个容易漏的点：视觉塔的 attention 用融合 wqkv 且带 bias（和主干不同构），以及 router 从此有两套偏置。
 open_questions:
 - 视觉 token 与文本 token 在 decode 下如何共享 router，未见公开说明

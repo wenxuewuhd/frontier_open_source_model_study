@@ -61,6 +61,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python scripts/fetch_hf.py <org/repo> --id <模型id>
 .venv/bin/python scripts/fetch_hf.py <org/repo> --id <模型id> --names-only   # 只要张量名，用于跨版本结构比对
 .venv/bin/python scripts/scaffold.py --id <模型id> --family <家族> --repo <org/repo>  # 从 config 生成草稿
+.venv/bin/python scripts/fetch_dtypes.py --id <模型id> --repo <org/repo>  # 逐子系统测精度，只读最小分片集
+.venv/bin/python scripts/apply_dtypes.py                                  # 写进记录，已有值时只比对
 .venv/bin/python scripts/derive.py --id <模型id> --model data/models/<家族>/<模型id>.yaml --ep 4
 .venv/bin/python scripts/validate.py
 .venv/bin/python scripts/mk_ops_table.py <算子表.yaml>
@@ -86,7 +88,7 @@ Astro 静态站，直接读 `data/` 下的 YAML 与 derived JSON，**不另定�
 | 变化矩阵 | 维度 × 版本，格子里是「字段：旧值 → 新值」 | `changesFor` 逐字段比两份记录，不经过任何人写的文字 |
 | 逐维度演进 | 改了什么 + **为什么改**（收益与代价） | `lineage.changed_from_predecessor` 的 `text` / `benefit` |
 | 规格对照 | 各版本关键规格 | `arch` / `context` |
-| 精度对照 | 量化这条独立的线 | `precision` |
+| 精度对照 | 量化这条独立的线 + **逐子系统的实测精度** | `precision`，子系统行来自 `fetch_dtypes.py` |
 
 三条规则，都是被实际错误逼出来的：
 
@@ -212,3 +214,44 @@ schema 由刻意选得差异最大的几个用例撑出来，而不是从一个�
 顺带还补上了 V4 线六份记录缺的 `attn_sink`：它只存在于权重里，config 没有这个开关，而矩阵在「attention sink 有 → 取消」这种不可能的变化上把缺口显了出来。
 
 **圆点能通过校验，因为它不声称任何具体值。** 一旦要求写出从什么变成什么，错误就必须现形。
+
+#### 按子系统测精度：不读全量清单也能回答
+
+「这个模型的专家是什么精度、注意力是什么精度」不需要全部张量的形状 —— 每个子系统拿一个代表张量就够。`fetch_dtypes.py` 因此只读**覆盖代表张量的最小分片集**：
+
+```bash
+.venv/bin/python scripts/fetch_dtypes.py --id ds-v3 --repo deepseek-ai/DeepSeek-V3
+#   ds-v3: 91991 个张量 / 9 个子系统，读 5 个分片（全量是 163 个）
+.venv/bin/python scripts/apply_dtypes.py      # 写进记录；已有值时只比对不覆盖
+```
+
+归类用 `scripts/lib/subsystems.py`，**和 `derive.py` 共用同一份** —— 两边用不同的归类，会让「参数量里的 expert」和「精度表里的 expert」指的不是同一批张量。展示顺序与中文名在 `data/schema/subsystems.json`，Python 和站点读同一个文件。
+
+挑代表张量的办法换过两次，两次都是被错误结果逼的：
+
+1. **按名字长度挑 → 选中了 `.scale`。** `layers.0.ffn.experts.0.w1.scale` 比 `.weight` 短，于是整条 V4 线的专家精度被报成 `FP8_E8M0` —— 报的是 scale 的精度。改成权重与 scale 分开挑，各报各的（专家是 FP4 权重 + FP8_E8M0 scale，只报一个会让反量化实现猜错）。
+2. **仍按名字长度挑 → 选中了 `attn_sink`。** 它是 `[64]` 的可学习向量，FP32，比 `attn.wkv.weight` 短。于是「注意力精度」报成 FP32。改成**读完分片之后按张量大小挑** —— 子系统里最大的那个才是带宽与存储的主体，也才是精度表该报的那个。
+
+同时修了归类顺序的两处：`attn_norm` / `ffn_norm` 要先归 norm（带 norm 的就是归一化，没有例外），`hc_attn_*` / `hc_ffn_*` 要先归 residual（mHC 系数不是注意力也不是 FFN，而且是 FP32，混进去会把那两项的精度带偏）。修完 V4-Flash 的 `dense_ffn` 这一类就正确地消失了 —— 它 43 层全是 MoE，本来就没有稠密 FFN。
+
+挑代表张量的办法最后定成**按元素数加权的多数**：带宽主体说了算，又不会被少数异类翻盘。占比低于 60% 记 `MIXED`，各 dtype 的占比留在 `facts/` 里。
+
+结果写 `facts/<id>/subsystem_dtypes.json`，**不进 `shapes.json`**：抽样只能回答精度，拿去算参数量会静默少算。`apply_dtypes.py` 对已有 `per_subsystem` 的记录默认只比对不覆盖 —— 抽样和全量清单不一致时，该是人去看为什么，而不是让抽样把全量盖掉。
+
+两道自检都过了：
+
+- **抽样 vs 全量**：V4.1-Flash 的 `per_subsystem` 是早先从完整清单（48 分片 96085 张量）逐项核出来的。抽样只读 14 个分片，**11 项全部吻合**。
+- **同架构版本之间**：V3 vs R1、V3.2 vs V3.2-Exp、V4-Flash-DSpark vs 0731、V4.1-Flash vs 1017 —— 四对「张量名完全一致」的版本，逐子系统的权重精度与 scale 精度全部一致。有一对一开始对不上，查出来是其中一个的抽样跑挂了（`head -1` 把 traceback 吃掉了），留着旧结果。
+
+#### 两件只有 dtype 看得见的事
+
+**一、`scale_fmt: ue8m0` 不等于 scale 存成 8 bit。** V3.1 起 config 声明 `scale_fmt: ue8m0`，但实测 scale 张量**仍是 FP32** —— ue8m0 在那几代约束的是取值（2 的幂次），不是容器。到 V4 才真的换成 8 bit 的 `F8_E8M0`：
+
+| | V3 | V3.1 | V3.2 | V4-Flash | V4.1-Flash |
+|---|---|---|---|---|---|
+| config `scale_fmt` | — | ue8m0 | ue8m0 | ue8m0 | ue8m0 |
+| scale 张量实测 dtype | FP32 | **FP32** | **FP32** | FP8_E8M0 | FP8_E8M0 |
+
+按「声明 ue8m0 就是 8 bit 存储」去算 scale 张量大小，V3.1–V3.2 会算小 4 倍。
+
+**二、V3.2-Exp 把所有 layernorm 权重从 BF16 提到了 FP32。** config 没有这个信息，张量名也和 V3.1 逐个相同 —— 只有 dtype 看得出来（`input_layernorm` / `post_attention_layernorm` 占比 100%）。影响是 RMSNorm 变成混合精度算子：FP32 权重配 BF16 激活，按「norm 权重与激活同 dtype」写的核会直接读错。

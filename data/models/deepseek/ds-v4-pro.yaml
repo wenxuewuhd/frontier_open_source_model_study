@@ -156,6 +156,22 @@ precision:
     weight_format: e4m3
     scale_format: ue8m0
     expert_dtype: FP4
+    per_subsystem:
+      expert: FP4
+      shared_expert: FP8_E4M3
+      attention: FP8_E4M3
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+      residual: FP32
+      draft: FP4
+    per_subsystem_scale:
+      expert: FP8_E8M0
+      shared_expert: FP8_E8M0
+      attention: FP8_E8M0
+      draft: FP8_E8M0
+    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 12 个分片头
 infra_signals:
 - text: 同代 Flash / Pro 只差规格不差算子。算子表可共用，只换形状参数
   evidence: judgement
@@ -183,6 +199,9 @@ evidence:
   infra_signals: judgement
   notes: judgement
   open_questions: judgement
+  precision.quantization.per_subsystem: derived
+  precision.quantization.per_subsystem_scale: derived
+  precision.quantization.subsystem_method: derived
 notes: 张量名集合是 V4-Flash 的超集（只是层数与专家数更多），无新增算子类型。同日发布的大号版本，适合用来区分「规格变化」与「机制变化」。
 open_questions:
 - 未取权重清单，参数量待补

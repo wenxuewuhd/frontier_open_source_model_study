@@ -96,6 +96,20 @@ evidence:
   infra_signals: judgement
   notes: judgement
   open_questions: judgement
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
 notes: 谱系起点。MLA 的两段式（下投影存 latent、上投影复原 KV）在这里定型，一直用到 V3.2；V4 把上投影彻底去掉。
 open_questions:
 - 未取权重清单，参数量与各子系统占比待补
+precision:
+  quantization:
+    per_subsystem:
+      expert: BF16
+      shared_expert: BF16
+      attention: BF16
+      dense_ffn: BF16
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 5 个分片头

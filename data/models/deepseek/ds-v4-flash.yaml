@@ -45,8 +45,10 @@ lineage:
     text: 新增 mHC 残差：残差流扩成 4 份并行拷贝（hc_mult 4），每层带 hc_attn_* / hc_ffn_* 系数，lm_head 前另有一组 hc_head_*
     benefit: 残差流变 4 份，等效加深信息通路而不加层数。代价对 infra 非常直接：所有逐元素算子、norm、残差加法的形状都乘 4，激活显存同步放大
   - axis: precision
-    text: 路由专家权重降到 FP4（expert_dtype fp4），非专家仍 FP8；scale 张量后缀由 weight_scale_inv 改为 scale
-    benefit: 专家占了绝大部分权重，降到 FP4 把权重存储与带宽再砍一半。代价是 FP4 两个一字节打包，参数量、带宽账、EP 切分三处都要先解包
+    text: 路由专家权重降到 FP4（expert_dtype fp4），非专家仍 FP8_E4M3；scale 张量后缀由 weight_scale_inv 改为 scale，**存储也真的换成了
+      8 bit 的 F8_E8M0**（V3.1 起声明 ue8m0，但那几代的 scale 张量实测仍是 FP32）
+    benefit: 专家占了绝大部分权重，降到 FP4 把权重存储与带宽再砍一半；scale 同时从 FP32 收到 8 bit，省掉的 scale 带宽在块变小的时候尤其值钱。代价是 FP4
+      两个一字节打包，参数量、带宽账、EP 切分三处都要先解包
   - axis: context
     text: 163840 → 1048576，原生训练长度 65536
     benefit: 原生 64K 外推到 1M。这个长度只有配合稀疏注意力与逐层压缩才算得动，三件事是一套而不是三件独立的改动
@@ -165,6 +167,22 @@ precision:
     weight_format: e4m3
     scale_format: ue8m0
     expert_dtype: FP4
+    per_subsystem:
+      expert: FP4
+      shared_expert: FP8_E4M3
+      attention: FP8_E4M3
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+      residual: FP32
+      draft: FP4
+    per_subsystem_scale:
+      expert: FP8_E8M0
+      shared_expert: FP8_E8M0
+      attention: FP8_E8M0
+      draft: FP8_E8M0
+    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 12 个分片头
 infra_signals:
 - text: MLA → MQA-on-latent 是整条线上最值得注意的反转：V2 用上投影换带宽，V4 又把它去掉。沿用 MLA 的注意力算子会直接对不上权重
   evidence: judgement
@@ -200,6 +218,9 @@ evidence:
   infra_signals: judgement
   notes: judgement
   open_questions: judgement
+  precision.quantization.per_subsystem: derived
+  precision.quantization.per_subsystem_scale: derived
+  precision.quantization.subsystem_method: derived
 notes: 谱系里最大的一次不连续，几乎每个维度都动了。对 infra 最要紧的是三件：KV 上投影消失（注意力算子换签名）、专家降到 FP4（打包存储，参数量不能直接求和）、mHC 把残差流宽度乘
   4（所有逐元素算子的形状都变）。另外 attn_sink 与 hash 路由层都不在 config 里，只能从权重清单发现。
 open_questions:

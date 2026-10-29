@@ -1,0 +1,19 @@
+{
+  "$comment": "子系统的展示顺序与中文名。Python 侧由 scripts/lib/subsystems.py 读取，站点侧由 site/src/lib/data.ts 读取 —— 一份定义，两边不会漂移。顺序按对带宽账的分量从大到小，不是字母序。归类用的正则在 subsystems.py 里，那是行为不是展示，不放在这。",
+  "subsystems": [
+    { "key": "expert", "label": "路由专家" },
+    { "key": "shared_expert", "label": "共享专家" },
+    { "key": "attention", "label": "注意力" },
+    { "key": "retrieval", "label": "检索表" },
+    { "key": "dense_ffn", "label": "稠密 FFN" },
+    { "key": "router", "label": "路由器" },
+    { "key": "embed", "label": "输入词表" },
+    { "key": "lm_head", "label": "输出头" },
+    { "key": "norm", "label": "归一化" },
+    { "key": "residual", "label": "残差系数" },
+    { "key": "draft", "label": "草稿 / MTP" },
+    { "key": "vision", "label": "视觉塔" },
+    { "key": "audio", "label": "音频" },
+    { "key": "other", "label": "其他" }
+  ]
+}

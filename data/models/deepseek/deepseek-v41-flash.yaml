@@ -220,7 +220,7 @@ precision:
       expert: FP4
       draft: FP4
       attention: FP8_E4M3
-      retrieval_table: FP8_E4M3
+      retrieval: FP8_E4M3
       shared_expert: FP8_E4M3
       embed: BF16
       lm_head: BF16
@@ -228,6 +228,18 @@ precision:
       router: BF16
       norm: BF16
       residual: FP32
+    # scale 张量的精度和权重精度是两个值：FP4 权重配 FP8_E8M0 的 scale。
+    # 只报一个会让反量化实现猜错 scale 张量的大小
+    per_subsystem_scale:
+      expert: FP8_E8M0
+      shared_expert: FP8_E8M0
+      attention: FP8_E8M0
+      retrieval: FP8_E8M0
+      draft: FP8_E8M0
+    subsystem_method: >-
+      per_subsystem 来自完整权重清单（48 分片 96085 张量）逐项核对；
+      per_subsystem_scale 由 fetch_dtypes.py 抽样读 14 个分片头得出，
+      与 ds-v4.1-flash-1017（config 逐字段相同的日期版）独立测得的 11 项完全一致
     packing_note: >-
       FP4 权重打包进 INT8 容器，每字节两个。工具据 per_subsystem 的逻辑精度
       与实际容器类型自动还原参数量；字节数不还原，容器就是真实存储。

@@ -177,6 +177,25 @@ precision:
     - 32
     scale_format: ue8m0
     expert_dtype: FP4
+    per_subsystem:
+      expert: FP4
+      shared_expert: FP8_E4M3
+      attention: FP8_E4M3
+      retrieval: FP8_E4M3
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+      residual: FP32
+      draft: FP4
+      vision: BF16
+    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 14 个分片头
+    per_subsystem_scale:
+      expert: FP8_E8M0
+      shared_expert: FP8_E8M0
+      attention: FP8_E8M0
+      retrieval: FP8_E8M0
+      draft: FP8_E8M0
 evidence:
   id: official
   family: official
@@ -197,4 +216,7 @@ evidence:
   arch.ffn.type: derived
   precision: official
   notes: judgement
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  precision.quantization.per_subsystem_scale: derived
 notes: V4.1-Flash 的日期版。架构零差异，算子表可直接套用旗舰那份。

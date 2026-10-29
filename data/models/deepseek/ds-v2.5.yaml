@@ -86,4 +86,18 @@ evidence:
   arch.ffn.type: derived
   infra_signals: judgement
   notes: judgement
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
 notes: 合并版（Chat + Coder）。对算子清单没有任何影响，收录是为了让「哪些版本不需要 infra 动作」也能一眼看出来。
+precision:
+  quantization:
+    per_subsystem:
+      expert: BF16
+      shared_expert: BF16
+      attention: BF16
+      dense_ffn: BF16
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 5 个分片头

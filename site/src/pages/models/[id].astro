@@ -4,8 +4,12 @@ import Evidence from '../../components/Evidence.astro';
 import Facts from '../../components/Facts.astro';
 import {
   allModels, modelById, url, fmtCount, fmtBytes, fmtInt, fmtSci, FAMILY_LABEL,
-  reviewStatus, SEVERITY_LABEL, RESOLUTION_LABEL, HORIZON_LABEL,
+  reviewStatus, SEVERITY_LABEL, RESOLUTION_LABEL, HORIZON_LABEL, SUBSYSTEMS,
 } from '../../lib/data';
+
+const SUBSYSTEM_LABEL: Record<string, string> = Object.fromEntries(
+  SUBSYSTEMS.map((s) => [s.key, s.label]),
+);
 
 export function getStaticPaths() {
   return allModels().map((m) => ({ params: { id: m.id } }));
@@ -359,14 +363,23 @@ const rv = reviewStatus(m);
         { label: '量化方法', value: q.method, path: 'precision.quantization' },
         { label: '激活量化', value: q.activation_scheme, path: 'precision.quantization' },
         { label: 'block 大小', value: q.weight_block_size, path: 'precision.quantization', mono: true },
+        { label: '权重元素格式', value: q.weight_format, path: 'precision.quantization', mono: true },
         { label: 'scale 格式', value: q.scale_format, path: 'precision.quantization', mono: true },
         {
-          label: '分子系统精度',
+          label: '分子系统精度（实测）',
+          // 权重精度与 scale 精度要并排看：FP4 权重配 FP8_E8M0 的 scale，
+          // 只看一个会让反量化实现猜错 scale 张量的大小
           value: q.per_subsystem
-            ? Object.entries(q.per_subsystem).map(([k, v]) => `${k}=${v}`).join('，')
+            ? Object.entries(q.per_subsystem)
+                .map(([k, v]) => {
+                  const sc = q.per_subsystem_scale?.[k];
+                  return `${SUBSYSTEM_LABEL[k] ?? k} ${v}${sc ? ` / ${sc}` : ''}`;
+                })
+                .join('，')
             : undefined,
           path: 'precision.quantization',
         },
+        { label: '实测方式', value: q.subsystem_method, path: 'precision.quantization' },
       ]}
     />
     {q.packing_note && <p class="small muted">{q.packing_note}<Evidence tag="derived" /></p>}
