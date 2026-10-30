@@ -6,12 +6,27 @@
 ## 一眼看清
 
 ```
-main            babf717   未推 21
-记录            49 份     六个语言模型家族 + M3.1-Flash 支线 + **第一份视频生成记录**
-逐层产物        6 份      六个旗舰全有（原先只有 deepseek）
+记录            54 份     六个语言模型家族 + M3.1-Flash 支线 + **视频生成 6 份**
+视频线          6 / 12    wan ×3、minimax-h3、ltx ×2；hunyuan-1.5 在录
+逐层产物        6 份      六个旗舰全有
 注意力架构图    5 张      差 minimax-m3 一张
-闸口            五道      全绿（validate 0 错 0 警 / 回归 32 / kv_table / 站点 63 页 / check_rendered）
+闸口            六道      全绿（validate 0 错 0 警 / 回归 39 / kv_table / 站点 70 页 /
+                          check_rendered / **字段消费点棘轮**）
 ```
+
+**验闸口要在临时 worktree 上跑。** 主 checkout 同时有好几个会话在写未提交的东西，
+直接跑五道闸全是别人半成品的噪声，会把真错盖住（已经发生过两次，我因此误判过一次归因）：
+
+```bash
+R=$PWD; T=<scratch>/verify
+git worktree add --detach $T HEAD -q
+ln -s $R/.venv $T/.venv; ln -s $R/facts $T/facts; ln -s $R/site/node_modules $T/site/node_modules
+(cd $T && python scripts/validate.py; ...; cd site && npx astro build)
+git worktree remove --force $T
+```
+
+软链要用**绝对路径**（worktree 在 scratchpad 里，不是仓的兄弟目录），
+`site/node_modules` 那个尤其容易错：相对目标按软链自己所在目录解析。
 
 **告警归零了**（原先那 2 条 basis 标签表的告警见下面「做完了的」最后一行）。
 
@@ -36,6 +51,11 @@ main            babf717   未推 21
 | **视频线 policy 与名册** | 8 个 family / 12 份进 `tracking.yaml`，与语言模型那条并列 |
 | **首录 wan2.2-ti2v-5b** | 本仓第一份 `kind: video-gen`，Gate B 两路 0 处不一致。三条口径判断定在这份记录的头注释里 |
 | **`weights_release_scope` 拆字段** | `measured` 一个布尔压着「取没取过数」与「进没进精度表」两件事，M3-MXFP8 只能填 false，**字段在说反话**。拆成 `manifest_taken` / `in_precision_table`，42 份 84 个条目，四个负例实跑都红 |
+| **视频线首批 6 份** | wan ×3、minimax-h3、ltx ×2。Gate B 两路对账全部 0 处不一致 |
+| **生成负载进页面** | derive 一直在算 `generation_workload`，页面一个字没读。序列长度 / 单步 FLOPs 拆分 / 逐因子推导表 / 两个时间压缩率现在都看得见 |
+| **`latent_frames` 声明优先** | H3 是 17n+5（厂商 VAE 实现 + 14 个官方样片验），公式给 61.5、真值 72。token 低 17% 经 O(n²) 放大成注意力低 31% |
+| **读 config 收口** | `lib/cfgio.py` 一个入口。量化声明**跟着模态走**：纯文本在顶层、VLM 嵌 `text_config` 下，所以只读顶层的新代码每多一份 VLM 就多漏一份 |
+| **第六道闸：字段消费点棘轮** | schema 的字段站点上得有人读。当前欠 47 个（基本是整个 `generation` 块） |
 | **M3.1-Flash（原 B1）** | 录为支线。顺带修掉三个页面早就印着的字面量 `undefined`（五道闸当时全绿） |
 | **LayerMap 三修** | 零 MTP 块的轨道错位（`repeat(0,…)` 被钳成 1）、`DT` 补 `MXFP4`、**`recurrent_state` 进表**。第三条原被当成「图的口径限制」，实际是 kimi 93 层里 69 层的缓存去向在表上不存在、而每 token 合计看着像覆盖全部层 |
 
@@ -102,6 +122,14 @@ main            babf717   未推 21
   名字跨组件重叠（`transformer` ∩ `transformer_full` 4091 个同名）。组件维度得来自
   分片路径 / `weight_map`，而那个信息现在没进 `shapes.json`。
   顺带：**扁平字典装同名张量会静默覆盖**，这次因为两份是相同副本所以没丢数，是运气。
+- **C7 残差与 Q 低秩两列共 52 格说「未录」** —— 残差 39 格、Q 低秩 13 格。
+  **不能靠 derived 自动判**：清单里没有残差张量推不出「普通残差相加」，
+  MiniMax 那两份就是没有权重的非常规残差（系数是 config 标量）。
+  判据要两路合一（清单无张量 **且** config 无残差系数键），而规则 DSL
+  读不到 config（`src` 只有 rec / derived）。Q 低秩那 13 份建议逐族系确认。
+- **C8 整个 `generation` 块没有消费点** —— 第六道闸报的 47 个欠账基本都在这里：
+  VAE 规格、音频、文本编码器、采样口径、尺寸约束、checkpoint 矩阵全录了，
+  页面上只渲染了由它们**推出来的**负载。还掉之后把棘轮收紧。
 - **C3 第一批三份录入** —— `wan2.2-ti2v-5b` → `minimax-h3` → `magi-2-preview`，第三份依赖 A3b。
 - **C4 视频线的 policy 与语言模型线不同** —— 「每个 family 追最新旗舰 + 一个差分基线；
   VAE 或注意力形态变了的同代档位单独录」。要写进 `tracking.yaml` 的 policy，
@@ -229,7 +257,33 @@ main            babf717   未推 21
 13. **派活时给的背景也要当待验证的东西** —— 我给 p1-minimax 的三条前提里有一条是反的
     （说 M3.1-Flash 的 MTP 被去掉，实际发了 1.96B 的 DSpark 草稿模块）。
     它查出来并顶了回来，这是对的。**brief 里的「已知」不比记录里的断言更可信。**
-14. **脚本「什么都没产出」却返回 0** —— `extract_layers.py` 对五个旗舰各产出 0 层，
+14. **字段加了、没人读** —— **一天四次**：`weights_release_scope` 一处不渲染、
+    `bottlenecks.fix` 不走 Prose、`generation_workload` 整块没消费点、
+    `group_size` 加完没有列。**第四个是我诊断完前三个之后自己造的。**
+    加字段时只想「schema 收得下」，没问「谁读它」。
+    已做成第六道闸（棘轮），但闸只挡新增，存量 47 个要人去还。
+15. **断言「A 当且仅当 B」只验了一个方向** —— p1-kimi 查「有 derived 残差信号的是不是
+    都填了字段」（7/7 成立）就报「两边 100% 一致、零例外」，反方向没查，
+    而反例（填了字段却无张量的两份 minimax）**就在它自己上一条命令的输出里**。
+    那两份是「没有权重的非常规残差」，照那条规则会把 39 格标成「确认无」。
+    **可执行的办法**：`sorted(A - B)` 与 `sorted(B - A)` 两行都跑、都打印，缺一行不许说「零例外」。
+16. **写死名单的回归用例** —— **一天三条**（KV 两条 + 「声明了而清单里没有」那条）。
+    每进一份新记录就红，而每次只能把数字或 id 加进去，用例什么也没守住。
+    **断言规律，不要断言人口普查**：按 kind / 按结构推期望，名单变了用例不用改。
+17. **「唯一 / 第一 / 零例外」这类断言有保质期** —— 两类要分开：
+    **过期**（写时对，后续记录让它失效，如我那句「全 F32 全仓独一份」）与
+    **当时就没核**（手边有全量数据却没去数，如 Qwen 的「INT4 首发」、
+    Gate A 的「Wan 是唯一宽松许可」）。后者更该防，它不需要任何事情发生就已经是错的。
+    写这类句子一律带**作用域与时点**。
+18. **小 diff 不等于对的 diff** —— 我拒绝 `json.dumps` 回写（会重排 1016 行），
+    改用定点插入得到 12 行，**结果八条里五条插到了别的列上**。固定窗口越过了列边界，
+    而没有任何闸口比对「规则的理由属不属于这一列」。
+    改用花括号配对定位，并**读回来双向验**（每列有自己的、且没有别列的）。
+19. **拿过期的状态去断言别人手上的情况** —— 我照一份旧的 `git status` 告诉 v-wan
+    「闸口失败是你那份半成品造成的」，而它早已提交并修好。同一轮还把一个
+    `preview_start` 的 cwd 问题归因成软链断了（纯猜，它用 lsof 坐实了真因）。
+    **别人手上的状态要现查，或者说清「截至我看到的那一刻」。**
+20. **脚本「什么都没产出」却返回 0** —— `extract_layers.py` 对五个旗舰各产出 0 层，
    只打一行 `!!` 就算成功（见 E1）。坑 #4 的同一张脸：**闸口和脚本都要能红**。
    新写一道检查时，先故意喂它一个坏输入，确认它真会非零退出 —— 这回给
    `check_stray_labels` 补的探针用例就是干这个的。
@@ -239,7 +293,10 @@ main            babf717   未推 21
 | 会话 | 分支 | 状态 |
 |---|---|---|
 | `p1-minimax` | `p1-minimax` | B1 已收工并入；**B2 还没做，minimax-m3 那张图也还没派** |
-| `p1-glm` `p1-kimi` `p1-qwen` `p1-stepfun` | 同名 | 已收工并入（E2 四张图） |
+| `p1-glm` `p1-qwen` `p1-stepfun` | 同名 | 已收工并入 |
+| `p1-kimi` | `p1-kimi` | 已收工并入（量化作用域专题、三态诊断） |
+| `v-wan` `v-ltx` | 同名 | 已收工并入（wan ×3 / ltx ×2） |
+| `gatea-video` | `v-minimax-h3` | **在录 hunyuan-video**；minimax-h3 已并 |
 | `e1-layers` | `main`（共用主 checkout，没单开 worktree） | 已收工（E1 直接提交在 main） |
 | `mm-infra` | `p3-vlm-infra` | 已收工并入，B4 归它 |
 | `presentation` | `p4-units` | 已收工并入 |
