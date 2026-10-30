@@ -73,8 +73,17 @@ def check_release_vs_measured(doc, path, derived_dir, errors):
     口径已经定了：**列厂商发布过的全部变体，每一项带「本仓取没取过数」的标记**
     （precision.weights_release_scope）。40 份带 weights_release 的记录已经全部迁完，
     所以这一条**从告警收紧成错误**：没交代又对不上，现在没有任何正当理由 ——
-    要么补 scope 说明在哪个仓（measured: false）或装在哪种容器里（container），
-    要么声明本身不对，两种都得有人动手。
+    要么补 scope 说明在哪个仓（in_precision_table: false）或装在哪种容器里
+    （container），要么声明本身不对，两种都得有人动手。
+
+    **这道闸认的是 in_precision_table，不是 manifest_taken。** 两者 2026-10-30 之前
+    是同一个 measured 布尔，而它同时背着「取没取过清单」与「进没进精度表」两件事。
+    本函数只关心后者：它比的是本记录 derived 的 weight_bytes_by_dtype，所以能为一种
+    精度的缺席作正当交代的，只有「它没进这张表」。前者是纯事实，与这道闸无关 ——
+    MiniMax-M3 的 MXFP8 清单取过却没进表，在旧字段下只能填 false，字段于是在说反话。
+
+    顺带查一条自相矛盾：in_precision_table 为真而 manifest_taken 为假 ——
+    没取过清单不可能有实测值进表，两个键拆开之后这种组合写得出来，所以得挡。
     """
     wr = ((doc.get("precision") or {}).get("weights_release")) or []
     mid = doc.get("id")
@@ -96,8 +105,8 @@ def check_release_vs_measured(doc, path, derived_dir, errors):
         return
 
     # weights_release_scope 一旦把某个变体交代清楚了，它就不再是「两种在字段上长得一样」
-    # 的那种情况 —— 有标记说明在独立仓（measured: false），或者说明是逻辑精度装在别的
-    # 容器里（container），都算交代过，放行。没标记的那些照旧报。
+    # 的那种情况 —— 有标记说明它没进这张精度表（in_precision_table: false），或者说明是
+    # 逻辑精度装在别的容器里（container），都算交代过，放行。没标记的那些照旧报。
     #
     # 这样 48 份可以一份一份迁移：每迁一份，它的告警当场消失，不必等全部迁完。
     # **全部迁完之后把下面的 warnings 改成 errors**，这一条就从提示变成闸 ——
@@ -106,7 +115,7 @@ def check_release_vs_measured(doc, path, derived_dir, errors):
     unexplained = []
     for v in missing:
         s = scope.get(v) or scope.get(str(v).upper()) or {}
-        if s.get("measured") is False or s.get("container"):
+        if s.get("in_precision_table") is False or s.get("container"):
             continue
         unexplained.append(v)
     if not unexplained:
@@ -115,9 +124,31 @@ def check_release_vs_measured(doc, path, derived_dir, errors):
     errors.append(
         f"{path}: precision.weights_release 声明了 {unexplained}，但实测清单里没有"
         f"（实测 {sorted(measured)}）。要么这些变体在本仓没取过数的独立仓里 —— "
-        f"那就在 precision.weights_release_scope 里写明是哪个仓、measured: false；"
+        f"那就在 precision.weights_release_scope 里写明是哪个仓、"
+        f"in_precision_table: false（清单取没取过是另一个键 manifest_taken）；"
         f"要么声明本身不对。两种在字段上长得一样，页面会并排显示"
         f"「声明发了 X」和「实测全是 Y」，读者会当成数据错")
+
+
+def check_scope_coherence(doc, path, errors):
+    """weights_release_scope 的两个布尔不能自相矛盾。
+
+    in_precision_table 为真，说的是「这个变体的实测值进了本记录的逐子系统精度表」；
+    而实测值只能来自清单。所以 manifest_taken 为假时它不可能为真。
+
+    这条在拆字段（2026-10-30）之前写不出来 —— 那时只有一个 measured 布尔，
+    没有第二个键可以和它冲突。拆开换来了表达力，也换来了这种新的错法，
+    所以拆的同时就得把它挡住。
+    """
+    scope = ((doc.get("precision") or {}).get("weights_release_scope")) or {}
+    for prec, s in scope.items():
+        s = s or {}
+        if s.get("in_precision_table") is True and s.get("manifest_taken") is False:
+            errors.append(
+                f"{path}: precision.weights_release_scope.{prec} 自相矛盾 —— "
+                f"in_precision_table: true 说实测值进了逐子系统精度表，"
+                f"而 manifest_taken: false 说本仓没取过这个仓的清单。"
+                f"没有清单就没有实测值，两者不能同时成立")
 
 
 def _root(data_dir):
@@ -653,6 +684,7 @@ def main():
         check_review(doc, p, errors, warnings)
         check_leak(doc, p, errors, args.allow_internal)
         check_release_vs_measured(doc, p, os.path.join(args.data_dir, "derived"), errors)
+        check_scope_coherence(doc, p, errors)
         check_absence_resolves(doc, p, os.path.join(args.data_dir, "derived"),
                                errors, warnings, gaps)
     check_review_pointers(loaded, errors, warnings)

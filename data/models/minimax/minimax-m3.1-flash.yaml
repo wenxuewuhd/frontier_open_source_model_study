@@ -291,10 +291,10 @@ arch:
 precision:
   weights_release: [NVFP4, FP8_E4M3, BF16, FP32]
   weights_release_scope:
-    NVFP4: { measured: true, container: UINT8 }
-    FP8_E4M3: { measured: true }
-    BF16: { measured: true }
-    FP32: { measured: true }
+    NVFP4: { manifest_taken: true, in_precision_table: true, container: UINT8 }
+    FP8_E4M3: { manifest_taken: true, in_precision_table: true }
+    BF16: { manifest_taken: true, in_precision_table: true }
+    FP32: { manifest_taken: true, in_precision_table: true }
   quantization:
     method: >-
       两套并存：路由专家 NVFP4（pack-quantized），其余量化路径 MXFP8。

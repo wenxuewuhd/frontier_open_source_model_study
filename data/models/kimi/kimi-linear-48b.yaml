@@ -253,8 +253,8 @@ arch:
 precision:
   weights_release: [BF16, FP32]
   weights_release_scope:
-    BF16: { measured: true }
-    FP32: { measured: true }
+    BF16: { manifest_taken: true, in_precision_table: true }
+    FP32: { manifest_taken: true, in_precision_table: true }
   quantization:
     per_subsystem:
       expert: BF16

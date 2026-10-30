@@ -257,9 +257,10 @@ arch:
 precision:
   weights_release: [BF16, FP8_E4M3]
   weights_release_scope:
-    BF16: { measured: true }
+    BF16: { manifest_taken: true, in_precision_table: true }
     FP8_E4M3:
-      measured: false
+      manifest_taken: false
+      in_precision_table: false
       repo: Qwen/Qwen3.8-2.4T-A95B-FP8
       note: 厂商另发的独立仓，本仓没有取过权重清单；本记录的实测口径只覆盖主仓
   quantization:

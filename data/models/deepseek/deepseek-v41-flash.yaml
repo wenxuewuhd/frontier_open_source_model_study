@@ -395,13 +395,14 @@ precision:
   - BF16
   - FP32
   weights_release_scope:
-    FP8_E4M3: { measured: true }
+    FP8_E4M3: { manifest_taken: true, in_precision_table: true }
     FP4:
-      measured: true
+      manifest_taken: true
+      in_precision_table: true
       container: INT8
       note: 逻辑精度 FP4 落盘时装在 INT8 容器里，清单里看到的是容器 dtype，不是声明错
-    BF16: { measured: true }
-    FP32: { measured: true }
+    BF16: { manifest_taken: true, in_precision_table: true }
+    FP32: { manifest_taken: true, in_precision_table: true }
   # KV 落盘精度。三个分量格式各不相同，单值装不下，kv_cache 记 MIXED、逐分量见下。
   # 全局 KV 与 indexer 的格式是厂商公布的（模型卡 + 技术报告 §2.4.4）；滑窗那一份不是，
   # 只有参考实现的伪量化调用作依据 —— 两档可信度不同，见核查 R36 / R38

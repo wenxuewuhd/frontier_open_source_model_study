@@ -792,15 +792,19 @@
         },
         "weights_release_scope": {
           "type": "object",
-          "description": "weights_release 里每种精度的口径：它在哪个仓、本记录的实测清单有没有覆盖到。为什么需要这个字段：同一种情况本仓有两种相反的记法同时存在 —— 通义列厂商发布过的全部变体（含从没取数的独立仓，qwen3.5-27b 声明 [BF16, FP8_E4M3, INT4] 而清单实测只有 [BF16, FP32]），MiniMax-M3 只列本仓取数那个仓实测到的（weights_release: [BF16, FP32]，厂商另发的 MiniMax-M3-MXFP8 只写在 benefit 的散文里）。两种都讲得通，同时存在不行：读者无从知道一行「BF16」是「厂商只发过 BF16」还是「本仓只取了 BF16 那个仓」，而精度表只显示取数那个仓，于是 M3 在表上看着像莫名退回不量化。约定是「列全部变体 + 标记哪些取过数」，缺口由 scripts/check_meaning.py 报出来",
+          "description": "weights_release 里每种精度的口径：它在哪个仓、本记录的实测清单有没有覆盖到。为什么需要这个字段：同一种情况本仓有两种相反的记法同时存在 —— 通义列厂商发布过的全部变体（含从没取数的独立仓，qwen3.5-27b 声明 [BF16, FP8_E4M3, INT4] 而清单实测只有 [BF16, FP32]），MiniMax-M3 只列本仓取数那个仓实测到的（weights_release: [BF16, FP32]，厂商另发的 MiniMax-M3-MXFP8 只写在 benefit 的散文里）。两种都讲得通，同时存在不行：读者无从知道一行「BF16」是「厂商只发过 BF16」还是「本仓只取了 BF16 那个仓」，而精度表只显示取数那个仓，于是 M3 在表上看着像莫名退回不量化。约定是「列全部变体 + 标记哪些取过数」，缺口由 scripts/check_meaning.py 报出来。**2026-10-30 拆字段**：原来的单个 measured 同时背着「取没取过数」与「进没进精度表」两件事，而 M3-MXFP8 恰好是「取过、没进表」，只能填 false，字段于是在说反话。现在拆成 manifest_taken 与 in_precision_table 两个布尔，measured 已删除、不留别名 —— 留着就会有人继续填它，两套语义并存比原来更糟",
           "additionalProperties": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["measured"],
+            "required": ["manifest_taken", "in_precision_table"],
             "properties": {
-              "measured": {
+              "manifest_taken": {
                 "type": "boolean",
-                "description": "本记录的实测清单（precision.quantization.per_subsystem 那一套）有没有覆盖这种精度。false 表示厂商发过但本仓没取数 —— 它在精度表上不可见，这个标记就是让它可见的那一半"
+                "description": "本仓取没取过这个仓的权重清单。**这是纯事实，与它进没进精度表无关。** 两件事原先压在一个 measured 布尔里：MiniMax-M3 的 MXFP8 是「清单取过、但没进精度表」，只能填 false，于是字段本身在说反话 —— 照着它复述的人就写出了「本仓没有取过它的清单」这种错声明（见 minimax-m3 的 R18 / R20）。一个字段说反话比留空坏得多：留空会被人去查，说反话不会"
+              },
+              "in_precision_table": {
+                "type": "boolean",
+                "description": "这个变体的实测值进没进本记录的逐子系统精度表（precision.quantization.per_subsystem 那一套）。**scripts/validate.py 的 check_release_vs_measured 认的是这一个**：它查「声明了某精度、而本记录 derived 的 weight_bytes_by_dtype 里没有」，false 就是对这种缺席的正当交代。为真而 manifest_taken 为假是自相矛盾 —— 没取过清单不可能有实测值进表，那道闸会报"
               },
               "repo": {
                 "type": "string",

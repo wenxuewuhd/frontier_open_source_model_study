@@ -360,11 +360,12 @@ precision:
   weights_release: [MXFP4, BF16, FP32]
   weights_release_scope:
     MXFP4:
-      measured: true
+      manifest_taken: true
+      in_precision_table: true
       container: UINT8
       note: 逻辑精度 MXFP4 落盘时装在 UINT8 容器里，清单里看到的是容器 dtype，不是声明错
-    BF16: { measured: true }
-    FP32: { measured: true }
+    BF16: { manifest_taken: true, in_precision_table: true }
+    FP32: { manifest_taken: true, in_precision_table: true }
   quantization:
     method: compressed-tensors（mxfp4-pack-quantized）
     expert_dtype: MXFP4

@@ -425,7 +425,9 @@ const rv = reviewStatus(m);
     {/* 发布变体的口径。这个字段原先一处都不渲染 —— 而它存在的理由恰恰是让
         「厂商发过但没进上面那张精度表」的档位在页面上可见：M3 主仓是 BF16，
         精度表照实报 BF16，读者看着像这一代莫名退回不量化，而厂商同时发了 MXFP8。
-        不渲染就等于把这个字段当注释写，闸口也查不出来。 */}
+        不渲染就等于把这个字段当注释写，闸口也查不出来。
+        三种说法而不是两种：manifest_taken 与 in_precision_table 是两件事，
+        「清单已取、但没进这张表」以前没法表达，只能跟「没取过」共用一句话。 */}
     {
       Object.keys(m.precision?.weights_release_scope ?? {}).length > 0 && (
         <div class="small muted" style="margin-top:10px">
@@ -438,7 +440,13 @@ const rv = reviewStatus(m);
               <strong>{prec}</strong>
               {sc?.repo ? ` · ${sc.repo}` : ''}
               {sc?.container ? ` · 落盘容器 ${sc.container}` : ''}
-              {` · ${sc?.measured ? '已进上面的精度表' : '不在上面的精度表内'}`}
+              {` · ${
+                sc?.in_precision_table
+                  ? '已进上面的精度表'
+                  : sc?.manifest_taken
+                    ? '清单已取，但不在上面的精度表内'
+                    : '本仓未取过清单，不在上面的精度表内'
+              }`}
               {sc?.note ? <> —— <Prose text={sc.note} /></> : null}
             </p>
           ))}

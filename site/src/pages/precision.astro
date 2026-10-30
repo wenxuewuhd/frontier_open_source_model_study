@@ -100,13 +100,22 @@ function lineageOrder(models: Model[]): { m: Model; depth: number }[] {
   return out;
 }
 
-/** 发布形态：厂商发了哪几档，本仓测没测过。`measured` 来自 weights_release_scope。 */
-function releases(m: Model): { dtype: string; measured?: boolean; note?: string }[] {
+/**
+ * 发布形态：厂商发了哪几档，本仓取没取过清单、进没进精度表。
+ *
+ * 两个布尔分开读，别合并。这一格原先只认一个 `measured`，于是 MiniMax-M3 的 MXFP8
+ * 在页面上打着「未取」、tooltip 写着「本仓没取清单」—— 而那份清单当时已经取过了
+ * （facts/minimax-m3-mxfp8，45,838 条）。字段说反话，页面就跟着说反话。
+ */
+function releases(m: Model): {
+  dtype: string; taken?: boolean; inTable?: boolean; note?: string;
+}[] {
   const list: string[] = prec(m).weights_release ?? [];
   const scope: Record<string, any> = prec(m).weights_release_scope ?? {};
   return list.map((d) => ({
     dtype: String(d),
-    measured: scope[d]?.measured,
+    taken: scope[d]?.manifest_taken,
+    inTable: scope[d]?.in_precision_table,
     note: scope[d]?.note,
   }));
 }
@@ -324,8 +333,13 @@ const shortName = (m: Model, label: string) =>
                       {rel.length ? rel.map((r) => (
                         <div class="rel">
                           <code>{r.dtype}</code>
-                          {r.measured === true && <span class="ok" title="本仓取过它的清单">实测</span>}
-                          {r.measured === false && <span class="muted" title="厂商发了，本仓没取清单">未取</span>}
+                          {r.inTable === true && <span class="ok" title="清单取过，实测值在这张精度表里">实测</span>}
+                          {r.inTable === false && r.taken === true && (
+                            <span class="muted" title="清单取过，但实测值没并进这张精度表">另仓已测</span>
+                          )}
+                          {r.inTable === false && r.taken !== true && (
+                            <span class="muted" title="厂商发了，本仓没取过这个仓的清单">未取</span>
+                          )}
                         </div>
                       )) : <span class="absent unsurveyed">未录</span>}
                     </td>

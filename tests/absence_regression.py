@@ -277,9 +277,11 @@ def _():
     # 原先是三份通义。minimax-m3 是后加的第四份：厂商与主仓并行维护
     # MiniMaxAI/MiniMax-M3-MXFP8（2026-10-30 查 HF API 确认存在，31 个分片、
     # 下载 48,817），而本仓只取过主仓的清单。补进 weights_release 之后它
-    # 当然会落进这张名单 —— **这正是对的**：声明了、没测过、所以必须带
-    # measured: false 交代清楚。闸口照旧放行（它有 scope），这条用例查的是
-    # 更底下那一层：摘掉交代之后还认不认得出来。
+    # 当然会落进这张名单 —— **这正是对的**：声明了、没进精度表、所以必须带
+    # in_precision_table: false 交代清楚。闸口照旧放行（它有 scope），这条用例
+    # 查的是更底下那一层：摘掉交代之后还认不认得出来。
+    # （2026-10-30 拆字段前这个键叫 measured，它同时背着「取没取过清单」，
+    #  而 minimax-m3 恰好是「取过、没进表」，只能填 false —— 字段在说反话。）
     want = ["minimax-m3", "qwen3.5-27b", "qwen3.5-397b-a17b", "qwen3.8-2.4t-a95b"]
     assert sorted(got) == want, f"实际是 {sorted(got)}，应当是 {want}"
 
@@ -303,7 +305,8 @@ def _():
 def _():
     d = copy.deepcopy(RECS["qwen3.5-27b"])
     d["precision"]["weights_release_scope"] = {
-        "FP8_E4M3": {"measured": False, "repo": "Qwen/Qwen3.5-27B-FP8"},
+        "FP8_E4M3": {"manifest_taken": False, "in_precision_table": False,
+                     "repo": "Qwen/Qwen3.5-27B-FP8"},
     }
     after = release_errors(d)
     assert after, "还有一种没交代，应当继续报"
@@ -311,12 +314,57 @@ def _():
         f"应当只报剩下的 INT4：{after}"
 
 
-@case("三·正例：measured: true 不能当成交代 —— 那是在说谎")
+@case("三·正例：in_precision_table: true 不能当成交代 —— 那是在说谎")
 def _():
-    # 声明了、实测清单里没有、却标 measured: true：这是自相矛盾，不该被放行
+    # 声明了、derived 的 by_dtype 里没有、却标 in_precision_table: true：
+    # 这是自相矛盾，不该被放行
     d = copy.deepcopy(RECS["qwen3.8-2.4t-a95b"])
-    d["precision"]["weights_release_scope"] = {"FP8_E4M3": {"measured": True}}
-    assert release_errors(d), "标 measured: true 却查无实据，必须继续报"
+    d["precision"]["weights_release_scope"] = {
+        "FP8_E4M3": {"manifest_taken": True, "in_precision_table": True},
+    }
+    assert release_errors(d), "标 in_precision_table: true 却查无实据，必须继续报"
+
+
+@case("三·负例：拆字段之后，manifest_taken 单独不足以当交代")
+def _():
+    """这条是拆字段（2026-10-30）的核心回归。
+
+    旧字段下「取过清单」与「进了精度表」是同一个布尔，所以这两件事分不开。
+    拆开之后要保证闸口认的仍然是后者 —— 一个变体清单取过、但实测值没并进
+    逐子系统精度表，依旧要能用 in_precision_table: false 交代；
+    反过来只写 manifest_taken 而不写 in_precision_table，不能蒙混过关。
+    """
+    d = copy.deepcopy(RECS["qwen3.8-2.4t-a95b"])
+    # 只说取过清单，不说进没进表 —— 闸口应当照旧报
+    d["precision"]["weights_release_scope"] = {"FP8_E4M3": {"manifest_taken": True}}
+    assert release_errors(d), "只写 manifest_taken 不构成交代，必须继续报"
+    # 补上「没进表」才算交代清楚
+    d["precision"]["weights_release_scope"] = {
+        "FP8_E4M3": {"manifest_taken": True, "in_precision_table": False},
+    }
+    assert not release_errors(d), "manifest_taken: true + in_precision_table: false 是正当交代"
+
+
+@case("三·负例：两个布尔自相矛盾要被挡住")
+def _():
+    """没取过清单不可能有实测值进表。
+
+    这种错法在拆字段之前写不出来（只有一个布尔，没有第二个键可以和它冲突）——
+    拆开换来表达力，也换来新的错法，所以拆的同时就得把它挡住。
+    """
+    import validate as V
+    d = copy.deepcopy(RECS["minimax-m3"])
+    d["precision"]["weights_release_scope"]["MXFP8"] = {
+        "manifest_taken": False, "in_precision_table": True,
+    }
+    errs = []
+    V.check_scope_coherence(d, "<test>", errs)
+    assert errs and "自相矛盾" in errs[0], f"应当报自相矛盾，实际 {errs}"
+    # 真实记录里一条都不该有
+    for mid, rec in RECS.items():
+        e = []
+        V.check_scope_coherence(rec, mid, e)
+        assert not e, f"{mid} 报了：{e}"
 
 
 @case("三·正例：四份「逻辑精度 vs 容器」不被误报")

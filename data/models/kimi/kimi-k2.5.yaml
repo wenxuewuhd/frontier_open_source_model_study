@@ -298,11 +298,12 @@ precision:
   weights_release: [INT4, BF16, FP32]
   weights_release_scope:
     INT4:
-      measured: true
+      manifest_taken: true
+      in_precision_table: true
       container: INT32
       note: 逻辑精度 INT4 落盘时装在 INT32 容器里，清单里看到的是容器 dtype，不是声明错
-    BF16: { measured: true }
-    FP32: { measured: true }
+    BF16: { manifest_taken: true, in_precision_table: true }
+    FP32: { manifest_taken: true, in_precision_table: true }
   quantization:
     method: compressed-tensors（pack-quantized，weight-only）
     expert_dtype: INT4

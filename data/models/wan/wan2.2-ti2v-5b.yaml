@@ -209,7 +209,8 @@ precision:
   weights_release: [FP32]
   weights_release_scope:
     FP32:
-      measured: true
+      manifest_taken: true
+      in_precision_table: true
       repo: Wan-AI/Wan2.2-TI2V-5B
       note: >-
         825 个张量**无一例外**全是 F32，这在本仓所有记录里是独一份 ——
