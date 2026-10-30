@@ -46,14 +46,36 @@ const byShapes = (m: Model): Record<string, number> =>
   (m.derived as any)?.from_shapes?.params_by_subsystem ?? {};
 
 type Cell =
-  | { kind: 'dtype'; dtype: string }
+  /** `shown` 是格子上实际显示的格式名；`derived` 为真表示它是从签名推的，不是记录原值 */
+  | { kind: 'dtype'; dtype: string; shown: string; derived: boolean; sig?: string }
   | { kind: 'unsurveyed' }
   | { kind: 'not_applicable' };
 
 /** 一个子系统在这一份记录里是什么状态。判据见文件头。 */
+/**
+ * 格子上显示哪个名字。
+ *
+ * 初版格子只印记录的 `dtype`，于是 DeepSeek 那一排全是 `4` —— 而「它到底是
+ * MXFP4 还是 NVFP4」的答案在**右边第 17 列**，表宽 4727px，等于把判据和结论
+ * 放在了两头，读者根本走不到。**一张表要在视线落点上回答它自己提出的问题。**
+ *
+ * 所以 `dtype` 是裸元素格式（`FP4`）而签名又能定下块格式时，格子直接显示块格式名，
+ * 并标成推导（虚下边框 + title 写出三个因子）。记录自己已经给了名字的不动，
+ * 理由见 NAMED_BLOCK_FORMAT 那段 —— 推导只补空缺。
+ */
 function cellFor(m: Model, key: string): Cell {
   const d = perSub(m)[key];
-  if (d) return { kind: 'dtype', dtype: String(d) };
+  if (d) {
+    const dtype = String(d);
+    const q = prec(m).quantization ?? {};
+    const blk = (q.per_subsystem_block ?? {})[key];
+    const scl = (q.per_subsystem_scale ?? {})[key];
+    const f = blockFormat(dtype, blk, scl);
+    const sig = [dtype, blk ? `块 ${blk}` : '', scl ? `scale ${scl}` : ''].filter(Boolean).join(' · ');
+    return f
+      ? { kind: 'dtype', dtype, shown: f.replace(' 式', ''), derived: true, sig }
+      : { kind: 'dtype', dtype, shown: dtype, derived: false, sig };
+  }
   const params = byShapes(m)[key];
   if (params && params > 0) return { kind: 'unsurveyed' };
   return { kind: 'not_applicable' };
@@ -331,6 +353,7 @@ const shortName = (m: Model, label: string) =>
     {Object.keys(DTYPE_CELL).map((d) => (
       <span><i class={`sw ${dtypeCell(d).cls}`}>{dtypeCell(d).short}</i>{d}</span>
     ))}
+    <span><i class="sw dt-fp4 drv">MX</i>底部虚线＝名字由签名推出，非记录原值</span>
     <span><i class="sw abs">·</i>不适用（这一代没有这块权重）</span>
     <span><i class="sw uns">?</i>未录（有权重，精度还没查）</span>
   </div>
@@ -377,10 +400,14 @@ const shortName = (m: Model, label: string) =>
                     {f.cols.map((k) => {
                       const c = cellFor(m, k);
                       if (c.kind === 'dtype') {
-                        const cell = dtypeCell(c.dtype);
+                        const cell = dtypeCell(c.shown);
                         return (
                           <td class="sub">
-                            <i class={`sw ${cell.cls}`} title={`${SUB_LABEL[k] ?? k}：${c.dtype}`}>
+                            <i
+                              class={`sw ${cell.cls}${c.derived ? ' drv' : ''}`}
+                              title={`${SUB_LABEL[k] ?? k}：${c.sig}`
+                                + (c.derived ? `\n→ ${c.shown}（由「元素 + 块 + scale」签名推出，记录只给了 ${c.dtype}）` : '')}
+                            >
                               {cell.short}
                             </i>
                           </td>
@@ -495,9 +522,11 @@ const shortName = (m: Model, label: string) =>
     <p class="small">
       <strong>4 bit 认签名不认名字。</strong> NVFP4 与 MXFP4 在 <code>dtype</code> 字段上
       可能都写作 <code>FP4</code>，分开它们的是<b>块与 scale</b>：块 16 + <code>E4M3</code>
-      是 NVFP4 式，块 32 + <code>E8M0</code> 是 OCP MXFP4。所以格子里的字母只是提示，
-      判断要看并排的「量化块 / scale」列 —— 本仓里 DeepSeek 的路由专家记作 <code>FP4</code>、
-      Kimi-K3 的记作 <code>MXFP4</code>，而两者签名相同（<code>[1,32]</code> + E8M0）。
+      是 NVFP4 式，块 32 + <code>E8M0</code> 是 OCP MXFP4。
+      记录只给了元素格式而签名又定得下来时，<b>格子直接显示块格式名并在底部画一道虚线</b>，
+      悬停能看到三个因子与记录原值。<b>没有虚线的就是记录自己写的名字。</b>
+      本仓里 DeepSeek 的路由专家记作 <code>FP4</code>、Kimi-K3 的记作 <code>MXFP4</code>，
+      而两者签名相同（<code>[1,32]</code> + E8M0）—— 这个差是厂商之差，不是本仓之差。
     </p>
     <p class="small">
       <strong>训练精度这一列没有</strong>：{trainDeclared} 份有。厂商公布的
@@ -541,6 +570,10 @@ const shortName = (m: Model, label: string) =>
   }
   /* 两种空格子都不上色，靠边框区分「不适用」与「未录」—— 它们不是精度，
      给它们配色会让读者在图例里找一档并不存在的精度 */
+  /* 推导出来的格式名：底下一道虚线，和记录原值区分开。只靠字母的话
+     「MX 是厂商说的还是我们推的」就看不出来了 */
+  .sw.drv { box-shadow: inset 0 -2px 0 0 color-mix(in oklab, var(--dt-ink) 70%, transparent); }
+
   .sw.abs { background: none; border: 1px solid var(--line); color: var(--ink-3); }
   .sw.uns { background: none; border: 1px dashed var(--ink-3); color: var(--ink-3); }
 
