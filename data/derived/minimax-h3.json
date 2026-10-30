@@ -1,7 +1,7 @@
 {
  "id": "minimax-h3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T16:34:24+00:00",
+ "generated_at": "2026-10-30T17:21:29+00:00",
  "inputs": {
   "facts_dir": "facts/minimax-h3",
   "config_present": false,
@@ -156,12 +156,13 @@
   "flops_per_step": {
    "linear": 2929160605819392.0,
    "linear_terms": {
-    "formula": "2 × (每视频 token 参数 × token 数 + 每样本参数 × 1)",
+    "formula": "2 × (每视频 token 参数 × token 数 + 每文本 token 参数 × 文本 token 数 + 每样本参数 × 1)",
     "factors": {
      "per_video_token": 20067788160,
      "per_sample": 13055204736,
      "per_text_token": 0,
-     "tokens": 72981.0
+     "tokens": 72981.0,
+     "text_tokens": 0
     },
     "note": "AdaLN 这类吃条件向量的参数每次前向只过一遍，不随 token 数增长"
    },
@@ -184,7 +185,7 @@
    "音频 VAE 与声码器"
   ],
   "notes": [
-   "文本 token 拼在同一条序列里，但记录没给文本长度 —— 序列长度是下界，注意力 FLOPs 同样是下界",
+   "文本 token 拼在同一条序列里，但档位没给 text_tokens —— 序列长度是下界，注意力 FLOPs 同样是下界。填 buckets[].text_tokens 可以补上",
    "缺 sampling.steps 或 sampling.cfg.forwards_per_step，端到端算不出"
   ]
  }

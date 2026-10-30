@@ -1,9 +1,9 @@
 {
  "id": "cogvideox-1.5-5b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T17:18:11+00:00",
+ "generated_at": "2026-10-30T17:21:30+00:00",
  "inputs": {
-  "facts_dir": "/Users/yuan/Work/frontier-llm-tracking/frontier_open_source_model_study/facts/cogvideox-1.5-5b",
+  "facts_dir": "facts/cogvideox-1.5-5b",
   "config_present": false,
   "shapes_present": true,
   "model_yaml": "data/models/cogvideo/cogvideox-1.5-5b.yaml",
@@ -98,7 +98,7 @@
   }
  ],
  "generation_workload": {
-  "status": "partial",
+  "status": "ok",
   "bucket": {
    "width": 1360,
    "height": 768,
@@ -139,33 +139,33 @@
    "latent_frames_source": "declared",
    "effective_temporal_ratio": 3.6818181818181817
   },
-  "sequence_tokens": 44880.0,
-  "sequence_tokens_is_lower_bound": true,
+  "sequence_tokens": 45106.0,
+  "sequence_tokens_is_lower_bound": false,
   "flops_per_step": {
-   "linear": 427159932811264.0,
+   "linear": 429310924296704.0,
    "linear_terms": {
     "formula": "2 × (每视频 token 参数 × token 数 + 每文本 token 参数 × 文本 token 数 + 每样本参数 × 1)",
     "factors": {
      "per_video_token": 4758830720,
      "per_sample": 799259648,
      "per_text_token": 12585984,
-     "tokens": 44880.0,
+     "tokens": 45106.0,
      "text_tokens": 226
     },
     "note": "AdaLN 这类吃条件向量的参数每次前向只过一遍，不随 token 数增长"
    },
-   "attention": 1039527994982400.0,
+   "attention": 1050023754694656.0,
    "attention_terms": {
     "formula": "每层 QK^T 2·n²·d + (softmax·V) 2·n²·d = 4·n²·d，再乘层数",
     "factors": {
      "layers": 42,
      "hidden": 3072,
-     "tokens": 44880.0
+     "tokens": 45106.0
     },
     "note": "稠密全注意力口径。块稀疏（SSTA）或线性注意力要另按其形态折算，本函数不替你折 —— 折算比例是记录里的事实，不是公式里的常数"
    },
-   "total": 1466687927793664.0,
-   "attention_share": 0.7087588131622247
+   "total": 1479334678991360.0,
+   "attention_share": 0.7097945918570524
   },
   "end_to_end_terms": {
    "formula": "步数 × 每步前向次数 × 单步 FLOPs",
@@ -176,14 +176,11 @@
     "cfg_embedded": false
    }
   },
-  "flops_end_to_end": 1.466687927793664e+17,
+  "flops_end_to_end": 1.47933467899136e+17,
   "excluded": [
    "文本编码一次（编码器参数量在 generation.text_encoders，本函数不计）",
    "VAE decode 一次（VAE 结构不在 config 里，解码器是 Transformer 时这一项不是小量）",
    "音频 VAE 与声码器"
-  ],
-  "notes": [
-   "文本 token 拼在同一条序列里，但记录没给文本长度 —— 序列长度是下界，注意力 FLOPs 同样是下界"
   ]
  }
 }

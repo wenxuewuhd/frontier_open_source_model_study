@@ -1,13 +1,20 @@
 {
  "id": "ltx-2",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T16:09:07+00:00",
+ "generated_at": "2026-10-30T17:21:29+00:00",
  "inputs": {
   "facts_dir": "facts/ltx-2",
   "config_present": false,
   "shapes_present": true,
   "model_yaml": "data/models/ltx/ltx-2.yaml",
   "ep_size": 1
+ },
+ "gate_b": {
+  "config": false,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 1,
+  "why": "仓里没有任何 config（顶层与组件目录都没有）。结构字段只有清单一路，config 侧的交叉核对整条跳过"
  },
  "from_shapes": {
   "available": true,
@@ -141,7 +148,9 @@
     "h": 16.0,
     "w": 24.0
    },
-   "latent_frames": 16.0
+   "latent_frames": 16.0,
+   "latent_frames_source": "formula_causal",
+   "effective_temporal_ratio": 7.5625
   },
   "audio_tokens": 504.16667000000007,
   "audio_tokens_terms": {
@@ -162,7 +171,8 @@
      "active_params": 18876174592,
      "source": "params.active_decode（记录声明）",
      "tokens": 6648.1666700000005
-    }
+    },
+    "note": "**这是上界。** 公式隐含「每个参数都过每个 token」，而 AdaLN 调制吃的是条件向量、每次前向只过一遍。填 backbone.param_scaling 可以算准"
    },
    "attention": 34758815964540.883,
    "attention_terms": {
@@ -178,31 +188,41 @@
    "attention_share": 0.12164374753835813
   },
   "end_to_end_terms": {
-   "formula": "Σ各阶段(步数 × 每步前向次数) × 单步 FLOPs",
+   "formula": "Σ各阶段(步数 × 每步前向次数 × 该段单步 FLOPs)",
    "stages": [
     {
      "name": "stage-1 低分辨率去噪",
      "steps": 40,
-     "forwards_per_step": 2
+     "forwards_per_step": 2,
+     "tokens": 6648.1666700000005,
+     "flops_per_step": 285742725523811.44,
+     "flops": 2.2859418041904916e+16,
+     "tokens_source": "default_bucket"
     },
     {
      "name": "stage-2 高分辨率精修",
      "steps": 3,
-     "forwards_per_step": 1
+     "forwards_per_step": 1,
+     "tokens": 6648.1666700000005,
+     "flops_per_step": 285742725523811.44,
+     "flops": 857228176571434.2,
+     "tokens_source": "default_bucket"
     }
    ],
    "stages_skipped": [
     "latent 空间上采样 ×2"
    ],
-   "note": "各阶段按同一个单步 FLOPs 估算；分辨率不同的阶段（SR、上采样）实际 token 数不同，这里是粗估，不要当精确值"
+   "note": "这几段没给 out_width / out_height，按主干段的 token 数估：stage-1 低分辨率去噪、stage-2 高分辨率精修。分辨率不同的段（SR、上采样）实际 token 数不同，而注意力是 O(n²)，所以这个数是粗估，不要当精确值"
   },
-  "flops_end_to_end": 2.3716646218476348e+16,
+  "flops_end_to_end": 2.371664621847635e+16,
   "excluded": [
    "文本编码一次（编码器参数量在 generation.text_encoders，本函数不计）",
    "VAE decode 一次（VAE 结构不在 config 里，解码器是 Transformer 时这一项不是小量）",
    "音频 VAE 与声码器"
   ],
   "notes": [
+   "线性 FLOPs 是上界：没填 backbone.param_scaling，逐样本参数（AdaLN 这类）被当成逐 token 算了",
+   "2 个阶段缺 out_width / out_height，按主干段 token 数估算，端到端是粗估",
    "1 个阶段缺步数或前向次数，未计入端到端：latent 空间上采样 ×2"
   ]
  }

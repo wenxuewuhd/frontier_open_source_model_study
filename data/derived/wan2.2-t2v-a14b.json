@@ -1,13 +1,20 @@
 {
  "id": "wan2.2-t2v-a14b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T15:49:38+00:00",
+ "generated_at": "2026-10-30T17:21:29+00:00",
  "inputs": {
   "facts_dir": "facts/wan2.2-t2v-a14b",
   "config_present": false,
   "shapes_present": true,
   "model_yaml": "data/models/wan/wan2.2-t2v-a14b.yaml",
   "ep_size": 1
+ },
+ "gate_b": {
+  "config": false,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 1,
+  "why": "仓里没有任何 config（顶层与组件目录都没有）。结构字段只有清单一路，config 侧的交叉核对整条跳过"
  },
  "from_shapes": {
   "available": true,
@@ -94,7 +101,7 @@
   }
  ],
  "generation_workload": {
-  "status": "ok",
+  "status": "partial",
   "bucket": {
    "width": 1280,
    "height": 720,
@@ -129,7 +136,9 @@
     "h": 45.0,
     "w": 80.0
    },
-   "latent_frames": 21.0
+   "latent_frames": 21.0,
+   "latent_frames_source": "formula_causal",
+   "effective_temporal_ratio": 3.857142857142857
   },
   "sequence_tokens": 75600.0,
   "sequence_tokens_is_lower_bound": false,
@@ -141,7 +150,8 @@
      "active_params": 14288491584,
      "source": "params.active_decode（记录声明）",
      "tokens": 75600.0
-    }
+    },
+    "note": "**这是上界。** 公式隐含「每个参数都过每个 token」，而 AdaLN 调制吃的是条件向量、每次前向只过一遍。填 backbone.param_scaling 可以算准"
    },
    "attention": 4682022912000000.0,
    "attention_terms": {
@@ -170,6 +180,9 @@
    "文本编码一次（编码器参数量在 generation.text_encoders，本函数不计）",
    "VAE decode 一次（VAE 结构不在 config 里，解码器是 Transformer 时这一项不是小量）",
    "音频 VAE 与声码器"
+  ],
+  "notes": [
+   "线性 FLOPs 是上界：没填 backbone.param_scaling，逐样本参数（AdaLN 这类）被当成逐 token 算了"
   ]
  }
 }

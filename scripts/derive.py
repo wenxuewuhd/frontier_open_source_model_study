@@ -752,14 +752,20 @@ def gen_workload(gen: dict, kind: str, dit_params: float, dit_params_src: str,
                     "DiT 侧是否也翻倍取决于实现，未确认前不乘声道数",
         }
 
-    seq = latent_tokens + audio_tokens
     notes = []
     tc = (gen.get("backbone") or {}).get("text_conditioning")
-    if tc == "in_sequence":
-        notes.append("文本 token 拼在同一条序列里，但记录没给文本长度 —— "
-                     "序列长度是下界，注意力 FLOPs 同样是下界")
+    n_txt_seq = bucket.get("text_tokens") or 0
+    # **in_sequence 的文本 token 占的是同一条序列**，所以要进 seq，
+    # 而注意力是 O(n²) —— 漏掉它整条注意力项偏低。
+    # 此前 text_tokens 只进了线性项，序列长度那一半没接上，
+    # 而且提示语照旧说「记录没给文本长度」—— 记录给了。
+    seq = latent_tokens + audio_tokens + (n_txt_seq if tc == "in_sequence" else 0)
+    lower_bound = tc == "in_sequence" and not n_txt_seq
+    if lower_bound:
+        notes.append("文本 token 拼在同一条序列里，但档位没给 text_tokens —— "
+                     "序列长度是下界，注意力 FLOPs 同样是下界。填 buckets[].text_tokens 可以补上")
     out["sequence_tokens"] = seq
-    out["sequence_tokens_is_lower_bound"] = tc == "in_sequence"
+    out["sequence_tokens_is_lower_bound"] = lower_bound
 
     # 单步 FLOPs。线性与注意力分开 —— 两者随 n 的增长阶不同（n vs n²），
     # 合成一个数就看不出瓶颈在哪一侧
@@ -1152,7 +1158,28 @@ def main():
     if not cfg and not shapes:
         sys.exit(f"! {fd} 下既没有 cfg.json 也没有 shapes.json，先跑 fetch_hf.py")
 
-    model = load_yaml(args.model) if args.model else {}
+    # --help 一直写着「缺省按 id 在 data/models 下找」，而代码是
+    # `load_yaml(args.model) if args.model else {}` —— **这个查找从来没实现过**。
+    # 后果不是报错：model={} → kind 为 None → 整条走 LLM 路，
+    # 生成类记录的 generation_workload **整块消失**，而五道闸全过
+    # （gatea-video 的一个提交就是这么错的）。
+    # 「空结果和真的没有长得一样」的又一个实例，这次让帮助文本说的那件事真的发生。
+    model_path = args.model
+    if not model_path:
+        import glob as _glob
+        # 记录在 data/models 下，而 --out-dir 默认是 data/derived —— 取它的上一级，
+        # 这样 --out-dir 指到别处时查找也跟着走，不写死路径
+        _root = os.path.dirname(os.path.normpath(args.out_dir)) or "data"
+        hits = sorted(_glob.glob(os.path.join(_root, "models", "*", f"{args.id}.yaml")))
+        if len(hits) == 1:
+            model_path = hits[0]
+            print(f"  （未给 --model，按 id 找到 {model_path}）", file=sys.stderr)
+        elif len(hits) > 1:
+            sys.exit(f"! 按 id 找到多份记录，用 --model 点名：{hits}")
+    model = load_yaml(model_path) if model_path else {}
+    if not model:
+        print(f"! 没有记录可读（--model 未给且 data/models 下没有 {args.id}.yaml）。"
+              "生成类记录会因此整块跳过 generation_workload", file=sys.stderr)
     kind = model.get("kind")
     is_gen = kind in GEN_KINDS
     gen = model.get("generation") or {}
@@ -1294,7 +1321,7 @@ def main():
             "facts_dir": fd,
             "config_present": bool(cfg),
             "shapes_present": bool(shapes),
-            "model_yaml": args.model,
+            "model_yaml": model_path,
             "ep_size": args.ep,
         },
         # Gate B 还剩几路。**这个事实一直在 inputs 里（config_present / shapes_present），

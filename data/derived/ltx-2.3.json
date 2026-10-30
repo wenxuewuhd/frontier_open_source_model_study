@@ -1,7 +1,7 @@
 {
  "id": "ltx-2.3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T16:29:06+00:00",
+ "generated_at": "2026-10-30T17:21:29+00:00",
  "inputs": {
   "facts_dir": "facts/ltx-2.3",
   "config_present": false,
@@ -189,7 +189,8 @@
      "active_params": 18988838144,
      "source": "params.active_decode（记录声明）",
      "tokens": 6648.1666700000005
-    }
+    },
+    "note": "**这是上界。** 公式隐含「每个参数都过每个 token」，而 AdaLN 调制吃的是条件向量、每次前向只过一遍。填 backbone.param_scaling 可以算准"
    },
    "attention": 34758815964540.883,
    "attention_terms": {
@@ -238,6 +239,7 @@
    "音频 VAE 与声码器"
   ],
   "notes": [
+   "线性 FLOPs 是上界：没填 backbone.param_scaling，逐样本参数（AdaLN 这类）被当成逐 token 算了",
    "2 个阶段缺 out_width / out_height，按主干段 token 数估算，端到端是粗估",
    "1 个阶段缺步数或前向次数，未计入端到端：latent 空间上采样 ×2"
   ]
