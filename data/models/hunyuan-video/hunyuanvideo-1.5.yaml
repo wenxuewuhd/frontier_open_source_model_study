@@ -675,9 +675,35 @@ open_questions:
     那要么读 `ssta_attention.py` 的实现，要么实测。
     **所以本记录的单步注意力 FLOPs 是稠密口径**，对稀疏档位偏高
   - >-
-    前代 `hunyuanvideo-13b` 还没录，它的权重是 .pt（pickle）读不了清单。
+    **前代 `hunyuanvideo-13b` 缺什么才能录 —— 逐条查过了。**
+
+    缺的是**清单**，不是数。官方仓 `tencent/HunyuanVideo` 一共 10 个文件、
+    **零个 safetensors**，权重是 4 个 `.pt`：
+    `transformers/mp_rank_00_model_states.pt` 25,642,314,002 B（主干）、
+    同目录的 `_fp8.pt` 13,185,233,506 B 与 `_fp8_map.pt` 103,890 B、
+    `vae/pytorch_model.pt` 986,000,558 B。HF 也因此没有 safetensors tally。
+    读头拿清单这条路不成立，`derive.py` 的权重路整条走不了，**Gate B 少一路**。
+
+    三条可能的路，代价与口径各不同：
+    (1) 下载 25.6 GB 反序列化 —— pickle 有执行风险，代价也大；
+    (2) 用社区 diffusers 镜像 `hunyuanvideo-community/HunyuanVideo`
+    （12 个 safetensors，HF tally **12,821,012,544 全 BF16**）。
+    它是**第三方转换**，按本仓来源优先级进不了厂商口径，
+    **但可以当旁证**：12,821,012,544 × 2 B = 25,642,025,088 B，
+    与官方 `.pt` 的 25,642,314,002 B 只差 288,914 B（pickle 开销），
+    说明那次转换没有增删张量；
+    (3) 等厂商发 safetensors。
+
+    **真正要定的是口径，不是取数**：Gate B 的本质是「config 公式路 × 权重清单路」
+    两路对账，只剩一路时这份记录算不算过闸、`params` 该标 `official`（厂商声明 13B）
+    还是 `derived`、第三方转换的清单能不能降级使用并标出来。
+    这是跨记录的决定（`sana-video` 同样标着 `blocked-no-safetensors`），
+    **由主会话定，本记录不替它定**。
+
+    顺带两条录 13B 时用得上的：官方仓里有**官方 FP8 权重**
+    （`_fp8.pt` + 一个 103 KB 的 `_fp8_map.pt`），这在视频线是头一份；
     跨代的三处主要变化（VAE 从 8×/4×/16ch 到 16×/4×/32ch、
-    从 20 双流+40 单流到 54 双流、新增 SSTA）现在只有线索没有对账
+    从 20 双流 + 40 单流到 54 双流 + 0 单流、新增 SSTA）现在只有线索没有对账
   - >-
     卡上那句「10 秒 720p 端到端相对 FlashAttention-3 加速 1.87×」没有给基线配置
     （几卡、什么精度、开不开 cache），**不能当性能基准**，没有写进 performance
