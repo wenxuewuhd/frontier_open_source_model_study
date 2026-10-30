@@ -217,8 +217,14 @@ bottlenecks:
       + norm 0.002）= 21.096 GB/token，合计 **32.987 GB/token**；
       前代 kimi-k2-0905 同口径是专家 1014.934 × 8/384 = 21.144 加非专家 11.891，
       合计 **33.035 GB/token**。两个数差 −0.15%，而两半的大小恰好对调。
-      所以模型卡的「约 2 倍生成加速」不可能来自每 token 字节数 ——
-      它要么来自 INT4 的计算 kernel、要么来自卡数减少后的并行配置变化，本仓没有依据选一个。
+      **那个「约 2 倍生成加速」是对 BF16 基线说的，不是对前代 FP8 发布说的**，所以它与上面的
+      −0.15% 并不矛盾。卡上原话是「a roughly 2x generation speed improvement」，
+      Key Features 里还限定了档位：「lossless 2x speed-up in **low-latency mode**」。
+      按 BF16 基线同口径复算：专家若是 BF16 则 1,014,687,129,600 × 2 B × 8/384 = 42.278 GB/token，
+      加非专家 21.096 = **63.374 GB/token**，对实际 32.987 = **1.92 倍**，与卡上的 roughly 2x 闭合。
+      若非专家也一起 INT4 则是 17.82 GB/token、3.56 倍 —— 没被量化的那一半就是加速比的天花板。
+      所以这个 2 倍确实来自每 token 字节数，只是基线是「从未发布过的 BF16 版本」；
+      拿前代 FP8 发布当基线算出 −0.15%，是换了基线，不是厂商夸大。见 R6。
       注意 derive.py 的 decode_weight_bytes_per_token 与算术强度对本记录仍不可用：
       params_total 少算 8 倍那一层已经修掉（见 review R1），但它按「激活参数 / 总参数」
       等比例折算，这对混合精度模型本来就不成立 —— 本代专家 INT4、其余 BF16，
@@ -406,6 +412,31 @@ review:
       （也正解释了 K3 的 MXFP4 装在 U8 里为什么现在算对：8 // 4 = 2）
     resolution: corrected
     changed_to: 改成「五条独立机制、六处闭合」并点明哪两处是同机制换方向；R1 的 changed_to 已写明还原因子要按位宽比算
+
+  - id: R6
+    field: bottlenecks 的 weight-bandwidth 一项
+    severity: wrong
+    claim: >-
+      「模型卡的『约 2 倍生成加速』不可能来自每 token 字节数 —— 它要么来自 INT4 的计算 kernel、
+      要么来自卡数减少后的并行配置变化，本仓没有依据选一个」
+    finding: >-
+      基线搞错了。原先拿**前代 FP8 发布**（kimi-k2-0905）当基线，得 −0.15%，于是判定那个
+      2 倍另有来源。但模型卡从没说基线是前代 —— 它说的是 INT4 对未量化权重，而 K2-Thinking
+      没有发布过 BF16 版本，所以这个基线只存在于算式里。按 BF16 基线同口径复算：
+      专家 1,014,687,129,600 × 2 B × 8/384 = 42.278 加非专家 21.096 = 63.374 GB/token，
+      对实际 32.987 = **1.92 倍**，与卡上 roughly 2x 闭合。
+      专家的逻辑参数量有两条独立路径对账：I32 容器 × 8 得 1,014,687,129,600、
+      BF16 scale × 32 得 1,014,686,023,680，差 1,105,920（group 32 的补齐余数）。
+      卡上还限定了档位，Key Features 原话「lossless 2x speed-up in low-latency mode」——
+      low-latency 就是小 batch，而小 batch 恰是非专家占比最高的一档，所以这个 2 倍同时
+      说明了天花板在哪：若非专家一起 INT4 则是 3.56 倍。
+      顺带把 lossless 标清楚：卡与官方博客都没给未量化侧的评测分，博客只说
+      「All benchmark results are reported under INT4 precision」——**无基准**，不可引用
+    resolution: corrected
+    changed_to: >-
+      weight-bandwidth 改写：保留两代 −0.15% 的结论（它回答的是「跨代省不省带宽」这个问题），
+      补上「2 倍是对 BF16 基线、且限定 low-latency mode」的复算与 1.92 倍闭合，
+      并点明若非专家一起量化则是 3.56 倍。原先「本仓没有依据选一个来源」那句撤掉
 
 notes: >-
   K2 线的精度拐点：结构与 kimi-k2-0905 逐位相同（还原打包后参数量一字不差），
