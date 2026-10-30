@@ -1,7 +1,7 @@
 {
  "id": "ds-v4-flash-dspark",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T16:01:55+00:00",
+ "generated_at": "2026-10-30T02:03:50+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-flash-dspark",
   "config_present": true,
@@ -91,50 +91,54 @@
   "layers": 43,
   "full_attention_layers": 43,
   "linear_attention_layers": 0,
-  "per_token_bytes": 13600,
+  "per_token_bytes": 6880,
   "per_sequence_bytes": 5636096,
-  "per_token_elems": 6800,
+  "per_token_elems": 3440,
   "per_token_elems_bound": "exact",
   "components": {
    "global_kv": {
-    "bytes_per_token": 10912,
-    "elements_per_token": 5456,
+    "bytes_per_token": 5536,
+    "elements_per_token": 2768,
     "bytes_basis": "dtype_fallback",
     "terms": {
-     "elements_per_token": 5456,
+     "elements_per_token": 2768,
      "bytes_per_element": 2,
      "source": "完整权重清单实测"
     }
    },
    "indexer": {
-    "bytes_per_token": 2688,
-    "elements_per_token": 1344,
+    "bytes_per_token": 1344,
+    "elements_per_token": 672,
     "bytes_basis": "dtype_fallback",
     "terms": {
-     "elements_per_token": 1344,
+     "elements_per_token": 672,
      "bytes_per_element": 2,
      "source": "完整权重清单实测"
     }
    },
    "local_window": {
     "bytes_per_sequence": 5636096,
+    "elements_per_sequence": 2818048,
     "bytes_basis": "dtype_fallback",
     "terms": {
-     "note": "滑窗局部 KV，每序列固定，不随上下文增长。记录直接给的字节数，按模型 dtype 算"
+     "elements_per_sequence": 2818048,
+     "bytes_per_element": 2,
+     "source": "完整权重清单实测",
+     "note": "滑窗局部 KV，每序列固定，不随上下文增长"
     }
    }
   },
   "notes": [
-   "按完整权重清单逐层量出来的每 token 元素数。compressor.ape 的第一维就是该层压缩比，每 token 元素 = wkv 输出宽度 / 比值（比值 4: 21 层, wkv 宽 1024, ape 有 -> 256 元素/token；比值 128: 20 层, wkv 宽 512, ape 有 -> 4 元素/token）。attn.wkv 那一份是 sliding_window 的局部 KV，每序列固定、不随上下文增长，单列在 local_window_bytes_per_sequence，不计入 per_token。按未压缩宽度乘总层数会高估五倍以上"
+   "主干与 ds-v4-flash 逐个相同，数也相同（依据见那份的 R1）：条目宽取 compressor.norm（512 / 128）， 全局 KV = 21 × 512/4 + 20 × 512/128 = 2768，indexer = 21 × 128/4 = 672。滑窗主干 43 × 128 × 512 = 2818048 元素/序列； 开草稿侧 3 个 MTP 块各有一份滑窗，46 层 3014656"
   ],
   "bytes_basis": "dtype_fallback",
   "dtype_assumed": true,
   "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
  },
  "kv_capacity_bytes_at_context": {
-  "4096": 61341696,
-  "32768": 451280896,
-  "1048576": 14266269696
+  "4096": 33816576,
+  "32768": 231079936,
+  "1048576": 7219838976
  },
  "kv_capacity_basis": "dtype_fallback",
  "active_params": {
