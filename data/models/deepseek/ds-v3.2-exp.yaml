@@ -24,14 +24,22 @@ lineage:
   successor: ds-v4-flash
   changed_from_predecessor:
   - axis: attention
-    text: 首次引入稀疏注意力 indexer（DSA）：每层新增 indexer.wk / wq_b / k_norm / weights_proj，64 个 index 头 × 128
-      维，topk 2048。注意力第一次变成两段式 —— 先打分选 token，再在选中的上面做全注意力
-    benefit: 长上下文下注意力从 O(L²) 降到 O(L·topk)。但 topk 2048 要到 128K 以上才真正省，短序列反而是净亏 —— 多一条打分 + topk + gather
-      的旁路，indexer 自己还要一份缓存
+    text: >-
+      首次引入稀疏注意力 indexer（DSA）：第 0–60 层与 MTP 块 layers.61 共 62 层，每层新增 7 个条目 ——
+      indexer.wq_b [8192, 1536] 与 wk [128, 7168]（FP8，各带 weight_scale_inv）、k_norm.weight 与 k_norm.bias [128]（F32）、
+      weights_proj [64, 7168]（BF16），共 434 个。64 个 index 头 × 128 维（wq_b 的输入 1536 是 q_lora_rank，
+      index query 复用 q_a 的 latent），topk 2048。注意力第一次变成两段式 —— 先打分选 token，再在选中的上面做全注意力
+    benefit: >-
+      长上下文下主注意力从 O(L²) 降到 O(L·topk)；indexer 打分本身仍是 O(L²)（每个 query 对全部历史打分，只是常数小：
+      64 头 × 128 维、FP8）。L ≤ topk 2048 时选 token 不省任何主注意力计算，只多一条打分 + topk + gather 的旁路，
+      indexer 自己还要一份缓存。从多长开始净省取决于两段的实际开销，本仓没有测过
   - axis: precision
-    text: layernorm 权重由 BF16 变成 FP32。抽样读到的第 0–8 层里，input_layernorm 与 post_attention_layernorm 全部是
-      F32，而 V3.1 的同名张量全部是 BF16；第 9–60 层未抽到，不能断言「全部层」。config 没有这个信息，张量名也与 V3.1 逐个相同 —— 只有 dtype 看得出来
-    benefit: 稀疏注意力把注意力拆成打分、选块、稠密三段，中间结果的数值范围比原来宽，norm 用 FP32 权重更稳（这一步是推断，公开材料没有说明动机）。对实现的影响是实测到的那些层上
+    text: >-
+      归一化权重由 BF16 变成 FP32，完整清单上是全部层：与 ds-v3 的完整清单（V3.1 与 V3 张量名逐个相同、config 同形）比，
+      同名张量里恰有 252 个变了，全部是 BF16 → F32、形状不变 —— input_layernorm / post_attention_layernorm /
+      q_a_layernorm / kv_a_layernorm 各 62 个（第 0–61 层，含 MTP 块）+ model.norm + MTP 的 enorm / hnorm / shared_head.norm。
+      新增的 indexer.k_norm 也是 F32。config 没有这个信息，这 252 个张量名也与前代相同 —— 只有 dtype 看得出来
+    benefit: 稀疏注意力把注意力拆成打分、选块、稠密三段，中间结果的数值范围比原来宽，norm 用 FP32 权重更稳（这一步是推断，公开材料没有说明动机）。对实现的影响是全部层上
       RMSNorm 变成混合精度算子：FP32 权重配 BF16 激活。按「norm 权重与激活同 dtype」写的核会直接读错
 params:
   total: 671878000000.0
@@ -48,8 +56,14 @@ params:
     lm_head: 926679000.0
     router: 106445000.0
     norm: 1022210.0
-  counting_note: 按完整权重清单（92425 条目）逐项统计，其中 45932 条是 weight_scale_inv（FP8 的 per-block scale 容器）—— 不计入参数，只计入权重存储。indexer
-    原先并在 attention 里，现按 derive.py 的子系统归类单列。total 不含草稿侧 13.5B；含在内的实测总量为 685.4B，权重存储 642.1 GiB。
+  counting_note: >-
+    total 与 breakdown 都是本仓按完整权重清单逐项求和的实测值（取 6 位有效数字），不是厂商声明值，所以 Gate B 的参数总量一项
+    （delta 0.0）是实测比实测。清单 92425 个条目，其中 45932 条是 weight_scale_inv（FP8 的 per-block scale 容器）——
+    不计入参数、只计入权重存储；真权重张量 46493 条（FP8_E4M3 45932、F32 435、BF16 126）。indexer 原先并在 attention 里，
+    现按 derive.py 的子系统归类单列。total 不含草稿侧 13.5B；含在内的实测总量 685,355,329,792。外部核对是 HF 的
+    safetensors tally 685,396,921,376：它把 41,591,584 个 scale 元素算进了参数量（F32 一栏 42,667,040 = 真 F32 1,075,456 +
+    scale），扣掉后逐位相同 —— ds-v3 的 tally 不含 scale，两个仓口径不同。权重存储 642.1 GiB。
+    激活参数两个口径见 data/derived/：带宽口径 37.48B、含输入词表 38.40B
 context:
   max: 163840
   train_native: 4096
@@ -57,7 +71,7 @@ arch:
   layers: 61
   hidden: 7168
   vocab: 129280
-  norm: RMSNorm
+  norm: RMSNorm（主干与 MLA 的 q_a / kv_a）；indexer.k_norm 带 bias [128]，按形状是 LayerNorm
   norm_eps: 1.0e-06
   activation: SwiGLU（hidden_act silu，gate/up/down 三件套）
   position: RoPE theta 10000 + YaRN 外推
@@ -71,20 +85,30 @@ arch:
     q_lora_rank: 1536
     head_dim: 192
     sparse:
-      mechanism: indexer 逐 token 打分后取 topk，再在选中的 token 上做全注意力。indexer 自带 wk / wq_b / k_norm / weights_proj，每层都有，K
-        独立产出
+      mechanism: indexer 逐 token 打分后取 topk，再在选中的 token 上做全注意力。indexer 自带 wk / wq_b / k_norm / weights_proj，
+        主干第 0–60 层与 MTP 块（layers.61）都有，每层的 index K 都由本层 wk 独立产出（与 V4 一代只在部分层产出不同）
       index_n_heads: 64
       index_head_dim: 128
       index_topk: 2048
       index_kv_dim: 128
-      index_kv_source: model.layers.N.self_attn.indexer.wk.weight [128, 7168]，输出维 128（62 层都有）
+      index_kv_source: >-
+        model.layers.N.self_attn.indexer.wk.weight [128, 7168]，输出维 128（62 层都有）。index K 在 64 个 index 头之间共享，
+        按 index_n_heads × index_head_dim = 8192（那是 wq_b 的输出维）算会高估 64 倍
+    kv_sharing:
+      index_kv_source_layers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+        30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60]
+      layer_coverage: >-
+        主干口径：kv_a_proj_with_mqa（MLA latent 576）与 indexer.wk（index K 128）在主干第 0–60 层都有，61 层就是实际产出层集合。
+        MTP 块 layers.61 两样也都带，开草稿侧按 62 层（61 主干 + 1 草稿块），每 token +704 元素（576 + 128）
     v_head_dim: 128
-    head_dim_note: head_dim 192 = qk_nope 128 + qk_rope 64，只适用于 QK 路径。V 的每头维度是 v_head_dim 128，所以 o_proj
+    head_dim_note: num_kv_heads 128 是 query 侧可见的 KV 头数，不是缓存宽度：落盘缓存是 kv_a_proj_with_mqa 的 576 维
+      （latent 512 + rope 64），按 2 × 128 × 192 = 49152 折算会高估 85.3 倍。head_dim 192 不是 config 字段，
+      是 qk_nope 128 + qk_rope 64，只适用于 QK 路径。V 的每头维度是 v_head_dim 128，所以 o_proj
       入口宽度是 128 头 × 128 = 16384（权重实测 [hidden, 16384]），不是 128 × 192 = 24576。按单一 head_dim 推 o_proj 会高
       50%
   ffn:
     type: moe
-    layer_pattern: 第 0–2 层稠密（intermediate 18432），其余为 MoE。稠密层的 FFN 比单个专家宽 9 倍，是全模型最宽的单个 GEMM
+    layer_pattern: 第 0–2 层稠密（intermediate 18432），第 3–60 层为 MoE（58 层）。稠密层的 FFN 中间维是单个专家（2048）的 9 倍
   moe:
     routed_experts: 256
     top_k: 8
@@ -94,7 +118,7 @@ arch:
     expert_groups: 8
     routing: sigmoid 打分 / noaux_tc 选路
     storage_note: 逐专家独立张量，不是堆叠。grouped GEMM 因此吃 2 维权重列表而非 3 维张量，EP 切分是切张量列表
-    balance: 无辅助损失，靠逐专家偏置 mlp.gate.e_score_correction_bias 调节（第 3 层起，59 个）
+    balance: 无辅助损失，靠逐专家偏置 mlp.gate.e_score_correction_bias 调节。清单里 59 个 = 主干 MoE 层 3–60 的 58 个 + MTP 块（layers.61）1 个
     dense_intermediate: 18432
   decoding:
     mtp_layers: 1
@@ -125,7 +149,11 @@ precision:
       indexer: FP32
       dense_ffn: FP32
       draft: FP32
-    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 10 个分片头
+    subsystem_method: >-
+      早先按抽样填（每个子系统 6 个代表张量，读 10 个分片头）。已用完整清单按 lib/subsystems.py 归类（mtp_from=61）按元素数复核：
+      expert / shared_expert / attention / dense_ffn 100% F8_E4M3，embed / lm_head 100% BF16，norm 100% F32，
+      router 99.99% BF16，indexer 96.7% F8_E4M3 / 3.3% BF16（weights_proj [64, 7168] 未量化、无 scale），
+      draft 85.5% F8_E4M3 / 14.5% BF16（它自带的 embed 与 head），代表值都不变
     per_subsystem_block:
       expert: '[128,128]'
       shared_expert: '[128,128]'
@@ -134,7 +162,7 @@ precision:
       dense_ffn: '[128,128]'
       draft: '[128,128]+[128ceil,128]'
 infra_signals:
-- text: 稀疏注意力把单个 FA 算子拆成「indexer 打分 → topk → gather → 稠密 FA」四段，每段的形状都随 topk 变。这条旁路在 V4、V4.1 又各改一次
+- text: 稀疏注意力把单个 FA 算子拆成「indexer 打分 → topk → gather → 稠密 FA」四段：打分段的形状随上下文长度变，topk / gather / 稠密 FA 三段随 topk 变。这条旁路在 V4、V4.1 又各改一次
   evidence: judgement
   horizon: now
   axis: attention
@@ -143,13 +171,15 @@ evidence:
   family: official
   kind: derived
   display_name: official
-  released: official
+  released: derived
   license: official
   hf: official
   lineage: judgement
   params: derived
   context: official
   arch: official
+  arch.attention.head_dim: derived
+  arch.attention.kv_sharing: derived
   arch.attention.type: derived
   arch.norm: derived
   arch.activation: derived
@@ -175,4 +205,120 @@ evidence:
   arch.attention.sparse.mechanism: judgement
 notes: 谱系里第一次出现「选 token 再算」的结构。它新增的不只是一个算子，而是一整条 打分 + topk + gather 的旁路，且 indexer 自己也要一份缓存。
 open_questions:
-- indexer 缓存的精度与布局未从权重清单核实
+- KV（MLA latent 576 与 index K 128）的实际存储精度未披露，derive.py 按 BF16 兜底，bytes_basis 是 dtype_fallback
+- index K 是否另带 per-block scale 等布局，权重定不了，要读 kernel
+- 训练精度没有一手来源，故不填 precision.training
+- indexer.k_norm 带 bias，按形状是 LayerNorm 而非 RMSNorm；未读实现确认
+reviewed:
+  date: '2026-10-30'
+  scope:
+  - official
+  - derived
+  - judgement
+  reviewer: 一个只读核查代理找候选，本会话在 facts/ 上逐条复算后写入
+  method: >-
+    核查代理按 .claude/skills/model-audit 的顺序过完整清单（92425 条目）、config、repoinfo 与 derived，给出候选与复现片段。
+    写进本记录的数本会话都重跑过：与 ds-v3 同名张量的 dtype / 形状差异（恰 252 个，全部 BF16 → F32）、新增条目（434 个，
+    7 种 × 62 层）、indexer.wk / kv_a_proj_with_mqa 的层号（0–61）、scale 条目与真权重张量数及 dtype 构成、HF tally 按 dtype
+    拆开的口径、e_score_correction_bias 层号（3–61）、按元素数的逐子系统精度。代理另指出本会话在 ds-v2 / v3 / v3.1 里把
+    glm-5.3 的「42.7 倍」照抄成了 128 头的倍数（应为 85.3），已在那三份里单独改正。
+review:
+- id: R1
+  field: lineage.changed_from_predecessor
+  severity: stale
+  claim: 「抽样读到的第 0–8 层里……全部是 F32……第 9–60 层未抽到，不能断言『全部层』……张量名也与 V3.1 逐个相同」
+  finding: >-
+    完整清单定了这件事：与 ds-v3（V3.1 的名字与 V3 相同）比，同名张量恰有 252 个变了，全部 BF16 → F32、形状不变，覆盖第 0–61 层
+    的四类层内 norm 与 model.norm、MTP 的 enorm / hnorm / shared_head.norm。抽样其实只抽到第 0–2 层（不是 0–8）。
+    「张量名与 V3.1 逐个相同」对整个模型不成立（新增 434 个 indexer 条目），只对这 252 个 norm 成立
+  resolution: corrected
+  changed_to: 改为「全部 252 个归一化权重 BF16 → F32」，benefit 里「实测到的那些层上」改为「全部层上」
+- id: R2
+  field: lineage.changed_from_predecessor
+  severity: imprecise
+  claim: 「每层新增 indexer.wk / wq_b / k_norm / weights_proj」
+  finding: 第 0–60 层与 MTP 块 layers.61 共 62 层，每层 7 个条目（含两个 weight_scale_inv 与 k_norm.bias），共 434；wq_b 的输入 1536 是 q_lora_rank
+  resolution: corrected
+  changed_to: 写明 62 层、7 种条目、形状与 dtype
+- id: R3
+  field: lineage.changed_from_predecessor
+  severity: overreach
+  claim: 「注意力从 O(L²) 降到 O(L·topk)。但 topk 2048 要到 128K 以上才真正省」
+  finding: 只有主注意力降到 O(L·topk)，indexer 打分仍对全部历史，是 O(L²)。「128K」没有任何来源与因子
+  resolution: corrected
+  changed_to: 写明 indexer 仍是 O(L²)、L ≤ topk 时不省主注意力，删掉「128K」
+- id: R4
+  field: arch.attention.kv_sharing
+  severity: missing
+  claim: 记录里没有 KV 层覆盖的口径；derive.py 因为没有产出层声明，把 indexer 标成 upper_bound
+  finding: >-
+    清单里 kv_a_proj_with_mqa [576, 7168] 与 indexer.wk [128, 7168] 在第 0–61 层都有。主干 61 层就是实际产出层集合，
+    宽度 128 是实测的，不是头数乘积 —— 「≤」是 derive 在没有声明时的保守标记，不是这份记录的真实不确定性。
+    开草稿侧是 62 层、+704 元素/token
+  resolution: corrected
+  changed_to: 新增 kv_sharing.index_kv_source_layers（0–60）与 layer_coverage，derive 的 indexer 由 upper_bound 变为 exact
+- id: R5
+  field: arch.attention.sparse.index_kv_source
+  severity: missing
+  claim: 只写了 wk 的输出维 128
+  finding: index K 在 64 个 index 头之间共享；按 index_n_heads × index_head_dim = 8192 算会高估 64 倍（skill 里的 32 倍是 V4.1 的 32 个头）
+  resolution: corrected
+  changed_to: 补上这条口径
+- id: R6
+  field: arch.attention.num_kv_heads
+  severity: missing
+  claim: num_kv_heads 128 旁边没有口径说明
+  finding: 落盘缓存是 576 维，按 2 × 128 × 192 = 49152 折算高估 85.3 倍
+  resolution: corrected
+  changed_to: head_dim_note 开头补上
+- id: R7
+  field: arch.ffn.layer_pattern
+  severity: wrong
+  claim: 「是全模型最宽的单个 GEMM」
+  finding: lm_head [129280, 7168] 926,679,040 元素（MTP 的 shared_head.head 同大），稠密层 gate/up/down 各 132,120,576（同 ds-v3 的 R2）
+  resolution: corrected
+  changed_to: 删掉「最宽 GEMM」，写明 MoE 层 3–60
+- id: R8
+  field: arch.moe.balance
+  severity: imprecise
+  claim: 「第 3 层起，59 个」
+  finding: 59 个偏置的层号 3–61，其中 61 是 MTP 块
+  resolution: corrected
+  changed_to: 拆成 58 + 1
+- id: R9
+  field: params.counting_note
+  severity: imprecise
+  claim: 「92425 条目……45932 条是 weight_scale_inv」
+  finding: >-
+    没给真权重张量数（46493），没说 total 是实测值（Gate B 那一项因此是实测比实测），也没提外部核对：HF tally 685,396,921,376
+    含 41,591,584 个 scale 元素，扣掉后与本仓逐位相同
+  resolution: corrected
+  changed_to: 补上三处，并写明两个仓的 tally 口径不同
+- id: R10
+  field: precision.quantization.subsystem_method
+  severity: stale
+  claim: 「抽样：每个子系统 6 个代表张量，共读 10 个分片头」
+  finding: 已有完整清单。按元素数全量复核，代表值都不变；indexer 是 96.7% FP8 / 3.3% BF16（weights_proj 未量化）
+  resolution: corrected
+  changed_to: 写明全量复核结果
+- id: R11
+  field: arch.norm
+  severity: imprecise
+  claim: RMSNorm
+  finding: indexer.k_norm 在 62 层都带 bias [128]（F32）。RMSNorm 没有 bias，按形状是 LayerNorm；未读实现
+  resolution: corrected
+  changed_to: 写明 indexer.k_norm 的例外，open question 留实现确认
+- id: R12
+  field: open_questions
+  severity: stale
+  claim: 「indexer 缓存的精度与布局未从权重清单核实」
+  finding: 宽度（128）与层覆盖（61 / 62）清单已经回答了；权重回答不了的只有落盘精度与布局。KV 精度兜底、训练精度两条缺
+  resolution: corrected
+  changed_to: 换成四条真正开着的
+- id: R13
+  field: evidence
+  severity: miscategorized
+  claim: arch.attention.head_dim 与 released 继承 official
+  finding: config 没有 head_dim 键；released 2025-09-29 是 repoinfo 的 createdAt
+  resolution: corrected
+  changed_to: 两者与新增的 kv_sharing 标 derived

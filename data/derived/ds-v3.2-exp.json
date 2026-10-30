@@ -1,7 +1,7 @@
 {
  "id": "ds-v3.2-exp",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T16:01:53+00:00",
+ "generated_at": "2026-10-30T01:55:10+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v3.2-exp",
   "config_present": true,
@@ -74,7 +74,7 @@
   "incomplete_note": null
  },
  "kv_cache": {
-  "status": "partial",
+  "status": "ok",
   "attention_type": "MLA",
   "kv_dtype": "bfloat16",
   "layers": 61,
@@ -83,7 +83,7 @@
   "per_token_bytes": 85888,
   "per_sequence_bytes": 0,
   "per_token_elems": 42944,
-  "per_token_elems_bound": "upper_bound",
+  "per_token_elems_bound": "exact",
   "components": {
    "full_attention": {
     "layers": 61,
@@ -103,14 +103,11 @@
     "bytes_per_token": 15616,
     "elements_per_token": 7808,
     "terms": {
-     "formula": "index_kv_dim(128)，实测自 model.layers.N.self_attn.indexer.wk.weight [128, 7168]，输出维 128（62 层都有） * bytes * layers(全部层，未声明产出层)(61)"
-    },
-    "elements_upper_bound": true
+     "formula": "index_kv_dim(128)，实测自 model.layers.N.self_attn.indexer.wk.weight [128, 7168]，输出维 128（62 层都有）。index K 在 64 个 index 头之间共享， 按 index_n_heads × index_head_dim = 8192（那是 wq_b 的输出维）算会高估 64 倍 * bytes * index_kv_source_layers(61)"
+    }
    }
   },
-  "notes": [
-   "没有任何 index 产出层声明，indexer 按全部 61 层计 —— 这是上界。实测 indexer 往往只在部分层上（DeepSeek V4 一代只在 compress_ratios==4 的层，约一半）"
-  ],
+  "notes": [],
   "dtype_assumed": true,
   "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML",
   "bytes_basis": "dtype_fallback"

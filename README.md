@@ -420,7 +420,7 @@ V4.1 更细：`compressor.wkv`/`norm` 在 4 个源层都有，但 `compressor.wg
 
 两头一起改：
 
-- `derive.py` 的每个随上下文增长的分量都带上 `elements_per_token`，合计成 `kv_cache.per_token_elems`。公式路径里层数或宽度只是上界的（V3.2-Exp 的 indexer 按全部 61 层计、宽度用头数乘积），标 `per_token_elems_bound: upper_bound`，页面上显示成 `≤ 42,944`。任一分量缺元素数就不报合计 —— 少算一项还印成精确值比不印更糟。
+- `derive.py` 的每个随上下文增长的分量都带上 `elements_per_token`，合计成 `kv_cache.per_token_elems`。公式路径里层数或宽度只是上界的，标 `per_token_elems_bound: upper_bound`，页面上显示成 `≤ N`。V3.2-Exp 起初就是这样（indexer 没有产出层声明，按全部 61 层计）；复核时清单显示 `indexer.wk` 恰在第 0–60 层全都有、宽度 128 是实测的，补上 `index_kv_source_layers` 后变为精确的 42,944（ds-v3.2-exp 的 R4）—— 上界标记说的是「记录没声明」，不一定是「真的不确定」。任一分量缺元素数就不报合计 —— 少算一项还印成精确值比不印更糟。
 - `data.ts` 的 `TRACKED_FIELDS` 新增 `diff: 'same-basis'` 守卫，和既有的 `'both-measured'` 并列。KV 字节行挂这个守卫，两侧 `bytes_basis` 不同（或任一侧是 `mixed`）就不出 from→to；出得来的也把口径写在数字旁边（`13,600 B（精度兜底）`）。跨代的结构比较改由新的「KV 元素 / token」行承担，它与精度无关。
 
 **没有去查 V4 的实际落盘精度。** 那份实现分析是 V4.1 专有的，V4 没有对应来源；按元素口径写，这个未知就不影响结论。`dtype_fallback` 这个标签本身是诚实的，`cache_basis` 里也早写明两种 basis 不能混比 —— 问题只在页面上已经在混比。
