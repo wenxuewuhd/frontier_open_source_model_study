@@ -2,7 +2,7 @@
 # 这份清单是选取结果，不是模型记录本身 —— 双周采集时核对并更新。
 # 较小档位只在有结构对照价值时才录，并在其记录里标 lineage.track: side。
 
-updated: 2026-10-29
+updated: 2026-10-30
 policy: 每个家族追最新旗舰；较小档位仅在有结构对照价值时收录
 
 families:
@@ -51,3 +51,176 @@ families:
     model_id: step-5-preview
     status: recorded
     note: 另有 BF16 与 NVFP4 两个发布变体
+
+# ─────────────────────────────────────────────────────────────────────
+# 视频生成线。**policy 与上面那条并列，不是替换。**
+#
+# 语言模型线的「每个家族追最新旗舰」有个前提：家族内的代际差异可以靠 lineage 文字
+# 讲清楚。视频线不成立 —— Wan2.2 的两个同代档位用两套 VAE（latent token 数差 4 倍）、
+# LTX-2→2.3 的参数涨幅不在主干、HunyuanVideo 1.5 相对 13B 把 VAE 与注意力形态全换了。
+# 这些差异落在**会进推导公式的数**上，写成一句 lineage，下游算 token 数就会错。
+# 这是本仓第一次有两套选题标准，所以单写一条，不要默认沿用上面那条。
+#
+# 依据与逐条排除理由见 docs/video-gen-gate-a.md。
+# 下面这些 consumer 目前都只读 `families`，不读 `video_families`：
+# refresh_check.py / kv_table.py / site 的 data.ts。接进去是另一件事。
+
+video_policy: >-
+  每个 family 追最新旗舰，外加一个差分基线；
+  VAE 或注意力形态变了的同代档位单独录；
+  纯分辨率/时长/任务（i2v、s2v、animate）变体不录，进记录内的变体表。
+
+video_families:
+  - family: minimax-video
+    flagship: MiniMax-H3
+    hf_repo: MiniMaxAI/MiniMax-H3
+    released: 2026-07-28
+    model_id: minimax-h3
+    status: planned
+    wave: 1
+    note: 压力测试首录。音视频联合；文本编码器是随仓发布的 Qwen3-VL-32B 全权重；
+          Ref2VA 侧带第二套 33B transformer_ref；Context-IR 与 Regenerate-2K 未开源。
+          取数实测：无顶层 config，17 份组件 config（FL2VA/ 与 Ref2VA/ 两套任务 checkpoint）
+
+  - family: ltx
+    flagship: LTX-2.5
+    hf_repo: Lightricks/LTX-2.5
+    released: 2026-07-23
+    model_id: null
+    status: blocked-gated
+    note: 仓 gated，模型卡与 config 均取不到，不录。family 当前实际最新记录是 ltx-2.3
+    members:
+      - model_id: ltx-2
+        hf_repo: Lightricks/LTX-2
+        released: 2026-01-03
+        status: planned
+        wave: 1
+        note: >-
+          取数要 --include。仓里同名张量跨文件 dtype 不同（distilled 是 BF16、
+          distilled-fp8 是 F8_E4M3），实测 7,132 个名字会撞；有 index.json 但
+          顶层另有整模型文件。9 份组件 config
+      - model_id: ltx-2.3
+        hf_repo: Lightricks/LTX-2.3
+        released: 2026-03-04
+        status: planned
+        wave: 1
+        note: >-
+          卡上无结构数字，全部靠权重头实测。取数要 --include：8 个顶层 safetensors 是
+          8 个不同模型（dev / distilled / 两个 LoRA / 三个 upscaler），没有 index.json，
+          而 dev 与 distilled 形状完全相同、连冲突都报不出来。整个仓没有任何 config，
+          Gate B 只剩清单一路 —— 记录里写「config 侧不存在」，不是「未取」
+
+  - family: wan
+    flagship: Wan2.2-T2V-A14B
+    hf_repo: Wan-AI/Wan2.2-T2V-A14B
+    released: 2025-07-24
+    model_id: wan2.2-t2v-a14b
+    status: planned
+    wave: 1
+    note: >-
+      时间步路由的 MoE，不是 token 路由。取数实测印证了这点：无顶层 config，
+      组件目录就叫 high_noise_model / low_noise_model，两套各 14B 按 boundary 切换
+    members:
+      - model_id: wan2.2-ti2v-5b
+        hf_repo: Wan-AI/Wan2.2-TI2V-5B
+        released: 2025-07-18
+        status: planned
+        wave: 1
+        note: 同代但换了 VAE（4×16×16/48ch），按「换 VAE 就是另一回事」单独录。
+              取数最简单的一份（顶层 config + 1 个 index + 3 分片），所以拿它当首录定形状
+      - model_id: wan2.1-t2v-14b
+        hf_repo: Wan-AI/Wan2.1-T2V-14B
+        released: 2025-02-25
+        status: planned
+        wave: 2
+        note: 差分基线
+
+  - family: hunyuan-video
+    flagship: HunyuanVideo-1.5
+    hf_repo: tencent/HunyuanVideo-1.5
+    released: 2025-11-20
+    model_id: hunyuanvideo-1.5
+    status: planned
+    wave: 1
+    note: 11 个全量 checkpoint 进同一份记录；SSTA 稀疏权重只有 720p_i2v_distilled_sparse 一个。
+          顶层 config 有，组件下另有 16 份
+    members:
+      - model_id: hunyuanvideo-13b
+        hf_repo: tencent/HunyuanVideo
+        released: 2024-12-01
+        status: blocked-no-safetensors
+        wave: 2
+        note: >-
+          嵌入式引导（每步单次前向），与 1.5 代的真 CFG 形成对照 —— 结构上值得录。
+          **但这个仓一个 safetensors 都没有**：权重是 4 个 .pt
+          （mp_rank_00_model_states{,_fp8,_fp8_map}.pt 与 vae/pytorch_model.pt）。
+          读头拿清单这条路不成立，要下整包再反序列化，而且是 pickle。
+          录它之前要先定「没有清单的记录怎么过 Gate B」
+
+  - family: cogvideo
+    flagship: CogVideoX1.5-5B
+    hf_repo: zai-org/CogVideoX1.5-5B
+    released: 2024-11-02
+    model_id: cogvideox-1.5-5b
+    status: planned
+    wave: 2
+    note: 2024 年锚点；该线自 2024-11 起无后续，zai-org 之后只发了任务模型
+
+  - family: stepvideo
+    flagship: Step-Video-T2V
+    hf_repo: stepfun-ai/stepvideo-t2v
+    released: 2025-02-14
+    model_id: stepvideo-t2v-30b
+    status: planned
+    wave: 2
+    note: 压缩率最激进（16×16×8 / 64ch）；卡上有峰值显存与端到端耗时，
+          是唯一能填公开 performance 的一份
+
+  - family: magi
+    flagship: MAGI-2-preview
+    hf_repo: sand-ai/MAGI-2-preview
+    released: 2026-08-03
+    model_id: magi-2-preview
+    status: planned
+    wave: 1
+    note: 唯一的 token 级 MoE 视频 DiT（114B 总参 / 每 token 激活 6B，36 层各 3072 专家）；
+          带 attention sink、逐头输出门、mHC 残差（×4）；视频 VAE 直接用 Wan2.2_VAE.pth，
+          音频 VAE 用 stable-audio-open-1.0，另带一个蒸馏的 turbo 解码器。
+          采用度低（HF 下载量 0、likes 122），入选理由是结构不是影响力
+
+  - family: sana-video
+    flagship: SANA-Video 2.0 5B 720p
+    hf_repo: Efficient-Large-Model/SANA-Video_2.0_5B_720p
+    released: 2026-08-20
+    model_id: sana-video-2.0-5b
+    status: blocked-no-safetensors
+    wave: 2
+    note: >-
+      唯一的线性注意力视频 DiT（75% gated linear + 25% dense anchor）；VAE 复用 ltx-2.3。
+      **但整个仓只有 5 个文件，权重是单个 .pth**，没有 safetensors、没有任何 config，
+      清单与 config 两路都取不到。结构唯一性是它入选的唯一理由，
+      而现在连结构都没法实测 —— 若要缩减范围，砍这一条
+
+video_watchlist:
+  - name: LTX-2.5
+    vendor: Lightricks
+    reason: 有公开权重但仓 gated，模型卡与 config 取不到；第三方镜像不足以支撑记录
+    action: 申请访问后转正式记录
+  - name: Sora 2 / Veo 3.x / Kling / Seedance / Runway Gen-4 / Pika
+    vendor: 多家
+    reason: 无公开权重，任何数字都无法复算
+  - name: H3-Context-IR / H3-Regenerate-2K
+    vendor: MiniMax
+    reason: MiniMax-H3 系统的两个模块未开源，端到端负载在公开仓算不全
+  - name: HunyuanMLLM
+    vendor: Tencent
+    reason: HunyuanVideo-1.5 的官方文本编码器未发布，社区用 Qwen2.5-VL-7B-Instruct 替代
+  - name: 世界模型 / 交互式视频线
+    vendor: Hy-Nomas / Matrix-Game-4.0 / AlayaWorld / Cosmos3 / LongLive-2.0 / lingbot-world
+    reason: 自回归逐块生成，KV cache 与流式时延回来了，负载模型与本线不同；建议单开一条线
+  - name: Diffusion Forcing 长视频
+    vendor: SkyReels-V2-DF / LongLive
+    reason: 改的是采样调度不是主干，作为路线观察条目
+  - name: 训练无关缓存加速
+    vendor: deepcache / teacache / taylorcache / MagCache
+    reason: 直接改变「步数 × 单步」的有效步数，是生成类特有的一类加速，进专题不进记录
