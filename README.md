@@ -412,11 +412,11 @@ V4.1 更细：`compressor.wkv`/`norm` 在 4 个源层都有，但 `compressor.wg
 
 | | 元素/token | 字节 | basis |
 |---|---|---|---|
-| V4-Flash | 2768 + 672 = **3440** | 6880 B | `dtype_fallback`（BF16 兜底） |
-| V4-Pro | **4924** | 9848 B | `dtype_fallback` |
+| V4-Flash | 2768 + 672 = **3440** | 5893 B | `mixed`（indexer 按公布的 MXFP4，main KV 兜底） |
+| V4-Pro | **4924** | 8438 B | `mixed` |
 | V4.1-Flash | 1280 + 320 = **1600** | 890 B | `theoretical_floor`（FP4 + scale） |
 
-属于结构的只有 **3440 / 1600 = 2.15 倍**（写这一节时是 6800 / 1600 = 4.25 倍）。另外 3.6 倍是「V4.1 查到了落盘格式、V4 还在按模型 dtype 兜底」—— 是调研进度的差，不是跨代改进。
+属于结构的只有 **3440 / 1600 = 2.15 倍**（写这一节时是 6800 / 1600 = 4.25 倍）。剩下那部分是「V4.1 的落盘格式查到了、V4 还有一半在按模型 dtype 兜底」—— 是调研进度的差，不是跨代改进。V4 一侧后来从 6880 降到 5893（indexer 的格式其实公布过，见下节），差距仍在，只是小了一点。厂商自己给的跨代比值是 **roughly 1/4**（V4.1 技术报告摘要与结论），和我们按兜底算出的 6.6 倍对不上 —— 这个缺口就是 V4 main KV 未公布的那一半。
 
 > V4 一侧的 6800 是后来查出的又一处错：比值 4 的层 compressor.wkv 输出 1024，但 compressor.norm 是 [512] —— 厂商参考实现在比值 4 时用重叠窗口，wkv 宽是 2 × head_dim 的中间量，落进缓存的条目仍是 512（index K 同理 256 → 128）。R28 验了层集合、除以比值、滑窗三个因子，没验「一个条目多宽」，而这正是 skill 提问顺序的第 2、3 问。V4.1 没有比值 4 的层，不受影响。留痕在 ds-v4-flash 的 R1 与 V4.1 记录的 R34。旗舰记录的 `lineage` 里早就把结构因子与精度因子拆开写了（R32），但族谱跨代那一栏仍在混比。
 
@@ -425,7 +425,7 @@ V4.1 更细：`compressor.wkv`/`norm` 在 4 个源层都有，但 `compressor.wg
 - `derive.py` 的每个随上下文增长的分量都带上 `elements_per_token`，合计成 `kv_cache.per_token_elems`。公式路径里层数或宽度只是上界的，标 `per_token_elems_bound: upper_bound`，页面上显示成 `≤ N`。V3.2-Exp 起初就是这样（indexer 没有产出层声明，按全部 61 层计）；复核时清单显示 `indexer.wk` 恰在第 0–60 层全都有、宽度 128 是实测的，补上 `index_kv_source_layers` 后变为精确的 42,944（ds-v3.2-exp 的 R4）—— 上界标记说的是「记录没声明」，不一定是「真的不确定」。任一分量缺元素数就不报合计 —— 少算一项还印成精确值比不印更糟。
 - `data.ts` 的 `TRACKED_FIELDS` 新增 `diff: 'same-basis'` 守卫，和既有的 `'both-measured'` 并列。KV 字节行挂这个守卫，两侧 `bytes_basis` 不同（或任一侧是 `mixed`）就不出 from→to；出得来的也把口径写在数字旁边（`13,600 B（精度兜底）`）。跨代的结构比较改由新的「KV 元素 / token」行承担，它与精度无关。
 
-**没有去查 V4 的实际落盘精度。** 那份实现分析是 V4.1 专有的，V4 没有对应来源；按元素口径写，这个未知就不影响结论。`dtype_fallback` 这个标签本身是诚实的，`cache_basis` 里也早写明两种 basis 不能混比 —— 问题只在页面上已经在混比。
+**当时没有去查 V4 的实际落盘精度**，判断是「那份实现分析是 V4.1 专有的，V4 没有对应来源」。后来发现这个判断有一半是错的：V4.1 的技术报告 §2.4.4 开篇就在替 V4 说话（见下节），indexer 的格式一直是公布状态。`dtype_fallback` 这个标签本身是诚实的 —— 它如实说了「没查过」—— 但「没有对应来源」和「没去找过来源」是两件事，当时把后者写成了前者。
 
 #### 零结构差异的权重刷新不再单独立记录
 
@@ -501,3 +501,52 @@ Gate B 的参数总量一项于是 skip。补上名字里的 27B 之后：全量
 复算时把 `model.language_model.` 与 `model.` 前缀归一后，共有的是 **32 族** —— 整条注意力与线性注意力路径同名，
 差异只在 FFN（dense vs 堆叠 grouped GEMM + router + 共享专家）和视觉前端。结论（该留）不变，论据换了。
 **代理的计数也是一个乘式的因子，进交付物之前要自己重算。**
+
+### 把厂商的 demo 参考实现当成了发布标准
+
+**差一步就把对的记录改错了。** V4.1 的 `precision.kv_cache_components` 记着全局 KV 是 FP4
+（E2M1 + 每 16 通道一个 E4M3 scale）、890 B/token，来源那栏写的是「参考实现的读取（二手）」。
+为了给它找一手依据，去读厂商随仓的 `inference/model.py`，得到一条看起来无懈可击的链：
+
+1. 三个缓存的分配点都是 `register_buffer("…", torch.zeros(…))`，**不传 dtype**，走文件末尾的
+   `torch.set_default_dtype(torch.bfloat16)`
+2. 三条量化调用（`fp4_act_quant(latent, 16, True, scale_dtype=…e4m3fn)` 等）的**返回值全部被丢弃**，
+   紧接着把原张量写进缓存
+3. `kernel.py` 里这两个函数的 `inplace=True` 分支是 `y = torch.empty_like(z)`（**原 dtype**）、
+   `x.copy_(y)` 后 `return x`；打包成 `float4_e2m1fn_x2` 的是 `inplace=False` 分支，而 scale 算了从不返回
+4. 反证也齐：同一文件里真正的打包 FP4（`Linear` 的权重）是末维折半加一个 `float8_e8m0fnu`
+   scale buffer —— 三个 KV 缓存一个特征都没有
+
+结论是「缓存存 BF16，890 应为 3200 B，高 3.6 倍」，并据此改了记录、改了 schema、写了两条核查发现。
+**全错。** 厂商模型卡与技术报告 §2.4.4 都明文写着：
+
+> we select E2M1 with one E4M3 scale per 16 channels, following NVFP4 but omitting its second-level global scale
+>
+> … FP4 **reduces storage** rather than accelerates matrix multiplication. **Dequantizing cached values before attention** …
+
+`890 bytes per token` 在模型卡、报告摘要、报告结论三处都有。而 `inference/README.md` 第一句就是
+"A readable reference implementation rather than a production serving engine" —— 它用伪量化模拟 FP4 的
+**数值行为**，不实现 FP4 的**存储**。上面四条证据单看每条都成立，合起来只证明了「那份 demo 存 BF16」，
+证不了「模型的 KV 是 BF16」。
+
+**闸口全绿，一道也没响。** `validate.py` 查 schema 与证据归属，`derive.py` 查内部一致性，
+没有任何一道检查「这个精度来自哪一档来源」。更糟的是记录里本来有一条交叉核对（R35：vLLM 的
+`swa_bytes_per_token` 在 mxfp8 布局下同为 528），它恰好与误读一致，于是**给错误背了书** ——
+假旁证比没有旁证更糟。挡住这次的不是任何机制，是有人记得卡上写的是 FP4。
+
+**同一份报告顺带把 V4 一代定了。** §2.4.4 开篇：
+"DeepSeek-V4 already uses QAT for FP4 indexer queries and keys … We adopt the OCP-standard MXFP4 format"，
+接着才是 "We now extend QAT to the main KV cache"。所以 V4 的 indexer 一直是 FP4 / MXFP4
+（每元素 0.53125 B），而 main KV 这一代还不是 FP4、格式厂商没有公布。四份 V4 记录因此从
+`dtype_fallback` 的 6880 / 9848 改成 `mixed` 的 5893 / 8438：有据的那半按公布格式算，没据的那半继续兜底，
+合计不再假装是同一种口径。厂商给的跨代比值是 roughly 1/4，而兜底算法给出 6.6 倍 —— 缺口正是未公布的那一半。
+
+规则落在两处：`CLAUDE.md` 的「改数据」一节与 `model-audit` skill 规则 10 ——
+**模型卡 / 技术报告 > 厂商参考实现 > 引擎实现**。参考实现能回答卡和报告不说的事（缓存布局、算法语义、
+哪些张量真被用到），但**不能推翻它们说过的数**；引擎（vllm / sglang）连这一档都不算，只进算子表。
+
+一个副产品：按同样的标准回看 V4.1 自己，滑窗（SWA）那一格也站不住 —— 报告只公布全局 KV 与 indexer，
+滑窗的 `FP8_E4M3` 唯一依据就是那条 inplace 伪量化调用。它现在标成「QAT 网格，非落盘宽度」并进了
+open question（R38）。**每 token 890 B 是硬的，每序列 2.77 MiB 不是。**
+`kimi-k3`、`minimax-m3`、`step-5-preview` 的缓存精度同样建立在参考实现的读取上，按新规则都要回去读卡和报告；
+`step-5-preview` 的 source 原文就是「`allocate_cache` 无 dtype 形参、写死 `torch.bfloat16`」，和这次踩的是同一个坑。

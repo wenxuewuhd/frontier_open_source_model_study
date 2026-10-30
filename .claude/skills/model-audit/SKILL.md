@@ -84,6 +84,19 @@ open question 继续开着。要钉死得读 kernel 或实测显存，那是独�
 **9. 注释不是证据。** 一条注释声称某个坑已经填了，是本仓代价最高的一处 —— 它让人不再去看，
 而实际只填了五个张量里的五个。要验就去看代码或数据。
 
+**10. 来源优先级：模型卡 / 技术报告 > 厂商参考实现 > 引擎实现。** 精度与模型结构按厂商发布的说法填。
+厂商随仓的 `inference/` 常常自称 demo —— V4.1 的 `inference/README.md` 第一句就是
+"A readable reference implementation rather than a production serving engine" —— 它会用**伪量化**代替打包存储：
+`fp4_act_quant(x, block, inplace=True)` 的 inplace 分支是 `y = torch.empty_like(z)`（**原 dtype**）、
+`x.copy_(y)` 后 `return x`，scale 算了从不返回；真打包成 `float4_e2m1fn_x2` 的是 `inplace=False` 那条。
+缓存缓冲区也确实是 BF16（`torch.zeros(...)` 不传 dtype，走 `set_default_dtype`）。照这条链读下去，
+V4.1 的 FP4 KV 会被读成 BF16、字节高 3.6 倍 —— 而技术报告 §2.4.4 说得很清楚：FP4 是**落盘格式**，
+「reduces storage rather than accelerates matmul」，读出前反量化。本仓差一步就把对的记录改错了，
+挡住它的不是任何闸口，是有人记得卡上写的是 FP4。
+反过来说，参考实现能回答卡和报告不说的事（缓存布局、算法语义、哪些张量真被用到），但**不能推翻它们说过的数**。
+引擎实现连这一档都不算：它可能滞后于厂商发布，也可能独立另选格式。本仓用 vLLM 的 `swa_bytes_per_token`
+给 V4.1 的滑窗格式做过旁证，而那个数恰好与误读一致，于是没挡住错误、反而给它背了书 —— 假旁证比没有旁证更糟。
+
 ## 完成判据
 
 - 每个报出去的乘积，**每个因子**都写了来源；只验了一个因子的乘积不提交

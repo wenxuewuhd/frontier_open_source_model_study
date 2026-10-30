@@ -216,6 +216,28 @@ arch:
       hidden，再以 4 个可学习的 [4096] 向量 image_start / image_end / image_newline / image_pad（顶层张量，不在 embed 表里）拼进序列。
       它们是否同时是 tokenizer 的特殊 token，facts/ 里没有
 precision:
+  # indexer 缓存的格式由厂商公布（见下 source）；main KV 这一代还不是 FP4，格式未公布。
+  # 两半可信度不同，合计因此是 mixed 口径 —— 见核查 R10
+  kv_cache_components:
+    indexer:
+      dtype: FP4
+      block: 32
+      scale_dtype: FP8_E8M0
+      note: OCP MXFP4，E2M1 + 每 32 通道一个 E8M0 scale，每元素 0.5 + 1/32 = 0.53125 B
+    source: >-
+      indexer 的格式由厂商公布，出处是后继者的技术报告：DeepSeek-V4.1-Flash 技术报告 §2.4.4
+      「FP4 Main KV Cache」开篇说 "DeepSeek-V4 already uses quantization-aware training (QAT)
+      for FP4 indexer queries and keys, accelerating index computation and reducing the indexer
+      cache size. We adopt the OCP-standard MXFP4 format"，讲的就是本代。
+      同一段接着说 "We now extend QAT to the main KV cache" —— 所以 main KV 在本代还不是 FP4，
+      而本代自己的模型卡只给权重精度（FP4 + FP8 Mixed，脚注限定为「专家 FP4、其余多为 FP8」），
+      不给 KV 的格式或字节数，引用块没有报告 URL，仓里也没有报告 PDF。
+      不要照厂商随仓 inference/ 的 act_quant / fp4_act_quant 调用读落盘格式：那些是 inplace 伪量化
+      （原 dtype 回写、scale 不返回），只给 QAT 网格（判定依据见 deepseek-v41-flash 的 R36）
+    note: >-
+      global_kv 不在这里：main KV 的落盘格式本代未公布，derive.py 对这一半按模型 dtype 兜底，
+      所以合计字节是 mixed 口径 —— indexer 那一半有一手依据，global 那一半是占位值。
+      两半不能当成同一档，合计也不能和别代的 theoretical_floor 相比
   quantization:
     method: fp8
     activation_scheme: dynamic
@@ -308,7 +330,12 @@ open_questions:
 - 视觉 token 与文本 token 在 decode 下如何共享 router，未见公开说明
 - hash 层（tid2eid 查表）上新加的 gate.bias / gate.bias_vl 是否参与选路，形状定不了
 - rms_norm_eps 1e-20 是否为实际推理值未见说明（前代 1e-6，权重不变）
-- KV 的实际落盘精度未进记录，derive.py 按 BF16 兜底；参考实现的写入量化与压缩器状态见 ds-v4-flash 的 open questions
+- >-
+  **main KV 的落盘格式本代未公布**（核查 R10）。厂商模型卡只给权重精度，没有技术报告；
+  后继者 V4.1 的报告只说本代已对 indexer 做 FP4 MXFP4、main KV 是「now extend」的下一步。
+  所以 global_kv 那一半仍按模型 dtype 兜底，合计字节是 mixed 口径，不能和别代的
+  theoretical_floor 相比。要钉死得等厂商公布或读生产 kernel
+- 参考实现在写缓存前对非 rope 维做 act_quant、压缩器另有 fp4_act_quant 分支，但那些是 inplace 伪量化，只给 QAT 网格、不给落盘宽度（判定依据见 deepseek-v41-flash 的 R36）
 - 训练精度没有一手来源，故不填 precision.training
 reviewed:
   date: '2026-10-30'
@@ -390,3 +417,20 @@ review:
   finding: released 2026-08-31 是 repoinfo 的 createdAt；视觉两项与另两项都来自清单
   resolution: corrected
   changed_to: 标 derived；train_native 标 judgement；另补 head_dim_note、swiglu_limit、compress_rope_theta、sinkhorn / eps
+- id: R10
+  field: precision.kv_cache_components
+  severity: missing
+  claim: 记录不填任何 KV 落盘精度，derive.py 整体按模型 dtype 兜底（dtype_fallback）
+  finding: >-
+    indexer 那一半其实是公布过的，只是出处在后继者身上：V4.1 技术报告 §2.4.4 开篇点名
+    "DeepSeek-V4 already uses QAT for FP4 indexer queries and keys ... We adopt the
+    OCP-standard MXFP4 format"。按 MXFP4（E2M1 + 每 32 通道一个 E8M0 scale）折算，
+    indexer 每元素 0.53125 B。同段的 "We now extend QAT to the main KV cache" 同时说明
+    main KV 在本代还不是 FP4，而本代的格式厂商没有公布，所以那一半只能继续兜底。
+    报告摘要与结论两处都说 V4.1 的 890 B/token 是 "roughly 1/4 of the corresponding
+    footprint of DeepSeek-V4-Flash"，即本代应在 3560 B/token 上下；而按 BF16 兜底算出的
+    5893 B/token 是 890 的 6.62 倍，明显不符。差额落在 main KV 那一半：2768 个元素
+    若按 FP8 + 每 32 元素一个 scale（1.03125 B/元素）折算，合计 3212 B，对 890 是 3.61 倍，
+    与「roughly 1/4」相符。但 FP8 这个格式厂商没说过，所以只记作约束、不写进字段
+  resolution: corrected
+  changed_to: 补 precision.kv_cache_components.indexer（FP4 / 块 32 / E8M0 scale）；main KV 留空并进 open_questions，合计 bytes_basis 由 dtype_fallback 变 mixed

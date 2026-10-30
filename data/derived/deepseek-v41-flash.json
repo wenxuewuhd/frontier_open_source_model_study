@@ -1,7 +1,7 @@
 {
  "id": "deepseek-v41-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T02:21:23+00:00",
+ "generated_at": "2026-10-30T06:09:30+00:00",
  "inputs": {
   "facts_dir": "facts/deepseek-v41-flash",
   "config_present": true,
@@ -143,7 +143,7 @@
       "dtype": "FP8_E4M3",
       "block": 32,
       "scale_dtype": "FP8_E8M0",
-      "note": "参考实现 _window_kv：kv_norm、末 64 维转 rope 之后，整条 512 维（含 rope 尾巴）act_quant(kv, fp8_block_size=32, scale_fmt=ue8m0, scale_dtype=float8_e8m0fnu)。每 32 元素一个 E8M0 scale，每位置 512 + 16 = 528 B。 vLLM 的 swa_bytes_per_token 在 mxfp8 布局下同为 528（R35）"
+      "note": "**落盘格式未公布，这一格是 QAT 网格而非存储宽度。** 技术报告只讲全局 KV 与 indexer， 滑窗的唯一依据是参考实现 _window_kv 的 act_quant(kv, fp8_block_size=32, scale_fmt=ue8m0, scale_dtype=float8_e8m0fnu, inplace=True) —— 而 inplace 伪量化只说明值被舍到 FP8 网格， 不说明存成多宽（见核查 R38）。按这个网格折算是每位置 512 + 16 = 528 B"
      },
      "note": "滑窗局部 KV，每序列固定，不随上下文增长"
     }

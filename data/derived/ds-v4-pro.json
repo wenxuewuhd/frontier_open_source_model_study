@@ -1,7 +1,7 @@
 {
  "id": "ds-v4-pro",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T02:01:57+00:00",
+ "generated_at": "2026-10-30T06:09:28+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-pro",
   "config_present": true,
@@ -91,7 +91,7 @@
   "layers": 61,
   "full_attention_layers": 61,
   "linear_attention_layers": 0,
-  "per_token_bytes": 9848,
+  "per_token_bytes": 8438.0,
   "per_sequence_bytes": 7995392,
   "per_token_elems": 4924,
   "per_token_elems_bound": "exact",
@@ -107,13 +107,19 @@
     }
    },
    "indexer": {
-    "bytes_per_token": 1920,
+    "bytes_per_token": 510.0,
     "elements_per_token": 960,
-    "bytes_basis": "dtype_fallback",
+    "bytes_basis": "theoretical_floor",
     "terms": {
      "elements_per_token": 960,
-     "bytes_per_element": 2,
-     "source": "完整权重清单实测"
+     "bytes_per_element": 0.53125,
+     "source": "完整权重清单实测",
+     "storage": {
+      "dtype": "FP4",
+      "block": 32,
+      "scale_dtype": "FP8_E8M0",
+      "note": "OCP MXFP4，E2M1 + 每 32 通道一个 E8M0 scale，每元素 0.5 + 1/32 = 0.53125 B"
+     }
     }
    },
    "local_window": {
@@ -129,18 +135,20 @@
    }
   },
   "notes": [
-   "元素口径，主干 61 层。每 token 元素 = 条目宽 / 压缩比，条目宽取 compressor.norm 的宽度：比值 4 的 30 层 compressor.wkv / ape 宽 1024，但 compressor.norm [512]（重叠窗口，依据见 ds-v4-flash 的 R1）。 全局 KV = 30 × 512/4 + 31 × 512/128 = 3840 + 124 = 3964；indexer = 30 × 128/4 = 960。 attn.wkv 那一份是滑窗局部 KV，每序列固定：61 × 128 × 512 = 3997696 元素/序列，开草稿侧加 mtp.0 为 62 层 4063232"
+   "元素口径，主干 61 层。每 token 元素 = 条目宽 / 压缩比，条目宽取 compressor.norm 的宽度：比值 4 的 30 层 compressor.wkv / ape 宽 1024，但 compressor.norm [512]（重叠窗口，依据见 ds-v4-flash 的 R1）。 全局 KV = 30 × 512/4 + 31 × 512/128 = 3840 + 124 = 3964；indexer = 30 × 128/4 = 960。 attn.wkv 那一份是滑窗局部 KV，每序列固定：61 × 128 × 512 = 3997696 元素/序列，开草稿侧加 mtp.0 为 62 层 4063232",
+   "字节是理论下限：元素数 × 落盘精度（含 scale）的精确计数，不含分页、环页与对齐粒度。实际部署在它之上，不能直接当显存预算",
+   "各分量字节口径不一：有的按落盘精度（理论下限），有的按模型 dtype 兜底，合计不是同一种数"
   ],
-  "bytes_basis": "dtype_fallback",
+  "bytes_basis": "mixed",
   "dtype_assumed": true,
   "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
  },
  "kv_capacity_bytes_at_context": {
-  "4096": 48332800,
-  "32768": 330694656,
-  "1048576": 10334371840
+  "4096": 42557440.0,
+  "32768": 284491776.0,
+  "1048576": 8855879680.0
  },
- "kv_capacity_basis": "dtype_fallback",
+ "kv_capacity_basis": "mixed",
  "active_params": {
   "status": "ok",
   "total": 48770659456.0,

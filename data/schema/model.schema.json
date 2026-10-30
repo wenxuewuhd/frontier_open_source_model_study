@@ -490,7 +490,7 @@
             "global_kv": { "$ref": "#/$defs/kv_component" },
             "indexer": { "$ref": "#/$defs/kv_component" },
             "local_window": { "$ref": "#/$defs/kv_component" },
-            "source": { "type": "string", "description": "精度从哪来。读实现得来的和量出来的不是一个等级，写清楚" },
+            "source": { "type": "string", "description": "精度从哪来。读实现得来的和量出来的不是一个等级，写清楚。**优先引模型卡 / 技术报告的原话与定位**；只能引参考实现时说明那是参考实现（常是 demo，会用伪量化代替打包存储，照它读会把 FP4 读成 BF16），并写清凭什么判定。引擎（vllm / sglang）不是这里的来源" },
             "note": { "type": "string" }
           }
         },
