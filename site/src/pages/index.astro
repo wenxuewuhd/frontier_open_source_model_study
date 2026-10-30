@@ -3,7 +3,7 @@ import Base from '../layouts/Base.astro';
 import Evidence from '../components/Evidence.astro';
 import {
   allModels, allSignals, roster, timeline, url, fmtCount, fmtBytes, FAMILY_LABEL,
-  HORIZON_LABEL, HORIZON_ORDER,
+  HORIZON_LABEL, HORIZON_ORDER, KV_BASIS_LABEL,
 } from '../lib/data';
 
 const models = allModels();
@@ -83,8 +83,12 @@ const recorded = r.families.filter((f) => f.status === 'recorded').length;
               <dd class="num">
                 {kv?.per_token_bytes ? `${kv.per_token_bytes.toLocaleString()} B/token` : '—'}
                 {kv?.per_sequence_bytes ? ` + ${fmtBytes(kv.per_sequence_bytes)}/序列` : ''}
-                {kv?.bytes_basis === 'theoretical_floor' && <span class="muted">（理论下限）</span>}
-                {kv?.bytes_basis === 'dtype_fallback' && <span class="muted">（精度兜底）</span>}
+                {/* 查表，不逐个值写 if：以前只认 theoretical_floor 与 dtype_fallback，
+                    vendor_declared / declared_dtype / mixed 三个值的卡片就一个标签都不出，
+                    于是「照抄厂商」和「本仓逐分量算的」在卡上长得一样 */}
+                {kv?.bytes_basis && KV_BASIS_LABEL[kv.bytes_basis] && (
+                  <span class="muted">（{KV_BASIS_LABEL[kv.bytes_basis]}）</span>
+                )}
               </dd>
               {/* 字节口径各卡不一，跨卡比结构要看元素数 —— 它与精度假设无关。
                   单位写进值里：这一行紧挨着上面的「B/token」，只写「1,600 /token」
