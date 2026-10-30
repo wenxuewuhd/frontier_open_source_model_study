@@ -540,7 +540,19 @@ const rv = reviewStatus(m);
             </p>
             <table>
               <tbody>
-                <tr><td>时间</td><td class="num">{gw.effective_compression?.temporal}×</td></tr>
+                <tr><td>时间（块内）</td><td class="num">{gw.effective_compression?.temporal}×</td></tr>
+                {/* 端到端比值 ≠ 块内卷积比。H3 按 17 帧一块、补 3 帧到 20 再除以 4，
+                    于是 243 帧出 72 个 latent 帧，端到端是 3.375 而不是 4 ——
+                    而且各档位之间不是常数（3.375 / 3.368 / 3.351）。
+                    两个数并排放，省得有人拿其中一个去推另一个 */}
+                {gw.latent_tokens_terms?.effective_temporal_ratio
+                  && Math.abs(gw.latent_tokens_terms.effective_temporal_ratio
+                              - (gw.effective_compression?.temporal ?? 0)) > 1e-6 && (
+                  <tr>
+                    <td>时间（端到端）</td>
+                    <td class="num">{gw.latent_tokens_terms.effective_temporal_ratio.toFixed(3)}×</td>
+                  </tr>
+                )}
                 <tr><td>高</td><td class="num">{gw.effective_compression?.spatial_h}×</td></tr>
                 <tr><td>宽</td><td class="num">{gw.effective_compression?.spatial_w}×</td></tr>
               </tbody>

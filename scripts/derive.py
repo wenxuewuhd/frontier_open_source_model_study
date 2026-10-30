@@ -672,13 +672,27 @@ def gen_workload(gen: dict, kind: str, dit_params: float, dit_params_src: str,
     # 这就是各家帧数都写成 4n+1 / 8n+1 的原因（Wan 的 121、HunyuanVideo 的 129、
     # LTX 的 8n+1）。按 F / t_c 算，Wan2.2 的 121 帧会得到 30.25 这种非整数，
     # 而真值是 31 —— 2% 的偏差不大，但它是个口径错误而不是精度误差，会一路传到 FLOPs。
+    # **记录声明了 latent 帧数就用声明的，不套公式。**
+    # (F-1)/t+1 只在「每 t 帧压一帧、首帧单独编」这一种分块规则下成立。实际各家不同：
+    # MiniMax-H3 按 17 帧一块、先补 3 帧到 20 再除以 4，每块出 5 个 token、整段末尾丢 3 个，
+    # T = ceil(F/17)×5 − 3 —— 默认档 243 帧真值 72，公式给 61.5，低 17%。
+    # token 低 17% 经注意力的 O(n²) 放大成低 31%，而这几个数是模型页上最显眼的三个。
+    # 各家的帧数约束（4n+1 / 8n+1 / 17n+5）都是分块规则的外在表现，
+    # 单一除数表达不了任何一个精确值，所以留一条「实测值优先」的路。
     causal = vae.get("causal")
-    if causal:
+    declared_lf = bucket.get("latent_frames")
+    if declared_lf:
+        n_t_latent = float(declared_lf)
+        t_formula = f"latent_frames = {declared_lf}（记录声明，未套公式）"
+        t_source = "declared"
+    elif causal:
         n_t_latent = (F - 1) / t_c + 1
         t_formula = "(F - 1) / t_vae + 1  （时间因果 VAE：首帧单独编码）"
+        t_source = "formula_causal"
     else:
         n_t_latent = F / t_c
         t_formula = "F / t_vae"
+        t_source = "formula_plain"
     n_t = n_t_latent / p_t
     n_h = H / (s_c * p_h)
     n_w = W / (s_c * p_w)
@@ -708,6 +722,12 @@ def gen_workload(gen: dict, kind: str, dit_params: float, dit_params_src: str,
             "factors": factors,
             "per_axis": {"t": n_t, "h": n_h, "w": n_w},
             "latent_frames": n_t_latent,
+            # 声明值还是公式算的，要能一眼看出来 —— 否则「这个数可不可信」没法判
+            "latent_frames_source": t_source,
+            # 端到端有效时间压缩率。它**不等于** vae.temporal_compression：
+            # 后者是块内卷积比（一手事实），前者是 F / latent_frames，受分块规则影响，
+            # 而且各档位之间不是常数。两个数并排放着，省得有人拿其中一个去推另一个
+            "effective_temporal_ratio": (F / n_t_latent) if n_t_latent else None,
         },
     }
 

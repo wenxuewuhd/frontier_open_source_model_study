@@ -290,6 +290,7 @@ generation:
     - width: 1344
       height: 768
       frames: 243
+      latent_frames: 72   # ceil(243/17)×5 − 3 = 72，见 R3
       fps: 24
       duration_s: 10.125
       default: true
@@ -303,18 +304,21 @@ generation:
     - width: 1344
       height: 768
       frames: 192
+      latent_frames: 57   # ceil(192/17)×5 − 3 = 57，见 R3
       fps: 24
       duration_s: 8.0
       note: assets/i2va.mp4 实测（首帧图生视频，请求 8 秒）
     - width: 1344
       height: 768
       frames: 124
+      latent_frames: 37   # ceil(124/17)×5 − 3 = 37，见 R3
       fps: 24
       duration_s: 5.1666667
       note: assets/ref2va.mp4 实测（多模态参考，请求 5 秒）
     - width: 2560
       height: 1440
       frames: 243
+      latent_frames: 72   # ceil(243/17)×5 − 3 = 72，见 R3
       fps: 24
       duration_s: 10.125
       note: >-

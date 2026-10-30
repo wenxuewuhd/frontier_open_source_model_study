@@ -1,7 +1,7 @@
 {
  "id": "wan2.2-ti2v-5b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T15:15:05+00:00",
+ "generated_at": "2026-10-30T16:08:52+00:00",
  "inputs": {
   "facts_dir": "facts/wan2.2-ti2v-5b",
   "config_present": true,
@@ -131,7 +131,9 @@
     "h": 22.0,
     "w": 40.0
    },
-   "latent_frames": 31.0
+   "latent_frames": 31.0,
+   "latent_frames_source": "formula_causal",
+   "effective_temporal_ratio": 3.903225806451613
   },
   "sequence_tokens": 27280.0,
   "sequence_tokens_is_lower_bound": false,
