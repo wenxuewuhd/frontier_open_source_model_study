@@ -58,7 +58,20 @@ sources:
       含草稿块应是 17,380,147,200）；其余 10,668,659,184 仍是 BF16，F32 那 8,448 个也还在。
       所以 **GPTQ-Int4 只覆盖主干稠密 FFN**，注意力、视觉塔、草稿块与两份词表都没量化。
       usedStorage 51.76 → **28.17 GiB（1.84 倍）**，只有 1.84 倍是因为降到 4 bit 的
-      只占参数量的 61.6%
+      只占参数量的 61.6%。
+      **本轮又补取了它的完整清单**（1,775 个张量），两件事因此是实测而不是声明：
+      (1) **量化组实测 group_size = 128，沿 in 维，192 个张量零例外** ——
+      gate/up 的 qweight [640, 17408] 还原 int4 打包后逻辑 in = 5120、
+      scales [40, 17408]，5120 / 40 = 128；down 的 qweight [2176, 5120] → 逻辑 in 17408、
+      scales [136, 5120]，17408 / 136 = 128。与 config 声明的 group_size 一致；
+      (2) **scale 的 dtype 是 F16**（不是 BF16，也不是主干权重的那套）。
+      被量化的恰好是 192 = 64 层 × 3 个投影，**草稿块的那 3 个没量化**
+      （含草稿块应是 195），与 tally 的结论一致。
+      另两个 GPTQ 格式张量也在：qzeros 16,711,680 个元素（尽管 sym 为 true）、
+      g_idx 1,769,472 个（尽管 desc_act 为 false）——
+      本仓只看形状，不能说它们的内容是什么，但它们确实占存储（合计 0.07 GiB）。
+      HF 的 I32 tally 17,112,760,320 = 容器 2,139,095,040 × 8，
+      说明**HF 把 int4-in-int32 也还原了**（和它对 FP4 装 INT8 的处理一致）
 
 hf:
   repo: Qwen/Qwen3.5-27B
@@ -533,10 +546,11 @@ open_questions:
     输出门的函数形式本代无声明（config 没有 output_gate_type），
     3.6 起声明为 swish；本档是否同为 swish 没有来源
   - >-
-    同代 FP8 仓（Qwen3.5-27B-FP8）的 config 与清单都没取。
-    Int4 仓的 config 本轮取了（哪一块被量化已由 tally 定下），**但清单没取**，
-    所以实测量化块（权重形状 ÷ 同名 scale 形状）仍未知 ——
-    GPTQ 的 group_size 128 是声明值，不是实测
+    同代 FP8 仓（Qwen3.5-27B-FP8）的 config 与清单都没取 ——
+    本档是稠密 FFN 档，不能照搬旗舰 FP8 仓的结论（那边只量化路由专家）。
+    Int4 仓的 config 与清单本轮都取了：**group_size 128 已是实测**
+    （192 个张量零例外），scale 是 F16，只覆盖主干稠密 FFN。
+    剩下的未知是 GPTQ 的 zero-point 与 g_idx 的实际内容（清单只有形状）
   - >-
     **视觉塔自注意力的跨度没有来源。** vision_config 里没有 window_size、
     也没有 fullatt_block_indexes（前代 Qwen2.5-VL 两个都有），所以一张图是
@@ -755,3 +769,20 @@ review:
       desc_act false，且逐 dtype tally 说明**只量化主干稠密 FFN**
       （I32 17,112,760,320 与本记录 dense_ffn 逐位相同），其余仍 BF16；
       open question 收窄为「清单没取，所以实测量化块仍未知」
+  - id: R9
+    field: precision.quantization
+    severity: unsupported
+    claim: >-
+      Int4 仓的 group_size 128 只是 config 声明值（R8 时清单还没取）
+    finding: >-
+      本轮取了清单（1,775 个张量），**实测与声明一致**：192 个被量化的张量零例外，
+      group_size = 128 沿 in 维 —— gate/up 的 qweight [640, 17408] 还原 int4 打包后
+      逻辑 in = 5120 而 scales [40, 17408]，5120 / 40 = 128；
+      down 的 qweight [2176, 5120] → 逻辑 in 17408 而 scales [136, 5120]，17408 / 136 = 128。
+      scale 的 dtype 是 **F16**。被量化的恰是 64 层 × 3 = 192 个投影，
+      **草稿块的 FFN 没量化**。
+      **这与 DeepSeek 一代的教训是反例**：那边 config 声明 [128,128] 而 FP4 专家实测
+      [1,32]（差 128 倍）；Qwen 这两个量化仓（本档 Int4 与旗舰 FP8）的声明都对上了。
+      所以「config 的量化块不可信」要改成「**必须实测，但它也可能是对的**」——
+      实测的价值在于把它从声明变成事实，不在于一定能抓到错
+    resolution: confirmed
