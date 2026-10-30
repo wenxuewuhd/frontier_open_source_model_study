@@ -38,7 +38,7 @@
     "vocab": {
       "unit": null,
       "absent": {
-        "state": "unsurveyed"
+        "state": "unsurveyed", "rules": [{ "state": "not_applicable", "why": "生成类模型没有词表：输入是 latent 张量与文本编码器的隐状态，不是 token id", "test": {"src": "rec", "op": "eq", "path": "kind", "values": ["video-gen", "image-gen"]} }]
       }
     },
     "attn_type": {
@@ -63,7 +63,7 @@
       "unit": null,
       "absent": {
         "state": "unsurveyed",
-        "rules": [{ "state": "not_applicable", "why": "非自回归生成模型，没有 KV 可压缩 —— 每一步重算全部 token", "test": {"src": "derived", "op": "eq", "path": "kv_cache.status", "values": ["not_applicable"]} }, { "state": "not_applicable", "why": "生成类模型没有词表：输入是 latent 张量与文本编码器的隐状态，不是 token id", "test": {"src": "rec", "op": "eq", "path": "kind", "values": ["video-gen", "image-gen"]} }, 
+        "rules": [{ "state": "not_applicable", "why": "非自回归生成模型，没有 KV 可压缩 —— 每一步重算全部 token", "test": {"src": "derived", "op": "eq", "path": "kv_cache.status", "values": ["not_applicable"]} }, 
           {
             "state": "not_applicable",
             "why": "非 latent 注意力，结构上没有 KV 低秩压缩",
@@ -107,7 +107,7 @@
     "o_lora": {
       "unit": null,
       "absent": {
-        "state": "not_applicable",
+        "state": "not_applicable", "rules": [{ "state": "not_applicable", "why": "非自回归生成模型，输出投影不做低秩分组", "test": {"src": "derived", "op": "eq", "path": "kv_cache.status", "values": ["not_applicable"]} }],
         "why": "输出投影不分组、不走低秩 —— 目前只有 MQA-latent 一代有这一项"
       }
     },
@@ -151,7 +151,7 @@
       "quantity": "随上下文线性增长的每 token 缓存元素数",
       "absent": {
         "state": "unsurveyed",
-        "rules": [{ "state": "not_applicable", "why": "非自回归生成模型，输出投影不做低秩分组", "test": {"src": "derived", "op": "eq", "path": "kv_cache.status", "values": ["not_applicable"]} }, 
+        "rules": [
           {
             "state": "not_applicable",
             "why": "非自回归生成模型，推理过程中没有跨步复用的 KV",
@@ -256,7 +256,7 @@
     "routing": {
       "unit": null,
       "absent": {
-        "state": "unsurveyed"
+        "state": "unsurveyed", "rules": [{ "state": "not_applicable", "why": "稠密模型，没有路由可言", "test": {"src": "rec", "op": "absent", "path": "arch.moe"} }]
       }
     },
     "hash": {
@@ -269,7 +269,7 @@
     "residual": {
       "unit": null,
       "absent": {
-        "state": "unsurveyed"
+        "state": "unsurveyed", "rules": [{ "state": "not_applicable", "why": "生成类记录不建 arch 块，残差形态（若有特别设计）写在 generation.backbone.note", "test": {"src": "rec", "op": "eq", "path": "kind", "values": ["video-gen", "image-gen"]} }]
       }
     },
     "retrieval": {
@@ -298,7 +298,7 @@
       "absent": {
         "state": "not_applicable",
         "why": "纯语言模型，没有视觉塔",
-        "rules": [{ "state": "not_applicable", "why": "生成类记录不建 arch 块，残差形态（若有特别设计）写在 generation.backbone.note", "test": {"src": "rec", "op": "eq", "path": "kind", "values": ["video-gen", "image-gen"]} }, { "state": "not_applicable", "why": "稠密模型，没有路由可言", "test": {"src": "rec", "op": "absent", "path": "arch.moe"} }, 
+        "rules": [
           {
             "state": "unsurveyed",
             "why": "是多模态记录，但视觉塔的规格还没录",
@@ -317,7 +317,7 @@
     "ctx": {
       "unit": null,
       "absent": {
-        "state": "unsurveyed"
+        "state": "unsurveyed", "rules": [{ "state": "not_applicable", "why": "生成类模型没有上下文窗口。它的「长度」是 latent token 数，由分辨率/帧数 ÷ VAE 压缩 ÷ patch 决定，见 generation.buckets", "test": {"src": "rec", "op": "eq", "path": "kind", "values": ["video-gen", "image-gen"]} }]
       }
     },
     "quant_block": {
@@ -325,15 +325,10 @@
       "scope": "config",
       "absent": {
         "state": "unsurveyed",
-        "rules": [{ "state": "not_applicable", "why": "生成类模型没有上下文窗口。它的「长度」是 latent token 数，由分辨率/帧数 ÷ VAE 压缩 ÷ patch 决定，见 generation.buckets", "test": {"src": "rec", "op": "eq", "path": "kind", "values": ["video-gen", "image-gen"]} }, 
+        "rules": [
           {
             "state": "confirmed_absent",
-            "why": "config 没有声明量化块 —— 这一代不带 config 级量化声明，实测值看下面的逐子系统行",
-            "test": {
-              "src": "rec",
-              "op": "absent",
-              "path": "precision.quantization.method"
-            },
+            "why": "config 没有声明量化块。**有 quantization.method 恰恰证明 config 读过了** —— compressed-tensors 声明的是 config_groups.*.weights 下的 group_size 与 strategy，没有 weight_block_size 这个键，所以这一格空着是「它没这么说」而不是「本仓没查」。实测值看下面的逐子系统行",
             "label": "未声明"
           }
         ]
@@ -347,12 +342,7 @@
         "rules": [
           {
             "state": "confirmed_absent",
-            "why": "config 没有声明 scale 格式；实测的 scale dtype 在下面的逐子系统行里",
-            "test": {
-              "src": "rec",
-              "op": "absent",
-              "path": "precision.quantization.method"
-            },
+            "why": "config 没有声明 scale 格式。同上：compressed-tensors 用的键是 scale_dtype，不是 scale_format。实测的 scale dtype 在下面的逐子系统行里",
             "label": "未声明"
           }
         ]
@@ -366,12 +356,7 @@
         "rules": [
           {
             "state": "confirmed_absent",
-            "why": "没有激活量化：权重不量化，激活也就没有 scale 要算",
-            "test": {
-              "src": "rec",
-              "op": "absent",
-              "path": "precision.quantization.method"
-            },
+            "why": "config 没有声明激活量化口径。**这与「声明了不量化」不是一回事** —— 后者是 input_activations: null，填 none",
             "label": "未声明"
           }
         ]

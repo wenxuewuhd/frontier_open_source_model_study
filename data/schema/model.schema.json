@@ -837,8 +837,22 @@
           "additionalProperties": false,
           "properties": {
             "method": { "type": "string" },
-            "activation_scheme": { "enum": ["static", "dynamic"] },
-            "weight_block_size": { "type": "array", "items": { "type": "integer" } },
+            "activation_scheme": {
+              "description": "config 声明的激活量化口径。**none 不等于字段缺席** —— none 是厂商明说了不量化激活（compressed-tensors 的 input_activations: null），字段缺席是 config 里根本没这一项；页面上前者印 none，后者印「未声明」。Kimi-K3 是这件事的样本：模型卡声明 MXFP8 激活、config 写 null、落盘没有激活 scale，**三者不一致本身是结论**，字段填 config 说的那个，差异写进 open_questions",
+              "enum": ["static", "dynamic", "none"]
+            },
+            "weight_block_size": {
+              "type": "array", "items": { "type": "integer" },
+              "description": "config 声明的量化块 tile（FP8 式 config 的 weight_block_size）。**不要拿 group 粒度往这里塞** —— compressed-tensors 声明的是沿单轴的 group_size，config 的 block_structure 明写 null，翻译成 [1, N] 是替厂商把 group 归一成 block tile。group 粒度用下面的 group_size / group_strategy"
+            },
+            "group_size": {
+              "type": "integer",
+              "description": "compressed-tensors 声明的 group 粒度（config_groups.*.weights.group_size），沿输入维分组。与 weight_block_size 是两种声明法、不互相换算：前者一维分组，后者二维 tile"
+            },
+            "group_strategy": {
+              "type": "string",
+              "description": "compressed-tensors 的 strategy（group / channel / tensor / block）。只抄 config 原值，不归一"
+            },
             "weight_format": {
               "type": "string",
               "description": "量化权重的元素格式（config 的 fmt，如 e4m3）。和 scale_format 是两回事，混用会凭空造出一次格式迁移"
