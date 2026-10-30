@@ -7,7 +7,8 @@
   2. 证据     每个手写叶子字段都要能在 evidence 里找到归属（支持前缀继承）；
               derived 的字段不允许手写；judgement 的字段列出来给人看
   3. 防泄漏   公开仓里不允许出现 visibility: internal 或 source.type: self
-  4. 声明对账 precision.weights_release 里声明的每种精度，都要在实测清单里出现（告警）
+  4. 声明对账 precision.weights_release 里声明的每种精度，都要在实测清单里出现，
+              或者在 weights_release_scope 里交代清楚它在哪个仓 / 装在哪种容器里（告警）
   5. 缺值三态 每一个会渲染成空格子的列，都要能说出自己是「没查」「不适用」
               还是「查了但没有」（data/schema/columns.json 的声明；第三态是信息，
               前两态是缺口，渲染成同一个 `—` 就等于把信息和缺口混为一谈）
@@ -62,8 +63,10 @@ def check_release_vs_measured(doc, path, derived_dir, warnings):
 
     报 warning 不报 error：声明里出现本仓没取过数的那个仓的精度，不一定是写错 ——
     厂商常把量化变体发在独立仓。但两种情况在字段上长得一模一样，所以必须提示。
-    weights_release 的口径（要不要带「本仓取没取过数」的标记）定下来之后，
-    这一条可以收紧成 error。
+
+    口径已经定了：**列厂商发布过的全部变体，每一项带「本仓取没取过数」的标记**
+    （precision.weights_release_scope）。交代过的在这里放行，所以 47 份可以一份一份
+    迁移。**全部迁完之后把 warnings 改成 errors**，这一条就从提示变成闸。
     """
     wr = ((doc.get("precision") or {}).get("weights_release")) or []
     mid = doc.get("id")
@@ -81,13 +84,32 @@ def check_release_vs_measured(doc, path, derived_dir, warnings):
         return  # 没有逐 dtype 统计（抽样快照等），这一项无从对账
     measured = {str(k).upper() for k in by}
     missing = [str(x) for x in wr if str(x).upper() not in measured]
-    if missing:
-        warnings.append(
-            f"{path}: precision.weights_release 声明了 {missing}，但实测清单里没有"
-            f"（实测 {sorted(measured)}）。要么这些变体在本仓没取过数的独立仓里 —— "
-            f"那就在记录里写明是哪个仓、本记录的实测口径只覆盖主仓；"
-            f"要么声明本身不对。两种在字段上长得一样，页面会并排显示"
-            f"「声明发了 X」和「实测全是 Y」，读者会当成数据错")
+    if not missing:
+        return
+
+    # weights_release_scope 一旦把某个变体交代清楚了，它就不再是「两种在字段上长得一样」
+    # 的那种情况 —— 有标记说明在独立仓（measured: false），或者说明是逻辑精度装在别的
+    # 容器里（container），都算交代过，放行。没标记的那些照旧报。
+    #
+    # 这样 47 份可以一份一份迁移：每迁一份，它的告警当场消失，不必等全部迁完。
+    # **全部迁完之后把下面的 warnings 改成 errors**，这一条就从提示变成闸 ——
+    # 届时「没交代又对不上」没有任何正当理由。
+    scope = ((doc.get("precision") or {}).get("weights_release_scope")) or {}
+    unexplained = []
+    for v in missing:
+        s = scope.get(v) or scope.get(str(v).upper()) or {}
+        if s.get("measured") is False or s.get("container"):
+            continue
+        unexplained.append(v)
+    if not unexplained:
+        return
+
+    warnings.append(
+        f"{path}: precision.weights_release 声明了 {unexplained}，但实测清单里没有"
+        f"（实测 {sorted(measured)}）。要么这些变体在本仓没取过数的独立仓里 —— "
+        f"那就在 precision.weights_release_scope 里写明是哪个仓、measured: false；"
+        f"要么声明本身不对。两种在字段上长得一样，页面会并排显示"
+        f"「声明发了 X」和「实测全是 Y」，读者会当成数据错")
 
 
 def check_absence_contract(errors, warnings):

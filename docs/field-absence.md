@@ -66,7 +66,7 @@
 
 ## 回归用例
 
-`tests/absence_regression.py`，15 条，三次误读各有负例与正例：
+`tests/absence_regression.py`，18 条，三次误读各有负例与正例：
 
 ```
 .venv/bin/python tests/absence_regression.py -v
@@ -102,9 +102,15 @@
 
 ### 和 `e4983d4` 那道闸的接缝
 
-`check_release_vs_measured` 现在报 warning：声明了而实测清单里没有的那三份通义。
-**47 份都带上 `weights_release_scope` 之后，这一条可以收紧成 error** ——
-有标记说明「在独立仓」的放行，没标记又对不上的报错。这是迁移要带的最后一步。
+`check_release_vs_measured` 已经认这个字段了：某个变体标了 `measured: false`（在独立仓）
+或带了 `container`（逻辑精度装在别的容器里），就算交代过，放行；没交代的照旧报。
+
+**所以 47 份可以一份一份迁移** —— 每迁一份，它的告警当场消失，不必等全部迁完，
+也就不必和别的会话抢一次性的大改。全部迁完之后把那里的 `warnings` 改成 `errors`，
+这一条就从提示变成闸：届时「没交代又对不上」没有任何正当理由。
+
+放行只认 `measured: false` 和 `container` 两种。**`measured: true` 不算交代** ——
+声明了、实测清单里查无实据、却标「取过数」，那是自相矛盾，继续报。回归用例钉住了这条。
 
 ### 排雷：7 份声明与实测不符，其中 4 份不要改
 
