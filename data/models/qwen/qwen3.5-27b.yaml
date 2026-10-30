@@ -1,0 +1,561 @@
+# 机械字段来自 config（official）；形状、参数量、层分布、视觉塔与草稿块的构成、
+# 以及 F32 的两类张量来自完整权重清单（11 分片 1199 条目，无读失败分片）。
+# 本档与 qwen3.8-27b 的清单只差 96 个张量的 dtype（见 lineage 与 R1），
+# 所以结构性字段两份记录一致，差异集中在 precision。
+id: qwen3.5-27b
+family: qwen
+kind: vlm
+display_name: Qwen3.5-27B
+released: '2026-02-24'
+license: apache-2.0
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3.5-27B
+    locator: config.json @ fc05daec18b0
+    accessed: '2026-10-30'
+    note: >-
+      许可取自 HF tags license:apache-2.0 与 cardData license: apache-2.0
+      （同代旗舰 Qwen3.5-397B-A17B 也是 apache-2.0；到 Qwen3.8 两档才各自变成
+      license_name: qwen3.8-max 与 qwen-community-1.0）。
+      11 分片 1199 个张量，逐分片读头取全，failed_shards 为空。
+      **1103 条 BF16 + 96 条 F32**（F32 的是 48 层的 linear_attn.A_log [48]
+      与 linear_attn.norm.weight [128]，共 8448 个元素）。
+      config 这一代第一次有 layer_types 列表、attn_output_gate 与 mamba_ssm_dtype；
+      **还没有** output_gate_type（3.6 起才有，值 swish）
+
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3.5-27B/blob/fc05daec18b0a78c049392ed2e771dde82bdf654/README.md
+    locator: 'README.md @ fc05daec18b0 · Model Overview'
+    accessed: '2026-10-30'
+    note: >-
+      按本仓「来源优先级：模型卡 / 技术报告 > 厂商参考实现 > 引擎实现」补的一手来源。
+      Model Overview 的声明值（**全部嵌在「Language Model」这一级下**，
+      与并列的 Vision Encoder 分开）：「Number of Parameters: **27B**」、
+      「Hidden Dimension: 5120」、「Token Embedding: **248320 (Padded)**」、
+      「Number of Layers: 64」、「Hidden Layout: **16 × (3 × (Gated DeltaNet → FFN)
+      → 1 × (Gated Attention → FFN))**」、「**Gated DeltaNet**: 48 for V and 16 for QK,
+      Head Dimension 128」、「**Gated Attention**: 24 for Q and 4 for KV,
+      Head Dimension 256, **Rotary Position Embedding Dimension: 64**」、
+      「Feed Forward Network: Intermediate Dimension 17408」、
+      「LM Output: 248320 (Padded)」、「MTP: trained with multi-steps」、
+      「Context Length: **262,144 natively and extensible up to 1,010,000 tokens**」。
+      类型写成「Causal Language Model **with Vision Encoder**」。
+      **卡里没有训练精度声明，也没有提 A_log / norm 的 F32**（那件事只有 dtype 看得见）
+
+hf:
+  repo: Qwen/Qwen3.5-27B
+  sha: fc05daec18b0a3ae0f7dd1a44d19b5a0c2a09d26
+  last_modified: '2026-04-24T08:10:17.000Z'
+  pipeline_tag: image-text-to-text
+  gated: false
+
+lineage:
+  track: side
+  predecessor: qwen3-32b
+  successor: qwen3.8-27b
+  changed_from_predecessor:
+    - axis: attention
+      text: >-
+        **混合线性注意力进入稠密 FFN 档**：64 层按 3:1 分成 48 层线性 + 16 层 full
+        attention，而且这一代 config **第一次给出 layer_types 列表**（不再只有
+        full_attention_interval）。清单与列表一致：self_attn.q_proj 恰在
+        3/7/…/63 这 16 层（外加草稿块），linear_attn.* 恰在其余 48 层。
+        full 层的几何也换了：24 头 / 4 KV 头 / head_dim **256**（前代 64 / 8 / 128），
+        q_proj [12288, 5120] = 2 × 24 × 256（**输出门，config 这一代有
+        attn_output_gate: true**），o_proj 入口 6144 = 24 × 256。
+        位置编码换成 **interleaved mRoPE**（mrope_section [11, 11, 10]，theta 1e7，
+        partial_rotary_factor 0.25）
+      benefit: >-
+        累积 KV 的层数从 64 降到 16、每层宽度不变（都是 2048 元素：
+        本代 2 × 4 × 256、前代 2 × 8 × 128），所以每 token 从 131,072 元素
+        降到 **32,768 元素，整 4 倍**。
+        **但满上下文的 KV 是涨的**：上下文同代从 40960 放到 262144（×6.4），
+        两个方向相反的因子乘起来是 10.00 GiB → **16.00 GiB**（×1.6）。
+        每 token 比与满上下文比说的不是一件事，两个都要给。
+        另外新增一类显存对象：48 层各一份每序列固定的递归状态，
+        合计 **151.50 MiB/序列**（FP32，config 声明 mamba_ssm_dtype: float32）
+    - axis: modality
+      text: >-
+        **稠密档第一次带视觉前端**：model.visual.* 共 333 个张量、460,730,096 参数 ——
+        27 个 ViT 块（qkv [3456, 1152] 带 bias、proj、两层非门控 MLP [4304]、
+        两个带 bias 的 LayerNorm）、patch_embed.proj [1152, 3, 2, 16, 16]（3D 卷积）、
+        pos_embed [2304, 1152]、merger（把 2×2 个 patch 拼成 4608 = 1152 × 4
+        再投到主干 hidden 5120）。架构名也从 ForCausalLM 变成 ForConditionalGeneration
+      benefit: >-
+        视觉塔的算子与语言主干不同：带 bias 的 LayerNorm、GELU（hidden_act
+        gelu_pytorch_tanh）、3D patch 卷积、patch merge。
+        它只占参数量的 1.66%，但在 prefill 侧是独立的一段负载，
+        而且可以分离部署 —— 容量规划要把它单列
+    - axis: scale
+      text: >-
+        词表 151936 → **248320**（+63.4%），embed 与 lm_head 各从 777,912,320
+        涨到 1,271,398,400；层数 64 不变、hidden 5120 不变、FFN 中间维 25600 → 17408
+      benefit: >-
+        lm_head 每步对 248320 行做全量 GEMM，这一项在带宽口径里从 777,912,320
+        涨到 1,271,398,400（占带宽口径的 4.9%）。
+        **输入词表那一份不进带宽口径**（只 gather 一行），但两份都要驻留
+    - axis: decoding
+      text: >-
+        **稠密档第一次有 MTP 草稿块**：config 的 mtp_num_hidden_layers: 1，
+        清单里 mtp.layers.0 带一套与主干 full attention 同名的 q/k/v/o（没有
+        linear_attn）加一套稠密 FFN（中间维 17408），另有 mtp.fc [5120, 10240]、
+        pre_fc_norm_embedding / pre_fc_norm_hidden、mtp.norm。共 15 条目、424,699,392 参数
+      benefit: >-
+        开草稿侧时累积 KV 的层数从 16 变 17（65536 → 69632 B/token，+6.25%），
+        线性状态仍是 48 层。草稿块的 FFN 是稠密的 —— 和主干一致，
+        所以草稿侧不需要额外的 MoE 算子
+    - axis: precision
+      text: >-
+        **48 层的 linear_attn.A_log [48] 与 linear_attn.norm.weight [128] 是 F32**，
+        其余 1103 条是 BF16（dt_bias [48] 也是 BF16）。
+        这是 Qwen 线唯一出现 F32 权重的一代：前代 Qwen3-Next 这两类是 BF16，
+        下一代（Qwen3.6-27B，与 qwen3.8-27b 清单逐位相同）又回到 BF16
+      benefit: >-
+        线性注意力的递归核在这一代是混合精度：F32 的衰减参数与输出 norm
+        配 BF16 的激活。按「norm 与激活同 dtype」或「衰减参数与权重同 dtype」
+        写的核在这一代会读错。**只有 dtype 看得见** ——
+        张量名与形状逐条相同
+
+params:
+  total: 2.7e+10
+  excludes: [vision, draft]
+  breakdown:
+    dense_ffn: 17112800000.0
+    attention: 7239770000.0
+    embed: 1271400000.0
+    lm_head: 1271400000.0
+    vision: 460730000.0
+    draft: 424699000.0
+    norm: 674816.0
+  counting_note: >-
+    total 取自模型名（27B），属厂商声明；breakdown 是本仓按完整权重清单
+    （11 分片 1199 条目）实测的分项，取 6 位有效数字。
+    实测全量 27,781,427,952，与 HF 平台自己从分片头统计的 safetensors tally
+    逐位相同（含 8448 个 F32 元素）。
+    **口径与 qwen3.8-27b 完全一致**（两份的清单除 96 个张量的 dtype 外逐条相同）：
+    名字不按全量算 —— 全量对 27B 是 +2.89%、取整是 28B，都超出 Gate B 的 2% 容差；
+    扣掉视觉塔（460,730,096）与草稿块（424,699,392）后是 26,895,998,464，−0.39%，
+    偏差最小。只扣其中一项取整也是 27B（+1.19% / +1.32%），所以扣哪几项仍是判断。
+    **模型卡给了一条旁证**：27B 这个数嵌在「Language Model」一级下、
+    与并列的「Vision Encoder」分开，所以**扣掉视觉塔是厂商自己的分法**；
+    MTP 那一行也在 Language Model 下，所以扣草稿块仍是本仓的判断。
+    权重存储 51.75 GiB（55,562,872,800 B，比 qwen3.8-27b 多 16,896 B ——
+    96 个 F32 张量的 8448 个元素每个多 2 字节，两档的 GiB 数在两位小数上相同）。
+    激活参数两个口径：带宽口径 25,609,631,936、可比官方口径 26,881,030,336
+    （含输入词表）—— 稠密模型的可比官方口径恰等于语言主干总量减草稿块与视觉塔后
+    再加回输入词表那一份。
+
+context:
+  max: 262144
+  train_native: 262144
+  extension_method: >-
+    模型卡写「262,144 natively and extensible up to 1,010,000 tokens」，
+    没有说用什么方法扩（config 的 rope_parameters 里 rope_type 是 default、无 scaling）。
+    按 1,010,000 部署时本记录的 per_token 数要乘 3.85（16.00 GiB → 61.65 GiB），
+    每序列状态不变
+
+arch:
+  layers: 64
+  hidden: 5120
+  vocab: 248320  # 模型卡写「Token Embedding: 248320 (Padded)」——补齐过的词表
+  norm: RMSNorm
+  norm_eps: 1.0e-06
+  activation: SwiGLU
+  position: >-
+    interleaved mRoPE，theta 1e7，partial_rotary_factor 0.25（只对 1/4 维度加 rope）：
+    256 × 0.25 = 64 维即 32 个频率对，mrope_section [11, 11, 10] 正好分完 32 对
+
+  attention:
+    type: hybrid
+    num_heads: 24
+    num_kv_heads: 4
+    head_dim: 256
+    head_dim_note: >-
+      full attention 层的 q_proj 是 [12288, 5120]，12288 = 2 × 24 头 × 256 ——
+      输出维翻倍，一半是 query、一半是输出门（config 的 attn_output_gate: true）。
+      o_proj 入口 6144 = 24 × 256 只对应 query 那一半。按 num_heads × head_dim
+      推 q_proj 会低一半。k_proj 与 v_proj 都是 [1024, 5120]（1024 = 4 × 256），
+      缓存宽度按它们的输出维算：每层 2 × 1024 = 2048 元素。
+      线性层的输出门是另一个张量 in_proj_z [6144, 5120]（= 48 value 头 × 128），不在 q 里。
+      另有每层 q_norm [256] 与 k_norm [256]，归 norm 子系统
+    partial_rotary_factor: 0.25
+    layer_pattern: >-
+      3:1 linear:full，full attention 落在层号 ≡ 3 (mod 4) 上。
+      **这一代 config 第一次给出 layer_types 列表**（64 项），
+      与清单一致：self_attn.q_proj 在 3/7/…/63 共 16 层（外加草稿块 1 层），
+      linear_attn.conv1d 在其余 48 层，两集合无交集
+    output_gate:
+      enabled: true
+      type: >-
+        未声明 —— 本代 config 有 attn_output_gate: true 但**没有 output_gate_type**
+        这个键（Qwen3.6 起才有，值 swish）。门的存在由 q_proj 的输出维翻倍定
+    hybrid:
+      layer_types_count:
+        linear: 48
+        full: 16
+      interval: 4
+      note: >-
+        16 层 full attention 的 KV 随上下文线性增长，48 层线性注意力只带每序列固定的
+        递归状态，两者增长方式不同，容量规划必须分开算。
+        以上层数都是主干口径（64 主干层 + 1 草稿块）：草稿块 mtp.layers.0 带一套与主干
+        full attention 同名的 q/k/v/o 投影、没有 linear_attn，
+        所以开草稿侧时累积 KV 的是 17 层、65536 → 69632 B/token，线性状态仍是 48 层。
+        本记录与 data/derived/ 都按主干口径记账
+    linear_state:
+      mechanism: >-
+        **Gated DeltaNet**（厂商名，模型卡 Model Overview）：门控线性注意力 + 短卷积。
+        卡把这一支的头数写成「48 for V and 16 for QK」，与 config 一致
+      num_key_heads: 16
+      num_value_heads: 48
+      key_head_dim: 128
+      value_head_dim: 128
+      conv_kernel_dim: 4
+      state_dtype: FP32
+      state_layout_note: >-
+        四个因子都钉在清单的形状上。状态头数 48（= value 头数）：每层
+        linear_attn.A_log [48] 与 dt_bias [48]，衰减参数每状态头一个；
+        in_proj_a [48, 5120] 与 in_proj_b [48, 5120] 也是 48。
+        投影这一代**拆成两张**：in_proj_qkv [10240, 5120]（= q 16×128 + k 16×128
+        + v 48×128）与 in_proj_z [6144, 5120]（输出门）——
+        前代 Qwen3-Next 是融合的 in_proj_qkvz，所以「conv1d 首维 = in_proj_qkv 输出维」
+        这个恒等式**从这一代起**才成立（48/48 层 conv1d.weight 都是 [10240, 1, 4]）。
+        跨代通用的写法是「conv 通道数 = q + k + v 三段之和」。
+        状态精度有一手来源：config 的 mamba_ssm_dtype: float32。
+        窗长按全窗 4 计是上界；矩阵状态的实际存储是否就是一个 [48, 128, 128]
+        的 FP32 张量仍需按实现核（两维都是 128，维序不影响容量）
+
+  ffn:
+    type: dense
+    intermediate: 17408
+    layer_pattern: >-
+      64 主干层与草稿块都是稠密 FFN（gate_proj / up_proj / down_proj 三张独立投影）。
+      **线性层与 full 层的 FFN 形态相同** —— 混合只发生在注意力一侧。
+      同代旗舰 qwen3.5-397b-a17b 这一档是 MoE（512 专家堆叠存储），
+      两档的差别在 FFN 而不在注意力
+
+  decoding:
+    mtp_layers: 1
+    mtp_layers_note: >-
+      config 的 mtp_num_hidden_layers: 1 与清单一致（mtp.layers.0 一个块）。
+      块内是一套 full attention（q/k/v/o + q_norm/k_norm，**没有 linear_attn**）
+      加一套稠密 FFN（中间维 17408），块外有 mtp.fc [5120, 10240]、
+      pre_fc_norm_embedding / pre_fc_norm_hidden、mtp.norm，共 15 条目、424,699,392 参数
+
+  vision:
+    encoder: Qwen3.5 vision tower
+    layers: 27
+    hidden: 1152
+    num_heads: 16
+    intermediate: 4304
+    patch_size: 16
+    spatial_merge_size: 2
+    temporal_patch_size: 2
+    out_hidden: 5120
+    params: 460730096.0
+    fusion: >-
+      patch merge 后投影到主干 hidden：merger.linear_fc1 [4608, 4608]
+      （4608 = 1152 × 4，即 2×2 个 patch 拼接）→ linear_fc2 [5120, 4608]。
+      deepstack_visual_indexes 是空列表，所以没有多层注入，只在输入侧并入
+
+precision:
+  weights_release: [BF16, FP8_E4M3, INT4]
+  quantization:
+    per_subsystem:
+      attention: BF16
+      dense_ffn: BF16
+      draft: BF16
+      vision: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: MIXED
+    subsystem_method: >-
+      来自完整权重清单（11 分片 1199 条目）逐项统计，非抽样：每个条目都带 shape 与 dtype，
+      failed_shards 为空。1103 条 BF16 + 96 条 F32。
+      **norm 一项标 MIXED**：48 层的 linear_attn.norm.weight 是 F32，
+      而 input_layernorm / post_attention_layernorm / q_norm / k_norm / model.norm
+      都是 BF16 —— 同一个子系统内两种精度，按元素数加权 F32 只占 6144 / 674,816 = 0.9%，
+      但「少数异类」在这里恰恰是要说的事，所以不报多数值。
+      attention 一项是 BF16：**A_log 虽然也是 F32，但它在 attention 桶里
+      只占 2304 / 7,239,766,528**，报 BF16 是带宽主体的精度 ——
+      A_log 的 F32 单独写在 lineage 的 precision 条与 open_questions 里。
+      本仓没有量化块（无 quantization_config），所以 per_subsystem_block 不填。
+      weights_release 的 FP8_E4M3 与 INT4 来自同代的 Qwen3.5-27B-FP8 与
+      Qwen3.5-27B-GPTQ-Int4 两个仓的存在（HF 名单，2026-03-03），
+      **本仓没有取它们的清单**，所以只记发布形态、不记量化配置
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/Qwen/Qwen3.5-27B
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      混合结构把长上下文的 KV 压力大幅转移：只有 1/4 的层累积 KV，
+      其余层的状态与上下文长度无关。代价是引擎要同时管理两种生命周期不同的
+      显存对象，而且线性层的状态无法像 KV 那样按 block 分页复用。
+      与前代（64 层全累积、40960 上下文）相比：每 token 的元素数降 4 倍，
+      而上下文放大 6.4 倍，所以满上下文的 KV 反而从 10.00 GiB 涨到 16.00 GiB。
+      混合结构买到的是「同样的缓存预算能撑更长的上下文」，不是「缓存变小」。
+    quantified: >-
+      65,536 B/token（16 层 × 2048 元素 × 2 B 兜底）+ 151.50 MiB/序列
+      （48 层 × (48×128×128 矩阵 + 4×10240 短卷积) × 4 B，FP32 有 config 声明）。
+      262144 满上下文 16.15 GiB；4096 上下文 256.00 MiB + 151.50 MiB。
+      **两个分量的 basis 不同**：per_token 是 dtype_fallback（KV 精度未披露），
+      per_sequence 的 FP32 来自 config —— 合计因此不是单一口径
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      线性注意力层需要递归状态更新与短卷积，和 full attention 完全不同的算子，
+      一个模型内两套路径按层交替调度。这一代还多了视觉塔的四类算子
+      （带 bias 的 LayerNorm、GELU、3D patch 卷积、patch merge）
+      与草稿块的一次额外前向。
+    visibility: public
+  - dimension: compute
+    finding: >-
+      dense FFN 意味着每 token 都要搬运全部 FFN 权重，没有 MoE 的稀疏激活优势。
+      带宽口径的激活参数 25,609,631,936 占语言主干（26,895,998,464）的 95.2%，
+      decode 每 token 搬 47.70 GiB —— 同代旗舰 qwen3.5-397b-a17b 的激活占比
+      只有 4.6%。这是这一档与旗舰最大的负载差别，而不是注意力。
+    quantified: >-
+      带宽口径 25,609,631,936 × 2 B = 47.70 GiB/token；权重存储 51.75 GiB
+    visibility: public
+
+infra_signals:
+  - text: >-
+      **Qwen 线唯一出现 F32 权重的一代**：48 层的 linear_attn.A_log 与
+      linear_attn.norm 是 F32（dt_bias 仍 BF16），前代 Qwen3-Next 与下一代
+      Qwen3.6/3.8 都是 BF16。张量名与形状逐条相同，**只有 dtype 看得见**。
+      线性注意力的递归核因此在这一代是混合精度，按「衰减参数与权重同 dtype」
+      写的核会读错。跟踪线性注意力时，衰减参数的精度要每代单独测。
+    evidence: derived
+    horizon: settled
+    axis: precision
+  - text: >-
+      config 这一代第一次把三件事写出来：layer_types 列表（前代只有 interval）、
+      attn_output_gate（前代门只在权重里）、mamba_ssm_dtype（前代状态精度无来源）。
+      **而 output_gate_type 还要再等一代**。
+      「config 声明了什么」本身是会随代际变的，所以跨代比较要比键集合，
+      不能只比键值 —— 否则会把「这一代才声明」读成「这一代才有」。
+    evidence: derived
+    horizon: settled
+    axis: attention
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: official
+  params.breakdown: derived
+  params.excludes: judgement
+  params.counting_note: judgement
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: judgement
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.attention.output_gate: derived
+  arch.attention.hybrid.layer_types_count: derived
+  arch.attention.hybrid.note: judgement
+  arch.attention.linear_state.mechanism: judgement
+  arch.attention.linear_state.state_layout_note: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.decoding.mtp_layers_note: derived
+  arch.vision.encoder: judgement
+  arch.vision.params: derived
+  arch.vision.fusion: derived
+  precision: official
+  precision.weights_release: judgement
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  稠密 FFN 档的第四代（2026-02），也是 qwen3.8-27b 的直接前代。
+  四件事同时进来：混合线性注意力、视觉前端、MTP 草稿块、248320 词表。
+  **与 qwen3.8-27b 的清单除 96 个张量的 dtype 外逐条相同** ——
+  所以那一档的结构字段与本档一致，两份之间唯一的变化是 A_log 与 linear_attn.norm
+  由 F32 回到 BF16，而那一步发生在中间的 Qwen3.6-27B
+  （3.6 与 3.8 的清单逐位相同、config 只差 transformers_version，故 3.6 不单独立记录）。
+  同代的 Qwen3.5-9B 张量名族与本档逐族相同（只是档位缩放），不另录。
+
+open_questions:
+  - >-
+    A_log 的 F32 在 attention 子系统里只占 2304 / 7,239,766,528，
+    所以 per_subsystem 的 attention 报 BF16（带宽主体）。
+    「衰减参数是 F32」这件事因此不在精度表的 attention 行里，
+    只写在 lineage 的 precision 条与本列表 —— 站点的精度表读不到它
+  - >-
+    矩阵状态的实际存储是否就是一个 [48, 128, 128] 的 FP32 张量需按实现确认
+    （两维都是 128，维序不影响容量）；状态头数与 conv 通道数已由权重清单确定
+  - >-
+    短卷积的状态按全窗 4 计是上界，实现若只存 k−1 = 3 个位置会低 1/4
+  - >-
+    KV cache 的实际落盘精度未披露，推导时按模型 dtype 兜底 ——
+    所以缓存账的 per_token 分量是 dtype_fallback，而 per_sequence 分量的 FP32
+    有 config 声明，**两个分量的 basis 不同，合计不能当单一口径用**
+  - >-
+    输出门的函数形式本代无声明（config 没有 output_gate_type），
+    3.6 起声明为 swish；本档是否同为 swish 没有来源
+  - >-
+    同代的 FP8 与 GPTQ-Int4 发布（Qwen3.5-27B-FP8 / -GPTQ-Int4）本仓没有取清单，
+    weights_release 只记发布形态，量化配置（块大小、哪些子系统量化）未知
+  - >-
+    训练精度没有一手来源：config 的 dtype: bfloat16 说的是发布权重，
+    而**模型卡正文本轮已读**（README.md @ fc05daec18b0），Model Overview 只列结构与规模，
+    没有训练精度声明，故不填 precision.training
+
+reviewed:
+  date: '2026-10-30'
+  scope:
+    - official
+    - derived
+    - judgement
+  reviewer: 本会话逐字段复算
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序对 facts/qwen3.5-27b 核：config 全部键
+    （并与 facts/qwen3.6-27b、facts/qwen3.8-27b 做了三方逐键 diff，见 R1）、
+    完整权重清单（1199 条目逐项 numel / dtype / 层索引）、repoinfo 的 tags / cardData /
+    sha 与逐 dtype 的 safetensors tally（BF16 27,781,419,504 + F32 8448）。
+    96 个 F32 张量逐条列出并按层核过（48 层 × A_log + norm）。
+    混合层的两个集合由清单的层索引交并集定，并与 config 的 layer_types 列表逐项比对一致。
+    conv 通道恒等式在 48/48 层上验过，并与前代的 z 融合布局做了对照（见 qwen3-next 的 R1）。
+    参数七项逐项按形状重算并与清单求和、HF tally 三方比对；
+    与 qwen3.8-27b 的分项逐位相同（两份清单只差 dtype），这给了 breakdown 一次独立对照。
+    derive.py 以默认 --ep 1 带 --model 重跑，0 处不一致。
+    **原理上核不了的**：输出门的函数形式、矩阵状态的实际布局、conv 窗长、
+    KV 落盘精度、训练精度、量化发布的配置，都在 open_questions 里。
+review:
+  - id: R1
+    field: precision.quantization.per_subsystem
+    severity: unsupported
+    claim: 96 个张量是 F32，而且这件事只发生在 Qwen3.5 这一代
+    finding: >-
+      逐条列过：48 层的 linear_attn.A_log [48] 与 linear_attn.norm.weight [128]，
+      共 96 条、8448 个元素，与 HF 逐 dtype 的 tally（F32: 8448）逐位相同。
+      代际范围也查了三份清单：Qwen3-Next 这两类是 BF16，本代 F32，
+      **Qwen3.6-27B 与 Qwen3.8-27B 又都是 BF16**，而且 3.6 与 3.8 的 1199 条
+      逐条 shape+dtype 全同。所以 F32 只在 3.5 一代出现，是个闭区间、不是「从此以后」
+    resolution: confirmed
+  - id: R2
+    field: precision.quantization.per_subsystem
+    severity: imprecise
+    claim: >-
+      草稿里 norm 报 BF16（按元素数加权的多数），attention 报 BF16
+    finding: >-
+      norm 这一项按加权多数确实是 BF16（F32 只占 6144 / 674,816 = 0.9%），
+      但**这里的少数异类恰恰是本记录要说的事**。
+      fetch_dtypes.py 的规则是占比低于 60% 记 MIXED，而这一项是 99.1% BF16，
+      机械地按那条规则会报 BF16、把 F32 盖掉。
+      所以 norm 手写成 MIXED 并在 subsystem_method 里写明两种精度各是谁；
+      attention 仍报 BF16（A_log 只占 2304 / 7.24e9），
+      但把这个取舍写进 open_questions —— 站点的精度表读不到 A_log 的 F32
+    resolution: corrected
+    changed_to: >-
+      norm 改为 MIXED 并在 subsystem_method 里列出 F32 的两类张量；
+      attention 留 BF16 并把「精度表读不到 A_log」记进 open_questions
+  - id: R3
+    field: lineage.changed_from_predecessor
+    severity: wrong
+    claim: >-
+      草稿里 attention 条的 benefit 写「满上下文的 KV 从 10.00 GiB 涨到 2.00 GiB」
+    finding: >-
+      涨/降写反了，而且这是两个方向相反的因子叠加的结果，必须把两个数都给：
+      每 token 元素数 131,072 → 32,768（**降 4 倍**，层数 64 → 16、每层宽度不变），
+      上下文 40960 → 262144（**涨 6.4 倍**），
+      重算：本代 65,536 B/token × 262144 = 17,179,869,184 B = 16.00 GiB，
+      前代 262,144 B/token × 40960 = 10,737,418,240 B = 10.00 GiB。
+      **满上下文的 KV 其实是涨的（10.00 → 16.00 GiB，×1.6）**，因为上下文涨的 6.4 倍
+      压过了每 token 降的 4 倍。草稿两处都错：方向反了，数也编了一个 2.00 GiB，
+      而且句子里还留着一句写到一半的自我更正。
+      skill 的「一个乘式逐因子验」在这里是「两个因子方向相反，必须各自算完再乘」
+    resolution: corrected
+    changed_to: >-
+      attention 条改为「每 token 降 4 倍」，并写明满上下文因上下文放大 6.4 倍
+      而从 10.00 GiB 涨到 16.00 GiB；bottleneck 的 quantified 用 derive 的
+      262144 合计（16.15 GiB，含每序列 151.50 MiB）
+  - id: R4
+    field: arch.attention.output_gate.type
+    severity: unsupported
+    claim: >-
+      草稿按 qwen3.8-27b 的写法填了 type: swish
+    finding: >-
+      三方逐键 diff 查出来：**本代 config 没有 output_gate_type 这个键**，
+      3.6 与 3.8 才有（值 swish）。门的存在有依据（attn_output_gate: true
+      加 q_proj 输出维翻倍），函数形式没有。从后一代抄一个本代没声明的值，
+      和旗舰那份 R3 从别档抄许可是同一类错
+    resolution: corrected
+    changed_to: type 改为「未声明」并写明 3.6 起才有这个键
+  - id: R5
+    field: arch.attention.linear_state.state_layout_note
+    severity: missing
+    claim: >-
+      草稿直接套用「conv1d 首维 = in_proj_qkv 输出维」
+    finding: >-
+      这一代成立（48/48 层 conv1d [10240, 1, 4]，in_proj_qkv [10240, 5120]），
+      但**前代不成立** —— Qwen3-Next 把 q/k/v 和 z 融合在 in_proj_qkvz 里，
+      conv1d 首维不含 z（见 qwen3-next-80b-a3b 的 R1）。
+      所以本记录要写明「这个恒等式从这一代起才成立」，
+      并给出跨代通用的写法（q + k + v 三段之和）。
+      结构规律钉代际（skill 规则 5）
+    resolution: corrected
+    changed_to: >-
+      state_layout_note 写明投影在本代拆成两张、恒等式从本代起成立，
+      并给出跨代通用写法
+  - id: R6
+    field: precision.weights_release
+    severity: imprecise
+    claim: >-
+      草稿只写 [BF16]
+    finding: >-
+      同代 HF 名单里有 Qwen3.5-27B-FP8（2026-02-25）与 Qwen3.5-27B-GPTQ-Int4
+      （2026-03-03）两个仓 —— **Qwen 线第一次有 INT4 的官方发布**
+      （前面各代只有社区 AWQ/GPTQ 或 FP8）。发布形态属于「量化发布形态」这条轴，
+      该记。但本仓没有取这两个仓的清单，所以只记形态、不记量化配置，
+      并留 open question。evidence 标 judgement（依据是名单的存在，不是清单）
+    resolution: corrected
+    changed_to: >-
+      weights_release 改为 [BF16, FP8_E4M3, INT4]（标 judgement），
+      subsystem_method 与 open_questions 写明没有取这两个仓的清单
+  - id: R7
+    field: sources
+    severity: missing
+    claim: 本记录原来只有 config.json 一个来源
+    finding: >-
+      本轮按 main 并入的来源优先级规则补读模型卡，四件事有了一手来源：
+      (1) **Hybrid Layout: 16 × (3 × (Gated DeltaNet → FFN) → 1 × (Gated Attention → FFN))**
+      —— 混合比例与 16 个重复单元是厂商写出来的，与 config 的 layer_types 和清单三方一致；
+      (2) 机制的厂商名是 **Gated DeltaNet** 与 **Gated Attention**；
+      (3) **Rotary Position Embedding Dimension: 64**（= head_dim 256 × 0.25），
+      本记录原来只有比例；
+      (4) **27B 这个数嵌在「Language Model」一级下、与 Vision Encoder 并列** ——
+      excludes 里的 vision 由此有了厂商分法的旁证（draft 那一项仍是判断，
+      因为 MTP 那一行也在 Language Model 下）。
+      另外卡写「Token Embedding: 248320 (Padded)」，解释了词表为什么是这个数。
+      卡里没有训练精度，也没有提 A_log / linear_attn.norm 的 F32 ——
+      那件事只有 dtype 看得见，仍是本仓的 derived 结论
+    resolution: corrected
+    changed_to: >-
+      新增 sources 的 modelcard 条目；linear_state.mechanism 写上厂商名；
+      counting_note 补「视觉塔那一项有厂商分法旁证」；
+      补 context.train_native 与 extension_method；vocab 旁注「Padded」

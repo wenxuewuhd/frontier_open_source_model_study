@@ -15,6 +15,25 @@ sources:
       许可取自 HF tags license:apache-2.0 与 cardData license: apache-2.0。
       同代旗舰是 license:other（qwen3.8-max），两档许可不同
 
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3.8-27B/blob/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/README.md
+    locator: 'README.md @ 1d4bf0f2ff60 · Model Overview'
+    accessed: '2026-10-30'
+    note: >-
+      P1 历史回溯时按本仓「来源优先级：模型卡 / 技术报告 > 厂商参考实现 > 引擎实现」
+      补的一手来源（本记录原先只有 config.json，见 R13）。Model Overview 的声明值
+      （**全部嵌在「Language Model」一级下**，与并列的 Vision Encoder 分开）：
+      「Number of Parameters: **27B**」、「Hidden Dimension: 5120」、
+      「Token Embedding: **248,320 (Padded)**」、「Number of Layers: 64」、
+      「Hidden Layout: **16 × (3 × (Gated DeltaNet → FFN) → 1 × (Gated Attention → FFN))**」、
+      「**Gated DeltaNet**: 48 for V and 16 for QK, Head Dimension 128」、
+      「**Gated Attention**: 24 for Q and 4 for KV, Head Dimension 256,
+      **Rotary Position Embedding Dimension: 64**」、
+      「Feed Forward Network: Intermediate Dimension 17,408」、
+      「MTP (Multi-Token Prediction): trained with multiple steps」、
+      「Context Length: **262,144 natively and extensible up to 1,000,000 tokens**」。
+      **卡里没有训练精度声明，也没有每 token 缓存字节数**
+
 hf:
   repo: Qwen/Qwen3.8-27B
   pipeline_tag: image-text-to-text
@@ -22,35 +41,38 @@ hf:
 
 lineage:
   track: side
-  predecessor: qwen3.8-2.4t-a95b
+  predecessor: qwen3.5-27b
+  # 本轮（P1 通义千问历史回溯）把 predecessor 从同代旗舰改成同档位的前代 ——
+  # 稠密 FFN 这一支与 MoE 旗舰那一支是两条链，按时间或按旗舰串会把两条混成一条假链
+  # （见 R12）。与旗舰的差异（dense vs MoE、视觉前端、mRoPE）仍是本档的收录理由，
+  # 已改写进 notes。
   changed_from_predecessor:
-    - axis: moe
+    - axis: precision
       text: >-
-        FFN 由 MoE 换成 dense：主干 64 层与草稿块都是 gate_proj / up_proj / down_proj 三个独立
-        2 维投影（中间维 17408）。旗舰独有的 14 个张量名族 —— 堆叠的 experts.gate_up_proj
-        [512, 4096, 8192] 与 experts.down_proj、router mlp.gate、shared_expert.* 与
-        shared_expert_gate（主干与草稿块各一套）—— 这里一个都没有
+        **这是本档相对前代唯一的权重侧变化**：48 层的 linear_attn.A_log [48]
+        与 linear_attn.norm.weight [128] 由 **F32 回到 BF16**（共 96 个张量、
+        8448 个元素），dt_bias 两代都是 BF16。
+        前代 qwen3.5-27b 的清单是 1103 条 BF16 + 96 条 F32，本档 1199 条全是 BF16；
+        **张量名、形状与条目数逐条相同**，参数量也逐位相同（27,781,427,952）。
+        这一步发生在中间的 **Qwen3.6-27B**：它与本档的 1199 条清单逐条
+        shape + dtype 全同、config 只差 transformers_version，
+        所以 Qwen3.6-27B 不单独立记录
       benefit: >-
-        差的是机制不是规格：dense GEMM 对三维堆叠 grouped GEMM + router + 共享专家，
-        算子集合不同，不是同一套算子换形状。这是收录这一档的主要理由，也是它和本仓删掉的
-        五份 DeepSeek 刷新（config 逐字段相同、张量名集合相同）不是一类的原因
-    - axis: modality
+        线性注意力的递归核不再是混合精度（前代是 F32 衰减参数 + F32 输出 norm
+        配 BF16 激活）。**只有 dtype 看得见** —— 按前代写的核在本档上会读错，
+        反之亦然。权重存储也差 16,896 B（8448 个元素各少 2 字节），
+        两档的 GiB 数在两位小数上相同（51.75 GiB）
+    - axis: training
       text: >-
-        多一整条视觉前端：visual.* 共 21 个张量名族 —— 27 个 ViT 块（qkv / proj / 两层非门控 MLP /
-        两个带 bias 的 norm）、patch_embed（[1152, 3, 2, 16, 16]，3D 卷积）、pos_embed 与 merger，合计 460,730,096 参数。
-        merger 把 2×2 个 patch 拼成 4608（= 1152 × 4）再投到主干 hidden 5120
+        config 侧的差异全部是「把已有的东西显式声明出来」：新增
+        output_gate_type: swish（门本来就在 q_proj 的后一半里）、
+        partial_rotary_factor 提到 text_config 顶层、bos_token_id / pad_token_id /
+        tie_word_embeddings 补齐、language_model_only: false，
+        去掉 mlp_only_layers: []。**没有一项改变结构**
       benefit: >-
-        旗舰是纯文本，视觉塔的算子（带 bias 的 LayerNorm、GELU、3D patch 卷积、patch merge）
-        在这一档才出现
-    - axis: attention
-      text: >-
-        位置编码换成 interleaved mRoPE（mrope_section [11, 11, 10]，旗舰是普通 RoPE）。
-        注意力与线性注意力的张量名族与旗舰完全相同（归一前缀后两档共有 32 族），只换形状：
-        full 层 24 头（旗舰 64），线性层 value 头 48（旗舰 128），key:value 头数比 1:3 对 1:8
-      benefit: >-
-        注意力侧除 mRoPE 外不带来新算子。它在缓存账上的用处是给了第二个 key:value 比：
-        「conv1d 通道数 = in_proj_qkv 输出维」在 1:8 与 1:3 两档同时成立，才能当规律用（R1）
-
+        能力变化来自训练与后训练，算子侧零工作量 —— 已经支持前代的平台，
+        支持本档不需要任何算子改动。和 README 里 DeepSeek R1 对 V3 那条同类。
+        跟踪时先比张量名集合与逐条 shape/dtype，相同就不必重走算子评估
 params:
   total: 27.0e+9
   excludes: [vision, draft]
@@ -69,12 +91,20 @@ params:
     名字不按全量算：全量对 27B 是 +2.89%，取整是 28B，也超出 Gate B 的 2% 容差。
     扣哪几项是判断 —— 只扣视觉 27.32B（+1.19%）、只扣草稿 27.36B（+1.32%）取整也都是 27B；
     excludes 取两者都扣，即语言主干 26,895,998,464（−0.39%），偏差最小，也和「名字指语言模型」
-    的读法一致。原来不填声明值，Gate B 的参数总量一项 skip，「名字不按全量算」这件事就一直看不见。
+    的读法一致 —— **模型卡给了这个读法一条旁证**：27B 这个数嵌在「Language Model」一级下、
+    与并列的「Vision Encoder」分开，所以扣掉视觉塔是厂商自己的分法；
+    MTP 那一行也在 Language Model 下，所以扣草稿块仍是本仓的判断。原来不填声明值，Gate B 的参数总量一项 skip，「名字不按全量算」这件事就一直看不见。
     权重存储 51.75 GiB。激活参数两个口径：带宽口径 25.6B、可比官方口径 26.9B（含输入词表）——
     dense 模型的可比官方口径恰等于语言主干总量。
 
 context:
   max: 262144
+  train_native: 262144
+  extension_method: >-
+    模型卡写「262,144 natively and extensible up to 1,000,000 tokens」
+    （注意是 1,000,000；同代旗舰与 Qwen3.5 两档写的是 1,010,000），
+    没有说用什么方法扩。按 1,000,000 部署时本记录的 per_token 数要乘 3.81
+    （16.00 GiB → 61.04 GiB），每序列状态不变
 
 arch:
   layers: 64
@@ -115,7 +145,9 @@ arch:
       enabled: true
       type: swish
     linear_state:
-      mechanism: 门控线性注意力 + 短卷积
+      mechanism: >-
+        **Gated DeltaNet**（厂商名，模型卡 Model Overview）：门控线性注意力 + 短卷积。
+        卡把这一支的头数写成「48 for V and 16 for QK」，与 config 一致
       num_key_heads: 16
       num_value_heads: 48
       key_head_dim: 128
@@ -242,9 +274,25 @@ evidence:
   open_questions: judgement
 
 notes: >-
-  较小档位，不是家族旗舰（旗舰见 qwen3.8-2.4t-a95b）。收录理由是与旗舰的可核差异，
-  逐条见 lineage.changed_from_predecessor：差的是机制不是规格 —— dense FFN 对堆叠 grouped GEMM
-  + router + 共享专家、整条视觉前端、mRoPE。注意力与线性注意力一侧与旗舰同名同构，只换形状。
+  稠密 FFN 支线的最新一档（旗舰见 qwen3.8-2.4t-a95b），`track: side`。
+  **predecessor 是同档位的前代 qwen3.5-27b，不是同代旗舰** —— 两条支线各自接通，
+  按旗舰串会把稠密与 MoE 混成一条假链（见 R12）。
+  相对前代只有一处权重变化（A_log 与 linear_attn.norm 由 F32 回到 BF16，
+  发生在中间的 Qwen3.6-27B），结构字段与前代完全一致。
+  **与同代旗舰的差异仍是本档的收录理由**，三条都在本仓核过：
+  (1) FFN 由 MoE 换成 dense —— 主干 64 层与草稿块都是 gate_proj / up_proj / down_proj
+  三个独立 2 维投影（中间维 17408），旗舰独有的 14 个张量名族（堆叠的
+  experts.gate_up_proj [512, 4096, 8192] 与 experts.down_proj、router mlp.gate、
+  shared_expert.* 与 shared_expert_gate，主干与草稿块各一套）这里一个都没有；
+  差的是机制不是规格，dense GEMM 对三维堆叠 grouped GEMM + router + 共享专家，
+  算子集合不同。
+  (2) 多一整条视觉前端（visual.* 21 个张量名族、460,730,096 参数），
+  旗舰是纯文本 —— 带 bias 的 LayerNorm、GELU、3D patch 卷积、patch merge
+  这四类算子只在这一档出现。
+  (3) 注意力与线性注意力的张量名族与旗舰完全相同（归一前缀后两档共有 32 族），
+  只换形状：full 层 24 头对 64、线性层 value 头 48 对 128，key:value 头数比
+  1:3 对 1:8 —— 它在缓存账上的用处是给了第二个比值，
+  「conv 通道数 = q + k + v 三段之和」在 1:8 与 1:3 两档同时成立才能当规律用（R1）。
   本记录最初是 P0-D 的 schema 普适性测试用例：与 V4.1 在三个轴上都不同
   （dense FFN、混合线性注意力、视觉融合路径）。
 
@@ -257,8 +305,9 @@ open_questions:
     没有一手说明
   - KV cache 的实际存储精度未披露，推导时按模型 dtype 兜底
   - >-
-    训练精度没有一手来源：config 的 dtype: bfloat16 说的是发布权重，模型卡正文未核，
-    故不填 precision.training
+    训练精度没有一手来源：config 的 dtype: bfloat16 说的是发布权重，
+    而**模型卡正文已读**（README.md @ 1d4bf0f2ff60，P1 轮补取），Model Overview 只列结构与规模，
+    没有训练精度声明，故不填 precision.training
   - >-
     config 的 output_gate_type: swish 只有一个键，而门在权重里有两处（full 层 q_proj 的
     后一半、线性层的 in_proj_z）。swish 作用在哪一处或两处，未按实现核
@@ -394,3 +443,46 @@ review:
     finding: 本仓只录了 Qwen3.8 的两档，其余档位没有核过
     resolution: corrected
     changed_to: 删掉这句，notes 只说本档与旗舰的关系
+  - id: R12
+    field: lineage.predecessor
+    severity: wrong
+    claim: predecessor 是 qwen3.8-2.4t-a95b（同代旗舰），changed_from_predecessor 三条都在和旗舰比
+    finding: >-
+      P1 的历史回溯把稠密支线补齐之后，本档的前代是 **qwen3.5-27b**
+      （2026-02-24，同档位、同结构）。指向旗舰有两处问题：
+      (1) **把两条支线串成了一条假链** —— 稠密 FFN 与 MoE 旗舰是两条独立演进线，
+      README 的「和 lineage.predecessor 比，不和时间上的前一个比」正是为这件事写的；
+      (2) 三条 changed_from_predecessor 描述的是「本档与旗舰的档位差异」，
+      而站点的「逐维度演进」块读这个字段，于是稠密支线的演进在族谱页上
+      显示成「相对旗舰少了 MoE、多了视觉塔」——读不出这一支自己走过什么。
+      相对真正的前代，本档的权重侧**只有一处变化**：48 层的 A_log 与
+      linear_attn.norm 由 F32 回到 BF16（96 个张量、8448 个元素），
+      其余 1199 条逐条 shape 相同、参数量逐位相同；config 侧的差异全是
+      把已有结构显式声明出来。这一步发生在中间的 Qwen3.6-27B，
+      而 3.6 与本档的清单逐条 shape + dtype 全同，所以 3.6 不单独立记录
+    resolution: corrected
+    changed_to: >-
+      predecessor 改为 qwen3.5-27b，changed_from_predecessor 改写成两条
+      （precision：F32 → BF16，发生在 3.6；training：config 的差异全是显式声明）；
+      与旗舰的三条差异改写进 notes，仍保留为本档的收录理由
+  - id: R13
+    field: sources
+    severity: missing
+    claim: 本记录只有 config.json 一个来源
+    finding: >-
+      按 main 并入的来源优先级规则补读模型卡，四件事有了一手来源：
+      (1) 「Hidden Layout: 16 × (3 × (Gated DeltaNet → FFN) → 1 × (Gated Attention → FFN))」
+      与 config 的 layer_types、清单的层集合三方一致；
+      (2) 机制的厂商名是 **Gated DeltaNet** 与 **Gated Attention**；
+      (3) 「Rotary Position Embedding Dimension: 64」= head_dim 256 × 0.25；
+      (4) **27B 嵌在「Language Model」一级下、与 Vision Encoder 并列** ——
+      excludes 里的 vision 由此有了厂商分法的旁证（draft 那一项仍是判断）。
+      另外卡写「extensible up to **1,000,000**」，而同代旗舰与 Qwen3.5 两档写的是
+      1,010,000 —— 同一代里两个数，各记录按自己的卡填。
+      **卡里没有训练精度，也没有每 token 缓存字节数**（后者是 main 新加的
+      kv_sharing.declared_per_token_bytes，本档填不了）
+    resolution: corrected
+    changed_to: >-
+      新增 sources 的 modelcard 条目；linear_state.mechanism 写上厂商名；
+      counting_note 补视觉塔的厂商分法旁证；补 context.train_native 与 extension_method；
+      训练精度那条 open question 改为「卡已读、无声明」

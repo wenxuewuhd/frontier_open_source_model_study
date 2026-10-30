@@ -1,0 +1,441 @@
+# 机械字段来自 config（official）；形状、参数量、专家存储布局与子系统拆分来自完整权重清单
+# （118 分片 36945 条目，无读失败分片，全 BF16）。
+# 「没有共享专家」是对清单做名字扫描得到的否定结论（derived），config 侧表现为缺键。
+id: qwen3-235b-a22b
+family: qwen
+kind: llm
+display_name: Qwen3-235B-A22B
+released: '2025-04-27'
+license: apache-2.0
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3-235B-A22B
+    locator: config.json @ 8efa61729e24
+    accessed: '2026-10-30'
+    note: >-
+      许可取自 HF tags license:apache-2.0 与 cardData license: apache-2.0。
+      BF16 发布，118 分片 36945 个张量，逐分片读头取全，failed_shards 为空。
+      config **没有** shared_expert_intermediate_size 这个键，清单里也没有任何
+      shared_expert 张量（36945 条零命中）—— 共享专家在这一代被去掉了。
+      和同代稠密档一样，config 里也没有 use_qk_norm，而清单 94/94 层都有
+      q_norm / k_norm [128]
+
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3-235B-A22B/blob/8efa61729e24bd65b1d152b5ab5409052aa80e65/README.md
+    locator: 'README.md @ 8efa61729e24 · Model Overview'
+    accessed: '2026-10-30'
+    note: >-
+      按本仓「来源优先级：模型卡 / 技术报告 > 厂商参考实现 > 引擎实现」补的一手来源。
+      Model Overview 的声明值：「Number of Parameters: **235B in total and 22B
+      activated**」、「Number of Paramaters (Non-Embedding): **234B**」、
+      「Number of Layers: 94」、「Number of Attention Heads (**GQA**): 64 for Q and 4 for KV」、
+      「Number of Experts: 128」、「Number of Activated Experts: 8」、
+      「Context Length: **32,768 natively** and 131,072 tokens with **YaRN**」。
+      **卡上没有「Number of Shared Experts」这一行** —— 下一代 Qwen3-Next 的卡有，
+      所以「共享专家被去掉」这件事在卡的字段集合上也看得出来，与清单的零命中一致。
+      卡里没有训练精度声明，也没有提 QK-Norm
+
+hf:
+  repo: Qwen/Qwen3-235B-A22B
+  sha: 8efa61729e24bd65b1d152b5ab5409052aa80e65
+  last_modified: '2025-07-26T03:45:13.000Z'
+  pipeline_tag: text-generation
+  gated: false
+
+lineage:
+  track: main
+  predecessor: qwen2-57b-a14b
+  successor: qwen3-next-80b-a3b
+  # MoE 支线从这一代起变成旗舰线（同代稠密档 qwen3-32b 标 side）。
+  changed_from_predecessor:
+    - axis: moe
+      text: >-
+        **共享专家被去掉**：config 没有 shared_expert_intermediate_size，
+        清单 36945 条里零个 shared_expert / shared_expert_gate 张量
+        （前代每层一套三张加一个门）。路由专家 64 → **128**，top_k 仍 8，
+        专家中间维 2560 → 1536（相对稠密 12288 是 **1/8**，前代是 1/7.4）。
+        **单个专家反而小了**：3 × 4096 × 1536 = 18,874,368 对前代
+        3 × 3584 × 2560 = 27,525,120（0.69 倍）。专家仍逐个独立存张量
+        （94 层 × 128 × 3 = 36,096 条目）
+      benefit: >-
+        每 token 的 FFN 中间维从 40960（路由 20480 + 共享 20480）降到
+        **12288**（8 × 1536，恰好一份稠密 FFN），常驻的那一半整个消失了。
+        容量与带宽的比（两侧都扣输入词表）从 4.15 倍跳到 **10.87 倍** ——
+        这是 Qwen 线稀疏度最大的一次改善，而它来自删掉共享专家、不是加专家。
+        代价：没有常驻通路之后 router 的负载均衡更关键（仍只有 aux-loss），
+        而且 grouped GEMM 的单专家更小（18.87M）、更依赖批量聚合
+    - axis: attention
+      text: >-
+        与同代稠密档同步的三件事：**QK-Norm 进来**（94/94 层 q_norm [128] 与
+        k_norm [128]，config 无开关）、**q/k/v 的 bias 整体去掉**
+        （attention_bias: false，清单零命中）、**head_dim 与 hidden/heads 解耦**
+        （config 显式 head_dim 128，而 4096 / 64 = 64，所以 q_proj 是 [8192, 4096]、
+        o_proj 是 [4096, 8192]）。KV 头 4 → 4 不变，但 hidden 从 3584 到 4096
+      benefit: >-
+        每层缓存仍 2 × 4 × 128 = 1024 元素，层数 28 → 94 让每 token 从 28,672
+        涨到 96,256 元素（3.36 倍）—— **这一代的 KV 增长全部来自层数**，
+        注意力形态没有压缩任何东西。按 hidden² 估 q_proj / o_proj 会低 50%
+        （4096² = 16,777,216 对实际 8192 × 4096 = 33,554,432）
+    - axis: context
+      text: 131072 → 40960（max_position_embeddings），rope_theta 仍 1e6、rope_scaling 为 null
+      benefit: >-
+        和同代稠密档一样，声明值是降的，长上下文做法不在 config 里。
+        40960 满上下文的 KV 只有 7.34 GiB，对 437.90 GiB 的权重存储可忽略
+    - axis: scale
+      text: 57.4B 总 / A14B → 235.1B 总 / A22B，层数 28 → 94，hidden 3584 → 4096
+      benefit: >-
+        总量 ×4.1 而激活量只 ×1.57（13,704,732,160 → 21,568,433,664，带宽口径），
+        **激活占比从 23.9% 降到 9.2%** —— 规模放大而 decode 带宽几乎没跟着涨，
+        这正是删掉共享专家 + 专家数翻倍换来的
+
+params:
+  total: 2.35e+11
+  active_decode: 2.2e+10
+  breakdown:
+    expert: 227096000000.0
+    attention: 6702500000.0
+    embed: 622330000.0
+    lm_head: 622330000.0
+    router: 49283072.0
+    norm: 798208.0
+  counting_note: >-
+    total 与 active_decode 都取自模型名（235B-A22B），属厂商声明；breakdown 是本仓按
+    完整权重清单（118 分片 36945 条目，全 BF16、无量化 scale、无低位打包）实测的分项，
+    取 6 位有效数字。实测全量 235,093,634,560，与 HF 平台自己从分片头统计的
+    safetensors tally 逐位相同，对 235B 是 **+0.04%** —— 本仓记录过的最接近的一次，
+    所以这一档不需要 excludes 之类的口径判断（也没有草稿块或视觉塔可扣）。
+    **A22B 两种口径都在容差内**：含输入词表 22,190,763,520（+0.87%）、
+    带宽口径 21,568,433,664（−1.96%，贴着 2% 边）。前两代 MoE 都是含输入词表那一种
+    明显更吻合，本代分不出来，所以这一档不作为那条规律的样本。
+    卡上另有一个口径：「Non-Embedding: 234B」—— 实测减**两份**词表
+    （输入 622,329,856 + lm_head 622,329,856）是 233,848,974,848（−0.06%）。
+    **Qwen 的「Non-Embedding」扣的是两份**（同代 Qwen3-32B 的 31.2B 也是这样算的），
+    与本仓「带宽口径含 lm_head」不是一个量。
+    激活的专家部分 = 227,096,395,776 × 8/128 = 14,193,524,736，常驻部分 7,374,908,928
+    （注意力 + router + norm + lm_head）—— **这一代常驻部分里没有共享专家**。
+    词表与输出层不共享权重（各 622,329,856）。权重存储 437.90 GiB。
+
+context:
+  max: 40960
+  train_native: 32768
+  extension_method: >-
+    YaRN。模型卡写「Context Length: 32,768 natively and 131,072 tokens with YaRN」，
+    而 config 的 max_position_embeddings 是 **40960**、rope_scaling 为 null。
+    本记录的 context.max 取 config 的 40960（本记录所有 KV 数的上下文基准）；
+    按卡的 131072 部署时 KV 要乘 3.2（7.34 GiB → 23.50 GiB）
+
+arch:
+  layers: 94
+  hidden: 4096
+  vocab: 151936
+  norm: RMSNorm
+  norm_eps: 1.0e-06
+  activation: SwiGLU
+  position: RoPE theta 1e6，作用在全部 head_dim 维（config 无 partial_rotary_factor）
+
+  attention:
+    type: GQA
+    num_heads: 64
+    num_kv_heads: 4
+    head_dim: 128
+    head_dim_note: >-
+      head_dim 128 是 config 的显式字段，且**不等于 hidden / num_heads**（4096 / 64 = 64）。
+      清单印证：q_proj [8192, 4096]（8192 = 64 × 128）、o_proj [4096, 8192]、
+      k_proj 与 v_proj [512, 4096]（512 = 4 × 128）。按 hidden² 估 q/o 会低 50%。
+      缓存宽度按 k_proj / v_proj 的输出维算：每层 2 × 512 = 1024 元素。
+      **零 .bias**（attention_bias: false，36945 条清单里 self_attn 下零命中），
+      另有每层 q_norm [128] 与 k_norm [128]（QK-Norm），它们归 norm 子系统
+    layer_pattern: 94 层同构，每层产出自己的 KV，无跨层共享、无滑窗、无稀疏
+
+  ffn:
+    type: moe
+    layer_pattern: >-
+      94 层全是 MoE 层（decoder_sparse_step: 1，清单里 94/94 层都有 experts），
+      没有「前 k 层走稠密」的安排。**也没有共享专家**，所以 FFN 侧每 token
+      只有被选中的 8 个专家在算
+
+  moe:
+    routed_experts: 128
+    shared_experts: 0
+    top_k: 8
+    intermediate: 1536
+    dense_intermediate: 12288
+    routing: 带辅助损失（router_aux_loss_coef 0.001）
+    balance: aux-loss
+    storage_note: >-
+      专家逐个独立存张量：每层 128 个专家 × 3 个投影（[1536, 4096] / [1536, 4096] /
+      [4096, 1536]），94 层共 36,096 个条目 —— 本仓记录里条目数最多的一份
+      （36945 总条目中 97.7% 是专家）。grouped GEMM 吃 2 维张量的列表、
+      EP 切分按张量切；3 维堆叠布局要到 Qwen3.5 一代才出现。
+      **没有共享专家张量**，所以 FFN 侧没有旁路通道
+
+precision:
+  weights_release: [BF16]
+  quantization:
+    per_subsystem:
+      attention: BF16
+      expert: BF16
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+    subsystem_method: >-
+      来自完整权重清单（118 分片 36945 条目）逐项统计，非抽样：每个条目都带 shape 与 dtype，
+      failed_shards 为空，36945 条全是 BF16。这一代没有 quantization_config；
+      同代另有 FP8 / GPTQ-Int4 / GGUF 发布，是同一份结构的再发布，本仓不另录
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/Qwen/Qwen3-235B-A22B
+    visibility: public
+
+bottlenecks:
+  - dimension: weight-bandwidth
+    finding: >-
+      删掉共享专家把稀疏度从 4.15 倍推到 10.87 倍（两侧都扣输入词表：
+      234,471,304,704 / 21,568,433,664）。decode 每 token 搬 40.17 GiB，
+      而权重存储 437.90 GiB —— 容量与带宽第一次差一个数量级。
+      这对部署形态的影响是定性的：权重必须跨卡/跨机摊开，而 decode 的
+      带宽需求只有总量的 9.2%，所以「装得下」比「搬得快」更先成为约束。
+    quantified: >-
+      权重存储 437.90 GiB（含输入词表）；带宽口径每 token 21,568,433,664 × 2 B
+      = 40.17 GiB。专家占总参数 96.6%（227,096,395,776 / 235,093,634,560），
+      激活占比 9.2%（21,568,433,664 / 234,471,304,704，两侧都扣输入词表）
+    visibility: public
+  - dimension: ep-comm
+    finding: >-
+      top_k 仍 8、hidden 4096、MoE 层 94 —— 每 token 的 dispatch + combine
+      12,320,768 B，是前代的 3.84 倍，增长全部来自层数（28 → 94）。
+      专家数翻倍不影响载荷（载荷是 2 × top_k × hidden），只影响目的地分布。
+    quantified: 2 × top_k 8 × hidden 4096 × 2 B × 94 层 = 12,320,768 B/token（EP>1，BF16 激活）
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      FFN 侧的算子集合**变简单了**：没有共享专家就没有旁路通道，
+      每层只有 router 打分 + top-8 + grouped GEMM 三件事。
+      注意力侧多了 QK-Norm 两个小算子。所以这一代对适配的要求是
+      「去掉一条路径、加两个小算子」，不是新范式。
+    visibility: public
+
+infra_signals:
+  - text: >-
+      **共享专家被删掉了，而这件事在 config 里表现为「缺一个键」。**
+      只比 config 的键值不比键集合，会把这一代读成「和前代一样有共享专家、
+      只是没声明大小」。清单侧是硬证据：36945 条里零个 shared_expert。
+      这条通路在下一代（qwen3-next-80b-a3b）又回来了 ——
+      所以 Qwen 的共享专家是**反复出现**，不能按「某一代有就以后都有」规划算子。
+    evidence: derived
+    horizon: settled
+    axis: moe
+  - text: >-
+      稀疏度的最大一次改善来自**删掉常驻通路**，不是加专家：
+      专家数 64 → 128 只影响路由分布，而共享专家从 20480 的常驻中间维变成 0，
+      直接把常驻部分砍掉 6.17B。规划 decode 带宽时，
+      「专家数 × top_k」这个比值远不如「有没有常驻通路」重要。
+    evidence: judgement
+    horizon: settled
+    axis: moe
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: official
+  params.breakdown: derived
+  params.counting_note: judgement
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: official
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.shared_experts: derived
+  arch.moe.dense_intermediate: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  precision: official
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  MoE 支线的第三代（2025-04），也是 Qwen 线旗舰第一次是 MoE ——
+  此后到 Qwen3.8 旗舰一直是 MoE，稠密档位转为 side（见 qwen3-32b）。
+  结构轴上最重的一件事是**共享专家被去掉**（下一代又加回来）；
+  注意力侧的三件事（QK-Norm、去 bias、head_dim 解耦）与同代稠密档同步。
+  同代的 Qwen3-30B-A3B 与 Qwen3-Coder-480B-A35B-Instruct 张量名族与本记录逐个相同
+  （归一层号后），只是档位与专家数缩放，不另录 ——
+  Coder-480B 的 config 里 use_qk_norm: true 是把本记录已有的结构显式声明出来，
+  不是新增。
+
+open_questions:
+  - >-
+    QK-Norm 作用在 rope 之前还是之后没有读实现，只知道它按 head_dim 归一（[128]）
+  - >-
+    config 的 max_position_embeddings 是 40960，而**模型卡写「32,768 natively and
+    131,072 tokens with YaRN」** —— 本仓取 config 的 40960 作 context.max
+    （引擎实际用的窗口，也是本记录所有 KV 数的上下文基准），
+    train_native 与 extension_method 按卡填。40960 本身的来历没有来源
+  - >-
+    KV cache 的实际落盘精度未披露，按 config 的 torch_dtype=bfloat16 兜底，
+    bytes_basis 是 dtype_fallback
+  - >-
+    训练精度没有一手来源：config 的 torch_dtype: bfloat16 说的是发布权重，
+    而**模型卡正文本轮已读**（README.md @ 8efa61729e24），Model Overview 只列规模、
+    层数、头数、专家数与上下文，没有训练精度声明，故不填 precision.training
+  - >-
+    删掉共享专家之后负载均衡只剩 aux-loss（router_aux_loss_coef 0.001），
+    有没有别的无损均衡手段（如 bias 纠偏）在 config 与清单里都看不到 ——
+    清单里 router 只有一张 [128, 4096] 的 gate.weight，**没有 gate.bias**
+
+reviewed:
+  date: '2026-10-30'
+  scope:
+    - official
+    - derived
+    - judgement
+  reviewer: 本会话逐字段复算
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序对 facts/qwen3-235b-a22b 核：config 全部键
+    （含「缺哪些键」——shared_expert_intermediate_size 与 use_qk_norm 都不存在）、
+    完整权重清单（36945 条目逐项 numel / dtype / 层索引、experts.N 下标集合 0–127）、
+    repoinfo 的 tags / cardData / sha 与 safetensors tally。
+    「没有共享专家」「没有 .bias」「没有 gate.bias」三条否定结论都是对清单做名字扫描
+    得到的零命中，不是从 config 的缺键推的（见 R1）。
+    参数六项逐项按形状重算并三方比对；三个比值（稀疏度、激活占比、专家粒度）
+    各自重算过分子分母（见 R2、R3）。
+    derive.py 以默认 --ep 1 带 --model 重跑，0 处不一致；EP 通信量按 --ep 4 另跑核对公式。
+    **原理上核不了的**：QK-Norm 与 rope 的先后、长上下文做法、KV 落盘精度、训练精度，
+    都在 open_questions 里。
+review:
+  - id: R1
+    field: arch.moe.shared_experts
+    severity: unsupported
+    claim: shared_experts 0
+    finding: >-
+      两边都查了：config 没有 shared_expert_intermediate_size 这个键
+      （前两代都有），清单 36945 条里 shared_expert / shared_expert_gate 零命中。
+      **缺键本身不是证据** —— 本仓在 attn_sink 上栽过反方向的同一个错
+      （config 没开关而权重里有）。零命中才是证据。
+      顺带扫出另两条否定事实：self_attn 下零个 .bias、router 只有 gate.weight
+      而**没有 gate.bias**（DeepSeek 一代的 routing_bias 这一代没有）
+    resolution: confirmed
+  - id: R2
+    field: bottlenecks
+    severity: unsupported
+    claim: 稀疏度 10.87 倍，激活占比 9.2%
+    finding: >-
+      两个数同口径重算：分子分母都扣掉只 gather 一行的输入词表 ——
+      234,471,304,704 / 21,568,433,664 = 10.871。
+      与前代 4.15 倍、前前代 5.89 倍是同一种算法，可以放在一条线上比。
+      激活占比 9.2% 是它的倒数。
+      专家占总参数 96.6% 用的是**含**输入词表的分母（235,093,634,560），
+      和上面两个不是同一个分母，已在 quantified 里写明
+    resolution: confirmed
+  - id: R3
+    field: lineage.changed_from_predecessor
+    severity: imprecise
+    claim: >-
+      草稿里 moe 那条写「专家数翻倍、粒度更细（1/7.4 → 1/8）」
+    finding: >-
+      1/8 与 1/7.4 几乎没差别，真正变化的是两件别的事：
+      (1) **单专家绝对尺寸反而小了**（18,874,368 对 27,525,120，0.69 倍）；
+      (2) 每 token 的 FFN 中间维从 40960 降到 12288（共享专家那 20480 没了，
+      路由那边也从 20480 降到 12288）。
+      把「更多更细」当成这一代的主旨会完全错过共享专家被删这件事
+    resolution: corrected
+    changed_to: >-
+      moe 条改为以「共享专家被去掉」开头，粒度比值与单专家绝对尺寸并列给出，
+      benefit 写明每 token FFN 中间维 40960 → 12288
+  - id: R4
+    field: lineage.changed_from_predecessor
+    severity: wrong
+    claim: >-
+      草稿里 attention 那条的 benefit 写「KV 每 token 从 28,672 降到 ……」
+    finding: >-
+      方向是反的：每 token 从 28,672 **涨到** 96,256 元素（3.36 倍），
+      因为层数 28 → 94 而每层宽度不变（都是 2 × 4 × 128 = 1024）。
+      这一代的注意力改动一个字节的缓存都没省。
+      「每层宽度不变 + 层数涨」这件事在只看 num_kv_heads 时完全看不出来
+    resolution: corrected
+    changed_to: benefit 改为「涨 3.36 倍，增长全部来自层数，注意力形态没压缩任何东西」
+  - id: R5
+    field: params.counting_note
+    severity: imprecise
+    claim: >-
+      草稿沿用前两代的说法：「A22B 对得上的是含输入词表的口径」
+    finding: >-
+      本代两种口径**都在容差内**：含输入词表 +0.87%、带宽口径 −1.96%。
+      虽然前者更吻合，但 −1.96% 也在 2% 以内，所以这一档分不出来、
+      不能当作「Qwen 的激活参数声明含输入词表」这条规律的样本。
+      前两代（−0.40% 对 −11.9%、+1.78% 对 −2.11%）才是能分辨的样本
+    resolution: corrected
+    changed_to: counting_note 改为写明两种口径都在容差内、本档不作为那条规律的样本
+  - id: R6
+    field: arch.moe.storage_note
+    severity: missing
+    claim: 草稿只写「专家逐个独立存张量」
+    finding: >-
+      这一代的条目数是本仓最多的一份：36,096 个专家条目占 36945 总条目的 97.7%。
+      这件事有实际后果 —— 加载时要开 36096 个张量视图，
+      而 Qwen3.5 一代同样 512 专家只用每层 2 个堆叠张量。
+      数量级差异值得写进 storage_note 而不是只说布局
+    resolution: corrected
+    changed_to: storage_note 补上条目数与占比，并点出与 Qwen3.5 堆叠布局的对比
+  - id: R7
+    field: hf.sha
+    severity: wrong
+    claim: >-
+      草稿里的 hf.sha 与 hf.last_modified 是按 12 位前缀「补全」的，不是从取数产物读的
+    finding: >-
+      本轮对全部新记录做了一次机械核对：把每份 YAML 的 hf.sha / hf.last_modified
+      与 facts/<id>/repoinfo.json 逐字符比。本记录两项都对不上 ——
+      sha 的后 28 位与 lastModified 的时分秒都是写记录时臆造的。
+      sha 是整份记录的可复现锚点（sources 的 locator 也引它），
+      错了之后「按 pinned sha 复现取数」这件事就断了，而**它不会被任何校验拦住**：
+      validate.py 不核对 facts/，derive.py 也不读 hf 块
+    resolution: corrected
+    changed_to: >-
+      两项都改为从 facts/<id>/repoinfo.json 直接读出的值；
+      核对脚本已对全部 11 份新记录跑过，现在逐字符一致
+  - id: R8
+    field: sources
+    severity: missing
+    claim: >-
+      本记录原来只有 config.json 一个来源；「共享专家被去掉」只靠 config 缺键
+      与清单零命中两条，上下文只记了 config 的 40960
+    finding: >-
+      本轮按 main 并入的来源优先级规则补读模型卡，三件事有了一手来源或旁证：
+      (1) 声明值「235B in total and 22B activated」与「Non-Embedding: 234B」——
+      后者让 Qwen 的 Non-Embedding 口径在本档上又验证一次：扣**两份**词表
+      得 233,848,974,848（−0.06%），扣一份对不上；
+      (2) 头数那一行把类型写成 (GQA)，arch.attention.type 由 derived 升为 official；
+      (3) **卡上没有「Number of Shared Experts」这一行**，而下一代 Qwen3-Next 的卡有
+      —— 字段集合的差异与清单的零命中同向，R1 的否定结论又多了一条独立旁证。
+      另外卡写「32,768 natively and 131,072 with YaRN」，与 config 的 40960 三个数
+      互不相同，本记录把三者都写出来并说明取哪一个当基准
+    resolution: corrected
+    changed_to: >-
+      新增 sources 的 modelcard 条目；counting_note 补 Non-Embedding 口径；
+      arch.attention.type 升 official；补 context.train_native 与 extension_method

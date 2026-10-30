@@ -1,0 +1,161 @@
+{
+ "id": "qwen2-57b-a14b",
+ "generated_by": "scripts/derive.py",
+ "generated_at": "2026-10-30T07:08:40+00:00",
+ "inputs": {
+  "facts_dir": "facts/qwen2-57b-a14b",
+  "config_present": true,
+  "shapes_present": true,
+  "model_yaml": "data/models/qwen/qwen2-57b-a14b.yaml",
+  "ep_size": 1
+ },
+ "from_shapes": {
+  "available": true,
+  "complete": true,
+  "tensor_count": 5771,
+  "params_total": 57408658944.0,
+  "params_by_subsystem": {
+   "norm": 204288.0,
+   "expert": 49325015040.0,
+   "shared_expert": 6165727232.0,
+   "router": 6422528.0,
+   "attention": 822212608.0,
+   "embed": 544538624.0,
+   "lm_head": 544538624.0
+  },
+  "scale_elements": 0.0,
+  "weight_bytes_total": 114817317888.0,
+  "weight_bytes_by_subsystem": {
+   "norm": 408576.0,
+   "expert": 98650030080.0,
+   "shared_expert": 12331454464.0,
+   "router": 12845056.0,
+   "attention": 1644425216.0,
+   "embed": 1089077248.0,
+   "lm_head": 1089077248.0
+  },
+  "weight_bytes_by_dtype": {
+   "BF16": 114817317888.0
+  },
+  "weight_dtype_containers": {},
+  "experts_seen": 64,
+  "expert_storage": "individual",
+  "layers_present": 28,
+  "mtp_layers_seen": [],
+  "mtp_attention_suffixes": [],
+  "draft_blocks_seen": 0,
+  "layer_index_max": 28,
+  "layers_missing": [],
+  "moe_layers_seen": 28,
+  "unknown_dtypes": [],
+  "packing_applied": {},
+  "packing_suspect": [],
+  "incomplete_note": null
+ },
+ "kv_cache": {
+  "status": "ok",
+  "attention_type": "GQA",
+  "kv_dtype": "bfloat16",
+  "layers": 28,
+  "full_attention_layers": 28,
+  "linear_attention_layers": 0,
+  "per_token_bytes": 57344,
+  "per_sequence_bytes": 0,
+  "per_token_elems": 28672,
+  "per_token_elems_bound": "exact",
+  "components": {
+   "full_attention": {
+    "layers": 28,
+    "bytes_per_layer": 2048,
+    "bytes_per_token": 57344,
+    "dtype": "bfloat16",
+    "elements_per_token": 28672,
+    "terms": {
+     "num_kv_heads": 4,
+     "head_dim": 128,
+     "formula": "2 * num_kv_heads * head_dim * bytes"
+    }
+   }
+  },
+  "notes": [],
+  "dtype_assumed": true,
+  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML",
+  "bytes_basis": "dtype_fallback"
+ },
+ "kv_capacity_bytes_at_context": {
+  "4096": 234881024,
+  "32768": 1879048192,
+  "131072": 7516192768
+ },
+ "kv_capacity_basis": "dtype_fallback",
+ "active_params": {
+  "status": "ok",
+  "total": 13704732160.0,
+  "total_with_embed": 14249270784.0,
+  "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的输入词表）；total_with_embed 含输入词表，用于和各家公布的「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
+  "expert_active": 6165626880.0,
+  "expert_total": 49325015040.0,
+  "expert_ratio": "8/64",
+  "always_active": 7539105280.0,
+  "lm_head": 544538624.0,
+  "dense": false,
+  "excluded": {
+   "embed_tokens": 544538624.0,
+   "retrieval_table": 0.0,
+   "vision": 0.0,
+   "draft": 0.0
+  },
+  "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
+ },
+ "flops": {
+  "linear_per_token": 27409464320.0,
+  "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
+ },
+ "arithmetic_intensity": {
+  "decode_weight_bytes_per_token": 27409464320.0,
+  "decode_flops_per_byte": 1.0,
+  "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
+ },
+ "ep_communication": {
+  "status": "ok",
+  "ep_size": 1,
+  "moe_layers": 28,
+  "bytes_per_token": 3211264,
+  "bytes_per_layer": 114688,
+  "formula": "2(dispatch+combine) * top_k * hidden * bytes * moe_layers",
+  "note": "EP=1 时为 0；跨机时该量按互联带宽折算成时间，是 decode 尾延迟的主因之一"
+ },
+ "reconciliation": [
+  {
+   "item": "路由专家数",
+   "config": 64.0,
+   "shapes": 64.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "专家存储布局",
+   "status": "ok",
+   "why": "individual（逐专家独立张量）"
+  },
+  {
+   "item": "层数",
+   "config": 28.0,
+   "shapes": 28.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "参数总量",
+   "YAML 声明": 57000000000.0,
+   "shapes 实测": 57408658944.0,
+   "delta_pct": 0.72,
+   "status": "ok"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "ok",
+   "why": "与 HF 的 safetensors tally 逐位相同（57,408,658,944）"
+  }
+ ]
+}

@@ -1,0 +1,380 @@
+# 机械字段来自 config（official）；形状、参数量与子系统拆分来自完整权重清单
+# （37 分片 963 条目，无读失败分片，全 BF16）。GQA 的缓存宽度取自 k_proj / v_proj
+# 的输出维，不是 config 的头数乘积（derived）。
+id: qwen2-72b
+family: qwen
+kind: llm
+display_name: Qwen2-72B
+released: '2024-05-22'
+license: other
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen2-72B
+    locator: config.json @ 5f149cae83c1
+    accessed: '2026-10-30'
+    note: >-
+      许可取自 HF tags license:other 与 cardData license_name: tongyi-qianwen。
+      同日发布的 Qwen2-57B-A14B 是 apache-2.0 —— 同一天的两档许可不同，
+      不能从一档推另一档。BF16 发布，37 分片 963 个张量，逐分片读头取全，
+      failed_shards 为空
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen2.5-72B
+    locator: config.json @ efba10c8e54e
+    accessed: '2026-10-30'
+    note: >-
+      Qwen2.5-72B 的零结构差异对照（见 notes 与 infra_signals）：config 只差
+      transformers_version，963 个张量的名字、形状与 dtype 逐条相同，
+      HF 的 safetensors tally 逐位相同。facts/qwen2.5-72b 下有完整清单可复核
+
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen2-72B/blob/5f149cae83c11c408a953dec64b12e7e662e8cb9/README.md
+    locator: 'README.md @ 5f149cae83c1 · Model Details'
+    accessed: '2026-10-30'
+    note: >-
+      按本仓「来源优先级：模型卡 / 技术报告 > 厂商参考实现 > 引擎实现」补的一手来源。
+      Model Details 一段写明 Qwen2 系列「is based on the Transformer architecture with
+      **SwiGLU activation, attention QKV bias, group query attention**, etc.」——
+      SwiGLU、QKV bias 与 GQA 三件事由此有了一手声明（前两件原来标 derived）。
+      **这份卡没有参数量表、也没有训练精度声明**，所以 params 的声明值仍只有模型名，
+      precision.training 仍不填
+
+hf:
+  repo: Qwen/Qwen2-72B
+  sha: 5f149cae83c11c408a953dec64b12e7e662e8cb9
+  last_modified: '2024-10-09T06:01:50.000Z'
+  pipeline_tag: text-generation
+  gated: false
+
+lineage:
+  track: main
+  predecessor: qwen1.5-72b
+  successor: qwen3-32b
+  changed_from_predecessor:
+    - axis: attention
+      text: >-
+        **MHA → GQA**：64 query 头不变，KV 头 64 → 8（8 组），head_dim 仍 128。
+        清单里 k_proj 与 v_proj 从 [8192, 8192] 变成 **[1024, 8192]**，
+        输出维 1024 = 8 头 × 128；q_proj 与 o_proj 仍是 [8192, 8192]。
+        q/k/v 的 bias 跟着缩：q 仍 [8192]，k 与 v 各 [1024]
+      benefit: >-
+        每层缓存从 2 × 64 × 128 = 16384 元素压到 2 × 8 × 128 = **2048 元素，8 倍**；
+        每 token 从 1,310,720 元素降到 163,840。注意力参数也从 21,476,802,560
+        降到 12,080,414,720（占总参数 29.7% → 16.6%）。
+        **缓存宽度必须按 k_proj / v_proj 的输出维算**：按 num_attention_heads × head_dim
+        折算得 16384，对实际 2048 是 8 倍高估
+    - axis: context
+      text: 32768 → 131072（max_position_embeddings），RoPE theta 仍 1e6
+      benefit: >-
+        上下文 ×4 与 GQA ÷8 是同一代的两件事，合起来满上下文的 KV 反而**减半**：
+        前代 32K × 2,621,440 B = 80.00 GiB，本代 128K × 327,680 B = 40.00 GiB。
+        只做其中一件都不成立 —— 128K 配 MHA 是 320 GiB
+    - axis: moe
+      text: 仍是稠密 FFN，中间维 24576 → 29568（+20.3%）
+      benefit: >-
+        注意力省下来的 9.40B 参数被 FFN 吃回去 9.81B，总量几乎不变
+        （72,287,920,128 → 72,706,203,648，+0.58%）。带宽口径的激活参数
+        从 71,042,211,840 涨到 71,460,495,360（+0.59%）——
+        **GQA 省的是缓存不是带宽**，这一代把省下的参数预算挪给了 FFN
+    - axis: precision
+      text: 仍是 BF16 直接发布，963 个条目全 BF16，没有 quantization_config
+      benefit: 精度这条轴在 Qwen 线一直到 Qwen3.5 才有 config 级的变化（见 qwen3.5-27b 的 F32 两项）
+
+params:
+  total: 7.2e+10
+  breakdown:
+    dense_ffn: 58133100000.0
+    attention: 12080400000.0
+    embed: 1245710000.0
+    lm_head: 1245710000.0
+    norm: 1318912.0
+  counting_note: >-
+    total 取自模型名（72B），属厂商声明；breakdown 是本仓按完整权重清单
+    （37 分片 963 条目，全 BF16、无量化 scale、无低位打包）实测的分项，取 6 位有效数字。
+    实测全量 72,706,203,648，与 HF 平台自己从分片头统计的 safetensors tally 逐位相同。
+    对 72B 是 +0.98%，在 Gate B 的 2% 容差内。没有草稿块、没有视觉塔，
+    唯一的另一种读法是扣掉输入词表：71,460,495,360，对 72B 是 −0.75%，**也在容差内**
+    （而且绝对值更小）—— 两种读法都过关，所以本记录取全量、不设 excludes，
+    和前代 qwen1.5-72b 保持同一种记法。同支线的 qwen3-32b 与 qwen2.5-14b-1m
+    只有「扣掉输入词表」那一种落在容差内，因此那两档设了 excludes: [embed]。
+    词表与输出层不共享权重（各 1,245,708,288，tie_word_embeddings: false）。
+    Gate B 的「参数总量」一项拿的是声明值比实测值；真正不依赖本仓任何一行代码的
+    外部核对是 HF 的 safetensors tally。
+    权重存储 135.43 GiB。激活参数两个口径：带宽口径 71,460,495,360
+    （不含只 gather 一行的输入词表）、可比官方口径 72,706,203,648（含输入词表）。
+    与前代的参数量几乎相同（+0.58%）但构成变了：注意力 −43.8%、FFN +20.3%。
+
+context:
+  max: 131072
+
+arch:
+  layers: 80
+  hidden: 8192
+  vocab: 152064
+  norm: RMSNorm
+  norm_eps: 1.0e-05
+  activation: SwiGLU
+  position: RoPE theta 1e6，作用在全部 head_dim 维（config 无 partial_rotary_factor）
+
+  attention:
+    type: GQA
+    num_heads: 64
+    num_kv_heads: 8
+    head_dim: 128
+    head_dim_note: >-
+      head_dim 不是这一代的 config 字段，128 = hidden 8192 / num_attention_heads 64，
+      由清单印证：q_proj 与 o_proj 是 [8192, 8192]，而 k_proj 与 v_proj 是 [1024, 8192]
+      —— 1024 = num_key_value_heads 8 × 128。缓存宽度按后者的输出维算
+      （每层 2 × 1024 = 2048 元素），按 query 头数折算会高估 8 倍。
+      q/k/v 带 bias（q [8192]、k 与 v 各 [1024]），o_proj 没有；Qwen3 起 bias 整体取消
+    layer_pattern: 80 层同构，每层产出自己的 KV，无跨层共享、无滑窗、无稀疏
+
+  ffn:
+    type: dense
+    intermediate: 29568
+
+precision:
+  weights_release: [BF16]
+  quantization:
+    per_subsystem:
+      attention: BF16
+      dense_ffn: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+    subsystem_method: >-
+      来自完整权重清单（37 分片 963 条目）逐项统计，非抽样：每个条目都带 shape 与 dtype，
+      failed_shards 为空，963 条全是 BF16。这一代没有 quantization_config，
+      不存在 scale 张量与量化块。同一套统计在 facts/qwen2.5-72b（同样 963 条目）上
+      逐条相同，是本仓少有的「两份独立取数逐条吻合」的样本
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/Qwen/Qwen2-72B
+    visibility: public
+
+bottlenecks:
+  - dimension: weight-bandwidth
+    finding: >-
+      GQA 把缓存压了 8 倍，但带宽一点没省：稠密 FFN 占总参数 80.0%，
+      带宽口径的激活参数 71,460,495,360 比前代还高 0.59%。
+      decode 每 token 要搬 133.11 GiB —— 这一代的瓶颈完全在权重带宽上，
+      而 128K 满上下文的 KV 只有 40.00 GiB。MoE 这条路在同代的
+      qwen2-57b-a14b 上才有，稠密线要到 Qwen3.5 才靠混合注意力改善 decode。
+    quantified: >-
+      带宽口径激活 71,460,495,360 × 2 B = 133.11 GiB/token；权重存储 135.43 GiB
+      （含输入词表）。dense_ffn 占总参数 80.0%（58,133,053,440 / 72,706,203,648）、
+      占带宽口径 81.3%（分母换成 71,460,495,360）—— 两个分母不同，引用时要带口径
+    visibility: public
+  - dimension: kv-capacity
+    finding: >-
+      8 组 GQA 下每层 2048 元素，80 层每 token 163,840 元素。128K 满上下文
+      40.00 GiB，是权重存储的 30%，仍不是主要矛盾。没有跨层共享、滑窗或稀疏，
+      所以 KV 随层数与上下文严格线性。
+    quantified: >-
+      2 × num_kv_heads 8 × head_dim 128 = 2048 元素/层/token × 80 层 = 163,840 元素/token；
+      KV 落盘精度未披露，按 config 的 torch_dtype=bfloat16 兜底得 327,680 B/token、
+      128K 满上下文 40.00 GiB —— dtype_fallback 口径
+    visibility: public
+
+infra_signals:
+  - text: >-
+      MHA → GQA 这一步在 Qwen 线是和「上下文 ×4」捆在一起发生的，
+      两件事合起来让满上下文的 KV 反而减半。跟踪时把它们拆开看会得出相反结论：
+      单看上下文是 ×4 的压力，单看 GQA 是 ÷8 的缓解。
+      比较要用元素口径（1,310,720 → 163,840），本代与前代的字节都是 dtype 兜底值。
+    evidence: judgement
+    horizon: settled
+    axis: attention
+  - text: >-
+      **Qwen2.5-72B 相对本记录在结构上零差异**：config 只差 transformers_version，
+      963 个张量的名字、形状与 dtype 逐条相同，HF tally 逐位相同。
+      一个被广泛当成「新一代」的发布，算子侧什么都不需要做 ——
+      和 README 里 DeepSeek R1 对 V3 那条是同一类。
+      跟踪新版本时先比张量名集合与逐条 shape/dtype，相同就不必重走算子评估。
+      本仓因此不为 Qwen2.5 的常规档位单独立记录。
+    evidence: judgement
+    horizon: settled
+    axis: training
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: official
+  params.breakdown: derived
+  params.counting_note: judgement
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: official
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.head_dim: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.ffn.type: derived
+  precision: official
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  稠密支线的第二代（2024-05），也是 Qwen 线 GQA 的起点。
+  **Qwen2.5-72B（2024-09-15）与本记录零结构差异**，所以不单独立记录：
+  config 逐键比对只差 transformers_version（4.40.1 → 4.43.1），
+  963 个张量的名字集合、逐条 shape 与 dtype 全部相同，HF 的 safetensors tally
+  也逐位相同（72,706,203,648）。两份清单都在 facts/ 下（qwen2-72b、qwen2.5-72b），
+  随时可复核。同代的 Qwen2-7B 张量名族与本记录逐个相同，只是档位缩放，不另录；
+  Qwen2.5 一代里**结构上确有新东西的是 Qwen2.5-14B-Instruct-1M**（dual chunk attention），
+  单独记在 qwen2.5-14b-1m。
+
+open_questions:
+  - >-
+    KV cache 的实际落盘精度未披露，按 config 的 torch_dtype=bfloat16 兜底，
+    bytes_basis 是 dtype_fallback，不能和别人按落盘格式算出来的理论下限比倍数
+  - >-
+    训练精度没有一手来源：config 的 torch_dtype: bfloat16 说的是发布权重，
+    而**模型卡正文本轮已读**（README.md @ 5f149cae83c1），Model Details 只讲结构，
+    没有训练精度声明，故不填 precision.training
+  - >-
+    128K 上下文是怎么扩出来的（YaRN / 长文继续训练 / 两者）没有一手来源：
+    config 的 rope_scaling 是 null、rope_theta 与前代同为 1e6，
+    所以扩展方式在 config 里看不出来，context.extension_method 不填
+
+reviewed:
+  date: '2026-10-30'
+  scope:
+    - official
+    - derived
+    - judgement
+  reviewer: 本会话逐字段复算
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序对 facts/qwen2-72b 核：config 全部键、
+    完整权重清单（963 条目逐项 numel / dtype / 层索引）、repoinfo 的 tags / cardData /
+    sha 与 safetensors tally。
+    缓存乘式的四个因子逐个落到清单里的张量形状上（见 R1）。
+    参数分项逐项按形状重算并与清单求和、HF tally 三方比对（见 R2）。
+    「Qwen2.5-72B 零差异」这一条是对 facts/qwen2.5-72b 实际取了完整清单之后
+    逐条比 shape 与 dtype 得到的，不是只比名字集合（见 R3）。
+    derive.py 以默认 --ep 1 带 --model 重跑，0 处不一致。
+    **原理上核不了的**：128K 的扩展方式、KV 落盘精度、训练精度，都在 open_questions 里。
+review:
+  - id: R1
+    field: bottlenecks
+    severity: unsupported
+    claim: 每 token 163,840 个 KV 元素、327,680 B、128K 共 40.00 GiB
+    finding: >-
+      四个因子逐个验：(1) **哪些层** —— q_proj 恰在 0–79 全部 80 层，无草稿块；
+      (2) **每层多宽** —— **从产出张量读**：k_proj 与 v_proj 都是 [1024, 8192]，
+      输出维 1024，K 与 V 各一份故 2048 元素。按 num_attention_heads × head_dim
+      折算会得 16384（8 倍高估），这正是本仓在 DeepSeek indexer 上栽过的那种错；
+      (3) **条目覆盖** —— 无压缩、无滑窗、无跨层共享，1:1；
+      (4) **每元素字节** —— 无一手来源，按 config 的 torch_dtype 兜底 2 B，
+      标 dtype_fallback
+    resolution: confirmed
+  - id: R2
+    field: params.breakdown
+    severity: unsupported
+    claim: 五项分项与合计 72,706,203,648
+    finding: >-
+      逐项按形状重算：dense_ffn 80 × 3 × 8192 × 29568 = 58,133,053,440；
+      attention 80 × (8192² × 2 + 1024 × 8192 × 2 + 8192 + 1024 × 2) = 12,080,414,720
+      —— 注意 q/o 是满方阵而 k/v 是 [1024, 8192]，bias 也跟着缩；
+      embed 与 lm_head 各 152064 × 8192 = 1,245,708,288；
+      norm 80 × 2 × 8192 + 8192 = 1,318,912。
+      五项合计与清单求和、与 HF tally 三者逐位相同
+    resolution: confirmed
+  - id: R3
+    field: infra_signals
+    severity: unsupported
+    claim: >-
+      草稿里「Qwen2.5-72B 与本记录张量名集合相同，所以零结构差异」
+    finding: >-
+      名字集合相同**不足以**说零结构差异 —— 形状和 dtype 都可能变而名字不变，
+      本仓的 Qwen3.5 → Qwen3.6 就是「名字逐个相同、96 个张量的 dtype 变了」。
+      所以对 facts/qwen2.5-72b 取了完整清单（37 分片 963 条目）逐条比
+      shape 与 dtype，全同；config 逐键比只差 transformers_version；
+      HF tally 逐位相同。三条都成立，这一条才敢写
+    resolution: confirmed
+  - id: R4
+    field: lineage.changed_from_predecessor
+    severity: imprecise
+    claim: >-
+      草稿里 attention 那条的 benefit 写「GQA 把 KV 压了 8 倍，长上下文的压力因此缓解」
+    finding: >-
+      同一代上下文从 32768 涨到 131072（×4），只说 8 倍压缩会让读者以为
+      满上下文的占用降到 1/8。两件事合起来是 80.00 GiB → 40.00 GiB，**减半**。
+      skill 的「跨代比之前两侧 basis 是不是同一套」在这里不是精度问题而是
+      上下文长度问题：比「每 token」是 8 倍，比「满上下文」是 2 倍，
+      两个数都对但说的不是一件事
+    resolution: corrected
+    changed_to: >-
+      attention 条给每 token 的 8 倍，context 条给满上下文的 2 倍，
+      并写明「只做其中一件都不成立」
+  - id: R5
+    field: params.counting_note
+    severity: missing
+    claim: >-
+      草稿只写了总量几乎不变（+0.58%）
+    finding: >-
+      总量不变掩盖了构成的大幅变化：注意力 21,476,802,560 → 12,080,414,720（−43.8%），
+      FFN 48,318,382,080 → 58,133,053,440（+20.3%）。
+      「GQA 省下来的参数被 FFN 吃回去了」是这一代真正的事实，
+      而只看 total 看不出来 —— 也正因如此，**GQA 省的是缓存不是带宽**：
+      带宽口径的激活参数还涨了 0.59%
+    resolution: corrected
+    changed_to: >-
+      counting_note 与 lineage 的 moe 条都补上两项的变化量与「省缓存不省带宽」这句
+  - id: R6
+    field: hf.sha
+    severity: wrong
+    claim: >-
+      草稿里的 hf.sha 与 hf.last_modified 是按 12 位前缀「补全」的，不是从取数产物读的
+    finding: >-
+      本轮对全部新记录做了一次机械核对：把每份 YAML 的 hf.sha / hf.last_modified
+      与 facts/<id>/repoinfo.json 逐字符比。本记录两项都对不上 ——
+      sha 的后 28 位与 lastModified 的时分秒都是写记录时臆造的。
+      sha 是整份记录的可复现锚点（sources 的 locator 也引它），
+      错了之后「按 pinned sha 复现取数」这件事就断了，而**它不会被任何校验拦住**：
+      validate.py 不核对 facts/，derive.py 也不读 hf 块
+    resolution: corrected
+    changed_to: >-
+      两项都改为从 facts/<id>/repoinfo.json 直接读出的值；
+      核对脚本已对全部 11 份新记录跑过，现在逐字符一致
+  - id: R7
+    field: sources
+    severity: missing
+    claim: 本记录原来只有 config.json 一个来源，SwiGLU 与 GQA 两条都标 derived
+    finding: >-
+      main 并入的新规则（CLAUDE.md「来源优先级：模型卡 / 技术报告 > 厂商参考实现 >
+      引擎实现」与 skill 规则 10）要求精度与结构按厂商发布的说法填，
+      而本仓此前只取了 config.json 与 repoinfo.json —— 模型卡正文没读过。
+      本轮补读 README.md（钉在 hf.sha 同一个 commit）：Model Details 把
+      SwiGLU activation、attention QKV bias、group query attention 三件事
+      列为 Qwen2 系列的设计面，**前两件从 derived 升为 official**，
+      GQA 这一条也从「按 k_proj 输出维推」变成有厂商说法佐证
+      （本记录仍把 arch.attention.type 标 derived —— 卡说的是系列设计面，
+      具体头数仍来自 config 与清单）。
+      卡里没有参数量表与训练精度，所以 params 与 precision.training 的处理不变
+    resolution: corrected
+    changed_to: >-
+      新增 sources 的 modelcard 条目（README.md @ sha），
+      arch.activation 的 evidence 由 derived 改为 official，
+      open_questions 的训练精度那条改为「卡已读、无声明」
