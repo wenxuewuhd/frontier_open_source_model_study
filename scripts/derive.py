@@ -99,7 +99,7 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
         comp, sub = classify2(name, mtp_from)
 
         bytes_comp[comp] = bytes_comp.get(comp, 0.0) + n * b
-        if not dtypes.is_scale_tensor(name, dt):
+        if dtypes.counts_as_param(name, dt):
             params_comp[comp] = params_comp.get(comp, 0.0) + n * dtypes.packing_factor(
                 logical.get(sub, ""), dt)
 
@@ -116,11 +116,11 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
             # 单独记下来，好跟外部的参数量 tally 对账：有的仓把 scale 算进了
             # 参数量，有的没算，两种都要能解释（见 reconcile 的外部对账一项）
             scale_elems += n
-        if not dtypes.is_scale_tensor(name, dt):
+        if dtypes.counts_as_param(name, dt):
             f = dtypes.packing_factor(logical.get(sub, ""), dt)
             if f > 1:
                 packing_applied[sub] = f
-            elif dt in ("INT8", "UINT8") and sub not in logical:
+            elif dtypes.is_container(dt) and sub not in logical:
                 # 整型容器里装低位权重很常见。没声明逻辑精度就无法还原，
                 # 参数量会少算整数倍，必须提示而不是默默算小。
                 packing_suspect.add(sub)

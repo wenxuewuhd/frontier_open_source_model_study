@@ -1,7 +1,8 @@
 # 手写记录。量化形态（容器、还原因子、块大小、scale 精度）与参数分项都来自完整权重清单
 # （facts/kimi-k2-thinking/shapes.json，208276 个张量，62/62 分片无读失败），
 # 并与 kimi-k2-0905 的清单逐条比对。
-# 注意：本记录的 params 是**还原打包后**的参数量，而 derive.py 当前少算 8 倍 —— 见 review R1。
+# 注意：本记录的 params 是**还原打包后**的参数量。derive.py 曾因不认 I32 容器少算 8 倍，
+# 已修（_CONTAINERS 纳入 INT32），现在两路逐位相同 —— 见 review R1。
 id: kimi-k2-thinking
 family: kimi
 kind: llm
@@ -74,12 +75,13 @@ params:
     norm: 1006592.0
   counting_note: >-
     **本记录的 total 与 breakdown 是本仓按完整清单（208276 条）逐项求和、并把 INT4 打包
-    还原（×8）之后的值；derive.py 当前算不出这个数**：lib/dtypes.py 的打包还原只认
+    还原（×8）之后的值。** 这个数曾经只能手算：lib/dtypes.py 的打包还原原先只认
     INT8 / UINT8 容器，不认 INT32，于是专家一项按容器数记成 126,835,891,200，
-    参数总量少算 8 倍。因此 data/derived/kimi-k2-thinking.json 里的
-    参数总量、按子系统分项与激活参数都偏小，Gate B 的「参数总量」与「外部参数量对账」
-    两项都报 MISMATCH —— 这是工具缺口，不是数据分歧，留痕见 review R1，
-    需要的脚本改动已交主会话统一处理。字节口径不受影响（容器就是真实存储）。
+    参数总量少算 8 倍，Gate B 的「参数总量」与「外部参数量对账」两项都报 MISMATCH。
+    那是工具缺口、不是数据分歧，**现已修复**（_CONTAINERS 纳入 INT32、还原因子改成
+    「容器位宽 / 逻辑位宽」、weight_shape 这类格式元数据单独排除），derive.py 现在
+    直接算出 1,026,408,240,256，与 HF tally 逐位相同、两项都报 delta_pct=0.0。
+    留痕见 review R1。字节口径自始不受影响（容器就是真实存储）。
     还原因子 ×8 有**五条独立机制、六处闭合**（(1)(2) 与 (3) 是同两个机制换方向再做一遍，
     不是第三个机制）：
     (1) experts gate_proj weight_packed [2048, 896] I32，而逻辑输入维是 hidden 7168 = 896 × 8；
@@ -210,9 +212,10 @@ bottlenecks:
       合计 **33.035 GB/token**。两个数差 −0.15%，而两半的大小恰好对调。
       所以模型卡的「约 2 倍生成加速」不可能来自每 token 字节数 ——
       它要么来自 INT4 的计算 kernel、要么来自卡数减少后的并行配置变化，本仓没有依据选一个。
-      注意 derive.py 的 decode_weight_bytes_per_token 与算术强度对本记录不可用：
-      它按「激活参数 / 总参数」等比例折算，而 derived 里的 params_total 本身少算 8 倍
-      （见 review R1），且等比例折算对混合精度模型本来就不成立（kimi-k3 的 R1 同一回事）
+      注意 derive.py 的 decode_weight_bytes_per_token 与算术强度对本记录仍不可用：
+      params_total 少算 8 倍那一层已经修掉（见 review R1），但它按「激活参数 / 总参数」
+      等比例折算，这对混合精度模型本来就不成立 —— 本代专家 INT4、其余 BF16，
+      按参数量比例分摊字节必然偏，和 kimi-k3 的 R1 是同一回事
     visibility: public
   - dimension: kv-capacity
     finding: >-
@@ -242,9 +245,10 @@ infra_signals:
     axis: precision
   - text: >-
       本仓的工具链在这一代露了一个缺口：lib/dtypes.py 的打包还原只认 INT8 / UINT8 容器，
-      I32 容器里的 INT4 不会被还原，参数量静默少算 8 倍。
-      接住它的是 Gate B 的外部参数量对账（HF 的 safetensors tally 不依赖本仓代码）——
-      这正是那一项当初被加进去的用途
+      I32 容器里的 INT4 不会被还原，参数量静默少算 8 倍（已修，见 review R1）。
+      值得记住的不是这个 bug，而是**接住它的是 Gate B 的外部参数量对账**
+      （HF 的 safetensors tally 不依赖本仓代码）—— 这正是那一项当初被加进去的用途。
+      内部自洽的错数不会自己暴露，只有不依赖本仓代码的第二来源才接得住
     evidence: derived
     horizon: now
     axis: precision
@@ -325,12 +329,16 @@ review:
       **接住它的是 Gate B 的外部参数量对账** —— 这一项当初加进来就是为了这种情况；
       两条 MISMATCH（参数总量、外部对账）都来自同一个根因，也因此连带让 derived 里的
       按子系统分项、激活参数与算术强度偏小
-    resolution: deferred
+    resolution: corrected
     changed_to: >-
-      本记录的 params.total 与 breakdown 填**还原后**的值并在 counting_note 里写明工具缺口；
-      需要的脚本改动（_CONTAINERS 纳入 INT32、还原因子按容器位宽/逻辑位宽算、
-      weight_shape 这类元数据张量单独排除）属仓库级改动，已写进交接说明交主会话统一处理，
-      本记录不改 scripts/
+      本记录的 params.total 与 breakdown 填**还原后**的值；脚本缺口随后由主会话修掉：
+      lib/dtypes.py 的 _CONTAINERS 从集合改成「容器 -> 位宽」的映射并纳入 INT32，
+      packing_factor() 的还原因子改成「容器位宽 / 逻辑位宽」（这里 32 / 4 = 8），
+      新增 is_metadata_tensor() 把 weight_shape 这类格式元数据排除在参数量之外
+      （字节照算），packing_suspect 的提示面也跟着扩到所有容器类型。
+      修完 derive.py 的 shapes 路直接给出 1,026,408,240,256，与 YAML 声明和 HF tally
+      三方逐位相同，两条 MISMATCH 都报 delta_pct=0.0；全仓另外 45 份记录的推导摘要
+      逐字未变（改动前后各跑一遍比对过）
   - id: R2
     field: bottlenecks
     severity: wrong
@@ -408,7 +416,3 @@ open_questions:
     本仓不收这条性能数据
   - >-
     QAT 从 SFT 之后开始，但预训练数值格式仍无一手声明，precision.training 不填
-  - >-
-    参数量在 data/derived/ 里偏小 8 倍：lib/dtypes.py 的 _CONTAINERS 只有 INT8 / UINT8，
-    I32 容器的 INT4 打包不会被还原。需要的改动是把 I32 纳入容器类型、
-    还原因子按「容器位宽 / 逻辑位宽」算（这里 32 / 4 = 8），属仓库级改动，本期不在本记录内做

@@ -61,19 +61,29 @@ def nbytes(dt: str) -> float:
 # 亚字节类型的位宽。低位权重常被打包进整型容器存放：
 # safetensors 里看到的是容器（如 I8），numel 是容器数而不是参数数。
 BITS = {"FP6": 6, "FP4": 4, "MXFP4": 4, "NVFP4": 4, "HIF4": 4, "INT4": 4}
-_CONTAINERS = {"INT8", "UINT8"}
+# 整型容器 -> 容器位宽。一字节容器装 2 个 FP4 是常见形态；compressed-tensors 的
+# pack-quantized 用的是 **I32**，一个容器装 8 个 INT4（末维 = 逻辑维 / 8）。
+# 少了 INT32 这一档，整条 MoE 的参数量会静默少算 8 倍 —— kimi-k2-thinking 与
+# kimi-k2.5 都踩过，是 Gate B 的 HF safetensors tally 对账把它接住的。
+_CONTAINERS = {"INT8": 8, "UINT8": 8, "INT32": 32}
+
+
+def is_container(dtype: str) -> bool:
+    """这个 dtype 有没有可能装着打包的低位权重。"""
+    return norm(dtype) in _CONTAINERS
 
 
 def packing_factor(logical_dtype: str, container_dtype: str) -> int:
     """每个容器元素里装了几个逻辑参数。
 
-    声明的逻辑类型不足 8 位、而实际张量是 8 位整型容器时，说明做了打包。
+    声明的逻辑类型不足容器位宽、而实际张量是整型容器时，说明做了打包。
     返回 1 表示没有打包。这个因子只用于参数量，不用于字节数 —— 容器就是真实存储。
     """
     bits = BITS.get(norm(logical_dtype))
-    if not bits or norm(container_dtype) not in _CONTAINERS:
+    width = _CONTAINERS.get(norm(container_dtype))
+    if not bits or not width:
         return 1
-    return max(8 // bits, 1)
+    return max(width // bits, 1)
 
 
 # scale 容器的叶名。各代不一样：ds-v3 一代是 weight_scale_inv，V4 一代改成了 scale
@@ -97,6 +107,23 @@ def is_scale_tensor(name: str, dtype: str) -> bool:
     if name.lower().rsplit(".", 1)[-1] in _SCALE_LEAVES:
         return True
     return norm(dtype) == "FP8_E8M0"
+
+
+# 量化格式随权重一起发的元数据张量。compressed-tensors 的 pack-quantized 会给每个
+# 打包权重配一个 weight_shape（I32 [2]，记打包前的逻辑形状）。它占字节，但既不是
+# 参数也不是 scale —— HF 的 tally 把它排除在外，本仓原先按叶名白名单算进了参数。
+# 单张量只有 2 个元素，但 69120 个张量就是 138,240，对账差不上。
+_METADATA_LEAVES = {"weight_shape"}
+
+
+def is_metadata_tensor(name: str, dtype: str = "") -> bool:
+    """量化格式的元数据张量：占存储，但不计入参数量。"""
+    return name.lower().rsplit(".", 1)[-1] in _METADATA_LEAVES
+
+
+def counts_as_param(name: str, dtype: str) -> bool:
+    """这个张量要不要计入参数量。scale 容器与格式元数据都不算，字节照样要算。"""
+    return not is_scale_tensor(name, dtype) and not is_metadata_tensor(name, dtype)
 
 
 def blocked_bytes(numel: float, data_dtype: str, block: int, scale_dtype: str = "FP8_E8M0") -> float:
