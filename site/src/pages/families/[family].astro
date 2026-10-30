@@ -214,11 +214,14 @@ const sideCls = (m: any) => (m.lineage?.track === 'side' ? 'side' : undefined);
     绝对值仍在下面这张表里，口径标在数字旁边。
   </p>
   <p class="small muted">
-    「KV 缓存精度」这一行没有 <code>—</code>：<strong>未公布</strong>是厂商没给落盘精度
-    （本仓绝大多数记录是这一类，字节那一行因此另有来源，哪一种看它括号里的基准），
-    <strong>不适用</strong>是这一版根本不落 KV、没有这笔账。
-    两者以前渲染成同一个符号，而「按兜底值规划容量」和「不用规划」是两个结论。
-    其余各行的 <code>—</code> 仍是「该版本没有这一项」。
+    这张表里<strong>没有空格子</strong>：每一格要么有值，要么说出自己是哪一种「没有」——
+    <strong>不适用</strong>（这一版的结构里本就没有这一项）、
+    <strong>确认无</strong>（查过，确实没有）、<strong>未录</strong>（本仓还没查）。
+    三者对决策的含义完全不同，而它们以前渲染成同一个 <code>—</code>。
+    以「KV 缓存精度」为例：<strong>未公布</strong>（这一列对「确认无」的说法）是厂商
+    没给落盘精度，本仓绝大多数记录是这一类，字节那一行因此另有来源、哪一种看它
+    括号里的基准；<strong>不适用</strong>则是这一版根本不落 KV、没有这笔账。
+    「按兜底值规划容量」和「不用规划」是两个结论，不该共用一个符号。
   </p>
   <p class="small muted">
     下半部分是逐子系统的<strong>实测</strong>值，由 <code>scripts/fetch_dtypes.py</code>
