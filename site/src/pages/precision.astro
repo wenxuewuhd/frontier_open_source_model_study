@@ -160,6 +160,19 @@ function blockSize(block: unknown): number | undefined {
 /** 元素格式是第三个因子，**少验一个就会把 FP8 认成 MXFP4**。 */
 const IS_E2M1 = new Set(['FP4', 'MXFP4', 'NVFP4']);
 
+/**
+ * 记录自己已经给了块格式名的，不再推 —— **推导只用来补空缺，不用来复述，更不用来反驳。**
+ *
+ * `minimax-m3.1-flash` 的专家记作 `NVFP4`，而签名（块 16 + E4M3）在这里会推出
+ * 「NVFP4 式」。两者看着像同一句话，其实差一个关键事实：严格的 NVFP4 有**第二级
+ * FP32 全局 scale**，「…式」是专门留给没有它的那种。而那份记录实测到了
+ * 21,888 个 weight_global_scale 与同样多的 weight_packed 一一对应，**第二级 scale
+ * 在**，所以它是严格 NVFP4；DeepSeek 的全局 KV 才是「式」——技术报告原话
+ * "following NVFP4 but omitting its second-level global scale"。
+ * 推导值盖在记录值旁边会把这个区别抹平，所以 dtype 已是块格式名时直接让位。
+ */
+const NAMED_BLOCK_FORMAT = new Set(['MXFP4', 'NVFP4']);
+
 function blockFormat(dtype: unknown, block: unknown, scale: unknown): string | undefined {
   // 初版只验了块与 scale 两个因子，于是 `FP8_E4M3 · 块 32 · scale E8M0` 的滑窗
   // 被标成了 MXFP4 —— 那是 8 bit 元素，怎么也成不了 FP4。本仓「一个乘式逐因子验」
@@ -167,6 +180,7 @@ function blockFormat(dtype: unknown, block: unknown, scale: unknown): string | u
   // 元素不是 E2M1 就一律不给名字（MXFP8 之类另有定义，但本仓没有一手依据去断言）。
   const dt = typeof dtype === 'string' ? dtype.toUpperCase() : '';
   if (!IS_E2M1.has(dt)) return undefined;
+  if (NAMED_BLOCK_FORMAT.has(dt)) return undefined; // 记录已经给了名字，让位
   const n = blockSize(block);
   const sc = typeof scale === 'string' ? scale.toUpperCase() : '';
   if (!n) return undefined;

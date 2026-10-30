@@ -389,6 +389,7 @@ precision:
     # 对比：DeepSeek 的专家实测签名与本代完全同构（块 32 + E8M0 一级 scale、元素 E2M1），
     # 而那边厂商只说「FP4」、从不给块格式命名，于是本仓那几份记 FP4 ——
     # **两边的名字之差是厂商之差，不是本仓之差**（见核查 R23）
+    scale_format: torch.uint8
     expert_dtype: MXFP4
     packing_note: >-
       路由专家的 FP4 权重两个一字节装进 U8 容器（weight_packed 末维是逻辑维的一半），
@@ -974,6 +975,27 @@ review:
       那层语义仍不写进字段
     resolution: confirmed
     changed_to: 原值保留；expert_dtype 与 per_subsystem_scale 上方各补一条注释，写明名字出处（模型卡第 4 节）与两处口径的对应关系
+  - id: R24
+    field: precision.quantization.scale_format
+    severity: missing
+    claim: 这一格空着，于是「scale 格式（config 声明）」那一列渲染成「未录」—— 说本仓没查过
+    finding: >-
+      查过了，而且 config 明写着。K3 的 quantization_config（嵌在 text_config 下）里
+      config_groups.group_0.weights.scale_dtype 的值是 **torch.uint8**；
+      本记录的 block_size_note 早就引了这个键，但字段本身没填，所以页面上成了「未录」。
+      填的是 **torch.uint8 而不是 ue8m0**：config 声明的是**容器 dtype**，
+      按 MX 规范那 8 个 bit 承载的是 E8M0 指数，但那一层 config 没说、形状与 dtype 也区分不了。
+      写 ue8m0 就是替厂商把容器归一成数值格式，而同列的 deepseek 系（ds-v3.1 起）
+      声明的恰恰是 scale_fmt: ue8m0 —— 两家声明的是不同层级的东西，
+      按本仓「不替它归一」的规矩，这一格只能照抄它自己说的那个值。
+      实测侧不变：per_subsystem_scale.expert 仍是 UINT8（容器），
+      两个值现在一致且各自标明了档位
+    resolution: corrected
+    changed_to: >-
+      precision.quantization.scale_format 填 torch.uint8（config 声明）。
+      全仓同类的另外 15 个格子不是数据缺、而是 columns.json 三态规则的问题
+      （有 method 就证明 config 读过，所以缺键应判「未声明」而不是「未录」），
+      那是共享文件，已写进交接笔记交主会话
 
 notes: >-
   Kimi 家族的旗舰，model_type kimi_k3（语言主干 kimi_linear），原生多模态。本仓第一份 Kimi 记录，
