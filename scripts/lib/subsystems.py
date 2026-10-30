@@ -19,11 +19,17 @@ import os
 import re
 
 SUBSYSTEM = [
-    ("retrieval", re.compile(r"engram|memory_table|retriev", re.I)),
+    # ngram_embedding / ple_embedding 是 Qwen3.8-Flash-Next 的 n-gram 查表（128 个分片
+    # 加 3 条索引元数据）。engram 差一个 e 认不出它 —— 51.2B 整块落进 other，而 other 在
+    # active_params 的常驻名单里，于是带宽口径激活偏高 8.7 倍（6.67B → 57.87B）。
+    # 这张表每 token 只读 16 行 × 160 维 = 5,120 B，不是常驻
+    ("retrieval", re.compile(r"engram|memory_table|retriev|ngram_embedding|ple_embedding", re.I)),
     # projector / patch_merge 是视觉到语言主干的投影（MiniMax-M3 的 multi_modal_projector 与
     # patch_merge_mlp、Kimi-K3 的 mm_projector、Step-5 的 vit_large_projector）。不加的话
     # patch_merge_mlp 因为带 mlp 落进 dense_ffn，其余落进 other
-    ("vision", re.compile(r"vision|visual|vit\.|aligner|image_|projector|patch_merge", re.I)),
+    # \bvit[._] 而不是 vit\.：Step-3 的两级下采样卷积叫裸的 vit_downsampler / vit_downsampler2
+    # （4 个张量、331,362,304 参数），没有点号也没有 vision_model. 前缀，要求字面点号就落进 other
+    ("vision", re.compile(r"vision|visual|\bvit[._]|aligner|image_|projector|patch_merge", re.I)),
     ("audio", re.compile(r"audio|speech|whisper", re.I)),
     # eh_proj / enorm / hnorm / shared_head 是 DeepSeek V3 一代 MTP 模块的名字 ——
     # 那一代 MTP 借用层索引（第 61 层），名字里没有 mtp，只按 mtp 匹配会把它算进主干
@@ -35,13 +41,24 @@ SUBSYSTEM = [
     ("shared_expert", re.compile(r"shared?_expert", re.I)),
     ("router", re.compile(r"\bgate\b|router|e_score|expert_bias", re.I)),
     ("lm_head", re.compile(r"\blm_head\b|output_layer|^head\.weight$", re.I)),
-    ("embed", re.compile(r"embed_tokens|\bwte\b|embed_in|^embed\.weight$", re.I)),
+    # word_embeddings 是 chatglm 一代的写法（glm-4-9b：transformer.embedding.word_embeddings）。
+    # 不认它，输入词表 620,756,992 落进 other 被当成常驻，active_params 偏高 7.07%
+    ("embed", re.compile(r"embed_tokens|\bwte\b|embed_in|^embed\.weight$|word_embeddings", re.I)),
     # 必须排在 attention / dense_ffn 之前：mHC 的系数叫 hc_attn_* / hc_ffn_*，
     # 名字里带 attn 和 ffn，但它们是残差系数不是注意力或 FFN 权重，
     # 而且往往是 FP32 —— 混进去会把那两个子系统的精度带偏
     # _res_proj 是 Kimi-K3 的 Attention Residuals 系数（self_attention_res_proj / mlp_res_proj /
     # output_attn_res_proj，均 [1, hidden]）；对应的 *_res_norm 仍归 norm
-    ("residual", re.compile(r"\bhc_[a-z]+_(base|fn|scale)\b|^hc_|residual|_res_proj\b", re.I)),
+    # hyper_connection 是 Qwen3.8-Flash-Next 对同一机制的另一套命名
+    # （attn_hyper_connection / mlp_hyper_connection / hyper_connection_mixer）。
+    # 它必须跟着这一条留在 attention 与 dense_ffn 之前，否则 attn_* 被 attn 抢走、
+    # mlp_* 被 mlp 抢走 —— 后者会让一个没有任何稠密 FFN 的模型显示出 316,538,880 的 dense_ffn
+    # hyper_connection(?!.*norm)：排除 *_hyper_connection.hc_norm.weight（Flash-Next 97 个）。
+    # 本条排在 norm 之前，不加这个否定前瞻就会把 hc_norm 从 norm 抢走，
+    # 违反「带 norm 的就是归一化，没有例外」那条规矩
+    ("residual", re.compile(
+        r"\bhc_[a-z]+_(base|fn|scale)\b|^hc_|residual|_res_proj\b|hyper_connection(?!.*norm)",
+        re.I)),
     # norm 必须排在 attention / dense_ffn 之前：attn_norm、ffn_norm、kv_norm、q_norm
     # 名字里带 attn / ffn / kv / q，按那两条先匹配会把归一化算成注意力或 FFN 权重。
     # 带 norm 的就是归一化，没有例外，所以提前判定是安全的
@@ -55,7 +72,13 @@ SUBSYSTEM = [
     # 它的 index_[qk]_norm 照上面的规则归 norm，与 GLM 的 indexer.k_norm 同口径
     ("indexer", re.compile(r"indexer|\bindex_[qk]_proj\b", re.I)),
     ("compressor", re.compile(r"compressor", re.I)),
-    ("attention", re.compile(r"attn|\bwq|\bwk|\bwv|\bwo\b|q_proj|k_proj|v_proj|o_proj|kv_[ab]|q_[ab]", re.I)),
+    # self_attention / query_key_value 是 chatglm 一代的写法：注意 attn 不是 attention 的子串
+    # （a-t-t-n vs a-t-t-e-n-t-i-o-n），所以上面那串一个都不命中，1,426,247,680 落进 other。
+    # self_attention.dense 靠 self_attention 命中就够，不要为它加 \bdense\b ——
+    # 那会把 mlp.dense_4h_to_h 从 dense_ffn 抢走（本条排在 dense_ffn 之前）
+    ("attention", re.compile(
+        r"attn|self_attention|query_key_value|\bwq|\bwk|\bwv|\bwo\b"
+        r"|q_proj|k_proj|v_proj|o_proj|kv_[ab]|q_[ab]", re.I)),
     ("dense_ffn", re.compile(r"mlp|ffn|gate_proj|up_proj|down_proj|w1|w2|w3", re.I)),
 ]
 
@@ -116,6 +139,23 @@ def classify2(name: str, mtp_from: int = None):
 
 _LAYER_IDX = re.compile(r"layers?\.(\d+)\.", re.I)
 
+# 视觉 / 音频塔自己也有 layers.N.，而塔的层数可以超过语言主干：Step-3 的塔
+# （vision_model.transformer.layers.N.*）有 63 层，主干只有 61 层。不给层号捷径留旁路，
+# 塔的第 61、62 层共 24 个张量会在任何名字正则之前被判成 draft，让一个没有 MTP 的模型
+# 凭空长出 draft 桶，并让 mtp_layers_seen / draft_blocks_seen 出现假阳性。
+# 后代（Step-5-Preview / Step-3.7-Flash）免疫只是因为塔改叫 resblocks.N.，配不上 layers?\.
+_TOWER = re.compile(r"vision|visual|\bvit[._]|audio|speech|whisper", re.I)
+
+
+def is_tower(name: str) -> bool:
+    """这个张量属不属于视觉 / 音频塔。
+
+    凡是按「层号」判断主干结构的地方都要先问这一句 —— 塔有自己的一套层号，
+    和语言主干的层号不在同一个命名空间里。derive.py 统计 layer_ids / mtp_layer_ids
+    时也用它，否则 classify() 这边绕开了、那边照样留假阳性。
+    """
+    return bool(_TOWER.search(name))
+
 
 def classify(name: str, mtp_from: int = None) -> str:
     """张量名 -> 子系统。
@@ -127,8 +167,10 @@ def classify(name: str, mtp_from: int = None) -> str:
     eh_proj / enorm / hnorm / shared_head 这几个胶水张量带标记。所以光靠名字匹配，
     第 61 层的 1536 个专家、注意力、norm、router、embed 副本会整块算进主干，
     参数量账上凭空多一层。层索引是唯一可靠的判据，但它只能由调用方给。
+
+    层号捷径只对主干成立，所以带视觉 / 音频塔标记的张量要绕开它（见 _TOWER）。
     """
-    if mtp_from is not None:
+    if mtp_from is not None and not is_tower(name):
         m = _LAYER_IDX.search(name)
         if m and int(m.group(1)) >= mtp_from:
             return "draft"

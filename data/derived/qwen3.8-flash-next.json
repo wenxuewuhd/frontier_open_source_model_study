@@ -1,7 +1,7 @@
 {
  "id": "qwen3.8-flash-next",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T07:21:24+00:00",
+ "generated_at": "2026-10-30T08:49:30+00:00",
  "inputs": {
   "facts_dir": "facts/qwen3.8-flash-next",
   "config_present": true,
@@ -15,13 +15,14 @@
   "tensor_count": 1658,
   "params_total": 179999981459.0,
   "params_by_subsystem": {
-   "other": 51239608355.0,
+   "retrieval": 51200245795.0,
    "expert": 120795955200.0,
    "router": 62914560.0,
    "shared_expert": 236052480.0,
-   "dense_ffn": 316538880.0,
+   "residual": 639631360.0,
    "norm": 1037824.0,
-   "attention": 3000733056.0,
+   "attention": 2684194176.0,
+   "other": 32808960.0,
    "vision": 448931056.0,
    "draft": 2607150848.0,
    "indexer": 19660800.0,
@@ -31,13 +32,14 @@
   "scale_elements": 0.0,
   "weight_bytes_total": 359999963128.0,
   "weight_bytes_by_subsystem": {
-   "other": 102479216920.0,
+   "retrieval": 102400491800.0,
    "expert": 241591910400.0,
    "router": 125829120.0,
    "shared_expert": 472104960.0,
-   "dense_ffn": 633077760.0,
+   "residual": 1279262720.0,
    "norm": 2075648.0,
-   "attention": 6001466112.0,
+   "attention": 5368388352.0,
+   "other": 65617920.0,
    "vision": 897862112.0,
    "draft": 5214301696.0,
    "indexer": 39321600.0,
@@ -54,9 +56,6 @@
   "layers_present": 48,
   "mtp_layers_seen": [],
   "mtp_attention_suffixes": [
-   "attn_hyper_connection.block_inject_weight.weight",
-   "attn_hyper_connection.input_mix_weight_down.weight",
-   "attn_hyper_connection.input_mix_weight_up.weight",
    "self_attn.k_proj.weight",
    "self_attn.o_proj.weight",
    "self_attn.q_proj.weight",
@@ -131,29 +130,29 @@
  "kv_capacity_basis": "dtype_fallback",
  "active_params": {
   "status": "ok",
-  "total": 57871541155.0,
-  "total_with_embed": 58507240355.0,
+  "total": 6671295360.0,
+  "total_with_embed": 7306994560.0,
   "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的输入词表）；total_with_embed 含输入词表，用于和各家公布的「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
   "expert_active": 2359296000.0,
   "expert_total": 120795955200.0,
   "expert_ratio": "10/512",
-  "always_active": 55512245155.0,
+  "always_active": 4311999360.0,
   "lm_head": 635699200.0,
   "dense": false,
   "excluded": {
    "embed_tokens": 635699200.0,
-   "retrieval_table": 0.0,
+   "retrieval_table": 51200245795.0,
    "vision": 448931056.0,
    "draft": 2607150848.0
   },
   "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
  },
  "flops": {
-  "linear_per_token": 115743082310.0,
+  "linear_per_token": 13342590720.0,
   "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
  },
  "arithmetic_intensity": {
-  "decode_weight_bytes_per_token": 115743082377.5168,
+  "decode_weight_bytes_per_token": 13342590727.783178,
   "decode_flops_per_byte": 0.9999999994166666,
   "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
  },
@@ -188,8 +187,15 @@
   },
   {
    "item": "参数总量",
-   "status": "skip",
-   "why": "YAML 声明 缺失"
+   "YAML 声明": 125000000000.0,
+   "shapes 实测(扣除 retrieval+draft)": 126192584816.0,
+   "delta_pct": 0.95,
+   "status": "ok"
+  },
+  {
+   "item": "口径说明",
+   "status": "ok",
+   "why": "声明值不含 retrieval+draft；含在内的实测总量为 180.0B"
   },
   {
    "item": "外部参数量对账",
@@ -199,7 +205,7 @@
   {
    "item": "KV 层覆盖口径",
    "status": "ok",
-   "why": "公式按主干 12 层 full attention 算（主干共 48 层，其余是不累积 KV 的线性层）；清单里另有 1 个草稿块，带着与主干 full attention 同名的 7 个投影，即它们也产出 KV。开草稿侧时累积 KV 的层要按 13 层算 —— 记录里要写明用哪个口径"
+   "why": "公式按主干 12 层 full attention 算（主干共 48 层，其余是不累积 KV 的线性层）；清单里另有 1 个草稿块，带着与主干 full attention 同名的 4 个投影，即它们也产出 KV。开草稿侧时累积 KV 的层要按 13 层算 —— 记录里要写明用哪个口径"
   }
  ]
 }

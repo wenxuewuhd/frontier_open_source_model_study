@@ -142,7 +142,11 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
                     draft_suffixes.add(name[mb.end():])
                     draft_blocks.add(mb.group(1))
 
-        m = _LAYER_IDX.search(name)
+        # 视觉 / 音频塔自己也有 layers.N.，而塔的层数可以超过语言主干（Step-3：塔 63 层、
+        # 主干 61 层）。classify() 那边已经按 _TOWER 绕开了层号捷径，这里也必须绕 ——
+        # 否则塔的第 61、62 层仍会进 mtp_layers_seen，在一个没有 MTP 的模型上留个假阳性；
+        # 塔的 0–60 层也会混进 layer_ids，和主干层号搅在一起
+        m = None if subsystems.is_tower(name) else _LAYER_IDX.search(name)
         if m:
             idx = int(m.group(1))
             # MTP 层不算主干层。V3 一代的 MTP 借用层索引（第 61 层，而主干是 0–60），
@@ -522,9 +526,12 @@ def active_params(shp: dict, t: dict, attn: dict, moe: dict) -> dict:
 
     # 每 token 全量搬运的部分。lm_head 必须计入：它对整个词表做全量 GEMM，
     # 不是「只触及少量行」—— 大词表模型里这一项可观。
+    # residual 也是常驻：mHC 与 hyper-connection 的系数是每层的可学习权重，每个 token 都要
+    # 走一遍，不是「只触及少量行」。漏掉它在 DeepSeek V4 一代只差 0.1%（39M / 37B），
+    # 但在 Qwen3.8-Flash-Next 是 640,624,640 / 6.67B = 9.6%，会直接渲染到站点上
     always = sum(p.get(k, 0.0) for k in
                  ("attention", "compressor", "indexer", "dense_ffn", "shared_expert", "router", "norm",
-                  "lm_head", "other"))
+                  "residual", "lm_head", "other"))
     embed = p.get("embed", 0.0)
     return {
         "status": "ok",

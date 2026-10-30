@@ -1,7 +1,7 @@
 {
  "id": "deepseek-v41-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T06:29:13+00:00",
+ "generated_at": "2026-10-30T08:47:36+00:00",
  "inputs": {
   "facts_dir": "facts/deepseek-v41-flash",
   "config_present": true,
@@ -166,13 +166,13 @@
  "kv_capacity_basis": "theoretical_floor",
  "active_params": {
   "status": "ok",
-  "total": 15776610304.0,
-  "total_with_embed": 16438523904.0,
+  "total": 15815934064.0,
+  "total_with_embed": 16477847664.0,
   "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的输入词表）；total_with_embed 含输入词表，用于和各家公布的「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
   "expert_active": 8493465600.0,
   "expert_total": 543581798400.0,
   "expert_ratio": "6/384",
-  "always_active": 7283144704.0,
+  "always_active": 7322468464.0,
   "lm_head": 661913600.0,
   "dense": false,
   "excluded": {
@@ -184,11 +184,11 @@
   "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
  },
  "flops": {
-  "linear_per_token": 31553220608.0,
+  "linear_per_token": 31631868128.0,
   "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
  },
  "arithmetic_intensity": {
-  "decode_weight_bytes_per_token": 10548385292.722395,
+  "decode_weight_bytes_per_token": 10574677516.694828,
   "decode_flops_per_byte": 2.9912844224385116,
   "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
  },

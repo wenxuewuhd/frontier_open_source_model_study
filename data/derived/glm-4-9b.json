@@ -1,7 +1,7 @@
 {
  "id": "glm-4-9b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T06:59:55+00:00",
+ "generated_at": "2026-10-30T08:49:30+00:00",
  "inputs": {
   "facts_dir": "facts/glm-4-9b",
   "config_present": true,
@@ -15,17 +15,21 @@
   "tensor_count": 284,
   "params_total": 9399951392.0,
   "params_by_subsystem": {
-   "other": 2047004704.0,
+   "embed": 620756992.0,
    "norm": 331776.0,
    "dense_ffn": 6731857920.0,
+   "attention": 1426247680.0,
+   "other": 32.0,
    "lm_head": 620756992.0
   },
   "scale_elements": 0.0,
   "weight_bytes_total": 18799902784.0,
   "weight_bytes_by_subsystem": {
-   "other": 4094009408.0,
+   "embed": 1241513984.0,
    "norm": 663552.0,
    "dense_ffn": 13463715840.0,
+   "attention": 2852495360.0,
+   "other": 64.0,
    "lm_head": 1241513984.0
   },
   "weight_bytes_by_dtype": {
@@ -84,17 +88,17 @@
  "kv_capacity_basis": "dtype_fallback",
  "active_params": {
   "status": "ok",
-  "total": 9399951392.0,
+  "total": 8779194400.0,
   "total_with_embed": 9399951392.0,
   "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的输入词表）；total_with_embed 含输入词表，用于和各家公布的「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
   "expert_active": 0.0,
   "expert_total": 0.0,
   "expert_ratio": "dense，无 MoE",
-  "always_active": 9399951392.0,
+  "always_active": 8779194400.0,
   "lm_head": 620756992.0,
   "dense": true,
   "excluded": {
-   "embed_tokens": 0.0,
+   "embed_tokens": 620756992.0,
    "retrieval_table": 0.0,
    "vision": 0.0,
    "draft": 0.0
@@ -102,11 +106,11 @@
   "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
  },
  "flops": {
-  "linear_per_token": 18799902784.0,
+  "linear_per_token": 17558388800.0,
   "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
  },
  "arithmetic_intensity": {
-  "decode_weight_bytes_per_token": 18799902784.0,
+  "decode_weight_bytes_per_token": 17558388800.0,
   "decode_flops_per_byte": 1.0,
   "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
  },

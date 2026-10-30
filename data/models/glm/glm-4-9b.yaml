@@ -105,16 +105,18 @@ params:
     真正的外部核对是 HF 的 safetensors tally，它不依赖本仓任何一行代码。
     other 一项是 rotary_pos_emb.inv_freq [32]：非训练缓冲区，被打包进了 safetensors，
     所以计进了 total —— 32 个元素，不影响任何口径。
-    **这里的 breakdown 与 data/derived/glm-4-9b.json 的 params_by_subsystem 不一致，
-    而且两边的 other 这个键指的不是同一批张量** —— 本记录的 other 只有 inv_freq 一张（32 元素），
-    派生 JSON 的 other 是 2,047,004,704（注意力 + 输入词表 + inv_freq）。原因是：
-    scripts/lib/subsystems.py 的归类正则认不出 chatglm 这一代的张量名
+    **这里的 breakdown 与 data/derived/glm-4-9b.json 的 params_by_subsystem 现已逐项相同，
+    两边的 other 都只有 inv_freq 一张（32 元素）。**
+    **原先不是这样**：scripts/lib/subsystems.py 的归类正则认不出 chatglm 这一代的张量名
     （self_attention.query_key_value / self_attention.dense / word_embeddings），
     把注意力 1,426,247,680 + 输入词表 620,756,992 + inv_freq 32 共 2,047,004,704
-    整块归进了 other 桶。本记录写的是实际子系统归属（逐项手工求和，合计与 tally 逐位相同）；
-    派生 JSON 里的 other 桶等于这三项之和。同一个缺口还让派生的激活参数偏高：
-    输入词表本该排除在带宽口径之外，被算成常驻，total_with_embed 与 total 因此相等
-    且都偏高 620,756,992（+7.07%）
+    整块归进了 other 桶，于是派生 JSON 的 other 这个键和本记录的指的不是同一批张量。
+    同一个缺口还让派生的激活参数偏高：输入词表被算成常驻，
+    total_with_embed 与 total 相等且都报 9,399,951,392（偏高 620,756,992，+7.07%）。
+    正则已修（attention 加 self_attention|query_key_value、embed 加 word_embeddings，见 R14），
+    重跑后派生分桶是 embed 620,756,992 + attention 1,426,247,680 + other 32，
+    带宽口径 active_params.total **9,399,951,392 → 8,779,194,400**
+    （不再等于 total_with_embed 9,399,951,392），excluded.embed_tokens 0 → 620,756,992
 
 context:
   max: 131072
@@ -190,8 +192,9 @@ bottlenecks:
     finding: >-
       稠密 9.4B、无 MoE，除输入词表以外的权重每 token 全部搬运 ——
       带宽口径的激活参数是 8,779,194,400（total 9,399,951,392 减输入词表 620,756,992），
-      占总参数 93.4%。**派生 JSON 把这个数报成 9,399,951,392 是偏高的**，
-      因为归类缺口让输入词表被算成常驻（见 params.counting_note）。
+      占总参数 93.4%。**派生 JSON 一度把这个数报成 9,399,951,392**，
+      因为归类缺口让输入词表被算成常驻；缺口已修，派生值现在也是 8,779,194,400
+      （见 params.counting_note 与 R14）。
       decode 的瓶颈完全在权重带宽上，而不在 KV 容量：BF16 下每 token 要搬运
       16.35 GiB 的权重（带宽口径 8,779,194,400 × 2 B；**权重存储是 17.51 GiB，
       两个口径差输入词表那一项，不要混用**），对 128K 上下文的 KV
@@ -307,7 +310,7 @@ review:
     claim: >-
       breakdown 用实际子系统归属（attention / embed / norm / other），而 other 只有 32 个元素
     finding: >-
-      本记录的 breakdown 与 data/derived/glm-4-9b.json 的 params_by_subsystem **不一致，
+      本记录的 breakdown 与 data/derived/glm-4-9b.json 的 params_by_subsystem 当时**不一致，
       而且两边的 other 这个键指的不是同一批张量**：本记录的 other 是 inv_freq 一张（32 元素），
       派生 JSON 的 other 是 2,047,004,704（注意力 1,426,247,680 + 输入词表 620,756,992
       + inv_freq 32）。根因是 scripts/lib/subsystems.py 的正则认不出 chatglm 这一代的名字
@@ -315,7 +318,8 @@ review:
       两个键同名不同义会让读者把两处数字对着看。
     resolution: corrected
     changed_to: >-
-      counting_note 写明两边的 other 不是同一批张量，并给出派生桶等于哪三项之和；共享脚本不改，缺口记进 open_questions 与交接报告
+      counting_note 写明两边的 other 不是同一批张量，并给出派生桶等于哪三项之和；
+      共享脚本的缺口随后在 R14 里修掉了，两边的 other 现在都只有 inv_freq 一张
   - id: R2
     field: bottlenecks
     severity: wrong
@@ -324,8 +328,9 @@ review:
     finding: >-
       输入词表每 token 只 gather 一行，从来不进带宽口径。带宽口径的激活参数是
       8,779,194,400（total 9,399,951,392 减 word_embeddings 620,756,992），占总参数 93.4%。
-      派生 JSON 把它报成 9,399,951,392、且 total 与 total_with_embed 相等，
-      正是 R1 那个归类缺口的第二个实害 —— 偏高 620,756,992（+7.07%），而且会渲染到站点上。
+      派生 JSON 当时把它报成 9,399,951,392、且 total 与 total_with_embed 相等，
+      正是 R1 那个归类缺口的第二个实害 —— 偏高 620,756,992（+7.07%），而且会渲染到站点上
+      （该缺口已在 R14 里修掉，派生值现在也是 8,779,194,400）。
     resolution: corrected
     changed_to: >-
       finding 改为带宽口径 8,779,194,400 并点明派生值偏高多少、为什么
@@ -497,9 +502,19 @@ review:
       Qwen 一轮的 conv 状态是改脚本解决的，不是在记录里挂 caveat。
       derive.py 的 reconciliation 也没有 breakdown vs params_by_subsystem 这一项，
       所以 Gate B 结构上拦不住这种分叉。
-    resolution: open
+    resolution: corrected
     changed_to: >-
-      本轮按任务约定不改共享脚本（另有家族会话在跑）；需要的最小改动（attention 正则加 self_attention|query_key_value、embed 正则加 word_embeddings）写进了交接报告与 open_questions，由主会话统一整合后全仓重跑 derive
+      **按 docstring 的「只此一份」改脚本，不在记录里挂 caveat**：
+      scripts/lib/subsystems.py 的 attention 正则加 `self_attention|query_key_value`、
+      embed 正则加 `word_embeddings`。重跑后派生分桶与本记录的 breakdown 逐项相同 ——
+      原先整块落进 other 的 2,047,004,704 拆回
+      **embed 620,756,992 + attention 1,426,247,680 + other 32**（只剩 inv_freq），
+      桶数 4 → 6。带宽口径 active_params.total
+      **9,399,951,392 → 8,779,194,400**（现在不再等于 total_with_embed 9,399,951,392），
+      excluded.embed_tokens **0 → 620,756,992**，
+      arithmetic_intensity 的每 token 权重字节 18,799,902,784 → **17,558,388,800**。
+      precision.quantization.per_subsystem 的 attention / embed 两个键现在
+      subsystems.py 也产得出来了
   - id: R15
     field: lineage.changed_from_predecessor
     severity: missing
@@ -552,14 +567,3 @@ open_questions:
     KV 头数翻倍意味着它的缓存宽度是本记录的 2 倍（1024 元素/层/token），
     不是同一份权重的再标注。本仓按「较小档位只在有结构对照价值时才录」没有收它 ——
     若后面要讲 GLM 的长上下文路线，它是该补的一份
-  - >-
-    **params.breakdown 用的是手工归类，与 scripts/lib/subsystems.py 不同**（见 R14）：
-    这个脚本的正则认不出 chatglm 这一代的张量名
-    （self_attention.query_key_value / self_attention.dense / word_embeddings），
-    所以 data/derived/glm-4-9b.json 的 params_by_subsystem 只有 4 个桶、
-    激活参数把输入词表算成常驻（偏高 620,756,992，+7.07%）、
-    arithmetic_intensity 的每 token 权重字节也跟着偏高。
-    本轮按任务约定不改共享脚本（另有家族会话在并行跑），
-    需要的最小改动已写进交接报告：attention 正则加 self_attention|query_key_value、
-    embed 正则加 word_embeddings；改完要全仓重跑 derive，
-    并把 counting_note 里那一大段解释缺口的文字删掉

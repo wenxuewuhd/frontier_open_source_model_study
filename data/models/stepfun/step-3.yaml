@@ -97,14 +97,15 @@ params:
     norm = (61 × 2 + 1) × 7168 + 61 × 2048 = 1,006,592 —— 每层三个 norm 张量里
     **inter_norm 只有 2048 宽**（它作用在 MFA 的低秩 latent 上，不是 hidden 宽），
     按 3 × 7168 算会多 437,248。九项相加 = 320,969,912,832 = total。
-    **breakdown 里的 vision 是修正值，不是 derive.py 当前的分桶**：lib/subsystems.py 有两处
-    命中不到这一份（视觉塔 63 层 > 主干 61 层，使 classify 的 mtp_from 层号捷径把
-    vision_model.transformer.layers.61/62 共 24 个张量判成 draft；vision 正则的 `vit\.`
-    要求字面点号，漏掉 vit_downsampler / vit_downsampler2 共 4 个张量，落进 other）。
-    于是 data/derived/step-3.json 里会显示 vision 4,208,158,720 + draft 135,853,568 +
-    other 331,362,304，三者之和恰等于本记录的 vision 4,675,374,592。
-    params.total 不受影响（分桶不改总和），Gate B 的参数总量与外部对账都是 0 差异。
-    修法与行号写在交接笔记里，属仓库级改动，不在本记录内处理
+    **breakdown 与 data/derived/step-3.json 的分桶现已逐项相同**。
+    原先不同：lib/subsystems.py 有两处命中不到这一份（视觉塔 63 层 > 主干 61 层，
+    使 classify 的 mtp_from 层号捷径把 vision_model.transformer.layers.61/62
+    共 24 个张量判成 draft；vision 正则的 `vit\.` 要求字面点号，
+    漏掉 vit_downsampler / vit_downsampler2 共 4 个张量，落进 other），
+    于是派生 JSON 显示 vision 4,208,158,720 + draft 135,853,568 + other 331,362,304。
+    两处都已修（见 R5）：层号捷径加了视觉 / 音频塔旁路，vision 正则改成 `\bvit[._]`，
+    28 个张量重新归类，**vision 回到 4,675,374,592，draft 与 other 两个桶消失**。
+    params.total 两侧都不受影响（分桶不改总和），Gate B 的参数总量与外部对账一直是 0 差异
 
 context:
   max: 65536
@@ -192,10 +193,17 @@ arch:
     mtp_layers: 0
     mtp_layers_note: >-
       config 没有 num_nextn_predict_layers，清单里也没有 eh_proj / enorm / hnorm / shared_head
-      任何一类 MTP 胶水张量。主干层索引止于 60。
-      **derived JSON 里的 mtp_layers_seen [61, 62] 与 draft_blocks_seen 2 是假阳性** ——
-      那是视觉塔第 61、62 层被 classify 的层号捷径误判（见 params.counting_note）。
-      MTP 是下一代 Step-3.5-Flash 才有的
+      任何一类 MTP 胶水张量。主干层索引止于 60，本代没有 MTP ——
+      它是下一代 Step-3.5-Flash 才有的。
+      这份记录逼出过一个工具缺口：视觉塔有 **63 层**而语言主干只有 **61 层**
+      （塔的张量名 vision_model.transformer.layers.N.* 和主干同形），于是塔的第 61、62 层
+      被按层索引当成了主干之后的 MTP 层 —— `draft_blocks_seen` 报 2、
+      `mtp_layers_seen` 报 [61, 62]，并让 24 个张量落进 draft 桶。
+      **两处现已全部修掉**：`lib/subsystems.py` 新增 `is_tower()`，`classify()` 的层号捷径
+      与 `derive.py` 的 layer_ids / mtp_layer_ids 统计都按它绕开塔，
+      现在 `draft_blocks_seen: 0`、`mtp_layers_seen: []`、`layers_present` 仍是 61
+      （见 params.counting_note 与 R5）。
+      后代（Step-5-Preview / Step-3.7-Flash）本就免疫，只因为塔改叫 resblocks.N.
 
   vision:
     encoder: >-
@@ -513,11 +521,27 @@ review:
       而厂商声明 38B —— 错的那个反而更像对的）。
       两处改动已逐张量验过：只有本代受影响，28 个张量重新归类，
       step-1 / step-3.5-flash / step-5-preview 三份 0 变化。params.total 不受影响
-    resolution: open
+    resolution: corrected
     changed_to: >-
       breakdown 写**修正值**（口径正确、且与两个厂商声明值闭合），
-      counting_note 与最后一条 open_question 写明与当前 derive 分桶的差额；
-      改法与行号报回主会话整合，属仓库级改动
+      **lib/subsystems.py 随后也按同一归类修好了**：
+      `classify()` 的层号捷径加了 `_TOWER` 旁路（视觉 / 音频塔的 `layers.N.`
+      不再被层号判成 draft），vision 正则 `vit\.` 改成 `\bvit[._]`。
+      重跑 derive（--ep 4）后派生分桶与本记录逐项相同：
+      vision 4,208,158,720 → **4,675,374,592**、
+      draft 135,853,568 → **0（桶消失）**、other 331,362,304 → **0（桶消失）**、
+      draft_blocks_seen 2 → **0**、mtp_layers_seen [61, 62] → **[]**。
+      后面这一项是第二轮才收干净的：`classify()` 绕开塔之后桶已经对了，但
+      `derive.py` 的 layer_ids / mtp_layer_ids 是另一处按原始层索引统计的代码，
+      假阳性还留着。所以把塔的判据提成 `subsystems.is_tower()`，两处共用同一个判据 ——
+      一个规则散在两处、只改一处，正是这类假阳性的来源。layers_present 自始是 61
+      带宽口径 active_params.total 38,249,345,024 → **37,917,982,720**
+      （下采样的 331,362,304 不再被当成常驻激活），
+      total_with_embed → **38,841,328,640**。
+      修正后两个厂商声明值同时闭合：vision 4,675,374,592，
+      实测总量 320,969,912,832 − 4,675,374,592 = 316,294,538,240，
+      正好对上模型卡「Total Parameters (LLM) 316B」，
+      而总量本身对上「Total Parameters (VLM) 321B」
   - id: R6
     field: arch.attention.head_dim_note
     severity: imprecise
@@ -813,9 +837,3 @@ open_questions:
     两级里只有第一级的 stride 取自 config 的 understand_projector_stride，
     第二级的 stride 2 与 padding 1 写死在 modeling_step3.py 第 692–698 行。
     结论搬进 arch.vision.fusion
-  - >-
-    lib/subsystems.py 在这一份上有两处归类命中不到（视觉塔层号 ≥ 主干层数被判成 draft；
-    vision 正则漏掉 bare `vit_downsampler`），使 data/derived/step-3.json 的子系统分桶
-    与本记录的 params.breakdown 不一致，且 active_params 把 331,362,304 个视觉下采样参数
-    错当成常驻激活（带宽口径因此偏高 0.9%，报 38.25B 而非 37.92B）。
-    params.total 与 Gate B 不受影响。修法与行号在交接笔记里，属仓库级改动
