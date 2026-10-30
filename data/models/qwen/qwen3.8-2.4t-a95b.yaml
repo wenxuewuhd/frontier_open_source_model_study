@@ -54,7 +54,22 @@ sources:
       与「主干路由专家 2,370,821,947,392 + 草稿块路由专家 25,769,803,776」之和
       **逐位相同**；BF16 那 49,590,974,336 与之相加又恰等于本记录的全量
       2,446,182,725,504。所以 **FP8 只覆盖路由专家（主干 + 草稿块），占参数量 97.97%**。
-      usedStorage 4.45 → **2.27 TiB（1.96 倍）**
+      usedStorage 4.45 → **2.27 TiB（1.96 倍）**。
+      **本轮又补取了它的完整清单**（213 分片 **287,119** 个张量，无读失败分片），
+      三件事因此是实测而不是声明：
+      (1) **量化块实测 [128, 128]**，142,848 个 FP8 张量**零例外**
+      （权重形状 ÷ 同名 weight_scale_inv 形状，逐维整除）——
+      与 config 声明的 weight_block_size 一致。
+      **这是本仓第一次遇到「config 的块声明是对的」**：DeepSeek V4 一代的 FP4 专家
+      声明 [128,128] 而实测是 [1,32]，差 128 倍；
+      (2) **scale 的 dtype 是 BF16**（叶名 weight_scale_inv，146,276,352 个元素、0.27 GiB），
+      不是 FP32、也不是 DeepSeek V4 一代那种 FP8_E8M0；
+      (3) **专家布局被拆回逐专家**（见 arch.moe.storage_note）。
+      字节对账：F8 2,396,591,751,168 × 1 B + BF16（权重 49,590,974,336 + scale
+      146,276,352）× 2 B = 2.27 TiB，与 usedStorage 一致。
+      **HF 这个仓的 tally 不含 scale**（BF16 那一项 49,590,974,336 恰等于清单里
+      非 scale 的 BF16 权重）—— 与 ds-v3.2-exp 那个含 scale 的 tally 相反，
+      本仓 Gate B「两种口径都接受」的设计在这里又用上了一次
 
 hf:
   repo: Qwen/Qwen3.8-2.4T-A95B
@@ -225,9 +240,16 @@ arch:
     routing: 带辅助损失（router_aux_loss_coef 0.001）
     balance: aux-loss
     storage_note: >-
-      专家为堆叠存储：每层一个 [512, 4096, 8192] 的 gate_up_proj 与一个
-      [512, 8192, 2048] 的 down_proj，gate 与 up 融合在一起。
-      grouped GEMM 因此吃 3 维权重，算子签名与逐专家独立张量的布局不同。
+      **这条只对 BF16 发布成立。** BF16 仓里专家为堆叠存储：每层一个
+      [512, 4096, 8192] 的 gate_up_proj 与一个 [512, 8192, 2048] 的 down_proj，
+      gate 与 up 融合在一起；grouped GEMM 因此吃 3 维权重，
+      算子签名与逐专家独立张量的布局不同。
+      **而同模型的 FP8 仓把堆叠拆回了逐专家，fusion 也拆开**：
+      92 层 × 512 专家 × 3 个投影 = 141,312 个 2 维张量（gate_proj / up_proj /
+      down_proj 各自独立），草稿块另有 512 × 3 = 1,536 个，
+      条目数 1,609 → **287,119**（见 sources[2] 与 R13）。
+      所以「Qwen3.8 旗舰的专家是堆叠的」这句话要带发布形态 ——
+      按 BF16 仓写的 grouped GEMM 路径在 FP8 仓上直接用不了。
 
   decoding:
     mtp_layers: 1
@@ -346,12 +368,12 @@ open_questions:
     excludes: draft 是按同代 27B 的口径做的判断，没有一手说明
   - KV cache 的实际存储精度未披露，推导时按模型 dtype 兜底
   - >-
-    （已关闭）FP8 发布版的量化配置本轮取了（sources[2]）：block-wise [128,128] +
-    动态激活量化，且 modules_to_not_convert 978 项说明**只有路由专家被量化**，
-    tally 逐位印证。**仍未取它的清单**，所以实测量化块
-    （权重形状 ÷ 同名 scale 形状）与 scale 的 dtype 都还不知道 ——
-    DeepSeek 那边正是在这一步上发现 config 声明的块对 FP4 专家错了 128 倍，
-    所以 [128,128] 目前只是声明值
+    （已关闭）FP8 发布版的量化配置与清单本轮都取了（sources[2]）：
+    block-wise + 动态激活量化，modules_to_not_convert 978 项说明**只有路由专家被量化**，
+    **实测量化块 [128,128] 零例外（142,848 个张量）、scale 是 BF16**，
+    专家布局被拆回逐专家。剩下的未知只有一项：**激活量化那一侧**
+    （activation_scheme dynamic 是运行期行为，清单里看不到），以及
+    FP8 仓是不是重训过而不只是转格式 —— 两者都要读实现或实测才知道
   - >-
     训练精度没有一手来源：config 的 dtype: bfloat16 说的是发布权重，
     而**模型卡正文已读**（README.md @ 207bd685a7e3，P1 轮补取），Model Overview 只列结构与规模，
@@ -555,3 +577,31 @@ review:
     changed_to: >-
       新增 sources 的 FP8 仓条目；原 open question 改为「已关闭」并收窄到
       「清单未取、所以实测量化块与 scale dtype 仍未知，[128,128] 只是声明值」
+  - id: R13
+    field: arch.moe.storage_note
+    severity: imprecise
+    claim: >-
+      「专家为堆叠存储：每层一个 [512, 4096, 8192] 的 gate_up_proj 与一个
+      [512, 8192, 2048] 的 down_proj……grouped GEMM 因此吃 3 维权重」——
+      没有带发布形态
+    finding: >-
+      对 BF16 仓成立，**对同模型的 FP8 仓不成立**。本轮取了 FP8 仓的完整清单
+      （213 分片 287,119 个张量）：那边的专家是
+      **92 层 × 512 专家 × 3 个投影 = 141,312 个 2 维张量**
+      （model.layers.N.mlp.experts.N.{gate,up,down}_proj.weight 各自独立），
+      草稿块另有 1,536 个 —— **堆叠被拆回逐专家，gate/up 的 fusion 也拆开了**。
+      两个仓的张量名族差异就这 6 对 4：FP8 仓独有 6 个逐专家族，
+      BF16 仓独有 4 个堆叠族（主干与草稿块各 2）。
+      条目数 1,609 → 287,119。
+      实害很直接：**按 BF16 仓写的 3 维 grouped GEMM 在 FP8 仓上用不了**，
+      EP 切分也从「按首维切」变回「按张量切」。
+      本仓在 Qwen3.5-397B-A17B 上已经栽过一次近似的错
+      （那次是「主干堆叠、草稿块逐专家」，一个模型内两种布局，见那份的 R1）——
+      **这次是「同一个模型、两个发布，两种布局」**，比那次更容易漏：
+      两个仓的 config 除 quantization_config 外完全相同
+    resolution: corrected
+    changed_to: >-
+      storage_note 改为先声明「这条只对 BF16 发布成立」，再写 FP8 仓的逐专家布局
+      与条目数，并点明按 BF16 写的 grouped GEMM 路径用不了；
+      sources[2] 补实测量化块 [128,128]（零例外）、scale 的 BF16 dtype、
+      字节与 tally 的对账，以及「HF 这个仓的 tally 不含 scale」
