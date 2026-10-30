@@ -792,7 +792,7 @@
         },
         "weights_release_scope": {
           "type": "object",
-          "description": "weights_release 里每种精度的口径：它在哪个仓、本记录的实测清单有没有覆盖到。为什么需要这个字段：同一种情况本仓有两种相反的记法同时存在 —— 通义列厂商发布过的全部变体（含从没取数的独立仓，qwen3.5-27b 声明 [BF16, FP8_E4M3, INT4] 而清单实测只有 [BF16, FP32]），MiniMax-M3 只列本仓取数那个仓实测到的（weights_release: [BF16, FP32]，厂商另发的 MiniMax-M3-MXFP8 只写在 benefit 的散文里）。两种都讲得通，同时存在不行：读者无从知道一行「BF16」是「厂商只发过 BF16」还是「本仓只取了 BF16 那个仓」，而精度表只显示取数那个仓，于是 M3 在表上看着像莫名退回不量化。约定是「列全部变体 + 标记哪些取过数」，缺口由 scripts/check_meaning.py 报出来。**2026-10-30 拆字段**：原来的单个 measured 同时背着「取没取过数」与「进没进精度表」两件事，而 M3-MXFP8 恰好是「取过、没进表」，只能填 false，字段于是在说反话。现在拆成 manifest_taken 与 in_precision_table 两个布尔，measured 已删除、不留别名 —— 留着就会有人继续填它，两套语义并存比原来更糟",
+          "description": "weights_release 里每种精度的口径：它在哪个仓、本记录的实测清单有没有覆盖到。为什么需要这个字段：同一种情况本仓有两种相反的记法同时存在 —— 通义列厂商发布过的全部变体（含从没取数的独立仓，qwen3.5-27b 声明 [BF16, FP8_E4M3, INT4] 而清单实测只有 [BF16, FP32]），MiniMax-M3 只列本仓取数那个仓实测到的（weights_release: [BF16, FP32]，厂商另发的 MiniMax-M3-MXFP8 只写在 benefit 的散文里）。两种都讲得通，同时存在不行：读者无从知道一行「BF16」是「厂商只发过 BF16」还是「本仓只取了 BF16 那个仓」，而精度表只显示取数那个仓，于是 M3 在表上看着像莫名退回不量化。约定是「列全部变体 + 标记哪些取过数」，缺口由 scripts/validate.py 的 check_release_vs_measured 报出来（声明了某精度、本记录 derived 的 weight_bytes_by_dtype 里没有、又没在这里交代，就是错误），两个布尔自相矛盾则由同文件的 check_scope_coherence 报；回归用例在 tests/absence_regression.py。**2026-10-30 拆字段**：原来的单个 measured 同时背着「取没取过数」与「进没进精度表」两件事，而 M3-MXFP8 恰好是「取过、没进表」，只能填 false，字段于是在说反话。现在拆成 manifest_taken 与 in_precision_table 两个布尔，measured 已删除、不留别名 —— 留着就会有人继续填它，两套语义并存比原来更糟",
           "additionalProperties": {
             "type": "object",
             "additionalProperties": false,

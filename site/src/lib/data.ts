@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import { absence, columnSpec, isAbsent, withUnit, type Absent } from './columns';
+import { absence, isAbsent, withUnit, type Absent } from './columns';
 
 export { absence, isAbsent } from './columns';
 export type { Absent, AbsenceState } from './columns';
@@ -418,15 +418,6 @@ export function rowIsInformative(f: TrackedField, models: Model[]): boolean {
   return models.some(
     (m) => hasValue(f, m) || absence(f.key, m, m.derived).state === 'confirmed_absent',
   );
-}
-
-/** 实测列测自哪个仓（scope=measured 的列才有），渲染器用它说明覆盖面。 */
-export function measuredScope(key: string, m: Model): string | undefined {
-  const spec = columnSpec(key);
-  if (spec?.scope !== 'measured' || !spec.scope_from) return undefined;
-  let cur: any = m;
-  for (const part of spec.scope_from.split('.')) cur = cur?.[part];
-  return typeof cur === 'string' ? cur : undefined;
 }
 
 /**
