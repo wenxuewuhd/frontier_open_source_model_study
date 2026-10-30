@@ -1,0 +1,870 @@
+# 机械字段来自 config（official），结构、参数量、量化块与精度来自完整权重清单
+# facts/minimax-m3.1-flash/shapes.json（89729 条）。
+# **这份清单横跨两个 checkpoint**：主仓索引 89632 条，另加 dspark/ 子目录自带索引的 97 条
+# （fetch_hf.py 按 siblings 的 .safetensors 后缀收集，不看索引归属）。
+# 两者在本记录里始终分开记账，见 params.counting_note 与 arch.decoding。
+id: minimax-m3.1-flash
+family: minimax
+kind: vlm
+display_name: MiniMax-M3.1-Flash
+released: '2026-10-17'
+license: other
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/MiniMaxAI/MiniMax-M3.1-Flash
+    locator: README.md「What's New in M3.1-Flash」节 / 「Model at a Glance」节 @ 2f33a8b9ae49
+    accessed: '2026-10-30'
+    note: >-
+      卡上三句原话。三条主线结论里，第一条与第三条由卡直接支持、再由权重清单独立证实；
+      第二条卡只说了「哪些路径被量化」，**没说它们用的是两种不同格式**，
+      那一层来自 config 的三个 moe_* 键与清单实测（见 precision 段）：
+      「the first three full-attention layers are replaced with sparse attention」、
+      「quantization-aware training: the routed MoE experts and the attention paths are
+      quantized during training」、「DSpark replaces the earlier EAGLE-like MTP approach.
+      The release includes the draft head」。Model at a Glance 另称
+      「Approximately 428B total; 23B activated per token」、上下文 1M。
+      **卡里没有任何缓存容量或每 token KV 字节的数字**，所以本记录没有
+      declared_per_token_bytes
+  - kind: repo
+    url: https://huggingface.co/MiniMaxAI/MiniMax-M3.1-Flash/tree/main
+    locator: config.json / model.safetensors.index.json / dspark/model.safetensors.index.json @ 2f33a8b9ae49
+    accessed: '2026-10-30'
+    note: >-
+      主索引 89632 条、48 个分片；dspark/ 子目录另有一份 config.json 与
+      model.safetensors.index.json，单分片 97 条。逐分片读头取全，无读失败分片
+
+hf:
+  repo: MiniMaxAI/MiniMax-M3.1-Flash
+  sha: 2f33a8b9ae49ce7b51c994df97166a7fd059bc2e
+  last_modified: '2026-10-30T08:44:16.000Z'
+  pipeline_tag: image-text-to-text
+  gated: false
+
+lineage:
+  track: side
+  predecessor: minimax-m3
+  # 每条都对照过 facts/minimax-m3 与 facts/minimax-m3.1-flash 的 config 差异与
+  # 张量名差异，再与模型卡「What's New」一节逐条核对，不是单靠其中一侧
+  changed_from_predecessor:
+    - axis: attention
+      text: >-
+        稀疏铺到第 0 层：config 的 sparse_attention_freq 从 `[0,0,0,1,1,…]` 变成 60 个 1，
+        权重侧 index_k_proj / index_q_proj 的层覆盖从 57 层（L3–L59）变成 **60/60 层**，
+        宽度仍是 [128, 6144] 与 [512, 6144]。模型卡原话是
+        「the first three full-attention layers are replaced with sparse attention」。
+        rope_theta 同时从 5e6 提到 1e7
+      benefit: >-
+        这一步**不省容量，反而加**：index K 多覆盖 3 层，KV 元素/token 从 68736 涨到
+        **69120**（+384 = 3 × 128），1Mi 上下文 BF16 兜底下是 135.0 GiB
+        （字节那一列两代同为 dtype_fallback，倍数就是元素数的倍数，不另报）。
+        省的是读，但要连新增的代价一起算：M3 的 L0–L2 是全量层，每步读满
+        3 × 2 GiB = 6.00 GiB；换成稀疏后这三层的主 KV 降到 3 × 4 MiB，
+        **同时多出 3 × 1048576 × 128 × 2 B = 0.75 GiB 的 index 全扫**，
+        这三层合计 6.00 → 0.762 GiB，是 7.88 倍而不是几百倍。代价是剩下的读量几乎全是 indexer 全扫
+        （见 bottlenecks：占比从 69.6% 升到 98.5%），省读的上限从此完全由 indexer 决定
+    - axis: precision
+      text: >-
+        从不量化变成**两套量化并存**，而 config 把这两套写在了不同的键里：
+        `quant_method: mxfp8` / `weight_block_size: [1, 32]` 描述的是非专家那一半，
+        专家那一半由 `moe_quant_algo: NVFP4` / `group_size: 16` /
+        `moe_quant_format: nvfp4-pack-quantized` 三个键描述。
+        逐张量实测与这两套声明逐项吻合：路由专家是 **NVFP4**
+        （4 bit 两个一字节装进 U8 的 `weight_packed`，
+        块 [1, 16]，`weight_scale` 是 FP8_E4M3，另配每张量的 FP32
+        `weight_global_scale` / `input_global_scale`），注意力 / indexer / 共享专家 /
+        稠密 FFN / 草稿块才是 **MXFP8**（FP8_E4M3，块 [1, 32]，scale 是 U8 容器）。
+        模型卡说的是「the routed MoE experts **and** the attention paths are quantized
+        during training」—— 两条路径，卡没说它们用的不是同一种格式；
+        说清楚的是 config，但要读到 `weight_block_size` 以外的三个键才看得到
+      benefit: >-
+        权重存储 795.51 → **235.07 GiB**（3.38 倍）。要紧的是**别只读
+        `weight_block_size`**：只看那一个键会把专家也按 [1, 32] 的 MXFP8 处理，
+        于是在三个轴上同时错 —— 位宽（8 vs 4）、块（32 vs 16）、
+        scale 格式（E8M0 vs E4M3），而专家占主干参数量的 96.7%
+        （413,122,166,784 / 427,051,937,408）。
+        与 DeepSeek V4 一代不同的是，那边 config 对 FP4 专家**什么都没说**、
+        声明的块直接是错的；这边 config 说全了，只是分在两组键里
+    - axis: decoding
+      text: >-
+        MTP 不是被去掉了，是**被换掉并且这次真的发了权重**。config 里
+        num_mtp_modules / num_nextn_predict_layers 两个键消失，而 `dspark/` 子目录
+        带来一个 97 条张量、1.96B 参数的草稿模块：5 个完整 decoder 层
+        （自注意力 + 12288 中间维的稠密 FFN）、一张 fc [6144, 30720]（30720 = 5 × 6144）、
+        hidden_norm / final_norm、markov_head 两张 [200064, 256]、
+        confidence_head [1, 6400]。模型卡原话：「DSpark replaces the earlier
+        EAGLE-like MTP approach. The release includes the draft head」
+      benefit: >-
+        M2 与 M3 连续两代「config 声明 MTP、权重里零个」的落差到这一代反过来了：
+        config 不声明，权重里有。**只看 config 判断投机解码能力，这一族连错三代、
+        而且第三代错的方向和前两代相反**。对 infra 的具体含义有两条：
+        草稿侧 1,958,493,697 参数要常驻，而主干带宽口径激活是 24,745,077,888，
+        草稿是它的 7.9%；
+        草稿的 5 层**没有 indexer**（dspark 下 index_* 零命中），是全量 GQA ——
+        主干已经全层块稀疏，草稿反而是语言侧唯一还做全量注意力的部分
+        （视觉塔的 32 层自注意力同样不稀疏，但它只在 prefill 跑一次）
+    - axis: modality
+      text: vision_config.image_size 2016 → 672，其余视觉字段（32 层、hidden 1280、patch 14、3D RoPE、spatial_merge 2）与 image_grid_pinpoints 都不变
+      benefit: >-
+        视觉塔的参数量与形状一个没动（865,567,232，逐张量同形），
+        变的是位置编码覆盖的原生分辨率。image_seq_length 仍是 576，
+        所以每图 token 数不变 —— 这一条不改 prefill 的 token 账
+    - axis: scale
+      text: >-
+        主干参数量基本没动：扣掉草稿侧后 427,040,140,160 → **427,051,937,408**，
+        只多 11,797,248，恰好是新增的 3 个 indexer 层
+        （3 × (512 + 128) × 6144 = 11,796,480，加 3 × 2 × 128 的 index_q_norm /
+        index_k_norm = 768）。层数、hidden、专家数、top_k、共享专家、
+        稠密层数全部不变
+      benefit: >-
+        所以这一代不是「小一号的 M3」：它是同一副骨架上换了量化方案、
+        把稀疏铺满、再挂一个草稿头。规格对照表里几乎每一行都和 M3 相同，
+        真正变的三件事都不在参数量上
+
+params:
+  total: 427051937408.0
+  excludes:
+    - draft
+  breakdown:
+    expert: 413122166784.0
+    attention: 6417285120.0
+    shared_expert: 3227516928.0
+    draft: 1958493697.0
+    lm_head: 1229193216.0
+    embed: 1229193216.0
+    vision: 865567232.0
+    dense_ffn: 679477248.0
+    indexer: 235929600.0
+    router: 44833920.0
+    norm: 774144.0
+  counting_note: >-
+    total 与 breakdown 都是本仓按完整权重清单逐项求和的实测值，不是厂商声明值 ——
+    所以 Gate B 的「参数总量」一项是实测比实测。清单 89729 个条目里只有 23490 条是权重张量（weight_packed 21888 + weight 1283
+    + bias 262 + e_score_correction_bias 57）：
+    另有 26202243072 个元素的 scale 容器（计存储、不计参数），以及 43776 个 FP32 的
+    `weight_global_scale` / `input_global_scale` 标量。
+    路由专家以 NVFP4 两个一字节打包存放，safetensors 的 numel 是容器数，已按逻辑精度还原；
+    直接求和会把专家参数少算一半（206,561,083,392 → 413,122,166,784）。
+    total 不含草稿侧 1.96B；含在内的实测总量 429,010,431,105。
+    **外部对账要换口径**：HF 平台的 safetensors tally 是 220,490,854,016，它同时在三件事上
+    与本仓不同 —— 不还原打包、排除全部 scale 容器、而且**只统计主索引**
+    （dspark/ 子目录自带索引，HF 不计）。按它的口径复算本仓清单
+    （不还原打包、排 scale、扣草稿侧）得 220,490,854,016，**与它逐位相同**。
+    厂商声明「Approximately 428B total」，对主干实测 427.05B 高 0.22%，
+    与 M3 卡上同一句话、同一个数（那边 0.2248%、本代 0.2220%，都是 0.22%）。
+    激活参数两套口径见 data/derived/；厂商的「23B activated」两套都不等于，见 open_questions
+
+context:
+  max: 1048576
+
+arch:
+  layers: 60
+  hidden: 6144
+  vocab: 200064
+  norm: RMSNorm（Gemma 式，use_gemma_norm）
+  norm_eps: 1.0e-06
+  activation: swigluoai：带截断的 SwiGLU，swiglu_alpha 1.702、swiglu_limit 7.0（config 声明，与 M3 相同）
+  position: RoPE theta **1e7**（M3 是 5e6），partial rotary 0.5（每头 128 维里 64 维带旋转）
+
+  attention:
+    type: GQA
+    num_heads: 64
+    num_kv_heads: 4
+    head_dim: 128
+    partial_rotary_factor: 0.5
+    head_dim_note: >-
+      几何与 M3 完全相同：q_proj [8192, 6144] = 64×128，k_proj / v_proj [512, 6144]
+      = 4×128（60/60 层只有这一种 shape，全量穷举），o_proj [6144, 8192]。
+      q_norm / k_norm 是 [128] 的逐头 RMSNorm（qk_norm_type per_head），
+      所以写进缓存的 K 条目仍是 4×128 = 512 维。变的只是精度：这一代
+      q/k/v/o 四个投影都是 FP8_E4M3 配 [1, 32] 块
+    layer_pattern: >-
+      **60/60 层都叠加 MSA 稀疏选块**（config sparse_attention_freq 60 项全为 1）。
+      M3 的 L0–L2 全量例外在这一代取消，模型卡「What's New」第一条写的就是这件事。
+      权重侧零例外地证实：index_k_proj / index_q_proj / index_k_norm / index_q_norm
+      在 L0–L59 每层都在。两类层的 K/V 投影同形，都每层存自己的 KV，无跨层共享
+    sparse:
+      mechanism: >-
+        MiniMax Sparse Attention（MSA），参数与 M3 逐项相同：index K 逐 token 存入缓存，
+        打分后按 128 个 token 一块做 max-pool，每个 index 头独立取 topk 16 块，
+        查询自己所在的那一块被强制保留并**占用 16 个名额里的 1 个**
+        （config sparse_local_block 1、sparse_init_block 0、sparse_score_type max）。
+        选的是「读哪些块」，主 K/V 全量保留。本代唯一的变化是作用层集合从 57 层变成 60 层。
+        **这段语义是从 M3 继承来的，不是在本代的实现上重新核过的**：M3 那份记录读的是
+        transformers 的 `modeling_minimax_m3_vl.py`，而本代模型卡把 Transformers 列在
+        「integrations in progress」，没有对应的参考实现可读。支撑继承的是
+        config 的 sparse_* 七个键与 M3 逐位相同（index_dim 128、num_index_heads 4、
+        topk_blocks 16、block_size 128、score_type max、local_block 1、init_block 0），
+        以及权重侧 indexer 的张量名与形状逐层相同。见 open_questions
+      index_topk: 2048
+      index_n_heads: 4
+      index_head_dim: 128
+      index_kv_dim: 128
+      index_kv_source: >-
+        language_model.model.layers.N.self_attn.index_k_proj.weight [128, 6144]，
+        **60 层全是 128**；之后 index_k_norm [128] 归一化，写缓存的仍是 128 维。
+        index_q_proj 是 [512, 6144] = 4 头 × 128 —— index K 在 4 个 index 头之间共享，
+        按 index_n_heads × index_head_dim = 512 算会高估 4 倍
+      block_size: 128
+      selected_blocks: 16
+    kv_sharing:
+      index_kv_source_layers:
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+         20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+         40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59]
+      layer_coverage: >-
+        这一代两类缓存的覆盖面**重合**了：GQA 的 K/V 在 60/60 层，index K 也在 60/60 层
+        （M3 是 60 与 57）。主干之外另有 dspark 的 5 个草稿层，它们有自己的
+        k_proj / v_proj [512, 6144] 但**没有 index_k_proj**，所以开草稿侧时
+        累积 KV 的层数**最多**是 60 + 5 = 65（取决于草稿侧缓存多长的历史，
+        这一点权重答不了），而其中只有 60 层有 index K。
+        下面 bottlenecks 的所有数字按主干 60 层口径算，不含草稿侧
+
+  ffn:
+    type: moe
+    layer_pattern: >-
+      与 M3 相同：L0–L2 稠密（mlp.gate_proj [12288, 6144]，dense_intermediate_size 12288），
+      L3–L59 共 57 层 MoE。注意**注意力的稀疏层集合与 FFN 的 MoE 层集合这一代不再重合**：
+      M3 里两者都是 L3–L59，本代稀疏是 60 层而 MoE 仍是 57 层 ——
+      L0–L2 的 FFN 仍然稠密，只有注意力变成了稀疏
+
+  moe:
+    routed_experts: 128
+    shared_experts: 1
+    top_k: 4
+    intermediate: 3072
+    first_k_dense: 3
+    dense_intermediate: 12288
+    routing: >-
+      sigmoid 打分，e_score_correction_bias 修正选路，routed_scaling_factor 2.0；
+      gate.weight [128, 6144] 与 e_score_correction_bias [128] 落盘都是 FP32（各 57 份），
+      与 config 的 quantization_config.ignored_layers 一致：那张表共 62 条 ——
+      57 个 block_sparse_moe.gate（层集合恰是 L3–L59，与实际有 gate 的层逐一相同）
+      加上 lm_head / model.embed_tokens / multi_modal_projector / patch_merge_mlp /
+      vision_tower 五条。后五条正好解释了为什么这几个子系统实测仍是 BF16：
+      它们被显式排除在量化之外，不是「厂商忘了量化」
+    balance: e_score_correction_bias（无辅助损失式偏置，config use_routing_bias）
+    storage_note: >-
+      逐专家独立张量，但这一代的落盘形态变了：不再是 `experts.N.w1.weight`，
+      而是 `experts.N.w1.weight_packed` 加三个伴生张量
+      （`weight_scale` FP8_E4M3、`weight_global_scale` FP32 标量、`input_global_scale`
+      FP32 标量）—— compressed-tensors 的 pack-quantized 布局。
+      grouped GEMM 要同时吃打包权重、逐块 scale 与两个全局 scale，算子签名与 M3 不同。
+      128 这个数在清单里独立成立：`.experts.` 的 weight_packed 张量 21888 条
+      = 57 层 × 128 × 3，每层的专家下标集合都恰为 {0..127}，零例外（全量穷举）。
+      derive.py 的对账把专家数报成「skip / config 缺失」，因为它找
+      n_routed_experts / num_experts 而 MiniMax 写的是 num_local_experts ——
+      Gate B 的「0 处不一致」不含专家数这一项
+
+  decoding:
+    mtp_layers: 0
+    mtp_layers_note: >-
+      按本仓既有口径（MTP 块数）记 0：config 里 num_mtp_modules 与
+      num_nextn_predict_layers 两个键都没有了，清单里也没有任何 mtp.* 前缀。
+      但**这不等于没有草稿侧** —— 换成了 DSpark，见 decoding.speculative。
+      M2 声明 3 个 MTP 模块、M3 声明 7 个，两代的权重里都是 0 个；
+      这一代反过来：config 不声明，权重里有
+    speculative:
+      method: >-
+        DSpark 草稿头（模型卡：「DSpark replaces the earlier EAGLE-like MTP approach」）。
+        落盘在 `dspark/` 子目录，自带 config.json 与 model.safetensors.index.json，
+        单分片 97 个张量、1,958,493,697 参数
+
+  vision:
+    encoder: CLIP 式 ViT（vision_tower.vision_model），3D RoPE；native image_size 672（M3 是 2016）
+    layers: 32
+    hidden: 1280
+    num_heads: 16
+    patch_size: 14
+    intermediate: 5120
+    spatial_merge_size: 2
+    temporal_patch_size: 2
+    out_hidden: 6144
+    params: 865567232.0
+    fusion: >-
+      与 M3 逐张量同形：multi_modal_projector 两层 MLP（1280 → 6144 → 6144，带 bias）
+      先投到主干宽度，再由 patch_merge_mlp 把 2×2 相邻 token 拼成 24576 维降回 6144。
+      patch_embedding [1280, 3, 2, 14, 14] 是时间维 2 帧的 3D 卷积，落盘 FP32。
+      视觉侧**整条没有被量化**，全是 BF16（patch_embedding 是 FP32）
+
+precision:
+  weights_release: [NVFP4, FP8_E4M3, BF16, FP32]
+  weights_release_scope:
+    NVFP4: { measured: true, container: UINT8 }
+    FP8_E4M3: { measured: true }
+    BF16: { measured: true }
+    FP32: { measured: true }
+  quantization:
+    method: >-
+      两套并存：路由专家 NVFP4（pack-quantized），其余量化路径 MXFP8。
+      两套都由 config 的 quantization_config 声明，但写在不同的键上 ——
+      `quant_method` / `weight_block_size` 管后者，
+      `moe_quant_algo` / `group_size` / `moe_quant_format` 管前者
+    activation_scheme: dynamic
+    weight_block_size: [1, 32]
+    block_size_note: >-
+      **`weight_block_size` 的 [1, 32] 只对 MXFP8 那一半成立**，专家那一半的块
+      写在 `group_size: 16` 上。逐张量实测
+      （逻辑形状 ÷ 同名 scale 形状，89729 条全量穷举、零例外）：
+      路由专家 21888 条是 **[1, 16]**（w1/w3 逻辑 [3072, 6144] ÷ scale [3072, 384]，
+      6144/384 = 16；w2 逻辑 [6144, 3072] ÷ [6144, 192]），
+      注意力 240 条、indexer 120 条、共享专家 171 条、稠密 FFN 9 条、草稿块 35 条
+      都是 [1, 32]。块 16 配 E4M3 scale 加一个 FP32 全局 scale 是 NVFP4 的标准形态，
+      块 32 配 E8M0 才是 MX 系；两者都与 config 对应的那组键一致。量化张量缺 scale 的数量是 0，孤立 scale 也是 0
+    per_subsystem:
+      expert: NVFP4
+      attention: FP8_E4M3
+      indexer: FP8_E4M3
+      shared_expert: FP8_E4M3
+      dense_ffn: FP8_E4M3
+      draft: MIXED
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+      router: FP32
+      vision: BF16
+    per_subsystem_scale:
+      expert: FP8_E4M3
+      attention: UINT8
+      indexer: UINT8
+      shared_expert: UINT8
+      dense_ffn: UINT8
+      draft: UINT8
+    per_subsystem_block:
+      expert: '[1, 16]'
+      attention: '[1, 32]'
+      indexer: '[1, 32]'
+      shared_expert: '[1, 32]'
+      dense_ffn: '[1, 32]'
+      draft: '[1, 32]'
+    packing_note: >-
+      只有路由专家打包：`weight_packed` 是 U8，第二维是逻辑维的一半
+      （w1/w3 [3072, 3072] ↔ 逻辑 [3072, 6144]，w2 [6144, 1536] ↔ [6144, 3072]），
+      每字节两个 4 bit 值。U8 容器总元素 206,561,083,392 × 2 = 413,122,166,784，
+      与 M3 的专家参数量逐位相同 —— 专家的几何一个没动，只是换了存法。
+      MXFP8 那一侧**没有打包**（FP8_E4M3 本来就是一字节一个值）
+    subsystem_method: >-
+      不是抽样：完整清单 89729 条逐项统计，逐子系统的权重 dtype、scale dtype 与块
+      都是穷举出来的。`draft` 记 MIXED 是因为草稿块内部两种精度并存：
+      27 条 BF16（norms、fc、markov_head、confidence_head）与 35 条 FP8_E4M3
+      （5 层的 q/k/v/o 与 mlp 三件套）。
+      scale 容器记 UINT8 是按落盘 dtype 写的 —— MX 系的 E8M0 scale 习惯装在 uint8 里，
+      但清单只能证明容器是 U8，E8M0 这层语义来自 MX 规范而不是这份权重，故不写进字段
+
+platforms:
+  - engine: SGLang
+    hardware: NVIDIA
+    status: supported
+    precision: MIXED
+    caveat: >-
+      模型卡点名 SGLang 并给了 cookbook 链接；本仓未实测。精度记 MIXED 是因为这份权重
+      本身就是两套格式（专家 NVFP4、其余量化路径 MXFP8），拍成单一值会与
+      precision.quantization.per_subsystem 自相矛盾；NVFP4 这个名字来自 config 的
+      moe_quant_algo，不是模型卡（卡只打了 mxfp8 / 8-bit 两个标签）
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/MiniMaxAI/MiniMax-M3.1-Flash
+    visibility: public
+  - engine: vLLM
+    hardware: NVIDIA
+    status: supported
+    precision: MIXED
+    caveat: 模型卡点名 vLLM recipe；本仓未实测。精度同上，两套格式
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/MiniMaxAI/MiniMax-M3.1-Flash
+    visibility: public
+  - engine: TokenSpeed
+    hardware: NVIDIA
+    status: supported
+    precision: MIXED
+    caveat: 模型卡与 SGLang / vLLM 并列推荐、给了 recipe 链接；本仓未实测
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/MiniMaxAI/MiniMax-M3.1-Flash
+    visibility: public
+  - engine: transformers
+    hardware: NVIDIA
+    status: wip
+    precision: MIXED
+    caveat: >-
+      模型卡把 Transformers 列在「Additional integrations in progress」里
+      （同列的还有 KTransformers、unsloth、ATOM），与 M3 不同 ——
+      那一代 transformers 已有参考实现，本代没有，所以 MSA 的算法语义这一代读不到
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/MiniMaxAI/MiniMax-M3.1-Flash
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      把稀疏铺到第 0 层**不省缓存，反而多存**：MSA 省的是读、不是存，而每多一个稀疏层
+      就多一份 index K。这一代 60 层全部既存完整 GQA KV、又存 index K，
+      两类缓存的层覆盖第一次完全重合
+    quantified: >-
+      逐因子：GQA 每层 2（K、V）× 4 KV 头 × 128 = 1024 元素
+      （k_proj / v_proj 输出维都是 512，写缓存前的 k_norm 是逐头 [128]，宽度不变），
+      × 60 层 = 61440；index K 每层 128（index_k_proj 输出 128、index_k_norm [128]）
+      × 60 层 = 7680；合计 **69120 元素/token**。两类在各自的全部层里都只有一种 shape
+      （89729 条全量穷举，非抽样）。对 M3 的 68736 多 384，恰是多出来的 3 层 index K。
+      条目数按 1:1 逐 token 计。落盘精度无一手声明，按 config 的 torch_dtype bfloat16
+      兜底（2 B/元素）得 138240 B/token、1Mi 上下文 135.0 GiB —— dtype_fallback 口径，
+      是**上界**不是实测，与 M3 两侧同口径所以可以比。
+      口径边界：derive.py 的 full_attention 分量只走 config 公式、不读实测宽度，
+      本例两者恰好都是 512，Gate B 的「0 处不一致」没有覆盖占 88.9% 的这一项。
+      开草稿侧时 KV 层数是 60 + 5 = 65，上面的数不含那 5 层
+    visibility: public
+  - dimension: kv-bandwidth
+    finding: >-
+      取消 L0–L2 的全量层确实把读量压下去了，但同时把 indexer 全扫从「大头」变成了
+      「几乎是全部」。省读的上限这一代**完全**由 indexer 决定，topk 块数再调也没用
+    quantified: >-
+      1Mi 上下文、单序列、BF16 两侧同口径，一个 decode step 的注意力侧读量逐项：
+      index K 全量扫描 60 层 × 1048576 × 128 × 2 B = 16,106,127,360 B = 15.00 GiB；
+      全量 GQA 层 0 个（M3 有 3 个，6.00 GiB）；60 个稀疏层真正选中的主 KV
+      = 60 层 × 4 个 KV 组 × 2048 token × 2 × 128 × 2 B = 251,658,240 B = 240.0 MiB
+      （「每个 index 头的选择各自管一个 KV 组」这一步来自 M3 记录的 R8，在那一代
+      对着参考实现核过；本代没有参考实现，是继承的假设。自洽性旁证：
+      1048576 / 2048 = 512，恰是每层全读 2 GiB 与选读 4 MiB 的比值）；
+      合计 16,357,785,600 B = **15.23 GiB**。对比全量 GQA 的 128,849,018,880 B
+      = 120.0 GiB，省 **7.88 倍**（M3 是 5.86 倍），其中 indexer 扫描占
+      **98.5%**（M3 是 69.6%）。
+      按参考实现的算法推导、非实测；换 FP8 落盘两侧等比例缩小，倍数不变。
+      草稿侧另算，而且**带一个权重答不了的前提**：dspark 的 5 层有自己的
+      k_proj / v_proj [512, 6144] 却没有 index_k_proj，所以它做的是全量注意力；
+      但它缓存多长的历史，权重里看不出来。**若**它和主干一样缓存全部 1Mi 上下文，
+      每个草稿步要读 5 × 2 GiB = 10.0 GiB，已是主干 15.23 GiB 的 66% ——
+      那样投机解码在这个模型上就是拿带宽换步数。缓存策略见 open_questions
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      一个 checkpoint 里要同时支持两套量化格式：路由专家 NVFP4 pack-quantized
+      （4 bit 打包 + 块 16 的 E4M3 scale + 两个 FP32 全局 scale），
+      其余量化路径 MXFP8（8 bit + 块 32 + U8 scale）。
+      config 只声明了后者，按它去反量化专家会同时错位宽、块与 scale 格式
+    quantified: >-
+      专家侧每个 w 要读四个张量：weight_packed [3072, 3072] U8、
+      weight_scale [3072, 384] FP8_E4M3、weight_global_scale 标量 FP32、
+      input_global_scale 标量 FP32。按 config 的 mxfp8 [1, 32] 去读会期望
+      scale 的列数是逻辑列数的 1/32（即 192），实际是 1/16（384），差 2 倍；
+      且会把 4 bit 当 8 bit 读，权重整体错位。专家那一半的正确参数在
+      `moe_quant_algo` / `group_size` / `moe_quant_format` 三个键里，
+      不在 `weight_block_size` 里。
+      影响面：21888 条专家张量占主干参数量的 96.7%。
+      另一条核契约与 M3 相同：index K 单头、index Q 4 头，每个 index 头独立选块、
+      **选块结果再映射到 4 个 KV 组上**（kv-bandwidth 里那个「4 个 KV 组」的因子
+      就出自这条，来源是 M3 记录对参考实现的核查），块索引左对齐、-1 右填充
+    visibility: public
+
+infra_signals:
+  - text: >-
+      「稀疏铺满」在容量账上是**加法不是减法**。M3 → M3.1-Flash 把最后 3 个全量层
+      也换成稀疏，KV 元素/token 从 68736 升到 69120 —— 每多一个稀疏层就多一份 index K。
+      真正变化的是读：全量层清零之后，注意力读量从 20.47 GiB/step 降到 15.23 GiB/step
+      （1Mi、BF16），但 indexer 全扫占到 98.5%。
+      给这一代做容量规划不能按「稀疏 = 少存」推，做带宽规划则要盯 indexer 而不是 topk
+    evidence: judgement
+    horizon: now
+    axis: attention
+  - text: >-
+      同一个 checkpoint 里两套量化格式并存：专家 NVFP4 块 16、
+      其余量化路径 MXFP8 块 32。引擎与算子库要按「逐子系统各有格式」准备，
+      不能按单一 quant_method 套。config 两套都声明了，但 `quant_method` 与
+      `weight_block_size` 只管非专家那一半，专家的算法、块与落盘布局在
+      `moe_quant_algo` / `group_size` / `moe_quant_format` 三个键上 ——
+      只读前两个键就会把 96.7% 的参数按错误格式反量化
+    evidence: judgement
+    horizon: now
+    axis: precision
+  - text: >-
+      MiniMax 这一族在「投机解码」上连错三代方向：M2 声明 3 个 MTP 模块、M3 声明 7 个，
+      权重里都是 0 个；M3.1-Flash 不声明，权重里却有一个 1.96B 的 DSpark 草稿模块，
+      而且它落在 `dspark/` 子目录、有自己的索引文件 ——
+      只读主索引的取数脚本会整块漏掉它。
+      判断一个发布有没有草稿侧，既不能只读 config，也不能只读主索引
+    evidence: judgement
+    horizon: now
+    axis: decoding
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: judgement
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  params.counting_note: derived
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.attention.sparse.mechanism: judgement
+  arch.attention.sparse.index_kv_dim: derived
+  arch.attention.sparse.index_kv_source: derived
+  arch.attention.kv_sharing.index_kv_source_layers: derived
+  arch.attention.kv_sharing.layer_coverage: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.routed_experts: derived
+  arch.moe.first_k_dense: derived
+  arch.moe.routing: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.decoding: derived
+  arch.decoding.mtp_layers: derived
+  arch.decoding.mtp_layers_note: derived
+  arch.decoding.speculative: derived
+  arch.vision.encoder: derived
+  arch.vision.params: derived
+  arch.vision.fusion: derived
+  precision: official
+  precision.weights_release: derived
+  precision.weights_release_scope: derived
+  precision.quantization.method: official
+  precision.quantization.block_size_note: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.per_subsystem_scale: derived
+  precision.quantization.per_subsystem_block: derived
+  precision.quantization.packing_note: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  M3 的支线发布（`lineage.track: side`）：旗舰仍是 M3 ——
+  `MiniMaxAI` 名下含 M3 的仓只有 MiniMax-M3、MiniMax-M3-MXFP8 与本记录三个，
+  **没有完整的 M3.1**，所以 `data/tracking.yaml` 的名册不动。
+  三件真正的变化（稀疏铺满、QAT 量化、DSpark 草稿头）都在模型卡
+  「What's New in M3.1-Flash」一节里有一手说法，再由完整清单独立证实；
+  但「两套格式」这一层卡上没有，是 config 的三个 moe_* 键加清单实测给出的；
+  层覆盖、条目宽度、专家分布、量化块与各子系统精度都对 89729 条穷举过。
+  与 **MiniMax-M3-MXFP8 不是同一批权重**：那一个是 M3 的纯量化版
+  （专家是未打包的 `experts.N.w1.weight` [3072, 6144] FP8_E4M3 配 weight_scale_inv，
+  HF tally 总量 427,040,140,160 与 M3 的参数量逐位相同），而本记录的专家是
+  NVFP4 打包、另有草稿模块、rope_theta 与稀疏层集合都变了 ——
+  后两项不是量化能做出来的，模型卡也写明是 quantization-aware **training**。
+  released 取 HF 仓的 createdAt 2026-10-17；lastModified 2026-10-30 是取数当天，
+  本记录钉的 rev 是 2f33a8b9ae49
+
+open_questions:
+  - >-
+    KV 落盘精度无一手声明。模型卡说的是权重侧的 QAT，没提缓存；config 也没有
+    kv_cache 相关键。本仓按 torch_dtype bfloat16 兜底，138240 B/token 与 135.0 GiB
+    都是**上界**，basis 记 dtype_fallback。考虑到这一代权重已经做到 NVFP4，
+    缓存按 FP8 甚至更低存的可能性比 M3 那一代更大，但没有来源。
+    跨代比结构请用元素口径（69120 元素/token）
+  - >-
+    DSpark 的接受率、每步草稿 token 数、以及草稿层与主干的对齐方式都没有一手来源。
+    `dspark/config.json` 本仓没有单独取（取数脚本只落了权重头），
+    `arch.decoding.speculative` 因此只填 method 与 target_layers，不填 accept_rate / num_tokens。
+    能从权重确定的只有：5 个完整 decoder 层、fc [6144, 30720] 的首维是 5 × 6144、
+    markov_head 两张 [200064, 256] 是词表宽、confidence_head 输出 1 维，
+    以及这 5 层有 k_proj / v_proj [512, 6144] 而没有 index_k_proj（即做全量注意力）。
+    **草稿侧缓存多长的历史权重答不了**，所以 bottlenecks 里那条 10.0 GiB/步
+    是「若缓存全部 1Mi 上下文」的条件值，不是实测也不是必然
+  - >-
+    厂商「Approximately 428B total; 23B activated per token」与 M3 卡上是同一句话、
+    同一组数，而两代的实测值并不相同（M3 主干 427.04B、本代主干 427.05B，
+    本代另有 1.96B 草稿侧）。本仓带宽口径激活 24,745,077,888（24.75B）、
+    可比官方口径 25,974,271,104（25.97B），两套都不等于 23B
+    （M3 的对应两个数是 24,733,280,640 与 25,962,473,856，本代只多 11,797,248 ——
+    与参数增量**逐位相同**，因为新增的 3 个 indexer 层每步都用，增的参数全是常驻激活的）。M3 那份记录对同一个「23B」也没能对上口径，
+    这一代沿用了同一句宣传语，所以口径差也原样继承，没有新增信息
+  - >-
+    `weight_global_scale` 与 `input_global_scale` 两个叶名确实不在
+    `lib/dtypes.py` 的 scale 白名单里（`_SCALE_LEAVES` 只收 scale / scale_inv /
+    weight_scale / weight_scale_inv），但它们**没有**被算进参数量 ——
+    这 43776 个张量都是 0 维的（`"shape": []`），而 `derive.py` 的
+    `numel()` 对空 shape 返回 0.0。两处错正好抵消，params_total
+    429,010,431,105 因此是对的（扣掉草稿侧 1,958,493,697 得 427,051,937,408，
+    恰等于 M3 的 427,040,140,160 加新增 3 个 indexer 层的 11,797,248，逐位吻合）。
+    真正留下的问题是**字节那一列**：0 维张量同样被记成 0 字节，
+    权重存储因此少算 43776 × 4 B = 175,104 B（235.07 GiB 那个数）。
+    量级 1e-6，不触发任何容差。抵消是运气不是设计 ——
+    哪天出现 0 维的真参数，就会被静默漏掉。两件事（白名单该不该扩、
+    `numel([])` 该不该是 0）都是仓库级决定，本记录只登记，不改共享文件
+  - >-
+    MSA 的算法语义（块 max-pool、局部块占名额、每 index 头独立 topk、选择映射到 KV 组）
+    在本代**没有可读的参考实现**：模型卡把 Transformers 列在
+    「Additional integrations in progress」，仓里也没有 modeling 代码。
+    本记录沿用 M3 那一代从 transformers 参考实现核出来的语义，依据是 config 的
+    sparse_* 七个键逐位相同、indexer 张量名与形状逐层相同。
+    这是「同参数同结构所以同语义」的推断，不是读到的 —— bottlenecks 里按它算出的
+    240.0 MiB 与 7.88 倍都带着这个前提。要钉死得等 SGLang / vLLM 的实现或厂商 kernel
+  - >-
+    训练精度无一手声明（模型卡只说 quantization-aware training，没说主干训练精度），
+    precision.training 不填
+
+reviewed:
+  date: '2026-10-30'
+  scope: [official, derived, judgement]
+  reviewer: 一个独立核查代理 + 本会话复算
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序，对判断类字段与全部 open_questions 逐条过。
+    代理穷举了 facts/minimax-m3.1-flash/shapes.json 全部 89729 条（非抽样）核层覆盖、
+    条目宽度、量化块（逐张量算逻辑形状 ÷ scale 形状）、专家下标分布与 dtype 分布，
+    并与 facts/minimax-m3（23416 条）、facts/minimax-m3-mxfp8（45838 条）逐条比对，
+    另外拉了模型卡与 HF 的 org 列表作外部核对。
+    本会话独立复核（不只是读代理的结论）的是：config 的 quantization_config 全部七个键
+    —— 这是本轮最重的一处，起草时只看了被截断的前三个键就断言「config 只声明了 mxfp8」，
+    实际还有 group_size 16 / moe_quant_algo NVFP4 / moe_quant_format nvfp4-pack-quantized
+    （R1）；叶名分布 89729 = 23490 权重 + 22463 scale 容器 + 43776 个 0 维全局 scale（R2）；
+    derive.py 的 numel() 对空 shape 返回 0.0，所以那 43776 个标量既没进参数量、
+    也没进字节数（R3）；dspark/ 子目录自带索引、主索引 89632 条不含它；
+    以及把 packing_factor 改成 4 / 8 跑 reconcile，确认容器口径那一档确实不约束打包因子（R7）。
+    层集合、条目宽度、69120 元素/token 与读量四项也在本会话独立穷举复算过。
+    Gate B：derive.py --ep 4 返回 0、0 处不一致；外部 tally 在「容器数且不含 draft」
+    这一档逐位相同，但那一档不约束打包因子，依据另见 precision.quantization.packing_note。
+    专家数那一项是 skip（derive 找 n_routed_experts，MiniMax 写 num_local_experts），
+    不在「0 处不一致」覆盖内
+
+review:
+  - id: R1
+    field: lineage.changed_from_predecessor
+    severity: wrong
+    claim: 「config 只写了 quant_method mxfp8 / weight_block_size [1,32]，两套量化都不是 config 声明的那一套」，并据此类比 DeepSeek V4 的 weight_block_size 坑
+    finding: >-
+      起草时把 config 的 quantization_config 打印截断在 1200 字符，ignored_layers
+      那张长表把后面三个键挤掉了，于是只看到前三个键就下了结论。实际七个键：
+      quant_method mxfp8、activation_scheme dynamic、weight_block_size [1,32]、
+      ignored_layers、**group_size 16**、**moe_quant_algo NVFP4**、
+      **moe_quant_format nvfp4-pack-quantized**。专家的算法、块与落盘布局 config
+      全说了，只是写在另外三个键上。DeepSeek V4 那边是 config 对 FP4 专家什么都没说、
+      声明的块直接是错的，两件事不是同一类 —— 类比必须删。
+      讽刺的是这正是 skill 规则 2「config 与权重冲突时权重赢」想防的反面：
+      这次是**没把 config 读完**就说它没说
+    resolution: corrected
+    changed_to: >-
+      五处相关文字全部重写成「两套都声明了，但写在两组键上，只读 weight_block_size
+      会漏掉专家」；删掉两处 DeepSeek V4 类比；precision.quantization.method 的
+      evidence 由 derived 改为 official（NVFP4 这个名字来自 config，不是从清单推出来的
+      —— 清单只能证明 4 bit、块 16、E4M3 scale）
+  - id: R2
+    field: params.counting_note
+    severity: wrong
+    claim: 「清单 89729 个条目里只有 63484 条是权重张量」
+    finding: >-
+      63484 不来自任何划分，且句子本身自相矛盾（89729 − 43776 = 45953 < 63484）。
+      按叶名穷举：权重类 23490（weight_packed 21888 + weight 1283 + bias 262 +
+      e_score_correction_bias 57）、scale 容器 22463、0 维全局 scale 43776，合计 89729
+    resolution: corrected
+    changed_to: 63484 → 23490，并把四类的构成写进括号
+  - id: R3
+    field: open_questions
+    severity: wrong
+    claim: 「weight_global_scale / input_global_scale 不在 scale 白名单里，于是 43776 个 FP32 标量被算进了参数量」
+    finding: >-
+      前半句对（_SCALE_LEAVES 确实只收四个叶名），结论不成立：这 43776 个张量都是
+      0 维的，而 derive.py 的 numel() 对空 shape 返回 0.0，所以它们贡献 0。
+      两处错正好抵消，params_total 429,010,431,105 是对的。
+      真正留下的是**字节那一列**：0 维张量同样记 0 字节，权重存储少算 43776 × 4 B
+      = 175,104 B。抵消是运气不是设计
+    resolution: corrected
+    changed_to: 整条重写：说明抵消关系、把问题指向字节列与「0 维真参数会被静默漏掉」这个隐患
+  - id: R4
+    field: infra_signals / open_questions
+    severity: wrong
+    claim: 「主干激活是 18.3B，草稿是它的 10.7%」「带宽口径 18.3B、可比官方口径 19.5B」
+    finding: >-
+      18.3B / 19.5B 是起草期跑 derive **没带 --model** 时的数（那次没还原专家打包）。
+      带 --model 的实际值是 24,745,077,888 与 25,974,271,104，
+      草稿占比 1,958,493,697 / 24,745,077,888 = 7.91%。
+      本会话在提交前自查发现，代理随后独立复现了同一处
+    resolution: corrected
+    changed_to: 三个数全部改成整数值，并补上「比 M3 多 11,797,248，与参数增量逐位相同」
+  - id: R5
+    field: arch.decoding.speculative.target_layers
+    severity: wrong
+    claim: target_layers [0, 1, 2, 3, 4]
+    finding: >-
+      这个字段在仓内其它记录里是**主干**被草稿头接走的层号
+      （ds-v4-flash-dspark 是 [40, 41, 42]，站点的 LayerMap 把它画在主干层图上），
+      而这里填的是草稿模块自己的层下标，是另一个量。真正的
+      dspark_target_layer_ids 没有来源 —— dspark/config.json 本仓没取
+    resolution: corrected
+    changed_to: 删掉该字段；5 层这个事实已经在 speculative.method 里写了
+  - id: R6
+    field: arch.ffn.layer_pattern
+    severity: wrong
+    claim: 「注意力的稀疏层集合与 FFN 的**稠密**层集合这一代不再重合」
+    finding: >-
+      稀疏集合与稠密集合在 M3 就是互补的，从来没有「重合」过。
+      逐层穷举：M3 稀疏 L3–L59 / MoE L3–L59 / 稠密 L0–L2 / 全量注意力 L0–L2；
+      本代稀疏 L0–L59 / MoE 仍 L3–L59 / 稠密仍 L0–L2 / 全量注意力空。
+      散掉的那一对是「稀疏 ↔ MoE」（或等价地「全量注意力 ↔ 稠密 FFN」）
+    resolution: corrected
+    changed_to: 「稠密层集合」改成「MoE 层集合」，并把两代的四个集合摆出来
+  - id: R7
+    field: params.counting_note
+    severity: wrong
+    claim: >-
+      counting_note 把「外部 tally 在容器口径下逐位相同」当成这份参数量被外部核过了
+      —— 本轮为此改了 scripts/derive.py 的对账，并在注释里写「这不是放宽判据」
+    finding: >-
+      是放宽。容器数 = 原始 numel，与本仓的 packing_factor 无关，所以拿它对账
+      **不约束打包因子**。代理用 monkeypatch 把因子改成 4 和 8，
+      params_total 变成 842B 和 1.67T，这一项照样报 ok；本会话独立复跑确认
+      （三种因子下容器口径恒为 222,449,347,713）。原 reconcile 的 docstring
+      还写着「tally 是唯一一条不依赖本仓代码的来源……打包还原错过也不会跟着错」，
+      正好是现在不成立的那半句
+    resolution: deferred
+    changed_to: >-
+      口径本身保留（HF 对这个仓的 tally 就是容器数，信息上无法恢复对打包因子的约束），
+      但三件事改了：容器数改为在 from_shapes 里按原始 numel 直接累计
+      （params_total_container，不再由 params ÷ factor 倒推）；命中容器口径时在
+      why 里明说「这一档不约束打包因子」；docstring 按 skill 规则 11 重写，
+      把强档与弱档分开列出。打包因子的依据改由记录自己给
+      （见 packing_note 的三条独立证据）。
+      是否该改成「记录声明口径、闸只验那一个」是仓库级设计题，留给主会话
+  - id: R8
+    field: platforms
+    severity: wrong
+    claim: 三个引擎条目都写 precision 为 NVFP4，ref.kind 为 modelcard
+    finding: >-
+      模型卡从不提 NVFP4（它打的标签是 mxfp8 / 8-bit），这个名字出自 config；
+      而且把一份两套格式的权重拍成单一 NVFP4，与本记录自己的 per_subsystem 冲突
+    resolution: corrected
+    changed_to: 三条的 precision 改为 MIXED，并在 caveat 里写明两套格式与 NVFP4 这个名字的出处
+  - id: R9
+    field: lineage.changed_from_predecessor
+    severity: imprecise
+    claim: 「M3 的 L0–L2 每步读满 3 × 2 GiB = 6.00 GiB，换成稀疏后这部分降到 3 × 4 MiB」
+    finding: >-
+      两个端点各自都对，但漏掉了这三层新增的代价：它们现在也要全扫 index K，
+      3 × 1048576 × 128 × 2 B = 0.75 GiB。这三层实际是 6.00 → 0.762 GiB，
+      7.88 倍，不是读起来的几百倍
+    resolution: corrected
+    changed_to: 补上 0.75 GiB 这一项与 7.88 倍
+  - id: R10
+    field: bottlenecks
+    severity: unsupported
+    claim: 「dspark 的 5 层是全量 GQA，每步读 5 × 2 GiB = 10.0 GiB」
+    finding: >-
+      「没有 indexer」由清单证实（97 条里 index_* 零命中），但「每步读 2 GiB/层」
+      还要求草稿侧缓存**全部** 1Mi 上下文，而缓存策略权重里看不出来；
+      「每步一次草稿前向」同样没有来源。字段上那句「按参考实现的算法推导」
+      盖不住这两条 —— 本代根本没有参考实现可读
+    resolution: corrected
+    changed_to: 改写成条件句（「若缓存全部 1Mi 上下文」），并在 open_questions 里点明；同时把「接近一个量级」改成「是主干 15.23 GiB 的 66%」
+  - id: R11
+    field: bottlenecks
+    severity: missing
+    claim: 「60 层 × 4 个 KV 组 × 2048 token × …」里的因子 4 没有来源
+    finding: >-
+      其余因子本记录都给了来源，只有「4 个 KV 组」靠的是「每个 index 头的选择各管
+      一个 KV 组」，而这句话在 M3 记录的 operator-gap 里（那一代对着参考实现核过），
+      本记录的 operator-gap 把它删掉了。数值是对的
+      （sparse_num_index_heads 4 = num_key_value_heads 4，且 1048576 / 2048 = 512
+      恰是每层 2 GiB 与 4 MiB 的比值），缺的是出处
+    resolution: corrected
+    changed_to: 在 operator-gap 里补回「选块结果再映射到 4 个 KV 组上」并注明它是 kv-bandwidth 那个因子的来源
+  - id: R12
+    field: sources / notes
+    severity: imprecise
+    claim: 「三条主线结论都先有模型卡这个一手来源、再由权重清单独立证实」
+    finding: >-
+      第一条与第三条成立。第二条不成立：卡只说了「routed MoE experts and the
+      attention paths are quantized during training」，没说两套格式；
+      而且本记录实测的范围比「attention paths」宽（575 条 MXFP8 里 shared_experts
+      171 条、dense_ffn 9 条都是 FFN）。「两套格式」这一层来自 config 与清单
+    resolution: corrected
+    changed_to: sources 与 notes 的总括句都改成分条说明，点出第二条卡上没有
+  - id: R13
+    field: platforms
+    severity: missing
+    claim: 只列了 SGLang / vLLM / transformers
+    finding: >-
+      模型卡与 SGLang、vLLM 并列推荐的还有 TokenSpeed（给了 recipe 链接），
+      「in progress」一栏还有 KTransformers / unsloth / ATOM。
+      这正是 skill 规则 11 那个方向：厂商发了而记录没声明，内部闸口全绿也看不见
+    resolution: corrected
+    changed_to: 补 TokenSpeed 一条；transformers 的 caveat 里补上同列的另外三个
+  - id: R14
+    field: arch.decoding.speculative
+    severity: wrong
+    claim: 记录只填 method 不填 num_tokens，并认为这不影响任何产物
+    finding: >-
+      站点的模型页无条件拼 `${method} ×${num_tokens}`，于是构建产物上印出
+      「DSpark 草稿头 ×undefined」，而五道闸全绿 —— check_rendered 当时只查
+      没解开的 ** 与反引号，不查字面量 undefined。
+      同一个模板毛病在「残差流」那一行上早就存在：minimax-text-01、minimax-m1-80k
+      与**我没碰过的 kimi-k3** 三页都印着 ×undefined
+    resolution: corrected
+    changed_to: >-
+      修了模型页那两行（选填字段先 filter 再拼），全站构建产物复查零命中。
+      **那道闸没有补上**：给 check_rendered.py 加过一条「查字面量 undefined」的判据，
+      注入负例验过它会报，但它随即在本记录自己的核查散文上误报 ——
+      这段文字要引用那个词才能说清问题。判据怎么把「页面印出了 undefined」
+      与「页面在讲 undefined」分开，是共享闸口的设计题，不在本记录里定，
+      所以那段改动已回退，只留站点侧的修复与这条留痕
+  - id: R15
+    field: evidence
+    severity: miscategorized
+    claim: evidence 里没有 arch.decoding 这一项
+    finding: >-
+      站点把「投机解码」「MTP 层」两行的证据口径解析到路径 arch.decoding，
+      而记录只有 arch.decoding.mtp_layers / .mtp_layers_note / .speculative 三个更深的键，
+      前缀继承于是落到 arch: official —— 一个 97 条张量实测出来的结论在页面上
+      标成「官方披露」
+    resolution: corrected
+    changed_to: evidence 里补一条 arch.decoding，标 derived
+  - id: R16
+    field: evidence
+    severity: imprecise
+    claim: released 的 evidence 标成 derived
+    finding: 2026-10-17 取自 HF 仓的 createdAt，是从建仓时间推断的发布日，不是厂商公告。前代 minimax-m3 对同样的推断标的是 judgement，而 derived 会自动过 Gate C
+    resolution: corrected
+    changed_to: released 改标 judgement，与 M3 对齐
+  - id: R17
+    field: params.counting_note
+    severity: imprecise
+    claim: 「对主干实测 427.05B 高 0.22%，那边对 427.04B 高 0.23%」
+    finding: 两个百分比分别是 0.2220% 与 0.2248%，四舍五入都是 0.22%。写成 0.22 / 0.23 会让人以为两代的偏差不同。0.23% 是从 M3 记录原样抄来的
+    resolution: corrected
+    changed_to: 两个数都写到小数点后四位，并说明都是 0.22%
+  - id: R18
+    field: lineage.changed_from_predecessor
+    severity: imprecise
+    claim: 「1Mi 上下文 BF16 兜底下 134.25 → 135.0 GiB」
+    finding: 两侧同为 dtype_fallback，字节的 from→to 就是元素数的 from→to 乘 2，不含新信息；站点的 uninformative 守卫正是为这种行准备的，正文里也该自己过一遍这条
+    resolution: corrected
+    changed_to: 只留绝对值 135.0 GiB，说明倍数看元素列
+  - id: R19
+    field: lineage.changed_from_predecessor
+    severity: overreach
+    claim: 「草稿反而是这个模型里唯一还做全量注意力读的部分」
+    finding: 32 层视觉塔的自注意力同样不稀疏
+    resolution: corrected
+    changed_to: 限定到语言侧，并注明视觉塔只在 prefill 跑一次
+  - id: R20
+    field: tests/absence_regression.py
+    severity: missing
+    claim: 把 45→46、47→48 的计数同步只改了回归用例与 site/src/lib/data.ts
+    finding: 同样的字面量还留在 scripts/validate.py 的两处 docstring、docs/field-absence.md 两处、以及回归用例自己的模块 docstring 里
+    resolution: corrected
+    changed_to: 五处一并改掉；合并 main（它重写了同一个回归文件、用例从 26 条涨到 27 条）之后复核仍在
+  - id: R21
+    field: params
+    severity: imprecise
+    claim: 参数量、缓存账与 M3-MXFP8 关系的全部乘式（逐因子复核，不止 params 一处）
+    finding: >-
+      逐因子穷举全部成立，数值不改：params.total 427,051,937,408（还原打包、排 scale、
+      扣草稿侧）与 breakdown 逐项复算一致；按 HF 口径（不还原打包、排 scale、扣 dspark）
+      复算得 220,490,854,016，与 HF tally 的四个 dtype 桶**逐桶**相同；
+      主干减 M3 = 11,797,248 = 3 × (512+128) × 6144 + 3 × 2 × 128；
+      69120 = 60 × 2 × 4 × 128 + 60 × 128，比 M3 多 384；
+      读量 15.00 GiB + 240.0 MiB = 15.23 GiB，对 120.0 GiB 是 7.8769 倍，
+      indexer 占 98.46%；M3-MXFP8 的张量名集合是 M3 的超集、差集恰为 22422 条
+      weight_scale_inv，23416 条共有张量形状逐条相同，HF tally 总量与 M3 参数量逐位相同
+    resolution: confirmed
