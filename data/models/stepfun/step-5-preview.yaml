@@ -359,6 +359,10 @@ arch:
 
 precision:
   weights_release: [FP8_E4M3, BF16, FP32]
+  weights_release_scope:
+    FP8_E4M3: { measured: true }
+    BF16: { measured: true }
+    FP32: { measured: true }
   kv_cache: MIXED
   kv_cache_components:
     global_kv:
@@ -525,6 +529,7 @@ evidence:
   arch.vision.separability.cross_prefix_sharing: judgement
   precision: official
   precision.weights_release: derived
+  precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived
   precision.quantization.per_subsystem_scale: derived
   precision.quantization.per_subsystem_block: derived

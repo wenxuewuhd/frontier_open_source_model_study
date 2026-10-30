@@ -358,6 +358,13 @@ arch:
 
 precision:
   weights_release: [MXFP4, BF16, FP32]
+  weights_release_scope:
+    MXFP4:
+      measured: true
+      container: UINT8
+      note: 逻辑精度 MXFP4 落盘时装在 UINT8 容器里，清单里看到的是容器 dtype，不是声明错
+    BF16: { measured: true }
+    FP32: { measured: true }
   quantization:
     method: compressed-tensors（mxfp4-pack-quantized）
     expert_dtype: MXFP4
@@ -541,6 +548,7 @@ evidence:
   arch.vision.separability.cross_prefix_sharing: judgement
   precision: official
   precision.weights_release: derived
+  precision.weights_release_scope: derived
   precision.quantization.packing_note: derived
   precision.quantization.per_subsystem: derived
   precision.quantization.per_subsystem_scale: derived

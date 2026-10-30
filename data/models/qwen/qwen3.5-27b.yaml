@@ -338,6 +338,16 @@ arch:
 
 precision:
   weights_release: [BF16, FP8_E4M3, INT4]
+  weights_release_scope:
+    BF16: { measured: true }
+    FP8_E4M3:
+      measured: false
+      repo: Qwen/Qwen3.5-27B-FP8
+      note: 厂商另发的独立仓，本仓没有取过权重清单；本记录的实测口径只覆盖主仓
+    INT4:
+      measured: false
+      repo: Qwen/Qwen3.5-27B-GPTQ-Int4
+      note: 厂商另发的独立仓，本仓没有取过权重清单；本记录的实测口径只覆盖主仓
   quantization:
     per_subsystem:
       attention: BF16
@@ -465,6 +475,7 @@ evidence:
   arch.vision.separability.cross_prefix_sharing: judgement
   precision: official
   precision.weights_release: judgement
+  precision.weights_release_scope: judgement
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived
   platforms: official

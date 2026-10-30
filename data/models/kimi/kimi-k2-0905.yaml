@@ -140,6 +140,10 @@ arch:
 
 precision:
   weights_release: [FP8_E4M3, BF16, FP32]
+  weights_release_scope:
+    FP8_E4M3: { measured: true }
+    BF16: { measured: true }
+    FP32: { measured: true }
   quantization:
     method: fp8（block-wise）
     activation_scheme: dynamic
@@ -214,6 +218,7 @@ evidence:
   precision: official
   precision.quantization.expert_dtype: derived
   precision.weights_release: derived
+  precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived
   precision.quantization.per_subsystem_scale: derived
   precision.quantization.per_subsystem_block: derived

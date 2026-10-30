@@ -214,6 +214,12 @@ arch:
 
 precision:
   weights_release: [BF16, FP8_E4M3]
+  weights_release_scope:
+    BF16: { measured: true }
+    FP8_E4M3:
+      measured: false
+      repo: Qwen/Qwen3.8-2.4T-A95B-FP8
+      note: 厂商另发的独立仓，本仓没有取过权重清单；本记录的实测口径只覆盖主仓
   quantization:
     per_subsystem:
       expert: BF16
@@ -338,6 +344,7 @@ evidence:
   arch.moe.storage_note: derived
   arch.position: derived
   precision: official
+  precision.weights_release_scope: judgement
   # 实测自权重清单，不是厂商说法 —— 落在 precision: official 的前缀继承里会绕过 Gate C
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived

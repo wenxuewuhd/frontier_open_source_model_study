@@ -146,6 +146,8 @@ arch:
 
 precision:
   weights_release: [BF16]
+  weights_release_scope:
+    BF16: { measured: true }
   quantization:
     per_subsystem:
       attention: BF16
@@ -244,6 +246,7 @@ evidence:
   arch.ffn.layer_pattern: derived
   precision: official
   precision.weights_release: derived
+  precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived
   platforms: official

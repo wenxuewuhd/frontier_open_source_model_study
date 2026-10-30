@@ -807,8 +807,8 @@
                 "description": "这种精度所在的 HF 仓。与 hf.repo 不同就说明它是独立发布的变体，本记录的实测口径不覆盖它"
               },
               "container": {
-                "$ref": "#/$defs/dtype",
-                "description": "逻辑精度落盘时装在哪种容器 dtype 里。**声明与实测不符常常不是错，而是正确记法**：FP4 装 INT8 容器（deepseek-v41-flash 声明 FP4 实测 I8）、8 个 INT4 打包进一个 I32（kimi-k2-thinking / kimi-k2.5）、MXFP4 一字节两个（kimi-k3 实测 UINT8）。全仓 7 份声明与实测不符的记录里 4 份是这一类，不要去改声明；只有三份 Qwen 是真的「厂商另发了仓、本仓没取数」"
+                "type": "string",
+                "description": "逻辑精度落盘时装在哪种容器 dtype 里。**不走 $defs/dtype 的枚举**：容器是存储形态不是逻辑精度，两套词表不同 —— INT32 作为容器合法（8 个 INT4 打包进去），但它从来不是一种声明得出来的权重精度，放进 dtype 枚举会让它变成可声明的。值由 derive.py 从清单算出（weight_dtype_containers），不是手填。**声明与实测不符常常不是错，而是正确记法**：FP4 装 INT8 容器（deepseek-v41-flash 声明 FP4 实测 I8）、8 个 INT4 打包进一个 I32（kimi-k2-thinking / kimi-k2.5）、MXFP4 一字节两个（kimi-k3 实测 UINT8）。全仓 7 份声明与实测不符的记录里 4 份是这一类，不要去改声明；只有三份 Qwen 是真的「厂商另发了仓、本仓没取数」"
               },
               "note": { "type": "string" }
             }
