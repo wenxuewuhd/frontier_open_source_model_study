@@ -379,10 +379,15 @@ export function kvCachePrecision(m: Model): { text: string; declared: boolean } 
   return { text: '未公布', declared: false };
 }
 
+// derive.py 能出五个 basis，这里要五个都有。少一个的后果不是「少一个标签」：
+// 没登记的值走 `KV_BASIS_LABEL[b] ?? ''`，那一格字节就成了整表里唯一没有口径标注的数，
+// 读起来像「这个是实打实的」，而 vendor_declared 恰恰是本仓算不出来、照抄厂商的那一行。
+// 取值的定义见 docs/kv-cache-accounting.md
 export const KV_BASIS_LABEL: Record<string, string> = {
   theoretical_floor: '理论下限',
-  dtype_fallback: '精度兜底',
+  vendor_declared: '厂商公布',
   declared_dtype: '声明精度',
+  dtype_fallback: '精度兜底',
   mixed: '口径混合',
 };
 

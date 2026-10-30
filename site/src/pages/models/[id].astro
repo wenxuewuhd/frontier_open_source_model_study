@@ -27,6 +27,7 @@ const kvPrec = kvCachePrecision(m);
 // 字节口径跟着数走：下限、兜底、声明精度是三种数，页面上丢了标签读者会直接当部署预算
 const KV_BASIS: Record<string, string> = {
   theoretical_floor: '理论下限',
+  vendor_declared: '按厂商公布值',
   dtype_fallback: '按模型 dtype 兜底',
   declared_dtype: '按声明精度',
   mixed: '口径混合',
