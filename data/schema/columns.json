@@ -334,6 +334,20 @@
         ]
       }
     },
+      "quant_grain": {
+        "unit": null,
+        "scope": "config",
+        "absent": {
+          "state": "unsurveyed",
+          "rules": [
+            {
+              "state": "confirmed_absent",
+              "why": "config 没有声明 group 粒度。FP8 式的 config 声明的是二维 tile（weight_block_size，看左边那一列），不是沿单轴的 group —— 两种声明法并存、不互相换算，所以这一格空着是「它用的是另一种说法」而不是「本仓没查」",
+              "label": "未声明"
+            }
+          ]
+        }
+      },
     "scale_fmt": {
       "unit": null,
       "scope": "config",

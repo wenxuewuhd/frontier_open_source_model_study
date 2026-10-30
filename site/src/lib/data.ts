@@ -640,6 +640,14 @@ export const TRACKED_FIELDS: TrackedField[] = [
       const b = m.precision?.quantization?.weight_block_size;
       return b ? `[${b.join(',')}]` : undefined;
     } },
+  // compressed-tensors 声明的是沿单轴的 group，不是二维 tile ——
+  // 与左边的「量化块」是两种声明法，并排放而不是二选一。
+  // 这一列是补的：schema 先收了 group_size / group_strategy 两个字段，
+  // 却没有任何一列读它们，于是值填进记录、页面上看不见（p1-kimi 发现的）。
+  { key: 'quant_grain', label: '量化粒度（config 声明）', axis: 'precision', group: 'precision',
+    get: (m) => (m.precision?.quantization?.group_size
+      ? `${m.precision.quantization.group_strategy ?? 'group'} ${m.precision.quantization.group_size}`
+      : undefined) },
   { key: 'scale_fmt', label: 'scale 格式（config 声明）', axis: 'precision', group: 'precision',
     get: (m) => m.precision?.quantization?.scale_format },
   { key: 'act_scheme', label: '激活量化', axis: 'precision', group: 'precision',
