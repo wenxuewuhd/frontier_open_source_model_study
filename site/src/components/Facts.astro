@@ -6,6 +6,7 @@
  * 和 scripts/validate.py 的前缀继承规则共用一套实现。
  */
 import Evidence from './Evidence.astro';
+import Prose from './Prose.astro';
 import { evidenceFor, type EvidenceTag } from '../lib/data';
 
 interface Row {
@@ -27,6 +28,8 @@ const shown = rows.filter(
   (r) => r.value !== undefined && r.value !== null && r.value !== '' && r.value !== '—' &&
          !(Array.isArray(r.value) && r.value.length === 0),
 );
+// 值可能带行内标记（记录散文按 Markdown 写），所以走 Prose 而不是直接插 ——
+// 直接插会把 `**…**` 原样显示给读者
 const render = (v: unknown) => (Array.isArray(v) ? v.join(', ') : String(v));
 ---
 
@@ -37,7 +40,7 @@ const render = (v: unknown) => (Array.isArray(v) ? v.join(', ') : String(v));
         <>
           <dt>{r.label}</dt>
           <dd>
-            <span class={r.mono ? 'num' : undefined}>{render(r.value)}</span>
+            <span class={r.mono ? 'num' : undefined}><Prose text={render(r.value)} /></span>
             {r.path && <Evidence tag={evidenceFor(r.path, evidence)} />}
           </dd>
         </>

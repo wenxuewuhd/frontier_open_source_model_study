@@ -12,6 +12,7 @@
  */
 import Base from '../layouts/Base.astro';
 import Evidence from '../components/Evidence.astro';
+import Prose from '../components/Prose.astro';
 import {
   families, allModels, roster, changesFor, evidenceFor, url, fmtInt, fmtBytes,
   KV_BASIS_LABEL, type Model, type EvidenceTag,
@@ -218,7 +219,7 @@ const shortName = (m: Model, label: string) =>
               <td class="num">
                 {kv.per_token_elems_bound === 'upper_bound' && '≤ '}{fmtInt(kv.per_token_elems)}
                 <span class="unit">元素</span><Evidence tag="derived" /></td>
-              <td>{seq.length ? seq.map((s) => <div>{s.text}</div>) : <span class="dash">无</span>}</td>
+              <td>{seq.length ? seq.map((s) => <div><Prose text={s.text} /></div>) : <span class="dash">无</span>}</td>
               <td>{basisOf(kv).map((b) => <code>{b}</code>)}</td>
             </tr>
           );
@@ -279,12 +280,12 @@ const shortName = (m: Model, label: string) =>
                     </td>
                     <td>
                       {seq.length
-                        ? seq.map((s) => <div>{s.text}<Evidence tag={s.ev} /></div>)
+                        ? seq.map((s) => <div><Prose text={s.text} /><Evidence tag={s.ev} /></div>)
                         : kv ? <span class="dash">无</span> : <span class="dash">—</span>}
                     </td>
                     <td>
                       {cov.length
-                        ? cov.map((c) => <div>{c.text}<Evidence tag={c.ev} /></div>)
+                        ? cov.map((c) => <div><Prose text={c.text} /><Evidence tag={c.ev} /></div>)
                         : <span class="dash">—</span>}
                     </td>
                     <td>
@@ -302,7 +303,7 @@ const shortName = (m: Model, label: string) =>
                             <span class="muted">字段变化</span><Evidence tag="derived" />
                             {changes.map((c) => (
                               <span class="chg">
-                                {c.field.label}：<span class="from">{c.from ?? '无'}</span> → <span class="to">{c.to ?? '取消'}</span>
+                                {c.field.label}：<span class="from"><Prose text={c.from ?? '无'} /></span> → <span class="to"><Prose text={c.to ?? '取消'} /></span>
                               </span>
                             ))}
                           </div>
@@ -312,9 +313,9 @@ const shortName = (m: Model, label: string) =>
                             <summary class="muted">改了什么 · 为什么（{story.length} 条，来自 lineage）</summary>
                             {story.map((e: any) => (
                               <div class="story">
-                                {e.text}<Evidence tag="derived" />
+                                <Prose text={e.text} /><Evidence tag="derived" />
                                 {e.benefit && (
-                                  <div class="benefit"><span class="muted">收益 ·</span> {e.benefit}<Evidence tag="judgement" /></div>
+                                  <div class="benefit"><span class="muted">收益 ·</span> <Prose text={e.benefit} /><Evidence tag="judgement" /></div>
                                 )}
                               </div>
                             ))}

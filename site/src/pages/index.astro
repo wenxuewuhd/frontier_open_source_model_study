@@ -1,6 +1,7 @@
 ---
 import Base from '../layouts/Base.astro';
 import Evidence from '../components/Evidence.astro';
+import Prose from '../components/Prose.astro';
 import {
   allModels, allSignals, roster, timeline, url, fmtCount, fmtBytes, FAMILY_LABEL,
   HORIZON_LABEL, HORIZON_ORDER, KV_BASIS_LABEL,
@@ -124,7 +125,7 @@ const recorded = r.families.filter((f) => f.status === 'recorded').length;
                   {s.axis && <span> · {s.axis}</span>}
                   <Evidence tag={s.evidence} />
                 </div>
-                <div>{s.text}</div>
+                <div><Prose text={s.text} /></div>
               </div>
             ))}
           </div>
@@ -151,7 +152,7 @@ const recorded = r.families.filter((f) => f.status === 'recorded').length;
               {(m.lineage?.changed_from_predecessor ?? []).length > 0 ? (
                 <ul class="plain">
                   {m.lineage.changed_from_predecessor.map((c: any) => (
-                    <li><span class="muted">{c.axis}</span> — {c.text}</li>
+                    <li><span class="muted">{c.axis}</span> — <Prose text={c.text} /></li>
                   ))}
                 </ul>
               ) : (

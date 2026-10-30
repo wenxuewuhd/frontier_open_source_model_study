@@ -7,6 +7,7 @@
  * 两档对页面底色不足 3:1，字母是必须的辅助编码，不是装饰。
  */
 import Evidence from './Evidence.astro';
+import Prose from './Prose.astro';
 import { fmtBytes, KV_BASIS_LABEL, KV_BASIS_NOTE } from '../lib/data';
 
 interface Props {
@@ -395,7 +396,7 @@ const classRoles = (c: any) => {
             <tr>
               <td>
                 {c.item}
-                {c.note && <div class="small muted">{c.note}</div>}
+                {c.note && <div class="small muted"><Prose text={c.note} /></div>}
               </td>
               <td class="num">{Array.isArray(c.config) ? c.config.join(',') : c.config}</td>
               <td class="num">{Array.isArray(c.weights) ? c.weights.join(',') : c.weights}</td>

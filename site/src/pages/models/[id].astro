@@ -3,6 +3,7 @@ import Base from '../../layouts/Base.astro';
 import Evidence from '../../components/Evidence.astro';
 import Facts from '../../components/Facts.astro';
 import LayerMap from '../../components/LayerMap.astro';
+import Prose from '../../components/Prose.astro';
 import {
   allModels, modelById, url, fmtCount, fmtBytes, fmtInt, fmtSci, FAMILY_LABEL,
   reviewStatus, SEVERITY_LABEL, RESOLUTION_LABEL, HORIZON_LABEL, SUBSYSTEMS,
@@ -133,14 +134,14 @@ const rv = reviewStatus(m);
 
   {
     s && !s.complete && (
-      <div class="note" style="margin-top:12px">{s.incomplete_note}</div>
+      <div class="note" style="margin-top:12px"><Prose text={s.incomplete_note} /></div>
     )
   }
   {
     m.params?.counting_note && (
       <p class="small muted" style="margin-top:10px">
         <strong>口径</strong>
-        <Evidence tag="judgement" />：{m.params.counting_note}
+        <Evidence tag="judgement" />：<Prose text={m.params.counting_note} />
       </p>
     )
   }
@@ -245,7 +246,7 @@ const rv = reviewStatus(m);
               ]}
             />
             {a.hybrid.note && (
-              <p class="small muted">{a.hybrid.note}<Evidence tag="judgement" /></p>
+              <p class="small muted"><Prose text={a.hybrid.note} /><Evidence tag="judgement" /></p>
             )}
           </div>
         )}
@@ -263,7 +264,7 @@ const rv = reviewStatus(m);
               ]}
             />
             {a.linear_state.state_layout_note && (
-              <p class="small muted">{a.linear_state.state_layout_note}</p>
+              <p class="small muted"><Prose text={a.linear_state.state_layout_note} /></p>
             )}
           </div>
         )}
@@ -292,7 +293,7 @@ const rv = reviewStatus(m);
               ]}
             />
             {a.kv_sharing.note && (
-              <p class="small muted">{a.kv_sharing.note}<Evidence tag="derived" /></p>
+              <p class="small muted"><Prose text={a.kv_sharing.note} /><Evidence tag="derived" /></p>
             )}
           </div>
         )}
@@ -331,7 +332,7 @@ const rv = reviewStatus(m);
           { label: '均衡', value: moe.balance, path: 'arch.moe.balance' },
         ]}
       />
-      {moe.storage_note && <p class="small muted">{moe.storage_note}<Evidence tag="derived" /></p>}
+      {moe.storage_note && <p class="small muted"><Prose text={moe.storage_note} /><Evidence tag="derived" /></p>}
     </div>
 
     {
@@ -351,7 +352,7 @@ const rv = reviewStatus(m);
               { label: '投机解码', value: m.arch?.decoding?.speculative ? `${m.arch.decoding.speculative.method} ×${m.arch.decoding.speculative.num_tokens}` : undefined, path: 'arch.decoding' },
             ]}
           />
-          {m.arch?.residual?.note && <p class="small muted">{m.arch.residual.note}</p>}
+          {m.arch?.residual?.note && <p class="small muted"><Prose text={m.arch.residual.note} /></p>}
         </div>
       )
     }
@@ -413,7 +414,7 @@ const rv = reviewStatus(m);
         { label: '实测方式', value: q.subsystem_method, path: 'precision.quantization' },
       ]}
     />
-    {q.packing_note && <p class="small muted">{q.packing_note}<Evidence tag="derived" /></p>}
+    {q.packing_note && <p class="small muted"><Prose text={q.packing_note} /><Evidence tag="derived" /></p>}
   </div>
 
   {
@@ -485,7 +486,7 @@ const rv = reviewStatus(m);
             {(kv.notes ?? []).length > 0 && (
               <div class="note" style="margin-top:10px">
                 <ul class="plain" style="margin:0">
-                  {kv.notes.map((n: string) => <li>{n}</li>)}
+                  {kv.notes.map((n: string) => <li><Prose text={n} /></li>)}
                 </ul>
               </div>
             )}
@@ -540,7 +541,7 @@ const rv = reviewStatus(m);
     )
   }
 
-  {act?.note && <p class="small muted" style="margin-top:10px">{act.note}</p>}
+  {act?.note && <p class="small muted" style="margin-top:10px"><Prose text={act.note} /></p>}
   {act?.semantics && <p class="small muted">{act.semantics}</p>}
 
   <h2>交叉核对</h2>
@@ -586,7 +587,7 @@ const rv = reviewStatus(m);
                 <td>{p.hardware}</td>
                 <td class="num">{p.precision ?? '—'}</td>
                 <td>{p.status}</td>
-                <td class="small muted">{p.caveat ?? ''}</td>
+                <td class="small muted"><Prose text={p.caveat ?? ''} /></td>
               </tr>
             ))}
           </tbody>
@@ -606,8 +607,8 @@ const rv = reviewStatus(m);
                 {b.dimension}
                 <Evidence tag={b.evidence ?? 'judgement'} />
               </div>
-              <div>{b.finding}</div>
-              {b.quantified && <div class="small num" style="margin-top:6px">{b.quantified}</div>}
+              <div><Prose text={b.finding} /></div>
+              {b.quantified && <div class="small num" style="margin-top:6px"><Prose text={b.quantified} /></div>}
               {b.fix && <div class="small muted" style="margin-top:6px"><strong>可修</strong>：{b.fix}</div>}
             </div>
           ))}
@@ -642,7 +643,7 @@ const rv = reviewStatus(m);
                 {sg.axis && ` · ${sg.axis}`}
                 <Evidence tag={sg.evidence} />
               </div>
-              <div>{sg.text}</div>
+              <div><Prose text={sg.text} /></div>
             </div>
           ))}
         </div>
@@ -656,7 +657,7 @@ const rv = reviewStatus(m);
         <div>
           <h2 style="margin-top:0">开放问题</h2>
           <ul class="plain small">
-            {m.open_questions!.map((o: string) => <li>{o}</li>)}
+            {m.open_questions!.map((o: string) => <li><Prose text={o} /></li>)}
           </ul>
         </div>
       )
@@ -670,7 +671,7 @@ const rv = reviewStatus(m);
               <li>
                 {src.url ? <a href={src.url}>{src.kind}</a> : src.kind}
                 {src.locator && <span class="muted"> · {src.locator}</span>}
-                {src.note && <div class="muted">{src.note}</div>}
+                {src.note && <div class="muted"><Prose text={src.note} /></div>}
               </li>
             ))}
           </ul>
@@ -688,7 +689,7 @@ const rv = reviewStatus(m);
           {((m as any).reviewed.scope ?? []).join('、') || '未说明范围'} ·
           共 {rv.total} 条发现，已改 {rv.corrected}，未解决 {rv.open}。
           <br />
-          方法：{(m as any).reviewed.method}
+          方法：<Prose text={(m as any).reviewed.method} />
         </p>
         {((m as any).review ?? []).length > 0 && (
           <table>
@@ -706,9 +707,9 @@ const rv = reviewStatus(m);
                   <td class="small num">{f.field}</td>
                   <td class="small">{SEVERITY_LABEL[f.severity] ?? f.severity}</td>
                   <td class="small">
-                    {f.claim && <div class="muted">原先：{f.claim}</div>}
-                    <div>{f.finding}</div>
-                    {f.changed_to && <div class="muted">改为：{f.changed_to}</div>}
+                    {f.claim && <div class="muted">原先：<Prose text={f.claim} /></div>}
+                    <div><Prose text={f.finding} /></div>
+                    {f.changed_to && <div class="muted">改为：<Prose text={f.changed_to} /></div>}
                   </td>
                   <td class="small">
                     <strong>{RESOLUTION_LABEL[f.resolution] ?? f.resolution}</strong>
@@ -727,7 +728,7 @@ const rv = reviewStatus(m);
     )
   }
 
-  {m.notes && <><h2>备注</h2><p class="small">{m.notes}</p></>}
+  {m.notes && <><h2>备注</h2><p class="small"><Prose text={m.notes} /></p></>}
 
   <p class="small muted" style="margin-top:28px">
     <a href={url('/models/')}>← 返回模型列表</a>

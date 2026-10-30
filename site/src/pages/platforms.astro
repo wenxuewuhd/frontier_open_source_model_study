@@ -1,5 +1,6 @@
 ---
 import Base from '../layouts/Base.astro';
+import Prose from '../components/Prose.astro';
 import { allModels, url, BUILD_IS_INTERNAL } from '../lib/data';
 
 const rows = allModels().flatMap((m) =>
@@ -55,7 +56,7 @@ const statusLabel: Record<string, string> = {
                 <td class="num">{r.precision ?? '—'}</td>
                 <td class="num">{r.parallel ?? '—'}</td>
                 <td>{statusLabel[r.status] ?? r.status}</td>
-                <td class="small muted">{r.caveat ?? ''}</td>
+                <td class="small muted"><Prose text={r.caveat ?? ''} /></td>
               </tr>
             ))}
           </tbody>
