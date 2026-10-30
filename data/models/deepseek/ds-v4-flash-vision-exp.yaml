@@ -12,6 +12,11 @@ sources:
   url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-Vision-Exp
   locator: config.json @ 6821d6ad3681
   accessed: '2026-10-29'
+- kind: repo
+  url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash/blob/60d8d70770c6776ff598c94bb586a859a38244f1/inference/model.py
+  locator: inference/model.py @ 60d8d70（V4-Flash 仓）—— Compressor 的 overlap / coff 与 kv_cache 形状
+  accessed: '2026-10-30'
+  note: 同代参考实现，缓存条目宽度的依据见 ds-v4-flash 的 R1
 hf:
   repo: deepseek-ai/DeepSeek-V4-Flash-Vision-Exp
   sha: 6821d6ad3681a4b137b066b76094fa82ebd0a380
@@ -24,17 +29,25 @@ lineage:
   successor: deepseek-v41-flash
   changed_from_predecessor:
   - axis: modality
-    text: 加视觉塔：vision.blocks.* 的 ViT（wqkv 融合 QKV、带 bias）+ patch_embed + 两层 aligner，并引入 image_start
-      / image_end / image_newline / image_pad 特殊 token
+    text: >-
+      加视觉塔：vision.blocks.0–31 的 ViT（wqkv [3072, 1024] 融合 QKV、带 bias；mlp.w1 [5632, 1024] = 2 × 2816 与 w2 [1024, 2816]
+      无 bias；norm 只有 weight；没有位置嵌入张量，config 有 vision_rope_theta）+ patch_embed [1024, 588]（588 = 3 × 14²）
+      + 两层 aligner（w1 [4096, 9216]，9216 = 1024 × 3²），以及 4 个可学习的 [4096] BF16 顶层向量 image_start / image_end /
+      image_newline / image_pad（不在 embed 表里）。合计 466,393,088 参数
     benefit: 多模态入口。代价是视觉塔的注意力用融合 wqkv 且带 bias，与主干不同构，要单独一套算子，不能复用主干的注意力实现
   - axis: moe
-    text: 新增第二套路由偏置 ffn.gate.bias_vl，视觉 token 走独立偏置 —— 融合 router 的算子签名因此改变，config 里看不到；同时给第 0/1/2
-      层（hash 路由层）补上了此前缺失的 ffn.gate.bias —— gate.bias 的层数由 40 增至 43，这三层此前只有 gate.weight 没有偏置
-    benefit: 视觉与文本 token 走不同的路由偏置，避免两种模态抢同一批专家。代价是融合 router 要多带一个模态输入，算子签名因此改变
+    text: >-
+      新增第二套路由偏置 ffn.gate.bias_vl：46 个 [256] F32，主干 43 层（含 hash 层 L0–L2）+ 3 个 MTP 块各一个。按名字推测是按 token
+      模态选用，没有一手说明，config 里也看不到。同时给 hash 层 L0/L1/L2 补上了此前缺失的 ffn.gate.bias —— 主干 gate.bias 由 40 层增至 43 层
+      （V4-Flash 与 DSpark 的这三层只有 gate.weight + tid2eid）
+    benefit: 融合 router 要多带一个偏置输入（若真按模态选，还要多一个模态标记），算子签名因此改变。「避免两种模态抢同一批专家」是对动机的推测，没有来源
   - axis: decoding
     text: config 的 num_nextn_predict_layers 由 1 改为 3 —— 追认 dspark 那一代权重里就已经存在的 3 个 MTP 块。本版草稿侧实际只多了
       3 个张量（mtp.{0,1,2}.ffn.gate.bias_vl），4705→4708
-    benefit: 对 infra 没有新增成本：3 块 MTP 在前一代就已经在算了，这一版只是 config 追上权重
+    benefit: 对 infra 没有新增成本：3 块 MTP 在前一代就已经在算了，这一版只是 HF config 追上权重（DSpark 同 rev 的 inference/config.json 早已写 3）
+  - axis: precision
+    text: config 的 rms_norm_eps 由 1e-6 改为 1e-20（V4.1 沿用 1e-20），norm 权重本身不变
+    benefit: 改的是 kernel 常数，不改形状。权重定不了哪个值是实际推理用的；1e-20 低于 BF16 的最小正规数，按 BF16 精度算 eps 等于没有
 params:
   total: 284801000000.0
   excludes:
@@ -50,8 +63,13 @@ params:
     router: 47437800.0
     residual: 33884200.0
     norm: 446080.0
-  counting_note: 按完整权重清单（72633 张量）逐项统计。total 不含草稿侧 19.8B；含在内的实测总量为 304.6B，权重存储 156.3 GiB。注意路由专家以 FP4
-    两个一字节打包存放，safetensors 的 numel 是容器数，已按 per_subsystem 的逻辑精度还原；直接求和会把专家参数少算一半。
+  counting_note: >-
+    total 与 breakdown 都是本仓按完整权重清单逐项求和的实测值（取 6 位有效数字），不是厂商声明值，所以 Gate B 的参数总量一项
+    （delta 0.0）是实测比实测。清单 72633 个条目 = 36915 个权重张量 + 35718 个 .scale 容器。total 不含草稿侧 19.8B，
+    但含视觉侧 466,393,088（vision 塔 + aligner + 4 个 image_* 向量）—— 与 qwen3.8-27b 的 excludes [vision, draft] 口径不同，
+    这一版厂商没有给总参数量，没有可对的声明值；扣掉视觉后是 284,334,579,287，再扣主干新增的 43 个 bias_vl 与 3 个 gate.bias
+    （46 × 256 = 11,776）是 284,334,567,511，恰是 DSpark 的主干实测值（MTP 块上的 3 个 bias_vl 在草稿侧，已扣）。含草稿的实测总量 304,646,824,126，与 HF 的 safetensors tally 逐位相同（不含 scale，I8 已按 FP4 还原）。
+    breakdown.attention 合并了 attention、compressor、indexer 三项。权重存储 156.3 GiB，含 scale 与草稿侧
 context:
   max: 1048576
   train_native: 65536
@@ -61,8 +79,8 @@ arch:
   vocab: 129280
   norm: RMSNorm
   norm_eps: 1.0e-20
-  activation: SwiGLU（hidden_act silu，gate/up/down 三件套）
-  position: RoPE theta 10000 + YaRN 外推
+  activation: SwiGLU（hidden_act silu，w1/w3/w2 三件套），带截断 swiglu_limit 10.0
+  position: RoPE theta 10000 + YaRN 外推；压缩条目另用 compress_rope_theta 160000
   attention:
     type: MQA-latent
     num_heads: 64
@@ -73,15 +91,17 @@ arch:
     o_groups: 8
     sliding_window: 128
     head_dim: 512
+    head_dim_note: num_kv_heads 1 × head_dim 512 是一个条目的宽度（attn.wkv 与 compressor.norm 都是 512，64 维 rope 在内），不是每 token 的缓存 —— 每 token 见 measured_per_token
     sparse:
       mechanism: indexer 打分取 topk 后在选中 token 上做全注意力。只在 21 / 43 层上有 indexer —— 权重里的规律是 indexer 存在 ⟺
-        compress_ratios[l] == 4，零例外。这一代没有独立的 indexer.wk，index K 由 attn.indexer.compressor.wkv 产出
+        compress_ratios[l] == 4，在本清单的 43 层主干 + 3 个 MTP 块里零例外。这一代没有独立的 indexer.wk，index K 由 attn.indexer.compressor.wkv 产出
       index_n_heads: 64
       index_head_dim: 128
       index_topk: 512
-      index_kv_dim: 64
-      index_kv_source: layers.N.attn.indexer.compressor.wkv.weight 输出维 256，但 indexer.compressor.ape
-        是 [4, 256] —— 4 个 token 共用一个 256 维条目，每 token 实为 64 元素。index_kv_dim 记的是每 token 值，不是条目宽度
+      index_kv_dim: 32
+      index_kv_source: >-
+        layers.N.attn.indexer.compressor.wkv.weight 输出维 256，是比值 4 的重叠窗口带来的 2 倍；条目宽以
+        indexer.compressor.norm.weight [128] 为准，4 个 token 一个条目，每 token 32 元素（同 ds-v4-flash 的 R2）
     kv_sharing:
       compress_ratios:
       - 0
@@ -133,14 +153,16 @@ arch:
       note: 权重清单里 kv_b_proj / k_b_proj / v_b_proj 零命中，config 也不声明 kv_lora_rank：这一代没有 KV 上投影，不是 MLA。compress_ratios
         的项数 = 主干层数 + MTP 层数。
       measured_per_token:
-        global_kv: 5456
-        indexer: 1344
-        local_window_bytes_per_sequence: 5636096
-        note: '按完整权重清单逐层量出来的每 token 元素数。compressor.ape 的第一维就是该层压缩比，每 token 元素 = wkv 输出宽度 / 比值（比值 4:
-          21 层, wkv 宽 1024, ape 有 -> 256 元素/token；比值 128: 20 层, wkv 宽 512, ape 有 -> 4 元素/token）。attn.wkv
-          那一份是 sliding_window 的局部 KV，每序列固定、不随上下文增长，单列在 local_window_bytes_per_sequence，不计入 per_token。按未压缩宽度乘总层数会高估五倍以上'
-      layer_coverage: compressor 在 41 / 43 层（存在 ⟺ compress_ratios[l] != 0）；indexer 在 21 / 43 层（存在
-        ⟺ compress_ratios[l] == 4）。attn.wkv 与 attn_sink 则在全部 43 层。三者覆盖面不同，不能混着说「逐层」
+        global_kv: 2768
+        indexer: 672
+        local_window_elems_per_sequence: 2818048
+        note: >-
+          注意力侧与 ds-v4-flash-dspark 逐个相同，数也相同（依据见 ds-v4-flash 的 R1）：条目宽取 compressor.norm（512 / 128），
+          全局 KV = 21 × 512/4 + 20 × 512/128 = 2768，indexer = 21 × 128/4 = 672。滑窗主干 43 × 128 × 512 = 2818048 元素/序列；
+          开草稿侧 3 个 MTP 块各有一份滑窗，46 层 3014656
+      layer_coverage: >-
+        主干口径（43 层，另有 3 个 MTP 块）：compressor 在 L2–L42 共 41 层，indexer 在比值 4 的 21 层，attn.wkv 与 attn_sink 在
+        43 层 + 3 个 MTP 块。MTP 块没有 compressor 与 indexer（compress_ratios[43..45] = 0），开草稿侧只多 3 层滑窗、per_token 不变
     attn_sink: 每头一个可学习 sink（layers.N.attn.attn_sink，全部层及 MTP 层）。它进 softmax 分母，改变算子签名；config 里没有这个开关，只能从权重清单发现
   ffn:
     type: moe
@@ -153,12 +175,14 @@ arch:
     hash_layers:
       count: 3
       mapping_tensor: layers.N.ffn.gate.tid2eid
-      note: 与 V4-Flash 相同 本版起这三层也有了 ffn.gate.bias（前代没有）。
+      note: count 3、tid2eid [129280, 6] 与 V4-Flash 相同；本版起 L0–L2 也有了 ffn.gate.bias 与 gate.bias_vl（V4-Flash、DSpark 的这三层只有 gate.weight + tid2eid）
     storage_note: 逐专家独立张量，不是堆叠。grouped GEMM 因此吃 2 维权重列表而非 3 维张量，EP 切分是切张量列表
-    balance: 无辅助损失，靠逐专家偏置 ffn.gate.bias 调节
+    balance: 无辅助损失，靠逐专家偏置 ffn.gate.bias 调节：主干 43 层 + 3 个 MTP 块各一个，另有同样分布的 gate.bias_vl
   residual:
     type: mHC
     multiplier: 4
+    sinkhorn_iters: 20
+    eps: 1.0e-06
     note: 残差流扩成 hc_mult 份并行拷贝，每层带 hc_attn_* / hc_ffn_* 系数张量；V4 到 V4-Flash-Vision-Exp 在 lm_head 前还有一组
       hc_head_*，V4.1 起撤掉。残差宽度乘 4 会改掉所有逐元素算子与 norm 的形状
   decoding:
@@ -176,15 +200,21 @@ arch:
     mtp_layers_note: 每个 MTP 块自带一套与主干同尺寸的 256 专家 MoE（权重实测 mtp.N.ffn.experts.0..255），草稿侧路由专家合计 3×256
       = 768 —— 对 EP 切分与权重账都是大项。V4.1 起缩到 128 专家 / top-3。
   vision:
-    encoder: 自研 ViT：vision.blocks.* 用融合 wqkv 且带 bias，与主干注意力不同构
+    encoder: >-
+      ViT 32 块：attn.wqkv [3072, 1024] 融合且带 bias、wo 带 bias；mlp.w1 [5632, 1024]（2 × 2816，按 w2 的输入维推是门控 MLP）+
+      w2 [1024, 2816]，无 bias；norm 只有 weight；没有位置嵌入张量（config 有 vision_rope_theta 10000）。与主干注意力不同构
+    intermediate: 2816
+    params: 466393088
     layers: 32
     hidden: 1024
     num_heads: 16
     patch_size: 14
     downsample_ratio: 3
     max_image_tokens: 384
-    fusion: 两层 MLP aligner（aligner.w1/w2，带 bias）把视觉特征投到主干 hidden，再以 image_start / image_end / image_newline
-      特殊 token 拼进文本序列
+    fusion: >-
+      两层 MLP aligner（aligner.w1 [4096, 9216] / w2 [4096, 4096]，带 bias；9216 = 1024 × 3²，即 3 × 3 合并）把视觉特征投到主干
+      hidden，再以 4 个可学习的 [4096] 向量 image_start / image_end / image_newline / image_pad（顶层张量，不在 embed 表里）拼进序列。
+      它们是否同时是 tokenizer 的特殊 token，facts/ 里没有
 precision:
   quantization:
     method: fp8
@@ -214,7 +244,9 @@ precision:
       attention: '[128,128]'
       indexer: '[128,128]'
       draft: '[1,32]+[128,128]'
-    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 16 个分片头
+    subsystem_method: >-
+      早先按抽样填（每个子系统 6 个代表张量，读 16 个分片头）。与 DSpark 同名的 72317 个张量形状与 dtype 逐个相同，按元素数的全量复核
+      同 ds-v4-flash / dspark；新增的视觉侧 100% BF16，代表值都不变
     per_subsystem_scale:
       expert: FP8_E8M0
       shared_expert: FP8_E8M0
@@ -222,7 +254,7 @@ precision:
       indexer: FP8_E8M0
       draft: FP8_E8M0
 infra_signals:
-- text: 分模态路由偏置让 router 从「一套偏置」变成「按 token 模态选偏置」，融合实现要多带一个输入
+- text: 第二套路由偏置 gate.bias_vl 让融合 router 至少要多带一个偏置输入；它是不是「按 token 模态选偏置」，按名字推测、没有一手说明
   evidence: judgement
   horizon: now
   axis: moe
@@ -231,13 +263,21 @@ evidence:
   family: official
   kind: derived
   display_name: official
-  released: official
+  released: derived
   license: official
   hf: official
   lineage: judgement
   params: derived
   context: official
+  context.train_native: judgement
   arch: official
+  arch.attention.head_dim_note: derived
+  arch.attention.kv_sharing.note: derived
+  arch.residual.note: derived
+  arch.residual.type: derived
+  arch.vision.encoder: derived
+  arch.vision.fusion: derived
+  arch.vision.params: derived
   arch.attention.type: derived
   arch.norm: derived
   arch.activation: derived
@@ -266,3 +306,87 @@ evidence:
 notes: 多模态入口。两个容易漏的点：视觉塔的 attention 用融合 wqkv 且带 bias（和主干不同构），以及 router 从此有两套偏置。
 open_questions:
 - 视觉 token 与文本 token 在 decode 下如何共享 router，未见公开说明
+- hash 层（tid2eid 查表）上新加的 gate.bias / gate.bias_vl 是否参与选路，形状定不了
+- rms_norm_eps 1e-20 是否为实际推理值未见说明（前代 1e-6，权重不变）
+- KV 的实际落盘精度未进记录，derive.py 按 BF16 兜底；参考实现的写入量化与压缩器状态见 ds-v4-flash 的 open questions
+- 训练精度没有一手来源，故不填 precision.training
+reviewed:
+  date: '2026-10-30'
+  scope:
+  - official
+  - derived
+  - judgement
+  reviewer: 一个只读核查代理找候选，本会话在 facts/ 上逐条复算后写入
+  method: >-
+    核查代理过完整清单（72633 条目）、config、repoinfo、derived，并与 ds-v4-flash-dspark 逐名比对。写进本记录的都由本会话重跑：
+    与 DSpark 的名字集合差（新增 316、删除 0、同名张量形状与 dtype 0 处变化）及新增项的归类、视觉侧元素合计、aligner 与 image_* 的形状、
+    hash 层新增 gate.bias 的层号、config 逐键 diff、扣视觉与扣新增偏置后与 DSpark 主干的对账。条目宽度一条沿用 ds-v4-flash 的 R1。
+review:
+- id: R1
+  field: arch.attention.kv_sharing.measured_per_token
+  severity: wrong
+  claim: global_kv 5456、indexer 1344、index_kv_dim 64
+  finding: 注意力侧与 DSpark / V4-Flash 逐个相同，同一个条目宽度错。应为 2768 + 672
+  resolution: corrected
+  changed_to: 同 ds-v4-flash 的 R1 / R2；滑窗改为元素口径
+- id: R2
+  field: params.counting_note
+  severity: missing
+  claim: excludes [draft]；「total 不含草稿侧 19.8B」
+  finding: >-
+    total 含视觉侧 466,393,088，记录没有说，且与 qwen3.8-27b 的 excludes [vision, draft] 口径不同。扣掉视觉、再扣主干新增的 46 个偏置
+    （11,776）恰是 DSpark 的主干实测值 284,334,567,511 —— 主干的差别只有路由偏置。72633 是条目（36915 权重 + 35718 scale）；total 是实测值；
+    外部核对是 HF tally 304,646,824,126（逐位相同）
+  resolution: corrected
+  changed_to: counting_note 写明 total 含视觉、口径差异、与 DSpark 的对账和外部核对；excludes 不改（这一版没有厂商声明值可对）
+- id: R3
+  field: arch.vision
+  severity: missing
+  claim: 没有 intermediate 与 params；encoder 写「自研 ViT」
+  finding: >-
+    config 有 vision_inter_dim 2816，权重 w2 [1024, 2816]、w1 [5632, 1024] 对得上；视觉侧合计 466,393,088。「自研」在 facts/ 里没有来源。
+    另漏了：MLP 无 bias、norm 只有 weight、没有位置嵌入张量（config 有 vision_rope_theta）
+  resolution: corrected
+  changed_to: 补 intermediate 2816 与 params，encoder 改按形状写、删掉「自研」
+- id: R4
+  field: arch.vision.fusion
+  severity: imprecise
+  claim: 「以 image_start / image_end / image_newline 特殊 token 拼进文本序列」
+  finding: 它们是 4 个 [4096] BF16 顶层张量（另有 image_pad，fusion 漏了），不在 embed 表里；是不是 tokenizer 的特殊 token，facts/ 里没有
+  resolution: corrected
+  changed_to: 改为「4 个可学习的 [4096] 向量」，补 aligner 的 3 × 3 合并
+- id: R5
+  field: lineage.changed_from_predecessor
+  severity: unsupported
+  claim: 「视觉 token 走独立偏置」；「避免两种模态抢同一批专家」
+  finding: 权重只说明每个 gate 多了一份 [256] F32 的 bias_vl（46 个：主干 43 层含 hash 层 + 3 个 MTP 块）。按模态选用是从名字推的，动机是推测
+  resolution: corrected
+  changed_to: text 写明分布并标为推测，benefit 删掉动机，hash 层上的偏置是否参与选路留 open question
+- id: R6
+  field: lineage.changed_from_predecessor
+  severity: missing
+  claim: 三个 axis，没有 rms_norm_eps
+  finding: config 与 DSpark 比还改了 rms_norm_eps 1e-6 → 1e-20（权重不变，V4.1 沿用）。它改 kernel 常数，记录自己的 norm_eps 已是 1e-20，lineage 没写
+  resolution: corrected
+  changed_to: 新增一条 precision 轴的 lineage，并留 open question
+- id: R7
+  field: arch.moe.hash_layers.note
+  severity: imprecise
+  claim: 「与 V4-Flash 相同 本版起这三层也有了 ffn.gate.bias（前代没有）。」
+  finding: 事实对（V4-Flash 与 DSpark 的 L0–L2 只有 gate.weight + tid2eid），但句子缺标点、没说相同的是什么、漏了 bias_vl
+  resolution: corrected
+  changed_to: 写成完整的一句
+- id: R8
+  field: arch.attention.kv_sharing.layer_coverage
+  severity: imprecise
+  claim: 「attn.wkv 与 attn_sink 则在全部 43 层」
+  finding: 两者都还有 3 个 MTP 块各一份，MTP 块没有 compressor / indexer
+  resolution: corrected
+  changed_to: 补主干口径与 MTP 块
+- id: R9
+  field: evidence
+  severity: miscategorized
+  claim: released、vision.encoder / fusion、kv_sharing.note、residual.type / note 继承 official
+  finding: released 2026-08-31 是 repoinfo 的 createdAt；视觉两项与另两项都来自清单
+  resolution: corrected
+  changed_to: 标 derived；train_native 标 judgement；另补 head_dim_note、swiglu_limit、compress_rope_theta、sinkhorn / eps
