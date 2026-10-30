@@ -1,0 +1,368 @@
+# 机械字段来自 config（official）；形状、参数量、专家存储布局与子系统拆分来自完整权重清单
+# （29 分片 5771 条目，无读失败分片，全 BF16）。共享专家个数、GQA 的缓存宽度与
+# 专家粒度的两个比值由清单的张量形状定（derived）。
+id: qwen2-57b-a14b
+family: qwen
+kind: llm
+display_name: Qwen2-57B-A14B
+released: '2024-05-22'
+license: apache-2.0
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen2-57B-A14B
+    locator: config.json @ f29d6a182178
+    accessed: '2026-10-30'
+    note: >-
+      许可取自 HF tags license:apache-2.0 与 cardData license: apache-2.0 ——
+      **这是 Qwen 线第一个 apache-2.0 发布**，同日的稠密旗舰 Qwen2-72B 仍是
+      license_name: tongyi-qianwen。同一天的两档许可不同。
+      BF16 发布，29 分片 5771 个张量，逐分片读头取全，failed_shards 为空
+
+hf:
+  repo: Qwen/Qwen2-57B-A14B
+  sha: f29d6a1821789bc7ad1d8f08bb1b2ef14f5c3d44
+  last_modified: '2024-06-16T07:40:40.000Z'
+  pipeline_tag: text-generation
+  gated: false
+
+lineage:
+  track: side
+  predecessor: qwen1.5-moe-a2.7b
+  successor: qwen3-235b-a22b
+  changed_from_predecessor:
+    - axis: attention
+      text: >-
+        **MoE 这一支第一次配 GQA**：28 query 头 / 4 KV 头 / head_dim 128。
+        清单里 k_proj 与 v_proj 是 [512, 3584]（512 = 4 × 128），q_proj 与 o_proj
+        是 [3584, 3584]。前代是 MHA（16 / 16），所以这一支的注意力形态是
+        跟着同日的稠密旗舰一起换的
+      benefit: >-
+        每层缓存 2 × 4 × 128 = 1024 元素（前代 MHA 是 4096），28 层每 token
+        28,672 元素。配上 128K 上下文是 7.00 GiB —— 在这一代里 KV 彻底不是矛盾，
+        矛盾全在 49.3B 的专家权重上
+    - axis: moe
+      text: >-
+        60 专家 top-4 → **64 专家 top-8**，专家中间维 1408 → 2560。
+        相对稠密中间维的比值从 1/4 收到 **1/7.4**（2560 / 18944），而**单个专家
+        反而大了 3.18 倍**（3 × 3584 × 2560 = 27,525,120 对前代
+        3 × 2048 × 1408 = 8,650,752）—— hidden 从 2048 涨到 3584，细是相对稠密 FFN 细。
+        共享专家仍是 1 个、仍自带 [1, 3584] 的门，中间维 5632 → 20480
+        （= 8 × 2560，恰等于被激活的那 8 个专家之和，也是稠密 18944 的 1.08 倍）。
+        专家仍逐个独立存张量（28 层 × 64 × 3 = 5376 条目）
+      benefit: >-
+        每 token 的 FFN 中间维 = 20480（路由 8 × 2560）+ 20480（共享）= 40960，
+        是一份稠密 FFN（18944）的 2.16 倍 —— 和前代「两份稠密 FFN」的格局一样，
+        但 top_k 从 4 翻到 8 让 grouped GEMM 的批量更大、kernel 效率更好，
+        代价是 EP 通信量翻倍（2 × top_k × hidden）
+    - axis: context
+      text: 8192 → 131072，RoPE theta 仍 1e6
+      benefit: >-
+        MoE 这一支拿到和稠密旗舰同样的 128K。因为 GQA 同时进来，
+        满上下文 KV 只有 7.00 GiB，占权重存储 106.93 GiB 的 6.5%
+    - axis: scale
+      text: 14.3B 总 / A2.7B → 57.4B 总 / A14B
+      benefit: >-
+        总量 ×4、激活量 ×5.1（2,378,008,576 → 13,704,732,160，带宽口径），
+        **激活占比从 16.6% 升到 23.9%** —— 这一代并没有把稀疏度做得更稀，
+        共享专家长到 20480 是主因（它常驻，占激活量的 45.0%）
+
+params:
+  total: 5.7e+10
+  active_decode: 1.4e+10
+  breakdown:
+    expert: 49325000000.0
+    shared_expert: 6165730000.0
+    attention: 822213000.0
+    embed: 544539000.0
+    lm_head: 544539000.0
+    router: 6422528.0
+    norm: 204288.0
+  counting_note: >-
+    total 与 active_decode 都取自模型名（57B-A14B），属厂商声明；breakdown 是本仓按
+    完整权重清单（29 分片 5771 条目，全 BF16、无量化 scale、无低位打包）实测的分项，
+    取 6 位有效数字。实测全量 57,408,658,944，与 HF 平台自己从分片头统计的
+    safetensors tally 逐位相同，对 57B 是 +0.72%（Gate B 的 2% 容差内）。
+    没有草稿块、没有视觉塔，所以没有 excludes。
+    **A14B 对得上的是可比官方口径**：含输入词表的激活参数 14,249,270,784 对 14B
+    是 +1.78%（容差内）；带宽口径 13,704,732,160 是 −2.11%（出容差）。
+    和前代 A2.7B 同样的规律 —— Qwen 的「激活参数」声明含输入词表。
+    激活的专家部分 = 49,325,015,040 × 8/64 = 6,165,626,880，常驻部分 7,539,105,280
+    （注意力 + 共享专家 + router + norm + lm_head），其中**共享专家一项就有
+    6,165,727,232，与被激活的路由专家几乎等量**（占带宽口径 45.0%）。
+    词表与输出层不共享权重（各 544,538,624）。权重存储 106.93 GiB。
+
+context:
+  max: 131072
+
+arch:
+  layers: 28
+  hidden: 3584
+  vocab: 151936
+  norm: RMSNorm
+  norm_eps: 1.0e-06
+  activation: SwiGLU
+  position: RoPE theta 1e6，作用在全部 head_dim 维（config 无 partial_rotary_factor）
+
+  attention:
+    type: GQA
+    num_heads: 28
+    num_kv_heads: 4
+    head_dim: 128
+    head_dim_note: >-
+      head_dim 不是这一代的 config 字段，128 = hidden 3584 / num_attention_heads 28，
+      由清单印证：q_proj 与 o_proj 是 [3584, 3584]，k_proj 与 v_proj 是 [512, 3584]
+      —— 512 = num_key_value_heads 4 × 128。缓存宽度按后者的输出维算
+      （每层 2 × 512 = 1024 元素），按 query 头数折算会得 7168，高估 7 倍。
+      q/k/v 带 bias（q [3584]、k 与 v 各 [512]），o_proj 没有
+    layer_pattern: 28 层同构，每层产出自己的 KV，无跨层共享、无滑窗、无稀疏
+
+  ffn:
+    type: moe
+    layer_pattern: >-
+      28 层全是 MoE 层（decoder_sparse_step: 1，清单里 28/28 层都有 experts 与
+      shared_expert），没有「前 k 层走稠密」的安排
+
+  moe:
+    routed_experts: 64
+    shared_experts: 1
+    top_k: 8
+    intermediate: 2560
+    dense_intermediate: 18944
+    routing: 带辅助损失（router_aux_loss_coef 0.001）
+    balance: aux-loss
+    storage_note: >-
+      专家逐个独立存张量：每层 64 个专家 × 3 个投影（[2560, 3584] / [2560, 3584] /
+      [3584, 2560]），28 层共 5376 个条目。grouped GEMM 吃 2 维张量的列表、
+      EP 切分按张量切 —— 3 维堆叠布局要到 Qwen3.5 一代才出现。
+      共享专家是另一套三张（[20480, 3584] ×2 / [3584, 20480]）加一张 [1, 3584] 的门，
+      走旁路、不经 router
+
+precision:
+  weights_release: [BF16]
+  quantization:
+    per_subsystem:
+      attention: BF16
+      expert: BF16
+      shared_expert: BF16
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+    subsystem_method: >-
+      来自完整权重清单（29 分片 5771 条目）逐项统计，非抽样：每个条目都带 shape 与 dtype，
+      failed_shards 为空，5771 条全是 BF16。这一代没有 quantization_config，
+      不存在 scale 张量与量化块
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/Qwen/Qwen2-57B-A14B
+    visibility: public
+
+bottlenecks:
+  - dimension: weight-bandwidth
+    finding: >-
+      专家权重占总参数 85.9%，而每 token 只激活 8/64。容量与带宽的比
+      （两侧都扣掉输入词表）是 56,864,120,320 / 13,704,732,160 = **4.15 倍**，
+      比前代的 5.89 倍反而小 —— 因为共享专家长到了 20480，常驻部分从
+      1.55 GiB 涨到 11.49 GiB。**稀疏度不是随代际单调变好的**。
+    quantified: >-
+      权重存储 106.93 GiB（含输入词表）；带宽口径每 token 13,704,732,160 × 2 B
+      = 25.52 GiB。共享专家 6,165,727,232 占带宽口径 45.0%，
+      与被激活的路由专家 6,165,626,880 几乎等量
+    visibility: public
+  - dimension: ep-comm
+    finding: >-
+      top_k 从 4 翻到 8，hidden 从 2048 涨到 3584，MoE 层从 24 变 28 ——
+      每 token 的 dispatch + combine 从 786,432 B 涨到 3,211,264 B，**4.08 倍**。
+      专家数只从 60 涨到 64，所以这一代的通信增长几乎全部来自 top_k 与 hidden。
+    quantified: >-
+      2 × top_k 8 × hidden 3584 × 2 B × 28 层 = 3,211,264 B/token（EP>1，BF16 激活）
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      与前代同样的三条 FFN 路径（router top-8、64 个独立张量上的 grouped GEMM、
+      带门的常驻共享专家），形状都变了但算子集合没变。
+      注意力侧从 MHA 换成 GQA 是标准改动。所以这一代对算子适配的要求是
+      「同一套算子换形状」，不是新算子 —— 和后面 Qwen3-Next 引入线性注意力
+      那种改动不是一类。
+    visibility: public
+
+infra_signals:
+  - text: >-
+      「专家更多更细」这句话在这一代要分两个口径讲：相对稠密 FFN 的比值从
+      1/4 收到 1/7.4（更细），而单个专家的绝对参数量从 8,650,752 涨到 27,525,120
+      （大了 3.18 倍，因为 hidden 从 2048 到 3584）。做 grouped GEMM 的 kernel
+      规划看的是绝对尺寸，做负载均衡看的是比值 —— 两个数都要记。
+      README 里 DeepSeek V3 那条「专家更多更细，但单专家反而变大了」是同一件事。
+    evidence: judgement
+    horizon: settled
+    axis: moe
+  - text: >-
+      常驻共享专家在这一代长到了被激活路由专家的同等量级（各约 6.17B），
+      占带宽口径激活参数的 45.0%。MoE 的「稀疏」只对路由那一半成立，
+      共享那一半是百分之百常驻 —— 容量规划时把共享专家算进「稀疏部分」
+      会低估 decode 的权重带宽近一半。
+    evidence: judgement
+    horizon: settled
+    axis: moe
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: official
+  params.breakdown: derived
+  params.counting_note: judgement
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.head_dim: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.shared_experts: derived
+  arch.moe.dense_intermediate: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  precision: official
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  MoE 支线的第二代（2024-05，与稠密旗舰 Qwen2-72B 同日）。
+  结构轴上的两件事：MoE 这一支第一次配 GQA，专家粒度相对稠密 FFN 收细一倍（1/4 → 1/7.4）。
+  算子集合与前代相同，只换形状。Qwen 线此后到 Qwen3 才再发 MoE
+  —— Qwen2.5 一代只有稠密档位（见 qwen2-72b 的 notes）。
+  同代另有 Qwen2-57B-A14B-Instruct 与 GPTQ-Int4、GGUF 发布，都是同一份结构，不另录。
+
+open_questions:
+  - >-
+    KV cache 的实际落盘精度未披露，按 config 的 torch_dtype=bfloat16 兜底，
+    bytes_basis 是 dtype_fallback，不能和别人按落盘格式算出来的理论下限比倍数
+  - >-
+    训练精度没有一手来源：config 的 torch_dtype: bfloat16 说的是发布权重，
+    模型卡正文未核，故不填 precision.training
+  - >-
+    128K 上下文的扩展方式没有一手来源（config 的 rope_scaling 为 null、
+    rope_theta 与前代同为 1e6），context.extension_method 不填
+  - >-
+    shared_expert_gate [1, 3584] 的激活函数在 config 里没有键，
+    本仓按清单的形状只能确定它是单行投影，没有按实现核
+
+reviewed:
+  date: '2026-10-30'
+  scope:
+    - official
+    - derived
+    - judgement
+  reviewer: 本会话逐字段复算
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序对 facts/qwen2-57b-a14b 核：config 全部键、
+    完整权重清单（5771 条目逐项 numel / dtype / 层索引）、repoinfo 的 tags / cardData /
+    sha 与 safetensors tally。
+    参数七项逐个按形状重算并三方比对；专家数由清单的 experts.N 下标集合定（0–63，28/28 层齐全）。
+    缓存乘式的四个因子逐个落到张量形状上（宽度取 k_proj / v_proj 的输出维 512）。
+    两个「专家粒度」的比值分别重算过分子分母（见 R2）。
+    derive.py 以默认 --ep 1 带 --model 重跑，0 处不一致；EP 通信量按 --ep 4 另跑一次核对公式。
+    **原理上核不了的**：128K 的扩展方式、shared_expert_gate 的激活函数、
+    KV 落盘精度、训练精度，都在 open_questions 里。
+review:
+  - id: R1
+    field: params.counting_note
+    severity: unsupported
+    claim: A14B 对得上的是含输入词表的口径
+    finding: >-
+      两个口径都算了：含输入词表 14,249,270,784（+1.78%，容差内）、
+      带宽口径 13,704,732,160（−2.11%，出容差）。前代 qwen1.5-moe-a2.7b 的
+      A2.7B 也是同一个规律（−0.40% 对 −11.9%）。两档同向成立，
+      所以「Qwen 的激活参数声明含输入词表」这句话有两个样本支撑，
+      不是从一个样本推广。做带宽估算必须用前者之外的那个数
+    resolution: confirmed
+  - id: R2
+    field: lineage.changed_from_predecessor
+    severity: imprecise
+    claim: >-
+      草稿里 moe 那条写「专家更细（1408 → 2560 相对稠密中间维的比值从 1/4 收到 1/7.4）」
+    finding: >-
+      只写比值会读成「专家变小了」，而**单个专家的绝对参数量大了 3.18 倍**：
+      3 × 3584 × 2560 = 27,525,120 对前代 3 × 2048 × 1408 = 8,650,752。
+      比值变细的原因是 hidden 从 2048 涨到 3584（稠密中间维跟着从 5632 到 18944），
+      不是专家被切小。README 里 DeepSeek V3/V4.1 那条「专家更多更细 —— 单专家反而变大了」
+      是同一个陷阱，本仓已经栽过一次
+    resolution: corrected
+    changed_to: >-
+      moe 条同时给出比值（1/4 → 1/7.4）与绝对尺寸（×3.18），
+      并把两者的因果（hidden 变宽）写出来
+  - id: R3
+    field: bottlenecks
+    severity: wrong
+    claim: >-
+      草稿里「MoE 让容量与带宽的比继续拉大，这一代比前代更稀疏」
+    finding: >-
+      反了。同口径（两侧都扣输入词表）重算：本代 56,864,120,320 / 13,704,732,160
+      = **4.15 倍**，前代 14,004,619,264 / 2,378,008,576 = 5.89 倍 ——
+      这一代**不如前代稀疏**。根因是共享专家从 5632 涨到 20480（常驻部分
+      1.55 GiB → 11.49 GiB），占了带宽口径激活参数的 45.0%。
+      「稀疏度随代际单调变好」是没有验过的直觉
+    resolution: corrected
+    changed_to: >-
+      bottleneck 改为 4.15 倍并写明比前代小、根因是共享专家长大；
+      infra_signals 补一条「共享专家那一半是百分之百常驻」
+  - id: R4
+    field: arch.moe.shared_experts
+    severity: miscategorized
+    claim: >-
+      草稿把 shared_experts / dense_intermediate / balance / storage_note
+      留在 arch 的 official 前缀继承下
+    finding: >-
+      config 只有 shared_expert_intermediate_size，没有「共享专家个数」这个键；
+      1 个是从清单数出来的（28/28 层各一套 mlp.shared_expert.* 加一张 shared_expert_gate）。
+      dense_intermediate 18944 虽然来自 config 的 intermediate_size，
+      但「它在 MoE 层里并不实际存在、只作为粒度对照」这个用法是本仓的判断。
+      继承 official 会让这些绕过 Gate C
+    resolution: corrected
+    changed_to: 四项与 activation / norm / head_dim / position 一并标 derived
+  - id: R5
+    field: lineage.changed_from_predecessor
+    severity: missing
+    claim: >-
+      草稿的 scale 那条只写「总量 ×4、激活 ×5.1」
+    finding: >-
+      两个倍数都对，但漏了结论：激活占比从 16.6%（2,378,008,576 / 14,004,619,264）
+      升到 23.9%（13,704,732,160 / 56,864,120,320）—— 规模放大的同时稀疏度退了。
+      这件事和 R3 是同一个事实的两种表述，而草稿两处都没说
+    resolution: corrected
+    changed_to: scale 条补上激活占比的变化与主因
+  - id: R6
+    field: license
+    severity: unsupported
+    claim: license apache-2.0
+    finding: >-
+      facts/qwen2-57b-a14b/repoinfo.json 的 tags 是 license:apache-2.0、
+      cardData 是 license: apache-2.0，没有 license_name。
+      **这是 Qwen 线第一个 apache-2.0**，而同日发布的 Qwen2-72B 仍是
+      license:other / tongyi-qianwen —— 同一天两档不同。
+      旗舰 qwen3.8-2.4t-a95b 的 R3 就是从别档抄许可抄错的
+    resolution: confirmed
