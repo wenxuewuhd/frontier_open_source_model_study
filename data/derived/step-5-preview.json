@@ -1,12 +1,12 @@
 {
  "id": "step-5-preview",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T09:05:05+00:00",
+ "generated_at": "2026-10-30T09:05:42+00:00",
  "inputs": {
   "facts_dir": "facts/step-5-preview",
   "config_present": true,
   "shapes_present": true,
-  "model_yaml": "/private/tmp/claude-501/-Users-yuan-Work-frontier-llm-tracking/12648ce4-3f22-4e9e-b647-bf5a6e781055/scratchpad/step5_head.yaml",
+  "model_yaml": "data/models/stepfun/step-5-preview.yaml",
   "ep_size": 4
  },
  "from_shapes": {
