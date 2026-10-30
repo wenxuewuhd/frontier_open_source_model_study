@@ -1,0 +1,361 @@
+id: step-5-preview
+family: stepfun
+kind: vlm
+display_name: Step-5-Preview
+released: '2026-10-15'
+license: other
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/stepfun-ai/Step-5-Preview
+    locator: config.json / README.md @ 364b3b03fed2
+    accessed: '2026-10-30'
+    note: >-
+      FP8 发布（quant_method fp8，只量化路由专家）。仓里 28 个 .safetensors，index 只引 26 个；
+      另两个（model-mtp3-00001、vit.safetensors）是 index 之外的同名副本，逐张量形状与 dtype
+      和 index 引用的那份相同。权重清单逐分片读头取全，按名去重后 2704 个张量 = index 的
+      weight_map 条目数，无读失败分片
+  - kind: repo
+    url: https://huggingface.co/stepfun-ai/Step-5-Preview/tree/364b3b03fed2477aa0953fe855a2c4c8c48ee3cc/inference
+    locator: inference/model.py（Step5Cache / DenseLayerCache / Step5Attention）、inference/kernel.py（DSALayerCache / region summary）
+    accessed: '2026-10-30'
+    note: 厂商随仓发布的参考实现，下载到本地只读、未执行。缓存形状与落盘精度从这里读
+
+hf:
+  repo: stepfun-ai/Step-5-Preview
+  sha: 364b3b03fed2477aa0953fe855a2c4c8c48ee3cc
+  last_modified: '2026-10-15T01:28:10.000Z'
+  gated: false
+
+lineage:
+  track: main
+
+params:
+  total: 602972927296.0
+  breakdown:
+    expert: 584652423168.0
+    attention: 9863955904.0
+    draft: 2515858560.0
+    vision: 1981014784.0
+    shared_expert: 1660944384.0
+    dense_ffn: 679477248.0
+    embed: 527958016.0
+    lm_head: 527958016.0
+    indexer: 435617792.0
+    router: 126908672.0
+    norm: 810752.0
+  counting_note: >-
+    按完整权重清单（index 引用的 26 个分片 + 2 个 index 外副本，按名去重 2704 条目）逐项统计。
+    2704 是 safetensors 条目数，其中 255 条是 weight_scale_inv（FP32，路由专家 FP8 的
+    per-block scale）—— 不计入参数、只计入权重存储；真权重张量 2449 条。无打包容器，numel 即参数数。
+    total 是本仓按清单求和的**实测值**，含视觉塔与投影（1.98B）和 3 个 MTP 层（2.52B）。
+    厂商声明值是模型卡原文「600B total parameters」「27B active parameters」：实测全量比 600B 高 0.50%，
+    扣掉 MTP 层后 600.46B（+0.08%），口径没写。
+    **外部对账对不上**：HF 的 safetensors tally 是 604,339,504,832，比本仓多 1,366,577,536。
+    逐 dtype 看，F8_E4M3 逐位相同，差在 BF16（+1,366,556,672）与 F32（+20,864），scale 不在其中。
+    index 外那份 model-mtp3-00001（10 个张量，BF16 1,123,024,896、F32 24,576）若被 HF 重复计入，
+    能解释 BF16 差额的 82%，剩下 BF16 243,531,776 与 F32 −3,712 找不到对应的张量组。
+    本仓的 2704 条与 index 的 weight_map 逐名相同，所以按 index 口径本仓的数是对的；
+    HF 那边的口径没查清，见 open_questions
+
+context:
+  max: 1048576
+
+arch:
+  layers: 92
+  hidden: 4096
+  vocab: 128896
+  norm: >-
+    零中心 RMSNorm：x / rms(x) × (1 + w)，权重落盘 FP32、以 0 为中心（参考实现 Step5RMSNorm）；
+    按常规 RMSNorm 读会把每层激活乘以约 0。config 另有 fp32_residual_connection=true
+  norm_eps: 1.0e-05
+  activation: SwiGLU，逐层 swiglu_limits 7.0 截断（路由专家与共享专家各一组，config 声明）
+  position: >-
+    逐层 RoPE：滑窗层 theta 1e4、全旋转；全局层 theta 1e7、partial_rotary 1/3（每头 192 维里 64 维），
+    llama3 式 rope_scaling 只作用于全局层（yarn_only_types full_attention）
+
+  attention:
+    type: hybrid
+    num_heads: 64
+    num_kv_heads: 4
+    head_dim: 192
+    v_head_dim: 192
+    sliding_window: 512
+    head_dim_note: >-
+      QK 与 V 每头都是 192：q_proj [12288, 4096] = 64×192，k_proj / v_proj [768, 4096] = 4×192，
+      o_proj [4096, 12288]。q_norm / k_norm 是逐头 [192]，写缓存的 K 是 k_norm 之后的 4×192 = 768 维，
+      与 k_proj 输出维相同（95/95 层一致）。g_proj [64, 4096] 是逐头的标量门（use_head_wise_attn_gate，
+      sigmoid），不是逐通道门
+    layer_pattern: >-
+      主干 92 层里滑窗与全局 3:1：L3, L7, …, L91 共 23 层是全局层（config layer_types 的
+      full_attention），其余 69 层是 sliding_window 512 的滑窗层。23 个全局层全部挂 DSA 稀疏索引器
+      （sparse_config.apply_to_layer_types full_attention，清单上 sparse_indexer_* 恰在这 23 层）。
+      3 个 MTP 层（L92–L94）在 layer_types 里都是滑窗层
+    sparse:
+      mechanism: >-
+        DSA 式区域选择：索引器每 8 个 token（region_block_size）把 index K 压成一个 256 维摘要 ——
+        按 index_z 在 token 轴上逐维 softmax 加权求均值（kernel.py 的 region summary），
+        转成 FP8_E4M3 存入缓存（无 scale）；16 个 index 头分成 4 组（num_provider_groups，与 4 个 KV 组对齐），
+        每组按摘要打分选 topk 512 个区域，再在选中区域上对全量 K/V 做注意力。只有凑满 8 个 token 的区域才写摘要，
+        尾部 token 留在每序列固定的 pending 缓冲里
+      index_n_heads: 16
+      index_head_dim: 256
+      index_kv_dim: 256
+      index_kv_source: >-
+        model.layers.N.self_attn.sparse_indexer_k.weight [256, 4096]（23 层），经 sparse_indexer_k_norm
+        （LayerNorm，[256] 带 bias）后仍是 256 维；sparse_indexer_z [256, 4096] 产出加权用的 logits，
+        不进缓存。sparse_indexer_q [4096, 4096] = 16 头 × 256，index K 只有 1 个头
+        （sparse_indexer_num_k_heads 1），按 16 × 256 算会高估 16 倍；而且 K 不逐 token 存，
+        按 8 token 一个摘要计，每 token 再摊 1/8
+      block_size: 8
+      index_topk: 512
+    kv_sharing:
+      index_kv_source_layers:
+        [3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43, 47, 51, 55, 59, 63, 67, 71, 75, 79, 83, 87, 91]
+      layer_coverage: >-
+        三类缓存的覆盖面各不相同，以下层数都是**主干口径**（L0–L91）：全量 K/V（随上下文增长）只在
+        23 个全局层；区域摘要也在这 23 层；滑窗 K/V（每序列固定 512 个位置）在其余 69 层。
+        参考实现的 Step5Cache 只为 num_hidden_layers（92）层建缓存。MTP 3 层（L92–L94）各带一套同形的
+        q/k/v/o/g 投影、layer_types 为滑窗，开草稿侧时滑窗层是 72 层（69 + 3），全局层与摘要层不变
+      measured_per_token:
+        global_kv: 35328
+        indexer: 736
+        local_window_elems_per_sequence: 54263808
+        note: >-
+          逐因子：全局 K/V 每层 2 × 4 组 × 192 = 1536 元素（k_proj / v_proj 输出 768，k_norm 逐头 [192]），
+          × 23 层 = 35328；区域摘要每层 256 元素 / 8 token = 32 元素/token，× 23 层 = 736；
+          滑窗 512 × 1536 × 69 层 = 54,263,808 元素/序列。主干口径，不含 MTP（开草稿侧滑窗再加
+          3 × 786,432）。另有每个全局层的 pending key / z 缓冲 2 × 8 × 256 BF16（23 层共 94,208 元素、
+          184 KiB/序列）没有计入
+
+  ffn:
+    type: moe
+    layer_pattern: >-
+      L0–L2 与 **L91** 稠密（mlp.gate_proj [13824, 4096]），L3–L90 共 88 层 MoE（config moe_layer_list）。
+      主干最后一层不是 MoE —— 按 first_k_dense 3 推「其余都是 MoE」会多算一层 352 专家。
+      3 个 MTP 层也是稠密 FFN
+
+  moe:
+    routed_experts: 352
+    shared_experts: 1
+    top_k: 8
+    intermediate: 1536
+    first_k_dense: 3
+    dense_intermediate: 13824
+    routing: >-
+      router 打分在 FP32 里做（need_fp32_gate），router_bias [352] FP32 修正选路，
+      moe_router_scaling_factor 3.0，norm_expert_weight；moe.gate.weight 落盘是 BF16
+    balance: router_bias（config use_moe_router_bias）
+    storage_note: >-
+      堆叠存储：每层 moe.gate_proj / up_proj [352, 1536, 4096]、down_proj [352, 4096, 1536]，
+      一个张量装一层全部 352 个专家，gate 与 up 分开不融合。名字里没有 experts，
+      扩展 subsystems.py 之前这 264 个张量会被归成 dense_ffn。共享专家叫 share_expert（单数），
+      中间维 1536 与路由专家同宽
+
+  decoding:
+    mtp_layers: 3
+    mtp_layers_note: >-
+      config num_nextn_predict_layers 3，清单里 L92–L94 三个完整块，与声明一致。每块是滑窗注意力 +
+      稠密 FFN（13824）+ eh_proj [4096, 8192] + 自带一份 shared_head.output [128896, 4096] 词表投影；
+      三份 shared_head.output 合计 1.58B，占草稿侧 2.52B 的 63%。参考实现（inference/）不加载 MTP，
+      模型卡给的 vLLM 命令用 --spec-method mtp
+
+  vision:
+    encoder: Perception Encoder（vision_config.model_type perception_encoder），LayerScale 0.1
+    layers: 47
+    hidden: 1536
+    num_heads: 16
+    patch_size: 14
+    intermediate: 8960
+    out_hidden: 4096
+    params: 1981014784.0
+    fusion: >-
+      两级 3×3 卷积下采样（vit_downsampler1 1536 → 3072、vit_downsampler2 3072 → 6144），
+      再经 vit_large_projector [4096, 6144] 投到主干宽度；image_token_len 169
+
+precision:
+  weights_release: [FP8_E4M3, BF16, FP32]
+  kv_cache: MIXED
+  kv_cache_components:
+    global_kv:
+      dtype: BF16
+    indexer:
+      dtype: FP8_E4M3
+      note: 区域摘要直接由 BF16 转 float8_e4m3fn，没有 scale 张量
+    local_window:
+      dtype: BF16
+    source: >-
+      读参考实现（二手于部署 kernel）：kernel.py 的 DSALayerCache 里 key / value 用调用方传入的 dtype、
+      summary 硬编码 torch.float8_e4m3fn；model.py 构造 Step5Cache 时传 torch.bfloat16；
+      滑窗层的 DenseLayerCache 同样用这个 dtype
+  quantization:
+    method: fp8
+    activation_scheme: dynamic
+    weight_block_size: [128, 128]
+    weight_format: e4m3
+    per_subsystem:
+      expert: FP8_E4M3
+      shared_expert: BF16
+      attention: BF16
+      indexer: BF16
+      dense_ffn: BF16
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: FP32
+      draft: BF16
+      vision: BF16
+    per_subsystem_scale:
+      expert: FP32
+    per_subsystem_block:
+      expert: '[1,128,128]'
+    block_size_note: >-
+      实测：down_proj [352, 4096, 1536] 对 scale [352, 32, 12]、gate/up [352, 1536, 4096] 对 [352, 12, 32]，
+      即每个专家内 [128, 128]（首维 1 是专家轴）—— 与 config 声明一致。
+      FP8 只覆盖 85 层的路由专家：L88–L90 三层的专家是 BF16、不带 scale（config modules_to_not_convert
+      逐层点名），注意力、共享专家、稠密 FFN、indexer 全部 BF16
+    subsystem_method: >-
+      代表精度由 fetch_dtypes.py 抽样（读 26 个分片里的 10 个）得出，按完整清单核过：
+      F8_E4M3 只有 255 个张量（85 层 × gate/up/down），恰是全部 FP8 元素 564,721,090,560；
+      expert 桶按元素数 96.6% 是 FP8，另 3.4% 是 L88–L90 的 BF16 专家 —— 假定「专家整体 FP8」的
+      引擎会在这三层解错。FP32 真参数 2,413,120 个（各类 norm、router_bias、indexer 的
+      sparse_indexer_w [16, 4096] 与 ssmax_s [64]），另有 34,467,840 个 FP32 scale 元素。
+      indexer 桶里 sparse_indexer_w 是 FP32，其余 q/k/z 是 BF16
+
+platforms:
+  - engine: vLLM
+    hardware: NVIDIA
+    status: supported
+    precision: FP8_E4M3
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/stepfun-ai/Step-5-Preview
+    visibility: public
+  - engine: SGLang
+    hardware: NVIDIA
+    status: supported
+    precision: FP8_E4M3
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/stepfun-ai/Step-5-Preview
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      三类缓存三种增长方式：23 个全局层的全量 K/V 随上下文线性增长，区域摘要按 1/8 增长，
+      69 个滑窗层每序列固定。稀疏只省读、不省存 —— 全局层的 K/V 全部保留，
+      摘要只是选区域用的索引
+    quantified: >-
+      元素口径（主干，不含 MTP）：35328 + 736 = 36064 元素/token，另 54,263,808 元素/序列。
+      精度按参考实现（K/V 与滑窗 BF16、摘要 FP8_E4M3 无 scale）：
+      35328 × 2 + 736 × 1 = 71392 B/token，滑窗 103.5 MiB/序列，1M 上下文约 69.8 GiB ——
+      theoretical_floor 口径，不含 page_size 16 的分页粒度，精度是读实现得来的（judgement）。
+      摘要占 per-token 字节的 1.0%，主体是全局层的 K/V
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      区域摘要是一个新的写缓存算子：按 index_z 逐维 softmax 加权求 8 token 的均值、直接转 FP8，
+      只在区域凑满时写；尾部 token 留在 pending 缓冲。按 DeepSeek 式「逐 token 存 index K」
+      实现的索引器在这里对不上 —— 缓存条目数差 8 倍、精度也不同
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      同一层 MoE 里 FP8 与 BF16 专家并存于不同层：L3–L87 与 L88–L90 的专家张量同形不同精度。
+      grouped GEMM 要按层选内核，不能整模型一个专家精度
+    visibility: public
+
+infra_signals:
+  - text: >-
+      本代（Step-5）是第三种「稀疏 + 混合」组合：滑窗与全局 3:1，稀疏只挂在全局层上，
+      索引按 8 token 一个摘要压缩存储。与 GLM-5.3（全层 DSA、逐 token index K）、
+      DeepSeek V4.1（少数层产出 KV）三者的缓存形状各不相同，容量模型不能互套
+    evidence: judgement
+    horizon: now
+    axis: attention
+  - text: >-
+      仓里放了两份 index 外的同名副本（vit.safetensors、model-mtp3-00001），HF 的参数量 tally
+      与 index 口径对不上 1.37B。按「下载全部 .safetensors 再加载」的流程会读到重复张量；
+      按文件求和的显存估算会多算
+    evidence: judgement
+    horizon: now
+    axis: scale
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: official
+  license: official
+  hf: official
+  lineage: official
+  params: derived
+  params.counting_note: derived
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.num_kv_heads: derived
+  arch.attention.v_head_dim: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.attention.sparse.mechanism: judgement
+  arch.attention.sparse.index_kv_dim: derived
+  arch.attention.sparse.index_kv_source: derived
+  arch.attention.kv_sharing.index_kv_source_layers: derived
+  arch.attention.kv_sharing.layer_coverage: derived
+  arch.attention.kv_sharing.measured_per_token: derived
+  arch.attention.kv_sharing.measured_per_token.note: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.routing: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.moe.first_k_dense: derived
+  arch.decoding.mtp_layers: derived
+  arch.decoding.mtp_layers_note: derived
+  arch.vision.params: derived
+  arch.vision.fusion: derived
+  precision: official
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.per_subsystem_scale: derived
+  precision.quantization.per_subsystem_block: derived
+  precision.quantization.block_size_note: derived
+  precision.quantization.subsystem_method: derived
+  precision.kv_cache: judgement
+  precision.kv_cache_components: judgement
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  阶跃星辰家族的旗舰（Preview），model_type step5_vl。本仓第一份 StepFun 记录。
+  层数、层集合、宽度、专家堆叠形状、量化覆盖与 FP32 分布对照完整权重清单核过；
+  缓存形状与精度来自厂商随仓的参考实现（inference/），不是部署 kernel；
+  top_k、topk 512、routed scaling 3.0、swiglu_limits 这类运行期标量只有 config 一个来源。
+  另有 BF16 与 NVFP4 两个发布变体（见 tracking.yaml），本记录只覆盖 FP8 这个仓
+
+open_questions:
+  - >-
+    HF 的 safetensors tally（604,339,504,832）比按 index 去重的清单多 1,366,577,536：
+    F8_E4M3 逐位相同，BF16 +1,366,556,672、F32 +20,864。index 外的 model-mtp3-00001 能解释
+    BF16 1,123,024,896 与 F32 24,576，剩余 BF16 243,531,776 / F32 −3,712 对不上任何张量组。
+    derive.py 的外部参数量对账因此报 MISMATCH；本仓的 2704 条与 weight_map 逐名相同，
+    差额在 HF 侧的统计口径（可能读的是更早的修订或别的文件集），未查清
+  - >-
+    缓存精度取自参考实现：K/V 按 Step5Cache 传入的 dtype（generate.py 传 torch.bfloat16）、
+    摘要硬编码 float8_e4m3fn。vLLM / SGLang 的部署实现可能另用 FP8 KV，未读
+  - >-
+    厂商「27B active」：本仓带宽口径 26.58B、可比官方口径 27.11B（再含输入词表），后者与 27B 相符，
+    但厂商口径没写
+  - >-
+    sparse_indexer_w [16, 4096] 是 FP32 而同组 q/k/z 是 BF16，ssmax_s [64] 在参考实现里是 buffer
+    （按 64 个 query 头，不是 16 个 index 头）—— SSMax 作用在主注意力还是索引打分上，未细读
+  - >-
+    训练精度无一手声明，precision.training 不填

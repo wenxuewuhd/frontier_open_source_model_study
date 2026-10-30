@@ -48,5 +48,6 @@ families:
     flagship: Step-5-Preview
     hf_repo: stepfun-ai/Step-5-Preview
     released: 2026-10-15
-    status: pending
+    model_id: step-5-preview
+    status: recorded
     note: 另有 BF16 与 NVFP4 两个发布变体

@@ -88,7 +88,7 @@ V4 一代的字节是按模型权重 dtype（BF16）兜底来的，V4.1 的是 F
 | GLM-5.3 | MLA | full attention KV + index K | **47,616** | 95,232 B | 0.00 MiB | `dtype_fallback` |
 | MiniMax-M3 | GQA | full attention KV + index K | **68,736** | 137,472 B | 0.00 MiB | `dtype_fallback` |
 | Kimi-K3 | HYBRID | full attention KV + 线性递归状态 | **13,824** | 27,648 B | 226.41 MiB | `dtype_fallback` |
-| Step-5-Preview | *待录* | | | | | |
+| Step-5-Preview | HYBRID | 全局压缩 KV + index K + 滑窗局部 KV | **36,064** | 71,392 B | 103.50 MiB | `theoretical_floor` |
 <!-- kv-roster 生成区结束 -->
 
 行取自 `data/tracking.yaml` 的追踪名册（每个族系的最新旗舰），数取自 `data/derived/`，
