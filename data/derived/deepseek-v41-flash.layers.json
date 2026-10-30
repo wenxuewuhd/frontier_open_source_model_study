@@ -1,7 +1,7 @@
 {
  "id": "deepseek-v41-flash",
  "generated_by": "scripts/extract_layers.py",
- "generated_at": "2026-10-29",
+ "generated_at": "2026-10-30",
  "inputs": {
   "shapes": "facts/deepseek-v41-flash/shapes.json",
   "shapes_sha256_16": "856b2048cc19985d",
@@ -96,11 +96,11 @@
   },
   "local_window": {
    "dtype": "FP8_E4M3",
-   "block": 128,
+   "block": 32,
    "scale_dtype": "FP8_E8M0",
    "data_bytes_per_element": 1,
-   "scale_bytes_per_element": 0.0078125,
-   "bytes_per_element": 1.0078125,
+   "scale_bytes_per_element": 0.03125,
+   "bytes_per_element": 1.03125,
    "basis": "theoretical_floor"
   },
   "source": "data/models/deepseek/deepseek-v41-flash.yaml"
@@ -175,7 +175,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -238,7 +238,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -305,7 +305,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     },
     "global_kv": {
      "entry_elems": 512,
@@ -377,7 +377,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -435,7 +435,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -493,7 +493,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -551,7 +551,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -609,7 +609,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -676,7 +676,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     },
     "global_kv": {
      "entry_elems": 512,
@@ -748,7 +748,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -806,7 +806,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -864,7 +864,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -922,7 +922,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -980,7 +980,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -1051,7 +1051,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     },
     "global_kv": {
      "entry_elems": 512,
@@ -1123,7 +1123,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -1181,7 +1181,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -1239,7 +1239,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -1297,7 +1297,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -1355,7 +1355,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -1423,7 +1423,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     },
     "global_kv": {
      "entry_elems": 512,
@@ -1495,7 +1495,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -1553,7 +1553,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -1611,7 +1611,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -1674,7 +1674,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -1732,7 +1732,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -1790,7 +1790,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -1848,7 +1848,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -1911,7 +1911,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -1969,7 +1969,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -2027,7 +2027,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -2085,7 +2085,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -2148,7 +2148,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -2206,7 +2206,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -2264,7 +2264,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -2322,7 +2322,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -2385,7 +2385,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -2443,7 +2443,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -2501,7 +2501,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -2559,7 +2559,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -2620,7 +2620,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -2678,7 +2678,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   },
@@ -2739,7 +2739,7 @@
      "entry_elems": 512,
      "window": 128,
      "elems_per_sequence": 65536,
-     "bytes_per_sequence": 66048.0
+     "bytes_per_sequence": 67584.0
     }
    }
   }
@@ -6715,15 +6715,15 @@
    "main": {
     "layers": 40,
     "elems_per_sequence": 2621440,
-    "bytes_per_sequence": 2641920.0
+    "bytes_per_sequence": 2703360.0
    },
    "mtp": {
     "layers": 3,
     "elems_per_sequence": 196608,
-    "bytes_per_sequence": 198144.0
+    "bytes_per_sequence": 202752.0
    },
    "elems_per_sequence": 2818048,
-   "bytes_per_sequence": 2840064.0,
+   "bytes_per_sequence": 2906112.0,
    "bytes_basis": "theoretical_floor"
   }
  },

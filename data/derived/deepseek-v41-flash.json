@@ -1,7 +1,7 @@
 {
  "id": "deepseek-v41-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T16:01:52+00:00",
+ "generated_at": "2026-10-30T02:21:23+00:00",
  "inputs": {
   "facts_dir": "facts/deepseek-v41-flash",
   "config_present": true,
@@ -95,7 +95,7 @@
   "full_attention_layers": 4,
   "linear_attention_layers": 0,
   "per_token_bytes": 890.0,
-  "per_sequence_bytes": 2840064.0,
+  "per_sequence_bytes": 2906112.0,
   "per_token_elems": 1600,
   "per_token_elems_bound": "exact",
   "components": {
@@ -132,18 +132,18 @@
     }
    },
    "local_window": {
-    "bytes_per_sequence": 2840064.0,
+    "bytes_per_sequence": 2906112.0,
     "elements_per_sequence": 2818048,
     "bytes_basis": "theoretical_floor",
     "terms": {
      "elements_per_sequence": 2818048,
-     "bytes_per_element": 1.0078125,
+     "bytes_per_element": 1.03125,
      "source": "完整权重清单实测",
      "storage": {
       "dtype": "FP8_E4M3",
-      "block": 128,
+      "block": 32,
       "scale_dtype": "FP8_E8M0",
-      "note": "来源只给了「每 128 元素 1 字节 scale」，E8M0 是按 config 的 scale_fmt=ue8m0 推定的。每位置 512 + 4 = 516 B"
+      "note": "参考实现 _window_kv：kv_norm、末 64 维转 rope 之后，整条 512 维（含 rope 尾巴）act_quant(kv, fp8_block_size=32, scale_fmt=ue8m0, scale_dtype=float8_e8m0fnu)。每 32 元素一个 E8M0 scale，每位置 512 + 16 = 528 B。 vLLM 的 swa_bytes_per_token 在 mxfp8 布局下同为 528（R35）"
      },
      "note": "滑窗局部 KV，每序列固定，不随上下文增长"
     }
@@ -157,9 +157,9 @@
   "bytes_basis": "theoretical_floor"
  },
  "kv_capacity_bytes_at_context": {
-  "4096": 6485504.0,
-  "32768": 32003584.0,
-  "1048576": 936072704.0
+  "4096": 6551552.0,
+  "32768": 32069632.0,
+  "1048576": 936138752.0
  },
  "kv_capacity_basis": "theoretical_floor",
  "active_params": {

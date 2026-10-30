@@ -59,12 +59,12 @@ V4 一代的字节是按模型权重 dtype（BF16）兜底来的，V4.1 的是 F
 | 层覆盖 | 4 源层 L2/8/14/20 | 同 4 层 | 43 层（含 3 个 MTP 块） |
 | 条目数 | 按 `compress_ratio` 折算（2/2/2/1） | 同样折算 | **每序列固定** 128 个位置 |
 | 元素 / token | 512 × 2.5 = **1280** | 128 × 2.5 = **320** | 不随上下文增长 |
-| 落盘格式 | FP4 块 16 + E4M3 scale | FP4 块 32 + E8M0（MXFP4） | FP8_E4M3 块 128 + E8M0 |
-| 每元素字节 | 0.5 + 1/16 = **0.5625** | 0.5 + 1/32 = **0.53125** | 1 + 1/128 = **1.0078125** |
-| 合计 | 720 B/token | 170 B/token | 2,840,064 B/序列 |
+| 落盘格式 | FP4 块 16 + E4M3 scale | FP4 块 32 + E8M0（MXFP4） | FP8_E4M3 块 32 + E8M0 |
+| 每元素字节 | 0.5 + 1/16 = **0.5625** | 0.5 + 1/32 = **0.53125** | 1 + 1/32 = **1.03125** |
+| 合计 | 720 B/token | 170 B/token | 2,906,112 B/序列 |
 
-**890 B/token + 2.71 MiB/序列**，1M 上下文 0.869 GiB。前两类的元素数是逐层量出来的（`fetch_kv_widths.py`），
-落盘格式是读实现得来的**二手来源**，evidence 标 `judgement`，R21 继续开着。
+**890 B/token + 2.77 MiB/序列**，1M 上下文 0.869 GiB。前两类的元素数是逐层量出来的（`fetch_kv_widths.py`），
+落盘格式取自厂商仓的参考实现 `inference/model.py`（R35 起是直接读的源码，此前是二手转述，滑窗那一格因此错成过块 128），但它仍是参考实现的选择，不是 kernel 或实测显存，evidence 标 `judgement`，R21 继续开着。
 
 四个因子都踩过坑，每个都单独错过一次：
 
@@ -83,7 +83,7 @@ V4 一代的字节是按模型权重 dtype（BF16）兜底来的，V4.1 的是 F
 <!-- kv-roster | 由 scripts/kv_table.py 生成，勿手改 -->
 | 族系旗舰 | 类型 | 缓存分量 | 元素/token | 字节/token | 每序列固定 | basis |
 |---|---|---|---|---|---|---|
-| DeepSeek-V4.1-Flash | MQA-LATENT | 全局压缩 KV + index K + 滑窗局部 KV | **1,600** | 890 B | 2.71 MiB | `theoretical_floor` |
+| DeepSeek-V4.1-Flash | MQA-LATENT | 全局压缩 KV + index K + 滑窗局部 KV | **1,600** | 890 B | 2.77 MiB | `theoretical_floor` |
 | Qwen3.8-2.4T-A95B | HYBRID | full attention KV + 线性递归状态 | **47,104** | 94,208 B | 573.56 MiB | `dtype_fallback` |
 | GLM-5.3 | MLA | full attention KV + index K | **47,616** | 95,232 B | 0.00 MiB | `dtype_fallback` |
 | MiniMax-M3 | *待录* | | | | | |
