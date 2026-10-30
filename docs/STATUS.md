@@ -33,6 +33,7 @@ main            babf717   未推 21
 | **E1 逐层产物** | `extract_layers.py` 推广到六族，五个旗舰补齐 `.layers.json`，deepseek 那份重跑逐字节相同 |
 | **E2 四张图** | glm-5.3 / kimi-k3 / qwen3.8-2.4t-a95b / step-5-preview，四个家族会话各画各的，**没有一张套模板** |
 | **M3.1-Flash（原 B1）** | 录为支线。顺带修掉三个页面早就印着的字面量 `undefined`（五道闸当时全绿） |
+| **LayerMap 三修** | 零 MTP 块的轨道错位（`repeat(0,…)` 被钳成 1）、`DT` 补 `MXFP4`、**`recurrent_state` 进表**。第三条原被当成「图的口径限制」，实际是 kimi 93 层里 69 层的缓存去向在表上不存在、而每 token 合计看着像覆盖全部层 |
 
 ## 待办
 
@@ -137,6 +138,14 @@ main            babf717   未推 21
 
 - **D1 `derive.py` 的算术强度按参数量比例折算 decode 权重字节** —— 对混合精度模型不成立
   （kimi-k3 偏 2.34×）。
+- **D3 `derive.py` 没法把「已查清的口径差」标成良性** —— step-5-preview 的外部参数量对账
+  永远报 MISMATCH，而记录第 106–114 行早已查清：HF 的 tally 含两份 index 外的同名副本
+  （`vit.safetensors`、`model-mtp3-00001`），是口径差不是算错。
+  **每次重跑都红一次而每次都该忽略，这会训练人不读红字。**
+  要么让记录能声明「这条 MISMATCH 已解释，依据在 X」，要么对账时认得 index 外副本。
+- **D4 `derive.py` 的 CLI 默认值会静默改坏产物** —— 不只是 `--ep`（A3），`--model` 也一样：
+  不给就把 `inputs.model_yaml` 记成 `null`，并丢掉 `attention_type`、`status: measured`。
+  两个都是「不传就得到一个看起来正常的错产物」。A3 的修法要把两个一起管。
 - **D2 选题漂移没有任何闸口查** —— 五道闸全在查已录记录的内部一致性，
   没有一道问「该录的录全了没有」。B2 就是实例。
 
