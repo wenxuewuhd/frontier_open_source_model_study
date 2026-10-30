@@ -342,6 +342,15 @@ export interface TrackedField {
    *                    读者会把它整个算成架构的功劳
    */
   diff?: boolean | 'both-measured' | 'same-basis';
+  /**
+   * diff 为 'same-basis' 时的第二道闸：两侧口径相同，但这个差**本身不含这个字段要说的信息**，
+   * 返回 true 就不出 from → to。
+   *
+   * 守卫拦住的是「口径不同还算倍数」，拦不住「口径相同但倍数是空的」。
+   * KV 字节正是后者：兜底口径下字节 = 元素 × 2，于是 2a 比 2b 和 a 比 b 是同一个数，
+   * 而元素那一行就在同一张矩阵里。两行并排显示同一个倍数，读者会把下面那行当成精度结论。
+   */
+  uninformative?: (prev: Model, m: Model) => boolean;
   /** diff 为 'same-basis' 时的口径。取不到或为 mixed 都不比：mixed 两边可能是不同的混法 */
   basis?: (m: Model) => string | undefined;
   get: (m: Model) => string | number | undefined;
@@ -383,6 +392,25 @@ export function kvCachePrecision(m: Model): { text: string; declared: boolean } 
 // 没登记的值走 `KV_BASIS_LABEL[b] ?? ''`，那一格字节就成了整表里唯一没有口径标注的数，
 // 读起来像「这个是实打实的」，而 vendor_declared 恰恰是本仓算不出来、照抄厂商的那一行。
 // 取值的定义见 docs/kv-cache-accounting.md
+/**
+ * 这一份的「KV 字节 / token」是不是**元素数的改写**，不含任何精度信息。
+ *
+ * 兜底口径的字节 = 元素 × 每元素字节，而那个「每元素字节」是本仓按模型 dtype 假设的，
+ * 不是查到的。当它恰好是 BF16 的 2 B 时，字节这一列就只是元素列乘了个常数：
+ * 两版相比，2a / 2b 与 a / b 是同一个数。
+ *
+ * 逐份判而不是「凡 dtype_fallback 都算」：兜底 dtype 不一定是 BF16 ——
+ * 一份按 FP8 兜底的记录字节是元素 × 1，和按 BF16 兜底的前代相比，
+ * 字节的倍数就**不**等于元素的倍数，那个差是有内容的，要留着。
+ * 本轮 40 份 dtype_fallback 全部是 ×2（零例外），但这条规律钉在这一代，
+ * 下一代未必成立，所以判据写成逐份算，不写成常数。
+ */
+function bytesAreRewrittenElements(m: Model): boolean {
+  const kv = m.derived?.kv_cache;
+  if (!kv || kv.bytes_basis !== 'dtype_fallback') return false;
+  return Boolean(kv.per_token_elems) && kv.per_token_bytes === kv.per_token_elems * 2;
+}
+
 export const KV_BASIS_LABEL: Record<string, string> = {
   theoretical_floor: '理论下限',
   vendor_declared: '厂商公布',
@@ -484,10 +512,13 @@ export const TRACKED_FIELDS: TrackedField[] = [
   // 而那是本仓查到了什么的差别，不是模型的差别。兜底来源看同表的「KV 字节 / token」
   { key: 'kv_dtype', label: 'KV 缓存精度', axis: 'precision', group: 'precision',
     get: (m) => kvCachePrecision(m).text },
-  // 字节随精度假设变，口径写在数字旁边；口径不同的两版不进变化矩阵 —— 结构变化看上面的元素行
+  // 字节随精度假设变，口径写在数字旁边；口径不同的两版不进变化矩阵 —— 结构变化看上面的元素行。
+  // 口径相同也未必比得出东西：两侧都是「元素在 BF16 假设下的改写」时，字节的倍数
+  // 恒等于元素的倍数，而元素那一行就在同一张矩阵里（见 uninformative）
   { key: 'kv_bytes', label: 'KV 字节 / token', axis: 'precision', group: 'precision',
     diff: 'same-basis',
     basis: (m) => m.derived?.kv_cache?.bytes_basis,
+    uninformative: (a, b) => bytesAreRewrittenElements(a) && bytesAreRewrittenElements(b),
     get: (m) => {
       const kv = m.derived?.kv_cache;
       if (!kv?.per_token_bytes) return undefined;
@@ -543,6 +574,9 @@ export function changesFor(m: Model): FieldChange[] {
         return false;
       }
       if (c.field.diff === 'same-basis') {
+        // 口径相同但差是空的：不出。守卫只管「口径不同不算倍数」，
+        // 管不到「口径相同、倍数却只是另一行的改写」
+        if (c.field.uninformative?.(prev, m)) return false;
         const a = c.field.basis?.(prev);
         const b = c.field.basis?.(m);
         if (!a || !b || a !== b || a === 'mixed') return false;
