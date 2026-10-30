@@ -3,7 +3,12 @@
 > 这是 [video-gen-gate-a.md](video-gen-gate-a.md) §5.5 的展开，供第 1 步执行。
 > Gate A 已定：12 份记录、8 个 family，录入先只做视频。本清单覆盖 **schema + derive.py +
 > subsystems.py** 三件管线改造，以及第一批三份记录的排期（§E、§F）。
-> 编制日期 2026-10-30，**2026-10-30 复核更新一次**（见 §0）。基线 `main` = 37e9404。
+> 编制日期 2026-10-30，复核更新一次（见 §0）。基线 `main` = 37e9404。
+>
+> **进度（2026-10-30）**：§E 第一段已全部落地 —— B1、B2、B3、B4、A3a、C1、C2、C3 都做完了，
+> LLM 侧 15 份记录的 `derive.py` 摘要与 JSON 逐字不变、`validate.py` 0 错 0 警。
+> 剩下卡在 P1 整合之后的是 **A3b**（`dit` 桶内正则扩展）与依赖它的 `fetch_dtypes.py`。
+> 两条实现中发现的事写在 §H。
 
 ## 0. 先决条件：P1 的共享脚本改动
 
@@ -336,7 +341,7 @@ MiniMax-H3 的卡自己把「VAE 压缩」和「patch 后的有效压缩」分�
 
 | 项 | 改什么 |
 |---|---|
-| `scripts/validate.py` | 对生成类跳过 LLM 专属必填；加 B2 的三个新必填；确认 `--list-judgements` 对 `generation.*` 生效 |
+| ~~`scripts/validate.py`~~ | **不用改**（已验证）。它只做 schema 校验 + 证据覆盖 + 防泄漏，三件都与 kind 无关；三个新必填由 schema 的 `allOf` 管，`leaf_paths` 对 `generation.*` 的前缀继承天然生效（列表不展开下标，`buckets` 整体算一个归属点）。拿一份生成类记录跑 `--data-dir` 实测：0 错，只剩「未核查」这类与本改动无关的告警 |
 | `scripts/fetch_hf.py` / `scaffold.py` | 生成类的 config 散在 `transformer/` `vae/` `text_encoder/` 等子目录，还有 LTX-2.3 那种单文件打包、MAGI-2 那种 `.pth`/`.ckpt`。取数要能按子目录分别拉 |
 | `scripts/fetch_dtypes.py` | 复用 A3 的分层归类（和 `derive.py` 共用同一份，不能两套） |
 | `site/` | 生成类详情页的「性能」区默认留空并显式说明（Gate A §5.3）；`data.ts` 的 `diff: 'same-basis'` 守卫要认识「VAE 压缩率 × patch」这个新口径对 |
@@ -421,3 +426,45 @@ MiniMax-H3 的卡自己把「VAE 压缩」和「patch 后的有效压缩」分�
    扫视频时撞见过几个线索，**未经查证，只是名字**：`Qwen-Image-2.1` / `Qwen-Image-2512`、
    `Z-Image-Turbo`（以上阿里）、`HunyuanImage-2.1`（腾讯）、`FLUX.1-Redux-dev`（BFL，
    HunyuanVideo-1.5 的 SigLIP 就从这个 gated 仓取）。要做得先按视频线那套方法正经扫一遍 HF。
+
+---
+
+## H. 实现中发现的两件事
+
+写在这里是因为它们都不在原清单里，而且第二件会影响到每一份记录的数。
+
+### H1. `validate.py` 不用改
+
+原清单 §D 写着要给它加生成类分支。实测不需要：它只做 schema 校验、证据覆盖、防泄漏，
+三件都与 `kind` 无关。三个新必填由 schema 的 `allOf` 条件分支管住；
+证据覆盖的 `leaf_paths` 对 `generation.*` 的前缀继承天然生效，
+而且它不把列表展开到下标，所以 `buckets` / `text_encoders` / `pipeline_stages`
+各算一个归属点，不会要求逐档位写证据。
+
+拿一份生成类记录跑 `validate.py --data-dir <临时目录>` 实测：0 错误，
+只剩「还没有 reviewed 块」这类与本改动无关的告警。
+
+### H2. 时间因果 VAE 的 latent 帧数不是 F / t_vae
+
+**这条会影响每一份视频记录的 token 数，原清单漏了。**
+
+时间因果 VAE 的第一帧单独编码，之后每 `t_vae` 帧压成一帧：
+
+```
+latent 帧数 = (F - 1) / t_vae + 1        而不是  F / t_vae
+```
+
+这正是各家帧数都写成 `4n+1` / `8n+1` 的原因 —— Wan 的 121、HunyuanVideo 的 129、
+LTX 的 `8n+1`、HunyuanVideo-1.5 训练数据要求的 `4n+1`。
+
+按 `F / t_vae` 算，Wan2.2-TI2V-5B 的 121 帧会得到 **30.25** 这种非整数，真值是 **31**。
+偏差只有 2%，但它是**口径错误而不是精度误差**：一路乘下去进单步 FLOPs、再乘步数进端到端。
+而且非整数本身就是「这个公式用错了」的信号，不该被静默吞掉。
+
+`derive.py` 现在按 `generation.vae.causal` 分支，并在任一轴算出非整数时报出来；
+`causal` 未填而时间轴不整除时，提示去填 `causal: true`。
+
+> 顺带一个可以写进专题的数：Wan2.2-TI2V-5B 在 1280×704×121f 下 latent token 27,280，
+> **单步注意力 FLOPs 已经和线性项持平（各占 50%）**。这就是「生成类是计算受限、
+> 不是 decode 那种带宽受限」最直白的证据 —— 而且 n² 那一项还会随分辨率继续涨。
+> 数字本身不要写进分析文字，它在 `data/derived/` 里。

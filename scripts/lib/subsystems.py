@@ -1,7 +1,15 @@
-"""张量名 → 子系统的归类。
+"""张量名 → 组件 → 子系统的归类。
 
 只此一份。derive.py 按它分参数量与带宽，fetch_dtypes.py 按它挑代表张量测精度 ——
 两边用不同的归类会让「参数量里的 expert」和「精度表里的 expert」指的不是同一批张量。
+
+**两层**。生成类的一份权重里常常同时装着 DiT、文本编码器、VAE、声码器、上采样器，
+它们是不同的模型：MiniMax-H3 的文本编码器是 33B 的 Qwen3-VL-32B，LTX-2.3 的单文件里
+DiT、VAE、audio VAE、vocoder 四样打包在一起。先按顶层前缀分到组件（component()），
+再在组件内跑子系统正则（classify()）—— 不分这一层，text_encoder 的 mlp 会和 DiT 自己的
+FFN 合成一桶，一个外部文本编码器被算进 DiT 的参数量。
+
+语言模型的张量没有组件前缀，全部落进缺省桶 backbone，现有行为不变。
 
 顺序即优先级，先匹配先得。draft 排在 expert 之前是有意的：
 mtp.N.ffn.experts.N.w1 属于草稿侧，它的权重要另算一份，不能并进主干 MoE。
@@ -59,6 +67,51 @@ _SPEC = json.load(open(os.path.join(
 
 ORDER = [s["key"] for s in _SPEC]
 LABEL = {s["key"]: s["label"] for s in _SPEC}
+
+
+_COMPONENTS = json.load(open(os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "data", "schema", "components.json")))["components"]
+
+COMPONENT_ORDER = [c["key"] for c in _COMPONENTS]
+COMPONENT_LABEL = {c["key"]: c["label"] for c in _COMPONENTS}
+
+# 前缀 -> 组件。最长前缀优先：MAGI-2 的 model.diffusion_model.video_embeddings_connector.
+# 既匹配 dit 的 model.diffusion_model. 也匹配 connector 的全称，按长度排就不会被 dit 抢走。
+_COMPONENT_PREFIXES = sorted(
+    ((pfx, c["key"]) for c in _COMPONENTS for pfx in c.get("prefixes", [])),
+    key=lambda kv: -len(kv[0]),
+)
+DEFAULT_COMPONENT = "backbone"
+
+
+def component(name: str) -> str:
+    """张量名 -> 顶层组件。
+
+    没有任何组件前缀的落 backbone —— 语言模型的全部张量都走这一支，
+    所以加这一层不改变语言模型侧的任何输出。
+    """
+    for pfx, key in _COMPONENT_PREFIXES:
+        if name.startswith(pfx):
+            return key
+    return DEFAULT_COMPONENT
+
+
+# 组件内还值得按子系统细分的只有主干两类。VAE / 声码器 / 上采样器的内部结构
+# 对负载账没有意义，整块算；文本编码器是另一个模型，它的内部拆分属于它自己那份记录。
+SPLIT_INSIDE = {"backbone", "dit", "refiner"}
+
+
+def classify2(name: str, mtp_from: int = None):
+    """张量名 -> (组件, 子系统)。
+
+    SPLIT_INSIDE 之外的组件不再细分，子系统直接返回组件名本身 ——
+    这样 derive.py 既可以按组件汇总，也可以在主干内按子系统拆，用的是同一次遍历。
+    """
+    comp = component(name)
+    if comp not in SPLIT_INSIDE:
+        return comp, comp
+    return comp, classify(name, mtp_from)
 
 
 _LAYER_IDX = re.compile(r"layers?\.(\d+)\.", re.I)

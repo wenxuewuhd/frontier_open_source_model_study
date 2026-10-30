@@ -1,0 +1,59 @@
+{
+  "$comment": "生成类模型的顶层组件。一份权重里常常同时装着 DiT、文本编码器、VAE、声码器、上采样器 —— 它们是不同的模型，不能先合成一桶再按子系统拆。scripts/lib/subsystems.py 的 component() 读 prefixes 做归类，站点读 label 做展示。顺序按一次推理里的权重搬运量从大到小，不是字母序。语言模型记录全部落进 dit 之外的那个缺省桶（backbone），现有行为不变。",
+  "components": [
+    {
+      "key": "backbone",
+      "label": "主干",
+      "prefixes": [],
+      "note": "缺省桶。语言模型的全部张量、以及生成类里没有组件前缀的 DiT 张量都落在这里"
+    },
+    {
+      "key": "dit",
+      "label": "扩散主干",
+      "prefixes": ["block.", "model.diffusion_model.", "diffusion_model.", "transformer.", "transformer_ref.", "pre_adapter.", "post_adapter."],
+      "note": "MAGI-2 用 block.* 与 pre/post_adapter.*；LTX 用 model.diffusion_model.*；diffusers 布局用 transformer.*。transformer_ref 是 MiniMax-H3 Ref2VA 的第二套主干，单独一套权重但同属 DiT"
+    },
+    {
+      "key": "refiner",
+      "label": "精修主干",
+      "prefixes": ["refiner."],
+      "note": "MAGI-2 的第二阶段，是另一套完整权重，不是 DiT 的一部分"
+    },
+    {
+      "key": "text_encoder",
+      "label": "文本编码器",
+      "prefixes": ["text_encoder.", "text_encoder_2.", "prompt_enhancer.", "text_embedding_projection.", "connectors.", "caption_"],
+      "note": "必须和 DiT 分开。MiniMax-H3 的文本编码器是 33B 的 Qwen3-VL-32B，混进 DiT 的参数量会让主干凭空翻倍"
+    },
+    {
+      "key": "connector",
+      "label": "连接器",
+      "prefixes": ["video_embeddings_connector.", "audio_embeddings_connector.", "model.diffusion_model.video_embeddings_connector.", "model.diffusion_model.audio_embeddings_connector."],
+      "note": "LTX-2.3 的 2.0B connector。19B→22B 的增量主要在这里而不在主干，不单列就看不出代际差分落在哪"
+    },
+    {
+      "key": "vae",
+      "label": "视觉 VAE",
+      "prefixes": ["vae.", "visual_vae.", "turbo_vae.", "first_stage_model."],
+      "note": "解码器是 Transformer 时（MiniMax-H3 的 36 层 ViT 解码器，5.2B）这一桶不是边角料"
+    },
+    {
+      "key": "audio_vae",
+      "label": "音频 VAE",
+      "prefixes": ["audio_vae."],
+      "note": "和 LLM 侧的 audio 子系统不是一回事 —— 那边是音频理解编码器，这边是生成侧的音频自编码器"
+    },
+    {
+      "key": "vocoder",
+      "label": "声码器",
+      "prefixes": ["vocoder."],
+      "note": "LTX-2 的 vocoder 输出 24 kHz，与音频 VAE 的 16 kHz 输入不是同一个采样率"
+    },
+    {
+      "key": "upsampler",
+      "label": "上采样器",
+      "prefixes": ["latent_upsampler.", "temporal_latent_upsampler.", "upsampler.", "diffusion_decoder."],
+      "note": "多阶段流水线里的 latent 上采样与扩散解码器"
+    }
+  ]
+}
