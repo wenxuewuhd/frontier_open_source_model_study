@@ -20,6 +20,20 @@ sources:
       BF16 发布，8 分片 4659 个张量，逐分片读头取全，failed_shards 为空。
       cardData.tags 含 moe 与 pretrained
 
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen1.5-MoE-A2.7B/blob/1a758c50ecb6350748b9ce0a99d2352fd9fc11c9/README.md
+    locator: 'README.md @ 1a758c50ecb6 · Model Details'
+    accessed: '2026-10-30'
+    note: >-
+      按本仓「来源优先级：模型卡 / 技术报告 > 厂商参考实现 > 引擎实现」补的一手来源。
+      Model Details 一段三件事都是声明值：**「`Qwen1.5-MoE-A2.7B` is upcycled from
+      `Qwen-1.8B`」**（本记录原来把 upcycle 放在 open_questions 里）、
+      **「It has 14.3B parameters in total and 2.7B activated parameters during runtime」**
+      （总量与激活量的声明值），以及「inference speed is 1.74 times that of
+      `Qwen1.5-7B`」。同代 Qwen1.5-72B 的卡也提到「an MoE model of 14B with 2.7B
+      activated」—— 两处的总量一个写 14.3B 一个写 14B，本记录取前者（更精确，
+      而且就在本档自己的卡上）。**卡里没有训练精度声明**
+
 hf:
   repo: Qwen/Qwen1.5-MoE-A2.7B
   sha: 1a758c50ecb6350748b9ce0a99d2352fd9fc11c9
@@ -66,6 +80,7 @@ lineage:
         MoE 这一支要到 qwen2-57b-a14b 才拿到 128K
 
 params:
+  total: 1.43e+10
   active_decode: 2.7e+9
   breakdown:
     expert: 12457100000.0
@@ -76,9 +91,13 @@ params:
     router: 2949120.0
     norm: 100352.0
   counting_note: >-
-    **模型名只声明激活参数（A2.7B），不声明总量**，所以 params.total 不填 ——
-    Gate B 的「参数总量」一项相应 skip，这是声明值缺失而不是本仓没算：
-    实测全量 14,315,784,192，与 HF 平台自己从分片头统计的 safetensors tally 逐位相同。
+    total 与 active_decode 都取自**模型卡的 Model Details**（「It has 14.3B parameters
+    in total and 2.7B activated parameters during runtime」），属厂商声明 ——
+    模型名本身只有 A2.7B 这一个数。
+    实测全量 14,315,784,192，与 HF 平台自己从分片头统计的 safetensors tally 逐位相同，
+    对声明的 14.3B 是 **+0.11%**（本仓记录过最接近的几个之一）。
+    同代 Qwen1.5-72B 的卡把它写成「an MoE model of 14B」，对实测是 +2.26%、出容差 ——
+    同一件事两处写法差一位小数就跨过了闸口，所以取本档自己卡上的 14.3B。
     breakdown 是按完整权重清单（8 分片 4659 条目，全 BF16、无量化 scale、无低位打包）
     实测的分项，取 6 位有效数字。
     **A2.7B 对得上的是可比官方口径、不是带宽口径**：含输入词表的激活参数
@@ -262,10 +281,13 @@ open_questions:
     bytes_basis 是 dtype_fallback，不能和别人按落盘格式算出来的理论下限比倍数
   - >-
     训练精度没有一手来源：config 的 torch_dtype: bfloat16 说的是发布权重，
-    模型卡正文未核，故不填 precision.training
+    而**模型卡正文本轮已读**（README.md @ 1a758c50ecb6），没有训练精度声明，
+    故不填 precision.training
   - >-
-    这一代是否由更小的稠密模型 upcycle 而来（专家中间维 1408 恰为稠密 5632 的 1/4、
-    hidden 2048 与 Qwen1.5-1.8B 同宽，两处都像），本仓没有一手来源，没有写进记录
+    （已关闭）upcycle 这件事本轮从模型卡拿到了一手来源：
+    「`Qwen1.5-MoE-A2.7B` is upcycled from `Qwen-1.8B`」。
+    留在这里是为了说明它怎么关掉的 —— 原来只有两处形状上的「像」
+    （专家中间维 1408 恰为稠密 5632 的 1/4、hidden 2048），那不是证据
   - >-
     shared_expert_gate [1, 2048] 的激活函数（sigmoid 还是别的）在 config 里没有键，
     本仓按清单的形状只能确定它是单行投影，没有按实现核
@@ -389,3 +411,33 @@ review:
     changed_to: >-
       两项都改为从 facts/<id>/repoinfo.json 直接读出的值；
       核对脚本已对全部 11 份新记录跑过，现在逐字符一致
+  - id: R8
+    field: params.total
+    severity: missing
+    claim: >-
+      「模型名只声明激活参数（A2.7B），不声明总量，所以 params.total 不填，
+      Gate B 的参数总量一项 skip」
+    finding: >-
+      模型名确实只有 A2.7B，但**模型卡的 Model Details 把总量写出来了**：
+      「It has 14.3B parameters in total and 2.7B activated parameters during runtime」。
+      本仓此前只取 config.json 与 repoinfo.json，没读过卡正文 ——
+      main 并入的新规则（CLAUDE.md 的来源优先级 / skill 规则 10）正是要堵这个口。
+      填上 14.3B 之后 Gate B 的参数总量一项由 skip 变 ok，偏差 **+0.11%**。
+      同一件事在同代 Qwen1.5-72B 的卡上写成「an MoE model of 14B」，
+      对实测是 +2.26%、**出 2% 容差** —— 取哪一处写法决定了闸口过不过，
+      所以记录里把两处都写出来并说明取前者
+    resolution: corrected
+    changed_to: >-
+      补 params.total 1.43e+10 与 sources[1]（README.md @ sha），
+      counting_note 写明两处声明值的差别；upcycle 那条 open question 关掉
+  - id: R9
+    field: open_questions
+    severity: unsupported
+    claim: >-
+      「这一代是否由更小的稠密模型 upcycle 而来……本仓没有一手来源」
+    finding: >-
+      模型卡直说「upcycled from `Qwen-1.8B`」。原来的 open question 靠两处形状上的
+      「像」（专家中间维 1408 = 稠密 5632 / 4、hidden 2048 与 1.8B 同宽）——
+      那是巧合级的证据，而一手来源一直就在卡上没人读
+    resolution: corrected
+    changed_to: open question 改写成「已关闭」并留下它当初为什么不算证据

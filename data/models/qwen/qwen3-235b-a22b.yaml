@@ -22,6 +22,21 @@ sources:
       和同代稠密档一样，config 里也没有 use_qk_norm，而清单 94/94 层都有
       q_norm / k_norm [128]
 
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3-235B-A22B/blob/8efa61729e24bd65b1d152b5ab5409052aa80e65/README.md
+    locator: 'README.md @ 8efa61729e24 · Model Overview'
+    accessed: '2026-10-30'
+    note: >-
+      按本仓「来源优先级：模型卡 / 技术报告 > 厂商参考实现 > 引擎实现」补的一手来源。
+      Model Overview 的声明值：「Number of Parameters: **235B in total and 22B
+      activated**」、「Number of Paramaters (Non-Embedding): **234B**」、
+      「Number of Layers: 94」、「Number of Attention Heads (**GQA**): 64 for Q and 4 for KV」、
+      「Number of Experts: 128」、「Number of Activated Experts: 8」、
+      「Context Length: **32,768 natively** and 131,072 tokens with **YaRN**」。
+      **卡上没有「Number of Shared Experts」这一行** —— 下一代 Qwen3-Next 的卡有，
+      所以「共享专家被去掉」这件事在卡的字段集合上也看得出来，与清单的零命中一致。
+      卡里没有训练精度声明，也没有提 QK-Norm
+
 hf:
   repo: Qwen/Qwen3-235B-A22B
   sha: 8efa61729e24bd65b1d152b5ab5409052aa80e65
@@ -94,12 +109,22 @@ params:
     **A22B 两种口径都在容差内**：含输入词表 22,190,763,520（+0.87%）、
     带宽口径 21,568,433,664（−1.96%，贴着 2% 边）。前两代 MoE 都是含输入词表那一种
     明显更吻合，本代分不出来，所以这一档不作为那条规律的样本。
+    卡上另有一个口径：「Non-Embedding: 234B」—— 实测减**两份**词表
+    （输入 622,329,856 + lm_head 622,329,856）是 233,848,974,848（−0.06%）。
+    **Qwen 的「Non-Embedding」扣的是两份**（同代 Qwen3-32B 的 31.2B 也是这样算的），
+    与本仓「带宽口径含 lm_head」不是一个量。
     激活的专家部分 = 227,096,395,776 × 8/128 = 14,193,524,736，常驻部分 7,374,908,928
     （注意力 + router + norm + lm_head）—— **这一代常驻部分里没有共享专家**。
     词表与输出层不共享权重（各 622,329,856）。权重存储 437.90 GiB。
 
 context:
   max: 40960
+  train_native: 32768
+  extension_method: >-
+    YaRN。模型卡写「Context Length: 32,768 natively and 131,072 tokens with YaRN」，
+    而 config 的 max_position_embeddings 是 **40960**、rope_scaling 为 null。
+    本记录的 context.max 取 config 的 40960（本记录所有 KV 数的上下文基准）；
+    按卡的 131072 部署时 KV 要乘 3.2（7.34 GiB → 23.50 GiB）
 
 arch:
   layers: 94
@@ -235,7 +260,7 @@ evidence:
   arch.norm: derived
   arch.activation: derived
   arch.position: derived
-  arch.attention.type: derived
+  arch.attention.type: official
   arch.attention.head_dim_note: derived
   arch.attention.layer_pattern: derived
   arch.ffn.type: derived
@@ -268,14 +293,17 @@ open_questions:
   - >-
     QK-Norm 作用在 rope 之前还是之后没有读实现，只知道它按 head_dim 归一（[128]）
   - >-
-    40960 之上的长上下文做法不在 config 里（rope_scaling 为 null），
-    context 只记声明值，不填 extension_method
+    config 的 max_position_embeddings 是 40960，而**模型卡写「32,768 natively and
+    131,072 tokens with YaRN」** —— 本仓取 config 的 40960 作 context.max
+    （引擎实际用的窗口，也是本记录所有 KV 数的上下文基准），
+    train_native 与 extension_method 按卡填。40960 本身的来历没有来源
   - >-
     KV cache 的实际落盘精度未披露，按 config 的 torch_dtype=bfloat16 兜底，
     bytes_basis 是 dtype_fallback
   - >-
     训练精度没有一手来源：config 的 torch_dtype: bfloat16 说的是发布权重，
-    模型卡正文未核，故不填 precision.training
+    而**模型卡正文本轮已读**（README.md @ 8efa61729e24），Model Overview 只列规模、
+    层数、头数、专家数与上下文，没有训练精度声明，故不填 precision.training
   - >-
     删掉共享专家之后负载均衡只剩 aux-loss（router_aux_loss_coef 0.001），
     有没有别的无损均衡手段（如 bias 纠偏）在 config 与清单里都看不到 ——
@@ -391,3 +419,23 @@ review:
     changed_to: >-
       两项都改为从 facts/<id>/repoinfo.json 直接读出的值；
       核对脚本已对全部 11 份新记录跑过，现在逐字符一致
+  - id: R8
+    field: sources
+    severity: missing
+    claim: >-
+      本记录原来只有 config.json 一个来源；「共享专家被去掉」只靠 config 缺键
+      与清单零命中两条，上下文只记了 config 的 40960
+    finding: >-
+      本轮按 main 并入的来源优先级规则补读模型卡，三件事有了一手来源或旁证：
+      (1) 声明值「235B in total and 22B activated」与「Non-Embedding: 234B」——
+      后者让 Qwen 的 Non-Embedding 口径在本档上又验证一次：扣**两份**词表
+      得 233,848,974,848（−0.06%），扣一份对不上；
+      (2) 头数那一行把类型写成 (GQA)，arch.attention.type 由 derived 升为 official；
+      (3) **卡上没有「Number of Shared Experts」这一行**，而下一代 Qwen3-Next 的卡有
+      —— 字段集合的差异与清单的零命中同向，R1 的否定结论又多了一条独立旁证。
+      另外卡写「32,768 natively and 131,072 with YaRN」，与 config 的 40960 三个数
+      互不相同，本记录把三者都写出来并说明取哪一个当基准
+    resolution: corrected
+    changed_to: >-
+      新增 sources 的 modelcard 条目；counting_note 补 Non-Embedding 口径；
+      arch.attention.type 升 official；补 context.train_native 与 extension_method

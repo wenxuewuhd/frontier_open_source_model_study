@@ -1,7 +1,7 @@
 {
  "id": "qwen1.5-moe-a2.7b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T06:19:41+00:00",
+ "generated_at": "2026-10-30T07:08:40+00:00",
  "inputs": {
   "facts_dir": "facts/qwen1.5-moe-a2.7b",
   "config_present": true,
@@ -146,8 +146,10 @@
   },
   {
    "item": "参数总量",
-   "status": "skip",
-   "why": "YAML 声明 缺失"
+   "YAML 声明": 14300000000.0,
+   "shapes 实测": 14315784192.0,
+   "delta_pct": 0.11,
+   "status": "ok"
   },
   {
    "item": "外部参数量对账",

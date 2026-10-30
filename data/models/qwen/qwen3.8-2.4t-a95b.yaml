@@ -16,6 +16,26 @@ sources:
       许可不是 apache-2.0：HF tags 为 license:other，模型卡 cardData 为
       license_name: qwen3.8-max（license_link: LICENSE）。同代 27B 是 apache-2.0，两档许可不同
 
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B/blob/207bd685a7e3696cfaff12ded7c6a7ea0f88c996/README.md
+    locator: 'README.md @ 207bd685a7e3 · Model Overview'
+    accessed: '2026-10-30'
+    note: >-
+      P1 历史回溯时按本仓「来源优先级：模型卡 / 技术报告 > 厂商参考实现 > 引擎实现」
+      补的一手来源（本记录原先只有 config.json，见 R11）。Model Overview 的声明值：
+      「Number of Parameters: **2.4T in total and 95B activated**」、
+      「Hidden Dimension: 8192」、「Token Embedding: **248,320 (Padded)**」、
+      「Number of Layers: 92」、「Hidden Layout: **23 × (3 × (Gated DeltaNet → MoE)
+      → 1 × (Gated Attention → MoE))**」、
+      「**Gated DeltaNet**: 128 for V and 16 for QK, Head Dimension 128」、
+      「**Gated Attention**: 64 for Q and 4 for KV, Head Dimension 256,
+      **Rotary Position Embedding Dimension: 64**」、
+      「Number of Experts: 512」「Number of Activated Experts: **10 Routed + 1 Shared**」
+      「Expert Intermediate Dimension: 2048」、「MTP: trained with multiple steps」、
+      「Context Length: **262,144 natively and extensible up to 1,010,000 tokens**」。
+      类型是「Causal Language Model」——**没有 Vision Encoder 那一级**，
+      与清单里 visual.* 零命中一致。**卡里没有训练精度，也没有每 token 缓存字节数**
+
 hf:
   repo: Qwen/Qwen3.8-2.4T-A95B
   pipeline_tag: text-generation
@@ -108,6 +128,11 @@ params:
 
 context:
   max: 262144
+  train_native: 262144
+  extension_method: >-
+    模型卡写「262,144 natively and extensible up to 1,010,000 tokens」，
+    没有说用什么方法扩。按 1,010,000 部署时本记录的 per_token 数要乘 3.85
+    （23.00 GiB → 88.62 GiB），每序列状态不变
 
 arch:
   layers: 92
@@ -146,7 +171,9 @@ arch:
       enabled: true
       type: swish
     linear_state:
-      mechanism: 门控线性注意力 + 短卷积
+      mechanism: >-
+        **Gated DeltaNet**（厂商名，模型卡 Model Overview）：门控线性注意力 + 短卷积。
+        卡把这一支的头数写成「128 for V and 16 for QK」，与 config 一致
       num_key_heads: 16
       num_value_heads: 128
       key_head_dim: 128
@@ -265,7 +292,7 @@ evidence:
   arch: official
   arch.norm: derived
   arch.activation: derived
-  arch.moe.shared_experts: derived
+  arch.moe.shared_experts: official
   arch.attention.head_dim_note: derived
   arch.attention.type: judgement
   arch.attention.layer_pattern: derived
@@ -300,8 +327,9 @@ open_questions:
   - KV cache 的实际存储精度未披露，推导时按模型 dtype 兜底
   - FP8 发布版的量化配置与 BF16 版的差异未核对
   - >-
-    训练精度没有一手来源：config 的 dtype: bfloat16 说的是发布权重，模型卡正文未核，
-    故不填 precision.training
+    训练精度没有一手来源：config 的 dtype: bfloat16 说的是发布权重，
+    而**模型卡正文已读**（README.md @ 207bd685a7e3，P1 轮补取），Model Overview 只列结构与规模，
+    没有训练精度声明，故不填 precision.training
   - >-
     config 的 output_gate_type: swish 只有一个键，而门在权重里有两处（full 层 q_proj 的
     后一半、线性层的 in_proj_z）。swish 作用在哪一处或两处，未按实现核
@@ -451,3 +479,29 @@ review:
       补 predecessor: qwen3.5-397b-a17b，并把 changed_from_predecessor 改写成
       五条相对前代的实际差异（scale / attention / moe / modality / precision），
       每条带可核的形状或条目数
+  - id: R11
+    field: sources
+    severity: missing
+    claim: >-
+      本记录只有 config.json 一个来源；R6 把 shared_experts 判成 derived
+      （「config 没有共享专家个数的键，1 个是从清单数出来的」）
+    finding: >-
+      main 并入的新规则（CLAUDE.md「来源优先级：模型卡 / 技术报告 > 厂商参考实现 >
+      引擎实现」与 skill 规则 10）要求精度与结构按厂商发布的说法填。
+      本轮（P1 历史回溯）补读模型卡，四件事有了一手来源：
+      (1) 「Number of Activated Experts: **10 Routed + 1 Shared**」——
+      **shared_experts 由 derived 升为 official**，R6 的判断本身没错，只是当时没读卡；
+      (2) 「Hidden Layout: 23 × (3 × (Gated DeltaNet → MoE) → 1 × (Gated Attention → MoE))」
+      与 config 的 layer_types、清单的层集合三方一致；
+      (3) 机制的厂商名是 **Gated DeltaNet** 与 **Gated Attention**；
+      (4) 「Rotary Position Embedding Dimension: 64」= head_dim 256 × 0.25。
+      另外卡的类型是「Causal Language Model」、**没有 Vision Encoder 那一级**，
+      与前代 Qwen3.5-397B-A17B 的卡（有那一级）对照，
+      「旗舰在 3.5 是 vlm、3.8 回到纯文本」这件事在卡上也看得出来。
+      **卡里没有每 token 的缓存字节数**，所以 main 新加的
+      kv_sharing.declared_per_token_bytes 本档填不了 —— 缓存侧仍无外部锚
+    resolution: corrected
+    changed_to: >-
+      新增 sources 的 modelcard 条目；arch.moe.shared_experts 升 official；
+      linear_state.mechanism 写上厂商名；补 context.train_native 与 extension_method；
+      训练精度那条 open question 改为「卡已读、无声明」

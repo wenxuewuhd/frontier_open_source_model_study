@@ -22,6 +22,21 @@ sources:
       是从权重读出来的（同代的 Qwen3-Coder-480B-A35B 的 config 才把
       use_qk_norm: true 显式写出来）
 
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3-32B/blob/9216db5781bf21249d130ec9da846c4624c16137/README.md
+    locator: 'README.md @ 9216db5781bf · Model Overview'
+    accessed: '2026-10-30'
+    note: >-
+      按本仓「来源优先级：模型卡 / 技术报告 > 厂商参考实现 > 引擎实现」补的一手来源，
+      它改掉了本记录的参数量口径（见 R8）。Model Overview 的声明值：
+      「Number of Parameters: **32.8B**」、「Number of Paramaters (Non-Embedding): **31.2B**」、
+      「Number of Layers: 64」、「Number of Attention Heads (GQA): 64 for Q and 8 for KV」、
+      「Context Length: **32,768 natively** and 131,072 tokens with **YaRN**」。
+      头数那一行把类型直接写成 **(GQA)**，所以 arch.attention.type 由 derived 升为 official。
+      注意最后一条与 config 的 max_position_embeddings 40960 **不一致**——
+      卡说原生 32768、靠 YaRN 到 131072，config 给的是 40960。
+      **卡里没有训练精度声明，也没有提 QK-Norm**（那件事只有权重看得见）
+
 hf:
   repo: Qwen/Qwen3-32B
   sha: 9216db5781bf21249d130ec9da846c4624c16137
@@ -67,8 +82,7 @@ lineage:
         与前代同样的格局。稠密这一支在 FFN 形态上一直到 Qwen3.5 才变
 
 params:
-  total: 3.2e+10
-  excludes: [embed]
+  total: 3.28e+10
   breakdown:
     dense_ffn: 25165800000.0
     attention: 6039800000.0
@@ -76,24 +90,33 @@ params:
     lm_head: 777912000.0
     norm: 676864.0
   counting_note: >-
-    total 取自模型名（32B），属厂商声明；breakdown 是本仓按完整权重清单
-    （17 分片 707 条目，全 BF16、无量化 scale、无低位打包）实测的分项，取 6 位有效数字。
-    实测全量 32,762,123,264，与 HF 平台自己从分片头统计的 safetensors tally 逐位相同。
-    **名字不按全量算**：全量对 32B 是 +2.38%，超出 Gate B 的 2% 容差，取整是 33B；
-    扣掉输入词表（777,912,320）后是 31,984,210,944，对 32B 是 **−0.05%**。
-    所以 excludes 取 [embed]，和同在稠密支线的 qwen2.5-14b-1m 一致
-    （那一档是 +5.50% 对 −0.06%）。**这是判断，没有一手说明。**
-    两档都是「扣掉输入词表后千分之一以内吻合」，而 qwen1.5-72b / qwen2-72b
-    两种读法都落在容差内、分不出来（见各自的 counting_note）。
-    lm_head 仍在声明口径内（它每步对全词表做 GEMM，和只 gather 一行的输入词表不是一回事）。
+    total 取自**模型卡**（「Number of Parameters: 32.8B」），不是模型名里的 32B ——
+    卡上的 32.8B 对实测 32,762,123,264 是 **−0.12%**，而模型名的 32B 是 +2.38%、
+    超出 Gate B 的 2% 容差。模型卡才是厂商声明（见 R8），所以**不需要任何 excludes**。
+    breakdown 是本仓按完整权重清单（17 分片 707 条目，全 BF16、无量化 scale、
+    无低位打包）实测的分项，取 6 位有效数字；实测全量与 HF 平台自己从分片头统计的
+    safetensors tally 逐位相同。
+    卡上另有一个口径：「Number of Paramaters (Non-Embedding): 31.2B」——
+    实测减**两份**词表（输入 777,912,320 + lm_head 777,912,320）是
+    31,206,298,624（+0.02%，几乎逐位），只减一份是 31,984,210,944（+2.5%、对不上）。
+    所以 **Qwen 的「Non-Embedding」把输入词表和输出头都扣掉了**，
+    与本仓的「带宽口径」（含 lm_head，因为它每步对全词表做 GEMM）不是同一个量。
     词表与输出层不共享权重（各 777,912,320，tie_word_embeddings: false）。
     权重存储 61.02 GiB。激活参数两个口径：带宽口径 31,984,210,944
-    （恰等于本记录的声明口径）、可比官方口径 32,762,123,264。
+    （不含只 gather 一行的输入词表，但含 lm_head）、
+    可比官方口径 32,762,123,264（含输入词表，稠密模型下恰等于全量）。
     注意 norm 一项（676,864）比前代同类大：除两个 layernorm 外，
     每层多了 q_norm 与 k_norm 各 [128]。
 
 context:
   max: 40960
+  train_native: 32768
+  extension_method: >-
+    YaRN。模型卡写「Context Length: 32,768 natively and 131,072 tokens with YaRN」，
+    而 config 的 max_position_embeddings 是 **40960**、rope_scaling 为 null ——
+    三者不一致。本记录的 context.max 取 config 的 40960（引擎实际用的窗口，
+    也是本记录所有 KV 数的上下文基准），train_native 取卡的 32768。
+    按卡的 131072 部署时，本记录的 KV 数要乘 3.2（10.00 GiB → 32.00 GiB）
 
 arch:
   layers: 64
@@ -200,14 +223,13 @@ evidence:
   lineage: judgement
   params: official
   params.breakdown: derived
-  params.excludes: judgement
   params.counting_note: judgement
   context: official
   arch: official
   arch.norm: derived
   arch.activation: derived
   arch.position: derived
-  arch.attention.type: derived
+  arch.attention.type: official
   arch.attention.head_dim_note: derived
   arch.attention.layer_pattern: derived
   arch.ffn.type: derived
@@ -235,17 +257,23 @@ open_questions:
     QK-Norm 作用在 rope 之前还是之后没有读实现，只知道它按 head_dim 归一
     （张量形状 [128]）。这件事影响算子融合方式，但不影响参数量与缓存账
   - >-
-    40960 之上的长上下文做法（官方文档提到的 YaRN 一类）不在 config 里
-    （rope_scaling 为 null），所以 context 只记声明值 40960，不填 extension_method
+    config 的 max_position_embeddings 是 40960，而**模型卡写「32,768 natively and
+    131,072 tokens with YaRN」** —— 三个数互不相同，本仓取 config 的 40960 作
+    context.max（它是引擎实际用的窗口，也是本记录所有 KV 数的上下文基准），
+    train_native 与 extension_method 按卡填。40960 这个值本身的来历没有来源，
+    **不要按「32768 + 8192 生成预算」这类拼法去解释** —— 那是猜
   - >-
     KV cache 的实际落盘精度未披露，按 config 的 torch_dtype=bfloat16 兜底，
     bytes_basis 是 dtype_fallback
   - >-
     训练精度没有一手来源：config 的 torch_dtype: bfloat16 说的是发布权重，
-    模型卡正文未核，故不填 precision.training
+    而**模型卡正文本轮已读**（README.md @ 9216db5781bf），Model Overview 只列规模、
+    层数、头数与上下文，没有训练精度声明，故不填 precision.training
   - >-
-    params.excludes 取 [embed] 是判断：名字里的 32B 对全量是 +2.38%（出容差）、
-    对扣掉输入词表后是 −0.05%，没有一手说明哪种才是厂商口径
+    （已关闭）params 的口径本轮由模型卡定下：声明值是 32.8B（全量，−0.12%），
+    不是模型名里的 32B，所以 excludes 删掉了。卡上的 Non-Embedding 31.2B
+    是「扣掉输入词表与输出头」的第三种口径（实测 31,206,298,624，+0.02%），
+    与本仓的带宽口径不同，已写进 counting_note
 
 reviewed:
   date: '2026-10-30'
@@ -363,3 +391,24 @@ review:
     changed_to: >-
       两项都改为从 facts/<id>/repoinfo.json 直接读出的值；
       核对脚本已对全部 11 份新记录跑过，现在逐字符一致
+  - id: R8
+    field: params.total
+    severity: wrong
+    claim: >-
+      total 取自模型名的 32B，并为此设了 excludes: [embed]（全量 +2.38% 出容差、
+      扣输入词表后 −0.05%），还把这个「规律」写成与 qwen2.5-14b-1m 一致
+    finding: >-
+      **模型卡给的声明值是 32.8B**（对实测 −0.12%），不是模型名里的 32B。
+      本仓此前只取 config.json 与 repoinfo.json、没读卡正文，于是拿模型名当声明值，
+      又为了让它落进 2% 容差发明了 excludes: [embed] ——
+      **两份记录（本档与 qwen2.5-14b-1m）发明了同一个不存在的口径，还互相引为佐证**。
+      卡上的「Non-Embedding: 31.2B」才是厂商的第二个口径，它扣的是**两份**词表
+      （输入 + lm_head，实测 31,206,298,624、+0.02%），
+      而本仓当初扣的是一份（31,984,210,944，对 31.2B 是 +2.5%）。
+      口径猜对了一半：知道该扣词表，不知道要扣两份，也不知道声明值是 32.8B
+    resolution: corrected
+    changed_to: >-
+      total 改为 3.28e+10、删掉 excludes，counting_note 写明三个口径
+      （全量 / Non-Embedding / 带宽）各自的数与偏差；
+      新增 sources 的 modelcard 条目；补 context.train_native 32768 与
+      extension_method（YaRN → 131072），并写明 config 的 40960 与卡不一致

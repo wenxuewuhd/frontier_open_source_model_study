@@ -22,6 +22,21 @@ sources:
       dual_chunk_attention_config 是这一代独有的键：chunk_size 262144、
       local_size 8192、original_max_position_embeddings 262144
 
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen2.5-14B-Instruct-1M/blob/620fad32de7bdd2293b3d99b39eba2fe63e97438/README.md
+    locator: 'README.md @ 620fad32de7b · 规格清单 / Processing Ultra-Long Texts'
+    accessed: '2026-10-30'
+    note: >-
+      按本仓「来源优先级：模型卡 / 技术报告 > 厂商参考实现 > 引擎实现」补的一手来源，
+      它改掉了本记录的参数量口径（见 R6）。卡上的声明值：
+      「Architecture: transformers with **RoPE, SwiGLU, RMSNorm, and Attention QKV bias**」、
+      「Number of Parameters: **14.7B**」、「Number of Paramaters (Non-Embedding): **13.1B**」、
+      「Number of Layers: 48」、「Number of Attention Heads (GQA): 40 for Q and 8 for KV」、
+      「Context Length: **Full 1,010,000 tokens** and generation 8192 tokens」。
+      卡另建议用厂商自带的 vLLM 分支（「introduces sparse attention and length
+      extrapolation methods」）—— 那是**引擎实现**，按来源优先级是最低一档，
+      本记录只记它存在、不拿它定任何数。**卡里没有训练精度声明**
+
 hf:
   repo: Qwen/Qwen2.5-14B-Instruct-1M
   sha: 620fad32de7bdd2293b3d99b39eba2fe63e97438
@@ -57,8 +72,7 @@ lineage:
         是上下文从 128K 到 1M（×7.7），不是结构变差
 
 params:
-  total: 1.4e+10
-  excludes: [embed]
+  total: 1.47e+10
   breakdown:
     dense_ffn: 10192200000.0
     attention: 3020240000.0
@@ -66,18 +80,22 @@ params:
     lm_head: 778568000.0
     norm: 496640.0
   counting_note: >-
-    total 取自模型名（14B），属厂商声明；breakdown 是本仓按完整权重清单
+    total 取自**模型卡**（「Number of Parameters: 14.7B」），不是模型名里的 14B ——
+    两者差 5.5%，而模型卡才是厂商声明（见 R6）。breakdown 是本仓按完整权重清单
     （8 分片 579 条目，全 BF16、无量化 scale、无低位打包）实测的分项，取 6 位有效数字。
-    实测全量 14,770,033,664，与 HF 平台自己从分片头统计的 safetensors tally 逐位相同。
-    **名字不按全量算**：全量对 14B 是 +5.50%，远超 Gate B 的 2% 容差；
-    扣掉输入词表（778,567,680）后是 13,991,465,984，对 14B 是 **−0.06%**。
-    两者差一个量级，所以 excludes 取 [embed] —— 这是判断（没有一手说明），
-    依据是两种读法的偏差相差 90 倍，而本档没有草稿块或视觉塔可扣。
-    注意这和 Qwen3.8 两档的情况不同：那两档扣的是草稿块与视觉塔，输入词表仍在 total 里。
+    实测全量 14,770,033,664，与 HF 平台自己从分片头统计的 safetensors tally 逐位相同，
+    对声明的 14.7B 是 **+0.48%**（声明值取整到一位小数所致），所以**不需要任何 excludes**。
+    卡上另有一个口径：「Number of Paramaters (Non-Embedding): 13.1B」——
+    实测 total 减**两份**词表（输入 778,567,680 + lm_head 778,567,680）是
+    13,212,898,304（+0.86%），只减一份是 13,991,465,984（+6.8%、对不上）。
+    所以 **Qwen 的「Non-Embedding」把输入词表和输出头都扣掉了**，
+    与本仓的「带宽口径」（含 lm_head，因为它每步对全词表做 GEMM）不是同一个量 ——
+    三个数都在本记录里，引用时要看清是哪一个。
     词表与输出层不共享权重（各 778,567,680，tie_word_embeddings: false），
     lm_head 仍在 total 里（它每步对全词表做 GEMM，和只 gather 一行的输入词表不是一回事）。
     权重存储 27.51 GiB。激活参数两个口径：带宽口径 13,991,465,984
-    （恰等于本记录的声明口径）、可比官方口径 14,770,033,664。
+    （不含只 gather 一行的输入词表）、可比官方口径 14,770,033,664
+    （含输入词表，稠密模型下恰等于声明的全量）。
 
 context:
   max: 1010000
@@ -200,13 +218,12 @@ evidence:
   lineage: judgement
   params: official
   params.breakdown: derived
-  params.excludes: judgement
   params.counting_note: judgement
   context: official
   context.extension_method: derived
   arch: official
-  arch.norm: derived
-  arch.activation: derived
+  arch.norm: official
+  arch.activation: official
   arch.position: derived
   arch.attention.type: derived
   arch.attention.head_dim: derived
@@ -247,10 +264,13 @@ open_questions:
     bytes_basis 是 dtype_fallback
   - >-
     训练精度没有一手来源：config 的 torch_dtype: bfloat16 说的是发布权重，
-    模型卡正文未核，故不填 precision.training
+    而**模型卡正文本轮已读**（README.md @ 620fad32de7b），规格清单只到 Architecture
+    那一行（RoPE / SwiGLU / RMSNorm / QKV bias），没有训练精度声明，
+    故不填 precision.training
   - >-
-    params.excludes 取 [embed] 是判断：名字里的 14B 对全量是 +5.50%、
-    对扣掉输入词表后是 −0.06%，没有一手说明哪种才是厂商口径
+    （已关闭）params 的口径本轮由模型卡定下：声明值是 14.7B（全量，+0.48%），
+    不是模型名里的 14B，所以 excludes 删掉了。卡上的 Non-Embedding 13.1B
+    是「扣掉输入词表与输出头」的第三种口径，与本仓的带宽口径不同，已写进 counting_note
 
 reviewed:
   date: '2026-10-30'
@@ -357,3 +377,27 @@ review:
     changed_to: >-
       两项都改为从 facts/<id>/repoinfo.json 直接读出的值；
       核对脚本已对全部 11 份新记录跑过，现在逐字符一致
+  - id: R7
+    field: params.total
+    severity: wrong
+    claim: >-
+      total 取自模型名的 14B，并为此设了 excludes: [embed]（全量 +5.50% 出容差、
+      扣输入词表后 −0.06%）
+    finding: >-
+      **模型卡直接给了声明值：「Number of Parameters: 14.7B」**，
+      实测 14,770,033,664 对它是 +0.48%（声明值取整到一位小数），
+      根本不需要扣任何东西。
+      本仓此前只取 config.json 与 repoinfo.json、没读卡正文，于是拿模型名当声明值，
+      又为了让它落进容差造了一个 excludes: [embed] 的判断 ——
+      **那个判断是为了迁就一个错的声明值而发明的**。
+      卡上还有第三个口径「Non-Embedding: 13.1B」：实测减两份词表
+      （输入 + lm_head）是 13,212,898,304（+0.86%）、只减一份是 13,991,465,984（+6.8%），
+      所以 Qwen 的 Non-Embedding 扣的是两份，与本仓「带宽口径含 lm_head」不是一个量。
+      同一个错在 qwen3-32b 上也发生过（见那份的同类留痕）
+    resolution: corrected
+    changed_to: >-
+      total 改为 1.47e+10、删掉 excludes，counting_note 写明三个口径
+      （全量 / Non-Embedding / 带宽）各自的数与偏差；
+      arch.norm 与 arch.activation 的 evidence 由 derived 改为 official
+      （卡的 Architecture 一行点名 RMSNorm 与 SwiGLU）；
+      新增 sources 的 modelcard 条目并注明厂商自带 vLLM 分支属引擎实现、不作为数的来源

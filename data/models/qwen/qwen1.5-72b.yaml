@@ -20,6 +20,22 @@ sources:
       两者在同一家族里并存，不能从一档推另一档）。
       BF16 发布，38 分片 963 个张量，逐分片读头取全，failed_shards 为空
 
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen1.5-72B/blob/93bac0d1ae83d50c43b1793e2d74a00dc43a4c36/README.md
+    locator: 'README.md @ 93bac0d1ae83 · Introduction / Model Details'
+    accessed: '2026-10-30'
+    note: >-
+      按本仓「来源优先级：模型卡 / 技术报告 > 厂商参考实现 > 引擎实现」补的一手来源。
+      Model Details 一段写明「SwiGLU activation, attention QKV bias, group query
+      attention, mixture of sliding window attention and full attention」是 Qwen1.5
+      系列的设计面，紧接一句**「For the beta version, temporarily we did not include
+      GQA (except for 32B) and the mixture of SWA and full attention」**——
+      所以本档既不是 GQA 也没有滑窗，与清单（k/v 都是 [8192, 8192]、
+      num_key_value_heads = num_attention_heads = 64）一致。
+      Introduction 另写「Stable support of 32K context length for models of all sizes」
+      与「an MoE model of 14B with 2.7B activated」（即同代的 qwen1.5-moe-a2.7b）。
+      **这份卡没有参数量表、也没有训练精度声明**
+
 hf:
   repo: Qwen/Qwen1.5-72B
   sha: 93bac0d1ae83d50c43b1793e2d74a00dc43a4c36
@@ -117,8 +133,9 @@ arch:
       由清单印证：q/k/v/o 四张都是 [8192, 8192]。num_key_value_heads 与
       num_attention_heads 同为 64，所以 KV 不做任何分组共享 —— 缓存宽度
       2 × 64 × 128 = 16384 元素/层，是后面所有代际的对照基线。
-      q/k/v 各带一张 [8192] 的 bias（Qwen1/Qwen2 一代的约定），o_proj 没有 bias；
-      Qwen3 起 bias 整体取消（attention_bias: false）
+      q/k/v 各带一张 [8192] 的 bias，o_proj 没有 bias —— 模型卡的 Model Details
+      把 attention QKV bias 列为系列设计面（一手来源）；Qwen3 起 bias 整体取消
+      （attention_bias: false）
     layer_pattern: 80 层同构，每层产出自己的 KV，无跨层共享、无滑窗、无稀疏
 
   ffn:
@@ -199,7 +216,7 @@ evidence:
   context: official
   arch: official
   arch.norm: derived
-  arch.activation: derived
+  arch.activation: official
   arch.position: derived
   arch.attention.type: derived
   arch.attention.head_dim: derived
@@ -230,7 +247,9 @@ open_questions:
     bytes_basis 是 dtype_fallback，不能和别人按落盘格式算出来的理论下限比倍数
   - >-
     训练精度没有一手来源：config 的 torch_dtype: bfloat16 说的是发布权重，
-    模型卡正文未核，故不填 precision.training
+    而**模型卡正文本轮已读**（README.md @ 93bac0d1ae83，见 sources[1]）——
+    Introduction 与 Model Details 都只讲结构与上下文，没有任何训练精度声明，
+    故不填 precision.training
   - >-
     同代的 Qwen1.5-110B（2024-04-25）没有取数核过。按名字是更大的同结构档位，
     若后面要讲 2024 年这一代的规模线，它是该补的一份
@@ -276,6 +295,9 @@ review:
     finding: >-
       config 同时有 sliding_window 32768 与 use_sliding_window false —— 这个值是惰性的，
       Qwen1.5 / Qwen2 一代全线都带着它而从不启用（Qwen3 起 sliding_window 直接是 null）。
+      **模型卡把这件事说死了**：「For the beta version, temporarily we did not include
+      GQA (except for 32B) and the mixture of SWA and full attention」——
+      滑窗与 GQA 都不在本档里，所以这不只是「config 字段惰性」的推断。
       记进 arch 会在族谱页的变化矩阵上显示成「有滑窗 → 取消」，
       而 Qwen 线从来没有用过滑窗局部 KV
     resolution: corrected
@@ -328,3 +350,22 @@ review:
       derive.py 的两个口径（带宽 71B / 可比官方 72.3B）与此一致。
       glm-4-9b 的 R2 就是把这两个数写成了一个
     resolution: confirmed
+  - id: R8
+    field: sources
+    severity: missing
+    claim: >-
+      本记录原来只有 config.json 一个来源，SwiGLU / QKV bias / 「没有滑窗」三条都靠推断
+    finding: >-
+      main 并入的新规则（CLAUDE.md「来源优先级：模型卡 / 技术报告 > 厂商参考实现 >
+      引擎实现」与 skill 规则 10）要求精度与结构按厂商发布的说法填，
+      而本仓此前只取了 config.json 与 repoinfo.json —— **模型卡正文根本没读过**。
+      本轮补读 README.md（钉在 hf.sha 同一个 commit）：Model Details 一段
+      把 SwiGLU 与 attention QKV bias 列为系列设计面（**这两条从 derived 升为 official**），
+      并明写 beta 版没有 GQA、没有 SWA 混合 —— 后者把 R2「config 的 sliding_window
+      是惰性字段」从推断变成了厂商自己的说法。
+      卡里没有参数量表、也没有训练精度，所以 params 与 precision.training 的处理不变
+    resolution: corrected
+    changed_to: >-
+      新增 sources[1]（README.md @ sha，Introduction / Model Details），
+      arch.activation 的 evidence 由 derived 改为 official，
+      head_dim_note 与 R2 补上卡里的原话，open_questions 的训练精度那条改为「卡已读、无声明」

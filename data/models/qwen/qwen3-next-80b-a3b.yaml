@@ -31,6 +31,27 @@ sources:
       与本记录的 81,324,862,720 相差 **1,650,471,424**，恰等于本仓从清单算出的
       draft 子系统参数量，逐位相同。两个仓的 tally 都不依赖本仓任何一行代码
 
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct/blob/9c7f2fbe84465e40164a94cc16cd30b6999b0cc7/README.md
+    locator: 'README.md @ 9c7f2fbe8446 · Model Overview'
+    accessed: '2026-10-30'
+    note: >-
+      按本仓「来源优先级：模型卡 / 技术报告 > 厂商参考实现 > 引擎实现」补的一手来源，
+      它给了本记录四件此前只能从权重推的事（见 R9）。Model Overview 的声明值：
+      「Training Stage: Pretraining (**15T tokens**) & Post-training」、
+      「Number of Parameters: **80B in total and 3B activated**」、
+      「Number of Paramaters (Non-Embedding): **79B**」、「Hidden Dimension: 2048」、
+      「Number of Layers: 48 — Hybrid Layout: **12 × (3 × (Gated DeltaNet → MoE)
+      → 1 × (Gated Attention → MoE))**」、
+      「**Gated Attention**: 16 for Q and 2 for KV, Head Dimension 256,
+      **Rotary Position Embedding Dimension: 64**」、
+      「**Gated DeltaNet**: 32 for V and 16 for QK, Head Dimension 128」、
+      「Number of Experts: 512」「Number of Activated Experts: 10」
+      「**Number of Shared Experts: 1**」「Expert Intermediate Dimension: 512」、
+      「Context Length: **262,144 natively and extensible up to 1,010,000 tokens**」。
+      **卡里没有 MTP 层数、没有训练精度、也没有状态精度** —— 前者只在权重里，
+      后两者两边都没有
+
 hf:
   repo: Qwen/Qwen3-Next-80B-A3B-Instruct
   sha: 9c7f2fbe84461fa4198f2cbd522b1c1e4c4a2b94
@@ -105,6 +126,7 @@ lineage:
 
 params:
   total: 8.0e+10
+  active_decode: 3.0e+9
   excludes: [draft]
   breakdown:
     expert: 77309400000.0
@@ -121,13 +143,24 @@ params:
     实测全量 81,324,862,720，与 HF 平台自己从分片头统计的 safetensors tally 逐位相同。
     对 80B 是 +1.66%（容差内）；扣掉草稿块（1,650,471,424）后是 79,674,391,296，
     对 80B 是 **−0.41%**，偏差更小，所以 excludes 取 [draft]。
+    **模型卡的第二个口径把这个扣法钉死了**：「Non-Embedding: 79B」——
+    79,674,391,296 再减两份词表（输入 311,164,928 + lm_head 311,164,928）是
+    79,052,061,440，对 79B 是 **+0.07%**；若不先扣草稿块，
+    减两份词表得 80,702,532,864、对 79B 是 +2.2%、出容差。
+    即「先扣草稿块、再扣两份词表」这条链上两个声明值同时吻合，
+    而任一步省掉都对不上 —— excludes [draft] 不再只是「偏差更小」的选择。
     **这个扣法有外部证据，不只是选偏差小的那个**：Qwen3-Coder-Next 的主干名族与本记录
     逐族相同而整块没有 mtp.*，它的 HF tally 恰好就是 79,674,391,296 ——
     即「本记录扣掉草稿块」与「另一个仓根本没有草稿块」两条路得到同一个数，逐位相同。
-    **A3B 是档位名而不是激活参数声明**，所以 active_decode 不填：
-    带宽口径 3,563,858,230 对 3B 是 +18.8%、含输入词表 3,875,023,158 是 +29.2%，
-    两种口径都远超 2% 容差；而同代 Qwen3-30B-A3B（总量 30.5B）与后来的
-    Qwen3.5-35B-A3B（35.9B）也都叫 A3B —— 总量差一倍而激活档位名相同。
+    **「3B activated」在本档是模型卡上的声明值**（不只是名字里的 A3B），
+    所以 active_decode 填 3e+9 —— 但它对不上本仓的任何一个口径：
+    带宽口径 3,563,858,230 是 +18.8%、含输入词表 3,875,023,158 是 +29.2%、
+    照 Non-Embedding 的办法再扣掉 lm_head 得 3,252,693,302 是 +8.4%，
+    **三种都远超 2% 容差**；只有「激活专家 + 注意力」两项 3,051,058,998（+1.7%）
+    落在容差内，但那个组合没有任何来源支持（它恰好不含共享专家、router、norm 与 lm_head）。
+    同一个「A3B」还同时用在 Qwen3-30B-A3B（总量 30.5B）与 Qwen3.5-35B-A3B（35.9B）上，
+    所以本仓的判断是：**它更像档位命名，而不是一个可对账的激活参数口径**。
+    reconcile() 不核 active_decode，这个比对是本记录自己做的。
     激活的专家部分 = 77,309,411,328 × 10/512 = 1,510,043,190，常驻部分 2,053,815,040
     （注意力 + 共享专家 + router + norm + lm_head）—— **常驻比激活的专家还多**，
     因为线性注意力层的投影（in_proj_qkvz 等）全部常驻、合计 1.21B。
@@ -135,6 +168,13 @@ params:
 
 context:
   max: 262144
+  train_native: 262144
+  extension_method: >-
+    模型卡写「262,144 natively and extensible up to 1,010,000 tokens」，
+    但**没有说用什么方法扩**（config 的 rope_scaling 为 null）。
+    本记录只记这个事实：原生 262144、厂商称可扩到 1,010,000。
+    按 1,010,000 部署时本记录的 per_token 数要乘 3.85（6.00 GiB → 23.11 GiB），
+    每序列状态不变
 
 arch:
   layers: 48
@@ -183,7 +223,10 @@ arch:
         所以开草稿侧时累积 KV 的是 13 层、24576 → 26624 B/token，线性状态仍是 36 层。
         本记录与 data/derived/ 都按主干口径记账。
     linear_state:
-      mechanism: 门控线性注意力 + 短卷积
+      mechanism: >-
+        **Gated DeltaNet**（厂商名，模型卡 Model Overview）：门控线性注意力 + 短卷积。
+        卡把这一支的头数写成「32 for V and 16 for QK」，与 config 的
+        linear_num_value_heads / linear_num_key_heads 一致
       num_key_heads: 16
       num_value_heads: 32
       key_head_dim: 128
@@ -390,7 +433,8 @@ notes: >-
 
 open_questions:
   - >-
-    **状态精度没有一手来源**：本代 config 没有 mamba_ssm_dtype 键
+    **状态精度没有一手来源**：本代 config 没有 mamba_ssm_dtype 键，
+    模型卡的 Gated DeltaNet 一节也只给头数与头维、不给精度
     （Qwen3.5 起才有且为 float32），清单里 A_log / dt_bias / linear_attn.norm
     三类权重都是 BF16，但「权重精度」不等于「运行期状态精度」。
     本记录不填 state_dtype，推导按模型 dtype 兜底；若实际是 FP32，
@@ -409,7 +453,9 @@ open_questions:
     bytes_basis 是 dtype_fallback
   - >-
     训练精度没有一手来源：config 的 torch_dtype: bfloat16 说的是发布权重，
-    模型卡正文未核，故不填 precision.training
+    而**模型卡正文本轮已读**（README.md @ 9c7f2fbe8446）——
+    Model Overview 给了训练**数据量**（Pretraining 15T tokens）但没有训练精度，
+    故不填 precision.training
 
 reviewed:
   date: '2026-10-30'
@@ -549,3 +595,31 @@ review:
     changed_to: >-
       attention 条给每 token 的 7.83 倍，context 条给满上下文的「×6.4 上下文而缓存还略降」，
       bottleneck 里给两个上下文档位下状态的占比
+  - id: R9
+    field: sources
+    severity: missing
+    claim: >-
+      本记录原来只有 config.json 一个来源，混合层集合、输出门、共享专家个数、
+      草稿块的存在四件事全靠权重清单推，并且把 A3B 判成了纯档位名
+    finding: >-
+      本轮按 main 并入的来源优先级规则补读模型卡，五件事有了一手来源：
+      (1) **Hybrid Layout: 12 × (3 × (Gated DeltaNet → MoE) → 1 × (Gated Attention → MoE))**
+      —— 混合比例与 12 个重复单元是厂商写出来的，与本仓从清单读的层集合
+      （full 在 3/7/…/47）一致，R3 的结论因此多了一条独立来源；
+      (2) **Number of Shared Experts: 1** —— 共享专家个数从 derived 变成有卡可依
+      （而上一代 qwen3-235b-a22b 的卡**没有这一行**，与它清单零命中同向）；
+      (3) **Rotary Position Embedding Dimension: 64** —— 等于 head_dim 256 ×
+      partial_rotary_factor 0.25，本记录原来只有 config 的比例；
+      (4) 机制的厂商名是 **Gated DeltaNet** 与 **Gated Attention**，
+      本记录原来只有本仓自己的描述「门控线性注意力 + 短卷积」；
+      (5) **Non-Embedding: 79B** 把 excludes [draft] 这条链钉死了（见 counting_note）。
+      反向的一条：**「3B activated」是卡上的声明值而不只是名字**，所以 active_decode
+      该填 —— 但它对不上本仓任何一个口径（+18.8% / +29.2% / +8.4%），
+      填上之后这个口径问题才看得见（Qwen3.8-27B 的 R7 定的就是这条规矩）。
+      卡里仍然没有 MTP 层数（只有权重有）、没有状态精度、没有训练精度
+    resolution: corrected
+    changed_to: >-
+      新增 sources 的 modelcard 条目；linear_state.mechanism 写上厂商名 Gated DeltaNet；
+      补 active_decode 3.0e+9 并在 counting_note 写明四种口径的偏差；
+      counting_note 补 Non-Embedding 的双重扣法验证；
+      补 context.train_native 与 extension_method（厂商称可扩到 1,010,000、未说方法）

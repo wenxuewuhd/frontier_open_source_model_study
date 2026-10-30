@@ -1,7 +1,7 @@
 {
  "id": "qwen3.8-flash-next",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T06:50:52+00:00",
+ "generated_at": "2026-10-30T07:08:42+00:00",
  "inputs": {
   "facts_dir": "facts/qwen3.8-flash-next",
   "config_present": true,

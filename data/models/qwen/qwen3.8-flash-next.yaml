@@ -25,6 +25,27 @@ sources:
       **model_type 是 qwen4_exp、架构名 Qwen4ExpForConditionalGeneration**，
       不是 Qwen3.5 那一套 —— 下一代的架构类在这一份上先落地
 
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3.8-Flash-Next/blob/de4b8e4d43b917e7706784d8bb445c9af86a3540/README.md
+    locator: 'README.md @ de4b8e4d43b9 · Model Overview'
+    accessed: '2026-10-30'
+    note: >-
+      按本仓「来源优先级：模型卡 / 技术报告 > 厂商参考实现 > 引擎实现」补的一手来源。
+      这份卡给了本记录最多的东西 —— 三类新机制全部有厂商名与声明值（见 R9）：
+      「Number of Parameters: **125B with 6B activated, plus 51B n-gram embedding
+      and 4B MTP**」、「N-gram Embedding: **20,000,000 (bigrams/trigrams at layer 2)**」、
+      「Hidden Layout: **12 × (3 × (Gated DeltaNet → MoE) → 1 × (Qwen Sparse Attention → MoE))**」、
+      「**Qwen Sparse Attention**: 24 for Q and 2 for KV, Head Dimension 256,
+      Rotary Position Embedding Dimension 64, **Indexer Structure: MQA with 4 Query
+      Heads and 1 Shared Key Head**, Indexer Head Dimension 128,
+      **Budget: 512 blocks or 2048 tokens**」、
+      「Number of Activated Experts: 10 Routed + 1 Shared」「Expert Intermediate Dimension: 640」、
+      「**Gated Residual**: Number of Branches **4**, Bottleneck Rank **320**」、
+      「MTP: **1 layer**, trained with multi-steps」、
+      「Context Length: 262,144 natively and extensible up to 1,000,000 tokens」。
+      **卡里没有训练精度声明，也没有每 token 的缓存字节数**
+      （所以 kv_sharing.declared_per_token_bytes 这个新字段本档填不了）
+
 hf:
   repo: Qwen/Qwen3.8-Flash-Next
   sha: de4b8e4d43b9ed57f2d28f1e9a7d8e20fe6a14b2
@@ -118,11 +139,26 @@ params:
     indexer: 19660800.0
     norm: 1037824.0
   counting_note: >-
-    **模型名里没有参数量**（没有 180B 也没有 A… 字样），所以 params.total 与
-    active_decode 都不填，Gate B 的参数总量一项相应 skip —— 这是声明值缺失，
-    不是本仓没算。实测全量 **179,999,981,459**，与 HF 平台自己从分片头统计的
-    safetensors tally 逐位相同；它离 180e9 只差 18,541（−0.00001%），
-    像是按 180B 这个目标配出来的，但本仓没有一手来源，所以不把 180B 当声明值填进去。
+    模型名里没有参数量，但**模型卡把它拆成三块写出来了**：
+    「125B with 6B activated, **plus 51B n-gram embedding and 4B MTP**」。
+    实测全量 **179,999,981,459**，与 HF 平台自己从分片头统计的 safetensors tally
+    逐位相同，而 125 + 51 + 4 = 180 —— 三块之和与实测对得上（差 18,541）。
+    逐块对照：**n-gram 查表** 实测 51,200,245,795 对 51B 是 **+0.39%**；
+    **主体** 实测 total − 查表 − 草稿块 = 126,192,584,816 对 125B 是 **+0.95%**；
+    **草稿块** 实测 2,607,150,848 对 4B 是 **−34.8%**，加上它共享的两份词表
+    （输入 + lm_head 各 635,699,200）才是 3,878,549,248、对 4B 是 −3.0%，仍出容差
+    —— 草稿块那一块的口径没对上，留了 open question。
+    **params.total 仍不填**，原因不是没有声明值而是闸口会报假不一致：
+    填 125e9 要配 excludes [retrieval, draft]，而 derive.py 按 subsystems.py 归类，
+    那边的 retrieval 桶在本档是空的（查表落进 other，见 R1），
+    于是 Gate B 会算出 177,392,830,611、报 +41.9% 的 MISMATCH ——
+    那是归类缺口造成的，不是数据问题。**subsystems.py 修好之后应当补上
+    total 1.25e+11 与 excludes [retrieval, draft] 并重跑 derive**（已写进交接报告）。
+    **「6B activated」对得上的是「带宽口径减 lm_head」**：
+    6,671,295,360 − 635,699,200 = 6,035,596,160，对 6B 是 **+0.59%**；
+    不减 lm_head 是 +11.2%、再含输入词表是 +21.8%。
+    这与 Qwen 卡上「Non-Embedding」一贯扣两份词表的办法同向
+    （见 qwen3-32b 与 qwen2.5-14b-1m 的 counting_note）。
     **breakdown 用的是本仓按实际子系统归属手工归类的结果，与
     data/derived/qwen3.8-flash-next.json 的 params_by_subsystem 不一致**，
     因为 scripts/lib/subsystems.py 的正则认不出本代的三类新张量名（见 R1）：
@@ -146,6 +182,12 @@ params:
 
 context:
   max: 262144
+  train_native: 262144
+  extension_method: >-
+    模型卡写「262,144 natively and extensible up to 1,000,000 tokens」
+    （注意是 1,000,000，Qwen3.5 两档与 Qwen3-Next 写的是 1,010,000），
+    没有说用什么方法扩。按 1,000,000 部署时本记录的 per_token 数要乘 3.81
+    （6.75 GiB → 25.75 GiB），每序列状态不变
 
 arch:
   layers: 48
@@ -184,17 +226,23 @@ arch:
       type: sigmoid
     sparse:
       mechanism: >-
-        稀疏块选择：每个 full attention 层用一个融合的 index_qk_proj 产出
-        index q（4 头 × 128）与 index k（1 头 × 128），按 index 打分选块，
-        config 的 indexer_budget 2048 是预算、indexer_compress_ratio 4 是压缩比。
-        **打分与选块的具体规则没有读实现**，本记录只记权重侧能定的三件事：
-        投影是融合的、index k 单头共享、层覆盖与 full attention 层逐个相同
+        **Qwen Sparse Attention**（厂商名，模型卡 Model Overview）。
+        每个 full attention 层用一个融合的 index_qk_proj 产出 index q（4 头 × 128）
+        与 index k（1 头 × 128）—— 卡把这个结构直接写成
+        「**Indexer Structure: MQA with 4 Query Heads and 1 Shared Key Head**」，
+        与本仓从张量形状读出的 640 = 4 × 128 + 1 × 128 一致。
+        预算也有一手来源：「**Budget: 512 blocks or 2048 tokens**」，
+        即 config 的 indexer_budget 2048 是 **token 数**、对应 512 个块
+        （块大小 2048 / 512 = 4 个 token，与 indexer_compress_ratio 4 一致）。
+        **打分与选块的具体规则仍没有读实现**，本记录只记卡与权重能定的部分
       index_n_heads: 4
       index_head_dim: 128
       index_kv_dim: 128
       index_kv_source: >-
         index_qk_proj [640, 2560] 的 k 段输出维 —— 640 = q 4 × 128 + k 1 × 128，
         所以落进缓存的 index K 每层只有 128 个元素，不是 4 × 128 = 512
+      block_size: 4
+      selected_blocks: 512
       index_topk: 2048
     kv_sharing:
       index_kv_source_layers: [3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43, 47]
@@ -204,9 +252,12 @@ arch:
         主干口径 48 层 + 1 草稿块；草稿块带全套 full attention 与 indexer，
         开草稿侧时两类都要按 13 层算
       note: >-
-        **index K 的条目数按 1:1 计费，是上界。** config 的 indexer_compress_ratio 4
-        与 indexer_budget 2048 都可能让实际条目数更低（前者像 DeepSeek V4 一代的
-        时序池化、后者像固定预算的选块），但本代权重里**没有任何压缩器张量**
+        **index K 的条目数按 1:1 计费，是上界。** 模型卡把预算写成
+        「Budget: 512 blocks or 2048 tokens」—— 所以 2048 是 token 数、块大小 4 个 token，
+        **这说的是「选中多少」而不是「存多少」**：被选中的块仍要从全量 index K 里挑，
+        所以缓存侧该存的条目数并不因预算而减少。
+        真正可能减少条目的是 indexer_compress_ratio 4（像 DeepSeek V4 一代的时序池化，
+        每 4 个 token 摊一个条目），但本代权重里**没有任何压缩器张量**
         （没有 compressor.ape 之类能定比值的东西），所以本仓不替公式折算。
         derived JSON 里的 per_token_elems_bound 标的是 exact，
         那只说明「宽度 × 层数」这两个因子是实测的，不代表条目覆盖已经核过
@@ -265,7 +316,10 @@ arch:
 
   retrieval:
     mechanism: >-
-      PLE n-gram 嵌入查表：按 n-gram（ngram_size 3）哈希到 16 个 n-gram 头上，
+      PLE n-gram 嵌入查表。模型卡写「N-gram Embedding: 20,000,000
+      (**bigrams/trigrams** at layer 2)」——「bigram 与 trigram 都用」这件事
+      config 只给 ngram_size 3 一个数，看不出来。
+      按 n-gram 哈希到 16 个 n-gram 头上，
       每头查一行 160 维，拼成 ple_embed_dim 2560 后经 key_proj / value_proj
       与一张短卷积并入残差流。表按 split_ngram_parts 128 分片存放，
       每片 [2500012, 160]
@@ -279,12 +333,18 @@ arch:
       （norm_conv / norm_key / norm_query）。10240 = 4 × hidden，
       即投影作用在 hyper-connections 加宽后的残差流上
     placement: >-
-      **config 声明 ple_layer_ids: [2]，而清单里这些张量在 layers.1 下** ——
-      两者冲突，按本仓约定取权重（config 描述模块配置、不描述落盘位置）。
-      差一位可能是 0/1 起点的口径差，本仓没有读实现确认
+      **清单里这些张量在 layers.1 下，而 config 的 ple_layer_ids 与模型卡
+      都说 layer 2**（卡的原话是「N-gram Embedding: 20,000,000
+      (bigrams/trigrams at layer 2)」）。两边差一位，最可能是计数起点不同
+      —— 卡与 config 按第 2 层（1 起），清单按索引 1（0 起）。
+      本记录的 layers 取清单的 [1]（0 基，与本仓其他层集合口径一致），
+      没有读实现确认这个解释
 
   residual:
-    type: hyper-connections（hc_count 4、hc_lowrank 320）
+    type: >-
+      **Gated Residual**（厂商名，模型卡写「Gated Residual: Number of Branches 4,
+      Bottleneck Rank 320」）；权重里的名字是 *_hyper_connection.*，
+      与 DeepSeek V4 一代的 mHC 是同类机制
     multiplier: 4
     coef_proj: >-
       每层两套：attn_hyper_connection 与 mlp_hyper_connection，各含
@@ -504,19 +564,27 @@ notes: >-
 open_questions:
   - >-
     **index K 的条目覆盖没有核过**：本记录按 1:1 计费得 1,536 元素/token，是上界。
-    config 的 indexer_compress_ratio 4 与 indexer_budget 2048 都可能让实际条目数更低，
+    模型卡把 budget 的语义定下来了（「512 blocks or 2048 tokens」，即块大小 4 个 token），
+    而那说的是「选中多少」不是「存多少」；indexer_compress_ratio 4 仍可能让实际条目数更低，
     但权重侧没有任何压缩器张量能定这件事（DeepSeek V4 一代有 compressor.ape
     的首维可以定比值，本代没有对应物）。要钉死得读实现
   - >-
     稀疏选块的打分规则、块大小与 budget 2048 的语义（是选中的块数还是 token 数）
     都没有读实现，arch.attention.sparse 只记权重侧能定的三件事
   - >-
-    **config 的 ple_layer_ids 是 [2] 而清单里 PLE 在 layers.1 下**，差一位。
-    本记录按权重取 [1]，可能是 0/1 起点的口径差，没有读实现确认
+    **config 与模型卡都说 PLE 在 layer 2，而清单里它在 layers.1 下**，差一位。
+    本记录按清单取 [1]（0 基），最可能的解释是计数起点不同（卡与 config 1 起），
+    但没有读实现确认
   - >-
     PLE 块自己那张 conv1d [10240, 1, 4] 的状态（4 × 10240 × 4 B = 163,840 B/序列）
     没有计入 per_sequence —— derive 的公式只建模线性注意力层的 conv。
     这使每序列状态偏低 0.14%（113.62 MiB 对 113.78 MiB）
+  - >-
+    **模型卡的「4B MTP」与实测的草稿块对不上**：清单里 mtp.* 合计 2,607,150,848
+    （−34.8%），加上它共享的两份词表（mtp_use_dedicated_embeddings: false，
+    各 635,699,200）是 3,878,549,248（−3.0%），仍在 2% 容差之外。
+    另两块（查表 +0.39%、主体 +0.95%）都吻合，而三块之和 180B 与实测只差 18,541
+    —— 所以差额像是厂商把某些常驻项算进了 MTP 那一块，本仓没有依据去猜是哪些
   - >-
     n-gram 哈希的算法（怎么从 3-gram 映到 16 个头的行号）没有来源，
     arch.retrieval.mechanism 只写了权重与 config 能支撑的部分
@@ -533,7 +601,8 @@ open_questions:
     weights_release 只写 BF16，量化配置未知
   - >-
     训练精度没有一手来源：config 的 dtype: bfloat16 说的是发布权重，
-    模型卡正文未核，故不填 precision.training
+    而**模型卡正文本轮已读**（README.md @ de4b8e4d43b9），Model Overview 只列结构与规模，
+    没有训练精度声明，故不填 precision.training
   - >-
     **params.breakdown 与 data/derived/qwen3.8-flash-next.json 的
     params_by_subsystem 不一致，且派生的激活参数偏高 8.7 倍**（见 R1）：
@@ -688,3 +757,38 @@ review:
       Qwen3.5 两档根本没有这个键。所以门的函数形式在 Qwen3.8 一代内部就不一致，
       不能从旗舰推本档
     resolution: confirmed
+  - id: R9
+    field: sources
+    severity: missing
+    claim: >-
+      本记录原来只有 config.json 一个来源；三类新机制的名字是本仓自己起的
+      （「稀疏 indexer」「hyper-connections」「PLE n-gram 查表」），
+      budget 2048 的语义、index k 单头共享、MTP 层数、参数量口径全部只靠权重与 config 推
+    finding: >-
+      本轮按 main 并入的来源优先级规则补读模型卡，七件事有了一手来源：
+      (1) **参数量的三块拆分**「125B with 6B activated, plus 51B n-gram embedding
+      and 4B MTP」—— 原记录写的「模型名里没有参数量、180B 只是本仓的观察」**不成立**，
+      声明值一直在卡上（逐块对照见 counting_note，其中草稿块那一块对不上，留了 open question）；
+      (2) 机制的厂商名是 **Qwen Sparse Attention** / **Gated DeltaNet** /
+      **Gated Residual**，本记录原来三个名字都是自己起的；
+      (3) 「**Indexer Structure: MQA with 4 Query Heads and 1 Shared Key Head**」——
+      R2 从张量形状读出的「index k 单头共享、宽度 128」由此有了厂商说法，
+      从 derived 变成有卡可依；
+      (4) 「**Budget: 512 blocks or 2048 tokens**」定下了 budget 的语义
+      （2048 是 token 数、块大小 4），原记录把它列为未知；
+      (5) 「**Gated Residual**: Branches 4, Bottleneck Rank 320」对上 hc_count / hc_lowrank；
+      (6) 「MTP: **1 layer**」—— 层数不再只有权重一个来源；
+      (7) 「N-gram Embedding: 20,000,000 (**bigrams/trigrams** at layer 2)」——
+      bigram 与 trigram 都用这件事 config 的 ngram_size 3 看不出来；
+      同时卡也说 layer 2，与清单的 layers.1 差一位（见 arch.retrieval.placement）。
+      **卡里没有每 token 的缓存字节数**，所以 main 新加的
+      kv_sharing.declared_per_token_bytes（缓存侧的外部锚）本档填不了 ——
+      缓存账仍然只有本仓一条路，这是 Gate B 在本档上的缺口
+    resolution: corrected
+    changed_to: >-
+      新增 sources 的 modelcard 条目；sparse.mechanism / residual.type /
+      linear_state.mechanism 写上厂商名；sparse 补 block_size 4 与 selected_blocks 512；
+      counting_note 改写成按卡的三块逐块对照（并说明为什么 total 仍不填：
+      填了会让 Gate B 报一个由 subsystems.py 归类缺口造成的 +41.9% 假不一致）；
+      retrieval.mechanism / placement 与两条 open question 按卡改写；
+      补 context.train_native 与 extension_method

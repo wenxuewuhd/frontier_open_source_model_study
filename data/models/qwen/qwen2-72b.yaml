@@ -28,6 +28,18 @@ sources:
       transformers_version，963 个张量的名字、形状与 dtype 逐条相同，
       HF 的 safetensors tally 逐位相同。facts/qwen2.5-72b 下有完整清单可复核
 
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen2-72B/blob/5f149cae83c11c408a953dec64b12e7e662e8cb9/README.md
+    locator: 'README.md @ 5f149cae83c1 · Model Details'
+    accessed: '2026-10-30'
+    note: >-
+      按本仓「来源优先级：模型卡 / 技术报告 > 厂商参考实现 > 引擎实现」补的一手来源。
+      Model Details 一段写明 Qwen2 系列「is based on the Transformer architecture with
+      **SwiGLU activation, attention QKV bias, group query attention**, etc.」——
+      SwiGLU、QKV bias 与 GQA 三件事由此有了一手声明（前两件原来标 derived）。
+      **这份卡没有参数量表、也没有训练精度声明**，所以 params 的声明值仍只有模型名，
+      precision.training 仍不填
+
 hf:
   repo: Qwen/Qwen2-72B
   sha: 5f149cae83c11c408a953dec64b12e7e662e8cb9
@@ -206,7 +218,7 @@ evidence:
   context: official
   arch: official
   arch.norm: derived
-  arch.activation: derived
+  arch.activation: official
   arch.position: derived
   arch.attention.type: derived
   arch.attention.head_dim: derived
@@ -239,7 +251,8 @@ open_questions:
     bytes_basis 是 dtype_fallback，不能和别人按落盘格式算出来的理论下限比倍数
   - >-
     训练精度没有一手来源：config 的 torch_dtype: bfloat16 说的是发布权重，
-    模型卡正文未核，故不填 precision.training
+    而**模型卡正文本轮已读**（README.md @ 5f149cae83c1），Model Details 只讲结构，
+    没有训练精度声明，故不填 precision.training
   - >-
     128K 上下文是怎么扩出来的（YaRN / 长文继续训练 / 两者）没有一手来源：
     config 的 rope_scaling 是 null、rope_theta 与前代同为 1e6，
@@ -345,3 +358,23 @@ review:
     changed_to: >-
       两项都改为从 facts/<id>/repoinfo.json 直接读出的值；
       核对脚本已对全部 11 份新记录跑过，现在逐字符一致
+  - id: R7
+    field: sources
+    severity: missing
+    claim: 本记录原来只有 config.json 一个来源，SwiGLU 与 GQA 两条都标 derived
+    finding: >-
+      main 并入的新规则（CLAUDE.md「来源优先级：模型卡 / 技术报告 > 厂商参考实现 >
+      引擎实现」与 skill 规则 10）要求精度与结构按厂商发布的说法填，
+      而本仓此前只取了 config.json 与 repoinfo.json —— 模型卡正文没读过。
+      本轮补读 README.md（钉在 hf.sha 同一个 commit）：Model Details 把
+      SwiGLU activation、attention QKV bias、group query attention 三件事
+      列为 Qwen2 系列的设计面，**前两件从 derived 升为 official**，
+      GQA 这一条也从「按 k_proj 输出维推」变成有厂商说法佐证
+      （本记录仍把 arch.attention.type 标 derived —— 卡说的是系列设计面，
+      具体头数仍来自 config 与清单）。
+      卡里没有参数量表与训练精度，所以 params 与 precision.training 的处理不变
+    resolution: corrected
+    changed_to: >-
+      新增 sources 的 modelcard 条目（README.md @ sha），
+      arch.activation 的 evidence 由 derived 改为 official，
+      open_questions 的训练精度那条改为「卡已读、无声明」

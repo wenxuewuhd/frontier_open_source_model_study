@@ -1,7 +1,7 @@
 {
  "id": "qwen3-32b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T06:29:31+00:00",
+ "generated_at": "2026-10-30T07:08:40+00:00",
  "inputs": {
   "facts_dir": "facts/qwen3-32b",
   "config_present": true,
@@ -132,15 +132,10 @@
   },
   {
    "item": "参数总量",
-   "YAML 声明": 32000000000.0,
-   "shapes 实测(扣除 embed)": 31984210944.0,
-   "delta_pct": -0.05,
+   "YAML 声明": 32800000000.0,
+   "shapes 实测": 32762123264.0,
+   "delta_pct": -0.12,
    "status": "ok"
-  },
-  {
-   "item": "口径说明",
-   "status": "ok",
-   "why": "声明值不含 embed；含在内的实测总量为 32.8B"
   },
   {
    "item": "外部参数量对账",
