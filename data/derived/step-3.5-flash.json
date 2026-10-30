@@ -1,0 +1,197 @@
+{
+ "id": "step-3.5-flash",
+ "generated_by": "scripts/derive.py",
+ "generated_at": "2026-10-30T06:48:07+00:00",
+ "inputs": {
+  "facts_dir": "facts/step-3.5-flash",
+  "config_present": true,
+  "shapes_present": true,
+  "model_yaml": "data/models/stepfun/step-3.5-flash.yaml",
+  "ep_size": 4
+ },
+ "from_shapes": {
+  "available": true,
+  "complete": true,
+  "tensor_count": 804,
+  "params_total": 199384301376.0,
+  "params_by_subsystem": {
+   "expert": 190253629440.0,
+   "router": 49557312.0,
+   "embed": 527958016.0,
+   "norm": 384256.0,
+   "dense_ffn": 415236096.0,
+   "attention": 4520804352.0,
+   "shared_expert": 660602880.0,
+   "draft": 2428171008.0,
+   "lm_head": 527958016.0
+  },
+  "scale_elements": 0.0,
+  "weight_bytes_total": 398768626944.0,
+  "weight_bytes_by_subsystem": {
+   "expert": 380507258880.0,
+   "router": 99138816.0,
+   "embed": 1055916032.0,
+   "norm": 768512.0,
+   "dense_ffn": 830472192.0,
+   "attention": 9041608704.0,
+   "shared_expert": 1321205760.0,
+   "draft": 4856342016.0,
+   "lm_head": 1055916032.0
+  },
+  "weight_bytes_by_dtype": {
+   "BF16": 398768578560.0,
+   "FP32": 48384.0
+  },
+  "weight_dtype_containers": {},
+  "experts_seen": 288,
+  "expert_storage": "stacked",
+  "layers_present": 45,
+  "mtp_layers_seen": [
+   45,
+   46,
+   47
+  ],
+  "mtp_attention_suffixes": [
+   "self_attn.g_proj.weight",
+   "self_attn.k_proj.weight",
+   "self_attn.o_proj.weight",
+   "self_attn.q_proj.weight",
+   "self_attn.v_proj.weight"
+  ],
+  "draft_blocks_seen": 3,
+  "layer_index_max": 45,
+  "layers_missing": [],
+  "moe_layers_seen": 42,
+  "unknown_dtypes": [],
+  "packing_applied": {},
+  "packing_suspect": [],
+  "incomplete_note": null
+ },
+ "kv_cache": {
+  "status": "measured",
+  "attention_type": "HYBRID",
+  "kv_dtype": "BF16",
+  "layers": 45,
+  "full_attention_layers": 12,
+  "linear_attention_layers": 0,
+  "per_token_bytes": 49152.0,
+  "per_sequence_bytes": 69206016.0,
+  "per_token_elems": 24576,
+  "per_token_elems_bound": "exact",
+  "components": {
+   "global_kv": {
+    "bytes_per_token": 49152.0,
+    "elements_per_token": 24576,
+    "bytes_basis": "theoretical_floor",
+    "terms": {
+     "elements_per_token": 24576,
+     "bytes_per_element": 2.0,
+     "source": "完整权重清单实测",
+     "storage": {
+      "dtype": "BF16",
+      "note": "无 scale 张量"
+     }
+    }
+   },
+   "local_window": {
+    "bytes_per_sequence": 69206016.0,
+    "elements_per_sequence": 34603008,
+    "bytes_basis": "theoretical_floor",
+    "terms": {
+     "elements_per_sequence": 34603008,
+     "bytes_per_element": 2.0,
+     "source": "完整权重清单实测",
+     "storage": {
+      "dtype": "BF16",
+      "note": "无 scale 张量"
+     },
+     "note": "滑窗局部 KV，每序列固定，不随上下文增长"
+    }
+   }
+  },
+  "notes": [
+   "逐因子：全局 K/V 每层 2（K 与 V）× 8 组 × 128 = 2048 元素 （k_proj / v_proj 输出维 1024，k_norm 逐头 [128] 不改宽度；48/48 层穷举一致）， × 12 个全局层 = 24,576； 滑窗 512 个位置 × 2048 元素 × 33 个主干滑窗层 = 34,603,008 元素/序列 （开草稿侧再加 3 × 1,048,576 = 3,145,728）。 **滑窗那一侧是结构下限，不是参考实现的行为**：滑窗靠掩码实现 （create_sliding_window_causal_mask，逐层 sliding_window=512）， 而参考实现的缓存是 transformers 的 DynamicCache —— 它不设上界， 滑窗层也会随上下文一直长。512 个位置是「正确解码所需」的量， 要靠引擎侧的有界滑窗缓存才拿得到（见 open_questions）",
+   "字节是理论下限：元素数 × 落盘精度（含 scale）的精确计数，不含分页、环页与对齐粒度。实际部署在它之上，不能直接当显存预算"
+  ],
+  "bytes_basis": "theoretical_floor"
+ },
+ "kv_capacity_bytes_at_context": {
+  "4096": 270532608.0,
+  "32768": 1679818752.0,
+  "262144": 12954107904.0
+ },
+ "kv_capacity_basis": "theoretical_floor",
+ "active_params": {
+  "status": "ok",
+  "total": 11459365952.0,
+  "total_with_embed": 11987323968.0,
+  "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的输入词表）；total_with_embed 含输入词表，用于和各家公布的「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
+  "expert_active": 5284823040.0,
+  "expert_total": 190253629440.0,
+  "expert_ratio": "8/288",
+  "always_active": 6174542912.0,
+  "lm_head": 527958016.0,
+  "dense": false,
+  "excluded": {
+   "embed_tokens": 527958016.0,
+   "retrieval_table": 0.0,
+   "vision": 0.0,
+   "draft": 2428171008.0
+  },
+  "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
+ },
+ "flops": {
+  "linear_per_token": 22918731904.0,
+  "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
+ },
+ "arithmetic_intensity": {
+  "decode_weight_bytes_per_token": 22918733294.40526,
+  "decode_flops_per_byte": 0.9999999393332415,
+  "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
+ },
+ "ep_communication": {
+  "status": "ok",
+  "ep_size": 4,
+  "moe_layers": 42,
+  "bytes_per_token": 5505024,
+  "bytes_per_layer": 131072,
+  "formula": "2(dispatch+combine) * top_k * hidden * bytes * moe_layers",
+  "note": "EP=1 时为 0；跨机时该量按互联带宽折算成时间，是 decode 尾延迟的主因之一"
+ },
+ "reconciliation": [
+  {
+   "item": "路由专家数",
+   "status": "skip",
+   "why": "config 缺失"
+  },
+  {
+   "item": "专家存储布局",
+   "status": "ok",
+   "why": "stacked（一个张量装一层全部专家，grouped GEMM 吃 3 维权重）"
+  },
+  {
+   "item": "层数",
+   "config": 45.0,
+   "shapes": 45.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "参数总量",
+   "YAML 声明": 199384301376.0,
+   "shapes 实测": 199384301376.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "ok",
+   "why": "与 HF 的 safetensors tally 逐位相同（199,384,301,376）"
+  },
+  {
+   "item": "KV 层覆盖口径",
+   "status": "ok",
+   "why": "公式按主干 45 层算（config num_hidden_layers）；清单里另有 3 个草稿块，带着与主干注意力同名的 5 个投影，即它们也产出 KV。开草稿侧时容量要按 48 层算 —— 记录里要写明用哪个口径"
+  }
+ ]
+}
