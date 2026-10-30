@@ -86,11 +86,13 @@ const recorded = r.families.filter((f) => f.status === 'recorded').length;
                 {kv?.bytes_basis === 'theoretical_floor' && <span class="muted">（理论下限）</span>}
                 {kv?.bytes_basis === 'dtype_fallback' && <span class="muted">（精度兜底）</span>}
               </dd>
-              {/* 字节口径各卡不一，跨卡比结构要看元素数 —— 它与精度假设无关 */}
+              {/* 字节口径各卡不一，跨卡比结构要看元素数 —— 它与精度假设无关。
+                  单位写进值里：这一行紧挨着上面的「B/token」，只写「1,600 /token」
+                  读起来就是同一种量的两个数，而它们差一个「每元素字节」的因子 */}
               <dt>KV 元素</dt>
               <dd class="num">
                 {kv?.per_token_elems
-                  ? `${kv.per_token_elems_bound === 'upper_bound' ? '≤ ' : ''}${kv.per_token_elems.toLocaleString()} /token`
+                  ? `${kv.per_token_elems_bound === 'upper_bound' ? '≤ ' : ''}${kv.per_token_elems.toLocaleString()} 元素/token`
                   : '—'}
               </dd>
             </dl>

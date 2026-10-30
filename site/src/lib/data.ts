@@ -393,8 +393,11 @@ export const TRACKED_FIELDS: TrackedField[] = [
     get: (m) => {
       const kv = m.derived?.kv_cache;
       if (!kv?.per_token_elems) return undefined;
-      // 公式路径里层数或宽度是上界的，数字前标 ≤，比较时读者能看出哪一侧不精确
-      return `${kv.per_token_elems_bound === 'upper_bound' ? '≤ ' : ''}${fmtInt(kv.per_token_elems)}`;
+      // 公式路径里层数或宽度是上界的，数字前标 ≤，比较时读者能看出哪一侧不精确。
+      // 单位跟着数字走，不只写在表头：裸的「1,600」被当成字节读过一次 ——
+      // 和它并排的字节列是「890 B（理论下限）」，两个数差 1.8 倍，看起来像哪一边算错了，
+      // 而实际是 1600 元素 × 0.5563 B/元素 = 890 B，两个口径
+      return `${kv.per_token_elems_bound === 'upper_bound' ? '≤ ' : ''}${fmtInt(kv.per_token_elems)} 元素`;
     } },
   { key: 'experts', label: '路由专家 / top-k', axis: 'moe', group: 'spec',
     get: (m) => (m.arch?.moe?.routed_experts
