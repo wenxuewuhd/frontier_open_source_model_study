@@ -1,0 +1,549 @@
+# 机械字段来自 config（official）；形状、参数量、子系统拆分、MTP 块构成与层集合来自完整权重清单（derived）。
+id: glm-4.5
+family: glm
+kind: llm
+display_name: GLM-4.5
+released: '2025-07-20'
+license: mit
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/zai-org/GLM-4.5
+    locator: config.json @ cbb2c7cfb52f
+    accessed: '2026-10-30'
+    note: >-
+      BF16 发布，93 分片。权重清单逐分片读头取全，44691 个张量，无读失败分片。
+      另有同期的 GLM-4.5-FP8 与较小档位 GLM-4.5-Air（46 层 / 128 专家），均未收录
+
+hf:
+  repo: zai-org/GLM-4.5
+  sha: cbb2c7cfb52fa128a9660cb1a7a78e017899e115
+  last_modified: '2025-08-11T13:27:03.000Z'
+  pipeline_tag: text-generation
+  gated: false
+
+lineage:
+  track: main
+  predecessor: glm-4-32b-0414
+  successor: glm-4.6
+  changed_from_predecessor:
+    - axis: moe
+      text: >-
+        家族首次从稠密转 MoE：160 个路由专家 + 1 个共享专家、top-8、专家中间维 1536，
+        前 3 层仍稠密（中间维 12288）。逐专家独立张量存放，不是堆叠的 3 维权重。
+        路由带 e_score_correction_bias [160]（F32），即偏置纠偏（noaux_tc 族形态）
+      benefit: >-
+        总参数 32.6B → 358B（11.0 倍），而带宽口径的激活参数只从 31.6B 变到 32.9B
+        （+3.9%）—— decode 的权重带宽几乎没涨，容量涨了一个数量级。
+        代价有三笔：(1) 权重存储 60.66 GiB → 667.46 GiB，HBM 容量成为首要约束；
+        (2) 多出 EP all-to-all，每 token 2 × top_k 8 × hidden 5120 × 2 B = 163,840 B/层，
+        89 个主干 MoE 层合计 14,581,760 B/token（14.58 MB）；(3) grouped GEMM 吃 2 维张量列表，
+        EP 切分按张量分配而不是按堆叠首维切。n_group=1 且 topk_group=1，
+        所以分组路由这条路实际未启用，不存在 DeepSeek V2 那种「组数约束目的地设备数」的收益
+    - axis: attention
+      text: >-
+        KV 头数 2 → 8、query 头数 48 → 96，head_dim 仍 128；QKV 的 bias 回来了
+        （attention_bias=true，但只在 q/k/v 上，o_proj 没有）；新增 QK-Norm
+        （q_norm / k_norm，各 [128]，逐 head_dim 归一化）；
+        每层 norm 从 4 处回到 2 处，0414 一代的 sandwich norm 去掉了
+      benefit: >-
+        KV 头数翻两番，每层缓存从 512 元素涨到 2048；叠上层数 61 → 92，
+        每 token 从 31232 元素涨到 188416，**6.03 倍**。这是整条 GLM 线上
+        KV 压力最重的一代 —— 32K 上下文就要 11.50 GiB（BF16 兜底口径），
+        而权重里能省的（MoE）和缓存里要付的（更多 KV 头 × 更多层）正好反向。
+        后面 GLM-4.7-Flash 转 MLA、GLM-5 叠 DSA，都是在还这笔账。
+        QK-Norm 的推理代价不能只看参数宽度。被去掉的 sandwich norm 两处是
+        post_self_attn_layernorm 与 post_mlp_layernorm，形状都是 **[6144]**
+        （0414 的 hidden 是 6144，不是本代的 5120），每层归一化 2 × 6144 = 12,288 个元素；
+        QK-Norm 的参数虽然各 [128]，但**各头共用一份参数、所有头都要过**，
+        每层实际是 q 96 头 × 128 + k 8 头 × 128 = **13,312** 个元素，比 12,288 高 8.3%。
+        所以 Vector 的**元素吞吐是略升的**；省下来的是参数量，以及两次全宽 reduce
+        夹在残差加法之间带来的同步面（QK-Norm 可以跟 QKV 投影的 epilogue 一起做）
+    - axis: decoding
+      text: >-
+        首次带 MTP 草稿块：config num_nextn_predict_layers=1，权重里第 92 层是一个
+        完整 transformer 块 —— 自带注意力（与主干同名的 7 张投影张量：q/k/v 的 weight 与 bias 共 6 张加 o_proj，另有 q_norm / k_norm 两张）、160 专家 MoE、
+        共享专家、router，外加主干没有的 eh_proj [5120, 10240]、enorm、hnorm、
+        shared_head.norm，以及自己独立的 embed_tokens 与 shared_head.head
+        （各 [151552, 5120]）
+      benefit: >-
+        投机解码把 decode 从「每步一个 token」变成「每步验证多个」，
+        但草稿侧成本不是「再跑一个投影头」：实测 5,539,962,272 参数，
+        占总量 1.55%，其中两张词表大小的张量（embed_tokens + shared_head.head）
+        就占 1,551,892,480，是草稿块的 28.0%。
+        **它也产出自己的 KV** —— 开草稿侧时 KV 层数要按 93 算，不是 92
+    - axis: context
+      text: 32768 → 131072（config max_position_embeddings），rope base 10000 → 1,000,000
+      benefit: >-
+        4 倍上下文，但叠上 KV 每 token 涨 6.03 倍，缓存总量涨 24 倍
+        （同样 32K 下 1.91 GiB → 11.50 GiB；各自的最大上下文下 1.91 GiB @ 32768 → 46.0 GiB @ 131072，24.1 倍。
+        两侧都是 BF16 兜底口径（bytes_basis: dtype_fallback），同一套 basis 才可以这样比）。
+        长上下文这一代是靠 rope base 放大 100 倍换来的，结构上没有任何省缓存的改造
+    - axis: precision
+      text: 仍是 BF16 直接发布（另有独立的 GLM-4.5-FP8 仓，未收录）
+      benefit: 主仓不量化，部署最简单；FP8 走单独的仓，与 GLM-5.3 把 FP8 做成主仓的做法不同
+
+params:
+  total: 358337791296.0
+  breakdown:
+    expert: 335963750400.0
+    attention: 12542287872.0
+    draft: 5539962272.0
+    shared_expert: 2099773440.0
+    embed: 775946240.0
+    lm_head: 775946240.0
+    dense_ffn: 566231040.0
+    router: 72923040.0
+    norm: 970752.0
+  counting_note: >-
+    按完整权重清单（93 分片 44691 条目）逐项求和，与 HF 平台自己从分片头统计的
+    safetensors tally（358,337,791,296）逐位相同。清单 dtype 只有 BF16 与 F32 两种
+    （F32 只有 e_score_correction_bias [160]，清单里 90 份、共 14,400 个元素 ——
+    主干 89 层各一份加 MTP 块一份），
+    没有量化 scale 容器、没有低位打包，条目数即张量数、numel 即参数数。
+    厂商未在 config 或模型卡里声明总参数或激活参数，total 是本仓按清单求和的实测值。
+    Gate B 的「参数总量」一项（delta 0.0）因此是**拿实测比实测，不构成核对** ——
+    真正的外部核对是 HF 的 safetensors tally，它不依赖本仓任何一行代码。
+    **draft 一项是第 92 层整块**（5,539,962,272），按层索引归类（classify 的 mtp_from=92）；
+    主干是 0–91。total 含草稿侧，没有 excludes。
+    逐因子核过：注意力 136,329,216/层 = q 12288×5120 + q.bias 12288 + k 1024×5120
+    + k.bias 1024 + v 1024×5120 + v.bias 1024 + o 5120×12288，× 92 主干层 = 12,542,287,872；
+    专家 3,774,873,600/层 = 160 × 3 × 1536×5120，× 89 个主干 MoE 层（L3–L91）= 335,963,750,400；
+    共享专家 23,592,960/层 × 89 = 2,099,773,440；稠密 FFN 3 层 × 3 × 12288×5120 = 566,231,040；
+    router 89 × (160×5120 + 160) = 72,923,040。
+    q_norm / k_norm（各 [128]）按 scripts/lib/subsystems.py 的优先级归在 norm 桶，
+    不在 attention 桶里 —— 所以 attention 的逐层乘式里没有它们
+
+context:
+  max: 131072
+
+arch:
+  layers: 92
+  hidden: 5120
+  vocab: 151552
+  norm: RMSNorm（每层 2 处：input / post_attention；另有注意力内的 q_norm / k_norm，各 [128]）
+  norm_eps: 1.0e-05
+  activation: SwiGLU（hidden_act silu；gate / up / down 三张独立张量，专家与共享专家同）
+  position: RoPE theta 1,000,000，partial_rotary_factor 0.5（只作用在每头前 64 维）
+
+  attention:
+    type: GQA
+    num_heads: 96
+    num_kv_heads: 8
+    head_dim: 128
+    head_dim_note: >-
+      q_proj [12288, 5120] = 96 头 × 128，k_proj / v_proj [1024, 5120] = 8 头 × 128，
+      o_proj [5120, 12288] = 入口 96 × 128。q/k/v 各带 bias，o_proj 没有。
+      缓存宽度按 KV 头算：2 × 8 头 × 128 = 2048 元素/层/token；
+      按 query 头数 96 折算会得 24576，高估 12 倍。
+      QK-Norm 的 q_norm / k_norm 都是 [128]，即沿 head_dim 归一化、各头共用一份参数
+    kv_sharing:
+      layer_coverage: >-
+        以下层数都是**主干口径**（0–91）：每层都有自己的 k_proj / v_proj，
+        92/92 层产出 KV，无跨层共享、无滑窗、无稀疏。
+        另有 MTP 块（第 92 层）自带与主干同名的 7 张注意力投影张量（q/k/v 的 weight 与 bias 共 6 张加 o_proj，另有 q_norm / k_norm），**也产出自己的 KV**；
+        config 的 num_hidden_layers=92 不含它。所以清单里产出 KV 的层共 93 个，
+        开 MTP 时要按这个数算（+2048 元素/token，+1.09%）
+    layer_pattern: 92 层同构 GQA，无混合、无稀疏
+
+  ffn:
+    type: moe
+    layer_pattern: >-
+      第 0–2 层稠密（中间维 12288），其余 89 层为 MoE；MTP 块（第 92 层）也是 MoE。
+      稠密层的 FFN 比单个专家宽 8 倍，单层 188,743,680 参数，
+      是一层注意力 136,329,216 的 1.38 倍
+
+  moe:
+    routed_experts: 160
+    shared_experts: 1
+    top_k: 8
+    intermediate: 1536
+    first_k_dense: 3
+    dense_intermediate: 12288
+    routing: >-
+      top-8 选路、norm_topk_prob=true 归一化、routed_scaling_factor 2.5。
+      n_group=1 且 topk_group=1，分组路由实际未启用。
+      config 这一代不声明 scoring_func 与 topk_method（GLM-4.7-Flash 起才显式写
+      noaux_tc），所以打分函数本身没有一手来源，见 open_questions
+    balance: >-
+      e_score_correction_bias [160]（F32；清单里 90 份 —— 主干 89 个 MoE 层各一份加
+      MTP 块一份）—— **偏置纠偏（noaux_tc 族形态）**。
+      「所以无辅助损失」这半句**不成立，已删**：本仓的 minimax-m2 同时有 62 份
+      e_score_correction_bias 和 config 里的 router_aux_loss_coef 0.001，
+      两者可以共存，张量存在定不了 aux loss 的有无；而「config 没有 aux_loss 字段」
+      在本代也不构成否证 —— 这一代的 config 连 topk_method / scoring_func 都不写。
+      aux loss 有无见 open_questions
+    storage_note: >-
+      逐专家独立张量（mlp.experts.N.{gate,up,down}_proj），不是堆叠的 3 维权重。
+      grouped GEMM 因此吃 2 维张量列表；EP 切分按张量分配，不按首维切
+
+  decoding:
+    mtp_layers: 1
+    mtp_layers_note: >-
+      config 声明 1，权重里确实只有 1 块（第 92 层，层索引 0–92 连续）——
+      本代没有踩 DeepSeek「声明 1、权重里 3 块」那个坑。
+      这一块自带 embed_tokens 与 shared_head.head 各 [151552, 5120]；
+      GLM-4.6 把这两张去掉了（见该记录），GLM-4.7 又加回来
+
+precision:
+  weights_release: [BF16, FP32]
+  quantization:
+    per_subsystem:
+      expert: BF16
+      shared_expert: BF16
+      attention: BF16
+      dense_ffn: BF16
+      draft: BF16
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+    subsystem_method: >-
+      来自完整权重清单（93 分片 44691 条目）逐项统计，非抽样：每个条目都带 shape 与 dtype，
+      failed_shards 为空。44691 个条目里 44601 是 BF16、90 是 F32。
+      **router 桶内部不同质**：主干 89 层（L3–L91）的 mlp.gate.weight [160, 5120] 是 BF16，
+      同样 89 份 e_score_correction_bias [160] 是 F32 真参数（不是 scale 容器，
+      所以**本代根本没有 per_subsystem_scale 这个字段** —— 不量化，不存在 scale 张量）。按元素数 router 桶 99.98% 是 BF16
+      （BF16 72,908,800 / F32 14,240 = 89 × 160），代表值报 BF16。
+      清单里这两种各有 90 份，第 90 份在 MTP 块（L92）、按层索引归在 draft 桶 ——
+      所以全清单的 90 × 160 = 14,400 个 F32 元素是 weights_release 里 FP32 的唯一来源，
+      其中 14,240 在 router 桶、160 在 draft 桶。
+      **draft 桶因此也不同质**：502 个张量里 501 个 BF16 加这 1 个 F32；
+      代表值报 BF16 没问题，但按「MTP 块整体 BF16」做名字精确匹配的流程要知道有这一张。
+      这一代没有 quantization_config，不存在 scale 张量与量化块
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/zai-org/GLM-4.5
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      这是整条 GLM 线上 KV 最重的一代：KV 头数 8（前代 2）× 92 层（前代 61），
+      每 token 188416 元素。没有任何省缓存的结构 —— 无跨层共享、无滑窗、无稀疏、
+      无 latent 压缩。长上下文的代价直接按「层数 × KV 头数 × head_dim」全额付。
+      后面三代（GLM-4.7-Flash 的 MLA、GLM-5 的 DSA、GLM-5.2 的 indexer 分层）
+      都在还这笔账。
+    quantified: >-
+      口径为**主干 92 层，不含 MTP 块**：2 × num_kv_heads 8 × head_dim 128 = 2048
+      元素/层/token × 92 层 = 188416 元素/token。开 MTP 时第 92 层另有一层，
+      即 93 层、190464 元素/token（+2048，+1.09%）。
+      KV 落盘精度未披露，按 config 的 torch_dtype=bfloat16 兜底（2 B/元素）得
+      376832 B/token、131072 上下文 46.0 GiB —— dtype_fallback 兜底口径，
+      不是实测落盘量
+    visibility: public
+  - dimension: ep-comm
+    finding: >-
+      160 专家 top-8、专家中间维 1536，逐专家独立张量存放。
+      EP 切分按张量分配而非按堆叠首维切，与 Qwen 那类 3 维堆叠权重的
+      切分方式和算子签名都不同。n_group=1 / topk_group=1 意味着分组路由未启用，
+      一个 token 的 8 个专家可以落到任意 8 个 EP 组上 —— 取消的是**分组**约束
+      （DeepSeek V2 那种「目的地组数 ≤ topk_group」），不是目的地数量本身的上界：
+      上界仍是 min(top_k 8, EP size)。
+    quantified: >-
+      每 token 每 MoE 层 2 × top_k 8 × hidden 5120 × 2 B（BF16）= 163,840 B，
+      89 个主干 MoE 层合计 14,581,760 B/token（14.58 MB）
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      MTP 块（第 92 层）是个完整 transformer 层：自带注意力、160 专家与共享专家、
+      router，并带主干根本没有的 eh_proj [5120, 10240]（把两路 hidden 拼接后降维）
+      与 enorm / hnorm / shared_head.norm。按主干层的算子集合去排 MTP 块，
+      会少掉 eh_proj 这一张最宽的投影，也会漏掉它自己的 KV。
+    quantified: 草稿块实测 5,539,962,272 参数（总量的 1.55%），其中 embed_tokens + shared_head.head 占 1,551,892,480（28.0%）
+    visibility: public
+
+infra_signals:
+  - text: >-
+      GLM 的 MoE 转型把容量和带宽解耦（总参数 ×11.0，带宽口径激活参数 +3.9%），
+      但同一代把 KV 头数从 2 加到 8、层数从 61 加到 92，KV 每 token 涨 6.03 倍。
+      **一代之内两笔账反向走**：权重侧省下来的，缓存侧又花出去了。
+      排 infra 预算时这两笔要分开看 —— 按「MoE 省带宽」一句话推不出这一代的真实压力点。
+    evidence: judgement
+    horizon: settled
+    axis: moe
+  - text: >-
+      MTP 草稿块在 GLM 家族从这一代开始，且一上来就是「完整 transformer 层 + 独立词表副本」
+      的形态，不是轻量投影头。它自带 KV，所以缓存账的层数要按 93 而不是 config 的 92 算；
+      适配流程要把「草稿块有没有自己的词表」当作必问项 ——
+      **这一项在 GLM-4.6（去掉）与 GLM-5（同样没有）各出现过一次变化**。
+      而「有没有自己的 KV」这一项四代都没变：GLM-5 的 MTP 块同样自带整套
+      kv_a_proj_with_mqa / kv_b_proj / q_a_proj / q_b_proj，形态从 GQA 换成 MLA latent，
+      但「自产 KV」这件事没动 —— 两项不要并在一句里说「各变过一次」。
+    evidence: judgement
+    horizon: now
+    axis: decoding
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.attention.kv_sharing.layer_coverage: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.routing: derived
+  arch.moe.balance: judgement
+  arch.moe.storage_note: derived
+  arch.moe.first_k_dense: derived
+  arch.moe.dense_intermediate: official
+  arch.decoding.mtp_layers: derived
+  arch.decoding.mtp_layers_note: derived
+  precision: official
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-30'
+  scope:
+    - official
+    - derived
+    - judgement
+  reviewer: 本会话逐字段复算，另派四路独立核查代理分管互不重叠的因子组
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序逐字段对 facts/glm-4.5 核：config 全部键、
+    完整权重清单（44691 条目，逐项 numel / dtype / 层索引）、repoinfo 的 tags / cardData /
+    createdAt / lastModified / sha 与逐 dtype 的 safetensors tally，以及
+    data/derived/glm-4.5.json 的分项与 KV 公式路。
+    本会话另做了两遍机械扫描：(1) 把记录里**每一个带逗号的数字**与从清单重算的集合比对
+    （张量 numel、逐层分组求和、各子系统求和、derived 的每一项、跨版本差值），未匹配的逐个手算；
+    (2) 同样扫 4–6 位纯数字，核出的口径错已改（留痕见下）。
+    记录里每一个「X 倍」「X%」都逐个重算过分子分母。
+    与 GLM-4.6 / GLM-4.7 的三组比对是本会话逐张量重做的（名字 + 形状 + dtype 三者都比），
+    不只比名字集合。
+    **哪些是实际重跑过的、哪些不是**，按本仓约定分开写明。
+    本会话实际重跑/重算：清单逐项求和得 params.total 与 breakdown，并与 breakdown
+    逐项求和、HF 的 safetensors tally 三方比对（逐 dtype 的元素数也比了）；
+    derive.py 的 reconciliation 与 active_params；缓存账公式路的四个因子
+    （宽度 / 层集合 / 条目覆盖 / 每元素字节）各自落到某个张量形状上；
+    cfg.json 的逐键 diff 与张量名集合的对称差、shape+dtype 字典的逐条相等；
+    dtype 的逐条计数。
+    **未逐项复跑、依据核查代理枚举的**：各子系统桶内的元素占比（99.9x% 这类分母的
+    归类优先级链没有逐张量重判）。
+    **原理上核不了的**（清单只有名字、形状与 dtype，所以不在 reviewed.scope 的覆盖内）：
+    运行期标量（top_k / index_topk / routed_scaling_factor / norm_eps / rope 参数 /
+    scoring_func / topk_method / attention_bias 等）只有 config 一个来源；
+    MTP 块自带的词表副本与主干那份是不是同值；KV 条目是 1:1 计费还是选存；
+    KV 的实际落盘精度。后三项都挂在 open_questions 里。
+review:
+  - id: R1
+    field: lineage.changed_from_predecessor
+    severity: wrong
+    claim: >-
+      EP all-to-all「89 个 MoE 层合计 14.26 MB/token」
+    finding: >-
+      逐因子重算：2 × top_k 8 × hidden 5120 × 2 B = 163,840 B/层，× 89 个主干 MoE 层
+      = 14,581,760 B，即 14.58 MB（13.91 MiB）。14.26 不对应任何一种单位换算。
+      **同一份记录的 bottleneck ep-comm 一条写的是 14.58 MB —— 两处自相矛盾**，
+      这是本仓反复出现的「文件内部不一致」指纹。
+    resolution: corrected
+    changed_to: >-
+      改为 14,581,760 B/token（14.58 MB），两处口径统一
+  - id: R2
+    field: bottlenecks
+    severity: wrong
+    claim: >-
+      「131072 上下文 33.07 GiB」
+    finding: >-
+      376,832 B/token × 131,072 = 49,392,123,904 B = **46.0 GiB**，与 derive.py 的
+      kv_capacity_bytes_at_context['131072'] 逐位相同。33.07 这个数在任何因子组合下都算不出来。
+      同一处的「24 倍」反而是对的（46.0 / 1.91），所以错的只是这一个绝对值 ——
+      一个乘式里只验了比值没验绝对值。
+    resolution: corrected
+    changed_to: >-
+      改为 46.0 GiB，并补上「两侧同为 dtype_fallback 口径才可以这样比」
+  - id: R3
+    field: precision.quantization.subsystem_method
+    severity: imprecise
+    claim: >-
+      「90 个 mlp.gate.weight 是 BF16，而 90 个 e_score_correction_bias 是 F32」—— 用来说明 router 桶内部不同质
+    finding: >-
+      90 是**全清单**的份数（层 3–92，含 MTP 块那一份）；router **桶**里只有 89 份
+      （主干 L3–L91），第 90 份在第 92 层、按层索引归在 draft 桶。
+      桶的参数量 72,923,040 = 89 × (160×5120 + 160) 自己就证明了这一点。
+      拿清单口径的份数去解释桶的构成，是混了两个口径 —— 与 glm-5.3 的 R7 同类。
+    resolution: corrected
+    changed_to: >-
+      区分「清单里 90 份」与「router 桶里 89 份」，并说明第 90 份归在哪
+  - id: R4
+    field: evidence.lineage
+    severity: miscategorized
+    claim: >-
+      lineage 标 derived
+    finding: >-
+      同 glm-4-9b 的 R3。
+    resolution: corrected
+    changed_to: >-
+      evidence 的 lineage 改为 judgement
+  - id: R5
+    field: params
+    severity: imprecise
+    claim: >-
+      breakdown 九项与 total
+    finding: >-
+      每一项逐因子重算并与清单求和、derived JSON、HF 的逐 dtype tally 三方对齐：
+      注意力 136,329,216/层 × 92、专家 3,774,873,600/层 × 89、共享专家 23,592,960 × 89、
+      稠密 FFN 3 × 188,743,680、router 89 × 819,360、draft 第 92 层整块 5,539,962,272
+      （直接取该层全部张量之和核过）。total 753→358,337,791,296 与 tally 逐位相同。
+      q_norm / k_norm 落在 norm 桶而不在 attention 桶这一条也按 subsystems.py 的顺序验过。
+    resolution: confirmed
+  - id: R6
+    field: arch.moe.balance
+    severity: unsupported
+    claim: >-
+      「e_score_correction_bias（F32，90 层各一份）—— 偏置纠偏、无辅助损失。config 没有 aux_loss 相关字段，这个结论来自权重清单里这张张量的存在」
+    finding: >-
+      「所以无辅助损失」这半句不成立：偏置纠偏与辅助损失可以共存 ——
+      本仓的 facts/minimax-m2 同时有 62 份 e_score_correction_bias 和 config 里的
+      router_aux_loss_coef 0.001、scoring_func sigmoid。张量存在只能说明走偏置纠偏，
+      定不了训练目标函数。另一条论据「config 没有 aux_loss 字段」在本代也弱：
+      这一代的 config 连 topk_method / scoring_func 都不写，缺字段不构成否证。
+      同一份记录的 open_questions 对 scoring_func 守了这条纪律，对 aux loss 没守。
+      evidence 把整条标 derived 也不对 —— 字段正文自己承认是推论。
+    resolution: corrected
+    changed_to: >-
+      删掉「无辅助损失」，改为「偏置纠偏（noaux_tc 族形态）」；aux loss 有无进 open_questions；evidence 的 arch.moe.balance 改 judgement
+  - id: R7
+    field: lineage.changed_from_predecessor
+    severity: wrong
+    claim: >-
+      「QK-Norm 的推理代价是每层两次小 RMSNorm（各 128 维），但它替掉了 sandwich norm 的两处全宽 norm（各 5120 维），Vector 负载实际是降的」
+    finding: >-
+      两个因子都错，结论反了。(1) 被去掉的 post_self_attn_layernorm 与
+      post_mlp_layernorm 在 glm-4-32b-0414 的清单里形状都是 **[6144]**（0414 的 hidden），
+      不是本代的 5120 —— 把两代的宽度串了。
+      (2) Vector 负载要按「每层被归一化的元素数」算：0414 那两处是 2 × 6144 = 12,288；
+      QK-Norm 的参数虽各 [128]，但各头共用一份参数、所有头都要过
+      （本记录自己的 head_dim_note 就写了「沿 head_dim 归一化、各头共用一份参数」），
+      所以实际是 q 96 × 128 + k 8 × 128 = **13,312**，比 12,288 **高 8.3%**。
+      只按参数宽度（2×128 vs 2×5120）比，正是 skill 规则 1 的「只验了一个因子」——
+      漏掉的因子是「每个 norm 作用在多少个头上」。
+    resolution: corrected
+    changed_to: >-
+      宽度改 6144；结论改为「元素吞吐略升（12,288 → 13,312，+8.3%），省下来的是参数量与两次全宽 reduce 的同步面」
+  - id: R8
+    field: bottlenecks
+    severity: wrong
+    claim: >-
+      ep-comm 一条写「一个 token 的 8 个专家可以落到任意 8 个 EP 组上，目的地设备数没有上界约束」
+    finding: >-
+      上界是 min(top_k 8, EP size)，不是无界。n_group=1 / topk_group=1 取消的是
+      **分组**约束（DeepSeek V2 那种「目的地组数 ≤ topk_group」），
+      不是目的地数量本身的上界 —— 本仓 ds-v2 的记录对分组上界的描述是对的，
+      这里把「取消分组」读成了「取消上界」。
+    resolution: corrected
+    changed_to: >-
+      改为「取消的是分组约束，上界仍是 min(top_k 8, EP size)」
+  - id: R9
+    field: precision.quantization.subsystem_method
+    severity: imprecise
+    claim: >-
+      「同样 89 份 e_score_correction_bias 是 F32 真参数……那 14,400 个 F32 元素是 weights_release 里 FP32 的唯一来源」
+    finding: >-
+      一句话里混了两个口径。router 桶（classify 的 mtp_from=92）实测 F32 是
+      89 × 160 = **14,240** 个元素（BF16 72,908,800，占 99.9805%）；
+      **14,400** 是整份清单的 90 份。承接「89 份」的「那 14,400 个」差 160 个元素，
+      差的那一份在 draft 桶。同时 draft 桶因此也不同质
+      （502 个张量里 501 BF16 + 1 个 F32），而原文只点名了 router 一个桶 ——
+      glm-5.3 的 R8 是同型。
+    resolution: corrected
+    changed_to: >-
+      拆开 router 桶 14,240 与全清单 14,400，并补上 draft 桶也不同质
+  - id: R10
+    field: infra_signals
+    severity: overreach
+    claim: >-
+      「适配流程要把「草稿块有没有自己的 KV / 自己的词表」当作必问项 —— 这两项在 GLM-4.6 与 GLM-5 又各变过一次」
+    finding: >-
+      只有「自己的词表」这一项变过（4.5 有 → 4.6 无 → 4.7 又有 → GLM-5 无）。
+      「自己的 KV」四代都没变：facts/glm-5 的 model.layers.78.* 带整套 MLA 投影
+      （kv_a_proj_with_mqa [576, 6144]、kv_b_proj [28672, 512]、q_a_proj、q_b_proj），
+      即 GLM-5 的 MTP 块仍然自产 KV —— 形态从 GQA 换成 MLA latent，
+      但「有没有」这件事没动。两项并在一句里说「各变过一次」会让读者以为 KV 那一项也变过。
+    resolution: corrected
+    changed_to: >-
+      拆成两句：词表这一项变过，自带 KV 这一项四代未变；item 级 evidence 从 derived 改 judgement
+  - id: R11
+    field: precision.quantization.subsystem_method
+    severity: imprecise
+    claim: >-
+      「不是 scale，所以 per_subsystem_scale 里没有 router 项」
+    finding: >-
+      本代不量化，**根本没有 per_subsystem_scale 这个字段** —— 这句话指向空气。
+      原句来自 glm-5.3（那份确实有 per_subsystem_scale，是 R9 写的），
+      复制到不量化的记录里就不成立。glm-4.6 / 4.7 / 4.7-flash / 5 / 5.2 同病。
+    resolution: corrected
+    changed_to: >-
+      改为「不是 scale 容器；本代不量化，没有 per_subsystem_scale 这个字段」，六份一起改
+  - id: R12
+    field: params.counting_note
+    severity: missing
+    claim: >-
+      counting_note 没说 Gate B 的参数总量一项是实测比实测
+    finding: >-
+      同 glm-4-9b 的 R13，照 ds-v2 的写法补。
+    resolution: corrected
+    changed_to: >-
+      补上这一句
+notes: >-
+  GLM 家族的 MoE 起点，也是第一代带 MTP 的 GLM。注意力仍是 GQA（96/8），
+  MLA 要到 GLM-4.7-Flash 才进来，DSA 要到 GLM-5。
+  层数、宽度、注意力几何、每层 norm 构成、专家分布与层集合、MTP 块构成、参数量与逐子系统精度
+  都对照完整权重清单核过；top_k / routed_scaling_factor / norm_topk_prob / rope 参数
+  这类运行期标量只有 config 一个来源，清单只有名字、形状与 dtype，交叉验证不了。
+  打分函数（sigmoid 还是 softmax）这一代 config 不声明，故未写进 routing 的断言里。
+
+open_questions:
+  - >-
+    MoE 是否用辅助损失没有一手来源。权重里有 e_score_correction_bias 只能说明
+    走偏置纠偏（noaux_tc 族形态），两者可以共存 —— 本仓的 minimax-m2 同时有
+    62 份 e_score_correction_bias 和 config 里的 router_aux_loss_coef 0.001。
+    而「config 没有 aux_loss 字段」在这一代也不构成否证：这一代的 config
+    连 topk_method / scoring_func 都不写
+  - >-
+    KV cache 的实际落盘精度未披露，按 config 的 torch_dtype=bfloat16 兜底
+    （2 B/元素），所以 376832 B/token 是 dtype_fallback 兜底口径，
+    不能和按落盘格式算出来的理论下限（如 DeepSeek V4.1 的 890 B/token）直接比倍数
+  - 训练精度无一手声明，config 只有 torch_dtype=bfloat16，所以 precision.training 不填
+  - >-
+    MoE 的打分函数没有一手来源。config 这一代不写 scoring_func / topk_method，
+    只有 norm_topk_prob 与 routed_scaling_factor；权重里的 e_score_correction_bias
+    只能说明走偏置纠偏（noaux_tc 族），定不了 sigmoid 还是 softmax。
+    GLM-4.7-Flash 的 config 才开始显式写 topk_method=noaux_tc，GLM-5 再加 scoring_func=sigmoid ——
+    但「后面声明了」不能回填到这一代
+  - >-
+    MTP 块自带的 embed_tokens / shared_head.head 与主干的 embed_tokens / lm_head
+    是不是数值相同的副本，清单定不了（只有形状与 dtype）。
+    这件事有实害：若是同值副本，加载时可以共享一份显存；若是独立训练的权重，不能。
+    GLM-4.6 去掉这两张（必然复用主干的）、GLM-4.7 又加回来，更说明这一项要读实现或比数值
+  - >-
+    较小档位 GLM-4.5-Air（同日发布，47 层含 MTP / hidden 4096 / 128 专家 top-8 /
+    first_k_dense 1 / use_qk_norm=false / routed_scaling_factor 1.0）未收录：
+    结构轴与本记录重合，没有新的对照价值。它的 MTP 块同样自带 embed_tokens 与
+    shared_head.head（已按张量名清单核过）
