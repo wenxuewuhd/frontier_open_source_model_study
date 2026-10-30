@@ -284,7 +284,7 @@ arch:
       encoder_linear_gflops: 2906.0
       projector_linear_gflops: 427.62
       backbone_token_budget: 576
-      backbone_linear_gflops_per_token: 47.0
+      backbone_linear_gflops_per_token: 47.01
       image_as_text_tokens: 647
       attention_excluded: >-
         被排除的是 encoder 自注意力的 QK^T 与 AV，形式

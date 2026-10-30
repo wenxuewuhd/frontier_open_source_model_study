@@ -294,8 +294,8 @@ arch:
       encoder_linear_gflops: 23146.5
       projector_linear_gflops: 161.61
       backbone_token_budget: 169
-      backbone_linear_gflops_per_token: 74.65
-      image_as_text_tokens: 481
+      backbone_linear_gflops_per_token: 73.99
+      image_as_text_tokens: 484
       attention_excluded: >-
         被排除的是 encoder 自注意力的 QK^T 与 AV，形式
         4 × n² × hidden × layers。本档是固定分辨率，所以 n 至多 2705、
@@ -321,13 +321,18 @@ arch:
         2 × 676 × (4096 × 1792 × 2²) = 39.69 +
         2 × 169 × (8192 × 4096 × 3²) = 102.07 +
         2 × 169 × (7168 × 8192) = 19.85，合计 161.61 GFLOPs。
-        主干分母 = 2 × (active_params.total 38,249,345,024 −
-        active_params.lm_head 923,345,920) = 74,651,998,208 ——
-        **不能用 derived 里的 flops.linear_per_token 76,498,690,048**，
+        主干分母 = 2 × (active_params.total 37,917,982,720 −
+        active_params.lm_head 923,345,920) = 73,989,273,600 ——
+        **不能用 derived 里的 flops.linear_per_token 75,835,965,440**，
         那一项含 lm_head（decode 口径）。
-        换算 = 169 + 23,308,069,152,768 / 74,651,998,208 = 169 + 312.2 = 481
+        换算 = 169 + 23,308,069,152,768 / 73,989,273,600 = 169 + 315.0 = 484
         （分子 = encoder 23,146,454,231,040 + projector 161,614,921,728）。
-        **这是 12 份里塔开销占比最高的一档**（481 / 169 = 2.85）：
+        **分母在 main 的 e394525 之后从 74.65 降到 73.99**（−0.89%）：
+        两级 `vit_downsampler` 的 3.31 亿参数原先被 `subsystems.py` 归进
+        `other`，而 `other` 在 `derive.py` 的常驻名单里 —— 等于把视觉塔的
+        下采样算成了语言主干的激活权重。修正后它们进 `vision`、不计激活。
+        换算值 481 → 484，占比 2.846 → 2.864，结论方向不变
+        **这是 12 份里塔开销占比最高的一档**（484 / 169 = 2.86）：
         一张图的 prefill 成本有 **65% 花在视觉塔上**、只有 35% 在主干。
         根因是 16:1 压缩把主干位置预算压到了 169（全批最低），
         而买下这个预算的代价是一座 4.3B 参数、63 层的塔。
@@ -590,8 +595,8 @@ review:
       **把两级都按 169 算会少算第一级 4 倍** —— 这是跨步卷积式压缩
       特有的坑，拼接式 merger 没有（那种只有一个位置数）。
       (2) **塔开销占比是 12 份里最高的**：一张图（全局视图那一路）
-      相当于 481 个文本 token，而它只占 169 个位置 ——
-      prefill 成本 65% 花在视觉塔上、只有 35% 在主干。
+      相当于 484 个文本 token（本条写时是 481，分母修正后见 R24），
+      而它只占 169 个位置 —— prefill 成本 65% 花在视觉塔上、只有 35% 在主干。
       encoder 线性项 23.1 TFLOPs 是 12 份里最大的，
       比第二位 minimax-m3 的 2906.0 GFLOPs 还大 8 倍（塔 63 层 ×
       hidden 1792 × inter 15360，光塔 4.3B 参数）。
@@ -617,7 +622,7 @@ review:
       compression_stage 写明两级跨步卷积各自的输出位置数；
       scope_note 写明 169 只是全局视图、以及固定分辨率不可换算到 672）、
       arch.vision.prefill（encoder 线性 23.1 TFLOPs、projector 161.61 GFLOPs
-      分三项给出、一张图 ≈ 481 个文本 token，塔占 65%）、
+      分三项给出、一张图 ≈ 481 个文本 token —— 该值已由 R24 改为 484）、
       arch.vision.separability（mixed，塔跨两个混合分片，
       并与下一代的 model-vit 专用文件对照）；
       evidence 加九条，四格判断类进 Gate C
@@ -961,6 +966,43 @@ review:
       bytes_basis 落回 dtype_fallback；元素数一个没动（31,232 元素/token）；
       卡上那两句各自讲什么写进 open_questions
 
+  - id: R24
+    field: arch.vision.params
+    severity: miscategorized
+    claim: >-
+      arch.vision.params 4,675,374,592（本记录早先实测自权重清单）
+    finding: >-
+      **这个数现在有三路独立闭合，而且刚刚接住了一个 derive.py 侧的归类错。**
+      本轮（R23）为算 encoder FLOPs 重做了视觉张量的分区，
+      按 shapes.json 求和得 encoder 4,285,292,032 + projector 390,082,560
+      = 4,675,374,592，与 YAML 里原有的值逐位相同 —— 这是第二路。
+      而当时 `data/derived/step-3.json` 的
+      `params_by_subsystem.vision` 是 **4,208,158,720**，少 4.67 亿，
+      同时凭空多出 `draft` 1.36 亿与 `other` 3.31 亿两个桶 ——
+      **本记录是一个没有 MTP 的模型，draft 桶本不该存在。**
+      main 的 e394525 查清了根因（两处）：
+      (1) `vision` 正则是 `vit\\.`，认不出 Step-3 裸的 `vit_downsampler` /
+      `vit_downsampler2`（4 个张量、331,362,304 参数），它们落进了 `other`；
+      (2) 层号捷径把塔自己的 `layers.N.` 判成 `draft` —— 本代塔有 **63 层**
+      而语言主干只有 **61 层**，于是塔的第 61、62 层共 24 个张量被判成草稿块。
+      修正后 `vision` 升到 4,675,374,592、`draft` 与 `other` 双双归零，
+      与 YAML 和本轮的分区三方一致。
+      **第三路是厂商声明**：总量 320,969,912,832 − 4,675,374,592
+      = 316,294,538,240，对上模型卡的「Total Parameters (LLM) 316B」，
+      而总量对上「Total Parameters (VLM) 321B」——
+      两个公布值同时闭合，这一路完全不依赖本仓代码。
+      **顺带被纠正的还有 prefill 的主干分母**：`other` 在 `derive.py` 的
+      常驻名单里，所以那 3.31 亿下采样参数原先被算成语言主干的激活权重，
+      分母虚高 0.89%（74.65 对 73.99）。见 R23 改后的 derivation。
+      记一条方法上的话：本轮做 encoder 参数量时**没有去读 derived JSON 的
+      vision 桶、而是自己从 shapes.json 重分区**，所以两边的差额才暴露出来。
+      如果当时图省事引了那个桶，encoder FLOPs 会跟着少算 4.67 亿参数的塔，
+      而 YAML 里那个正确的 params 就成了孤证、没人会发现它和 derived 不一致
+    resolution: confirmed
+    changed_to: >-
+      params 原值成立、不改。prefill 的 backbone_linear_gflops_per_token
+      74.65 → 73.99、image_as_text_tokens 481 → 484（占比 2.846 → 2.864，
+      方向不变），derivation 里写明分母修正的根因
 notes: >-
   这一族第一个 MoE、也是唯一一代用 MFA 的。model_type step3_vl，
   architectures Step3VLForConditionalGeneration。

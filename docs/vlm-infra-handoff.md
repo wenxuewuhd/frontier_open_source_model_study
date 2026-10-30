@@ -20,18 +20,21 @@ schema 同步改了（`additionalProperties` 仍是 `false`）。
 
 同一张 672×672 的图（StepFun 两档固定 728，**不可换算**，见下）：
 
+（下表已按并入 `main` 的 `e394525` 重算 —— 那个提交改了子系统归类，
+`qwen3.8-flash-next` 的占比因此变动 9.5 倍，详见本页「并 main 之后的修正」一节。）
+
 | id | enc tok | 主干 tok | 压缩比 | ≈文本 tok | 塔占比 | 分片 |
 |---|---|---|---|---|---|---|
-| step-3 | 2705 | 169 | 16 | 481 | **2.85** | mixed |
+| step-3 | 2705 | 169 | 16 | 484 | **2.86** | mixed |
 | step-5-preview | 2704 | 169 | 16 | 352 | 2.08 | **dedicated** |
 | kimi-vl-a3b | 2304 | 576 | 4 | 1007 | **1.75** | mixed |
 | ds-v4-flash-vision-exp | 2304 | 256 | 9 | 332 | 1.30 | mixed |
+| qwen3.8-flash-next | 1764 | 441 | 4 | 564 | 1.28 | mixed |
 | deepseek-v41-flash | 2304 | 256 | 9 | 320 | 1.25 | partial |
 | minimax-m3 | 2304 | 576 | 4 | 647 | 1.12 | mixed |
 | qwen3.5-397b-a17b | 1764 | 441 | 4 | 490 | 1.11 | mixed |
 | qwen3.5-27b / qwen3.8-27b | 1764 | 441 | 4 | 472 | 1.07 | mixed |
 | kimi-k2.5 | 2304 | 576 | 4 | 608 | 1.06 | **dedicated** |
-| qwen3.8-flash-next | 1764 | 441 | 4 | 454 | 1.03 | mixed |
 | kimi-k3 | 2304 | 576 | 4 | 585 | **1.02** | **dedicated** |
 
 ## 三个最关键的发现
@@ -101,6 +104,9 @@ projector 线性项 **427.62 GFLOPs = Qwen 同口径 39.54 的 10.8 倍**；
 「12 份里塔开销占比最低」，算到 Kimi 才发现 kimi-k3 的 1.016 更低。
 已收回成「同代四档最低、跨族系第二低」（提交 `0a00fbe`）。
 报最高/最低之前要把比较范围说出来 —— 和「结构规律钉代际」是同一条。
+
+**后续**：并入 `main` 之后这条结论又被推翻了一次 —— `qwen3.8-flash-next`
+现在是四档里塔**最重**的一档（1.279），不是最轻。见下一节。
 
 ## 顺手补上的空格子
 
@@ -205,6 +211,79 @@ HF 逐文件相加、本仓按 `weight_map` 去重。
 kimi-k3 / kimi-k2.5 / kimi-vl-a3b / minimax-m3 / qwen3.5-27b /
 qwen3.5-397b-a17b / qwen3.8-27b / qwen3.8-flash-next / step-3 / step-5-preview）。
 
+## 并 main 之后的修正（`e394525` 落地后）
+
+把 `main` 的三个提交（`e394525` 归类整合、`4391992` head_dim、`cc4cf38`
+公布值档次）并进本分支后，`e394525` 改了 `scripts/lib/subsystems.py` 的归类与
+`derive.py` 的常驻名单，**12 份里有 5 份的主干分母跟着变**，
+`arch.vision.prefill` 的两格按新值重算过。
+
+| id | 分母 GF/tok | ≈文本 tok | 占比 | 变动来源 |
+|---|---|---|---|---|
+| qwen3.8-flash-next | 114.47 → **12.07** | 454 → **564** | 1.029 → **1.279** | PLE 查表 512 亿从 `other`（计激活）移到 `retrieval`（不计） |
+| step-3 | 74.65 → **73.99** | 481 → **484** | 2.846 → **2.864** | 两级 `vit_downsampler` 3.31 亿从 `other` 移到 `vision` |
+| deepseek-v41-flash | 30.23 → **30.31** | 320 | 1.250 → 1.249 | `residual` 计进常驻（+0.26%） |
+| ds-v4-flash-vision-exp | 25.42 → **25.49** | 332 | 1.296 → 1.295 | 同上（+0.27%） |
+| kimi-k3 | 206.03 | 585 | 1.016 | 同上，+0.001%，取整后无变化 |
+
+### `qwen3.8-flash-next`：错了 9.5 倍，结论整个反过来（该记录 R13）
+
+旧分母 114.47 把 **PLE 查表的 51,200,245,795 个参数当成了常驻**——
+`subsystems.py` 认不出 PLE、归进 `other`，而 `other` 在 `derive.py` 的常驻名单里。
+修正后 `active_params.total` 从 578.7 亿掉到 **66.7 亿**，分母 12.07。
+于是它从「四档里塔最轻、12 份里第 2 低」变成「四档里塔最**重**、12 份里第 8」，
+塔占一张图 prefill 的 **22%** 而不是 3%。
+
+两点方法上的话都写进了 R13：
+
+- **这一条是上一轮自己预告的。** 当时把偏差写进 `open_questions`、
+  并特意把 `prefill.derivation` 标成 `judgement` 让它进 Gate C，
+  理由就是「正则修好后要重算」。偏差没被当成精修放过去，所以正则一落地就被抓回来 ——
+  这是把已知不确定写成字段而不是埋在数里的直接收益。
+- **但预告的方向写错了。** 当时写「114.47 是上界、454 是下界」，幅度估成「略」,
+  实际 9.5 倍。根因是只看到「PLE 被错分」这个事实，没去看它占
+  `active_params.total` 多少（512 亿 / 578.7 亿 = **88%**）。
+  **知道一个因子错了，不等于知道它错多少** —— 下次报上界/下界要同时给幅度。
+
+### `step-3`：`arch.vision.params` 现在有三路独立闭合（该记录 R24）
+
+这是主会话点名想要的交叉验证，结论是**修正后的归类对了**：
+
+1. 本轮为算 encoder FLOPs 自己从 `shapes.json` 重分区：
+   encoder 4,285,292,032 + projector 390,082,560 = **4,675,374,592**；
+2. 修正后 `derive.py` 的 `params_by_subsystem.vision` = **4,675,374,592**
+   （修正前是 4,208,158,720，少 4.67 亿，还凭空多出 `draft` 1.36 亿 ——
+   **本记录是没有 MTP 的模型，draft 桶本不该存在**）；
+3. 厂商声明：总量 320,969,912,832 − 4,675,374,592 = **316,294,538,240**，
+   对上模型卡的「Total Parameters (LLM) 316B」，总量对上「(VLM) 321B」。
+   这一路完全不依赖本仓代码。
+
+**一句方法上的话**：本轮做 encoder 参数量时**没有引 derived JSON 的 `vision` 桶、
+而是自己从 `shapes.json` 重分区**，所以两边的差额才暴露出来。
+图省事引那个桶的话，encoder FLOPs 会跟着少算 4.67 亿参数的塔，
+而 YAML 里那个正确的 `params` 就成了孤证。
+
+### 三桶巡检结果（主会话点名要的）
+
+`_TOWER` 旁路只在阶跃四份上逐张量验过，风险面是「某一代的 MTP 块张量名里带
+vision/vit/audio 字样」。12 份逐份比过 `draft` / `vision` / `other` 三桶：
+
+- **只有 step-3 的三桶变了**（`vision` +4.67 亿、`draft` 与 `other` 归零），
+  方向正确、且三路闭合。
+- `qwen3.8-flash-next` 的 `other` 从 512 亿降到 3,280 万（PLE 移走），
+  `draft` 2,607,150,848 **未变**。
+- 其余 10 份三桶**一个字节没动**，包括 `draft` 非零的 5 份
+  （qwen3.5-27b / qwen3.8-27b 各 424,699,392、qwen3.5-397b-a17b 6,595,568,128、
+  deepseek-v41-flash 14,225,362,530、ds-v4-flash-vision-exp 19,845,851,751、
+  step-5-preview 2,515,858,560）。
+- **没有发现把真 MTP 张量误移出 `draft` 的情况** —— 即担心的风险面在这 12 份上没出现。
+
+另报一处**不是我的改动范围、但顺手发现的**：`main` 里
+`data/derived/deepseek-v41-flash.json` 相对它自己的 `derive.py` 是**旧的**——
+重跑会新增 `cc4cf38` 引入的 `declared_tier: tech_report` 与
+`declared_covers: per_token` 两个字段。我重跑后把它们带上了。
+其余 11 份重跑只差时间戳。
+
 ## 一个踩到的坑：`.gitignore` 的 `facts/` 挡不住符号链接
 
 worktree 里没有 `.venv` 和 `facts/`（都在 gitignore 里、不随分支走），
@@ -231,13 +310,9 @@ worktree 里没有 `.venv` 和 `facts/`（都在 gitignore 里、不随分支走
 
 按价值排序：
 
-1. **`qwen3.8-flash-next` 的 `prefill` 两格要重算**，在 `subsystems.py`
-   的正则修好之后。它的 PLE 查表与 hyper-connections 被错分
-   （该记录 `notes` 已记），所以 `backbone_linear_gflops_per_token` 114.47
-   是**上界**、`image_as_text_tokens` 454 是**下界**。
-   已把那一格的 `derivation` 标成 `judgement` 让它进 Gate C，
-   并写进该记录的 `open_questions` —— 修完正则记得回来重算这两格。
-   **这是本轮唯一一个依赖共享脚本修复的待办。**
+1. ~~`qwen3.8-flash-next` 的 `prefill` 两格要重算~~ —— **已做**，
+   见「并 main 之后的修正」。`subsystems.py` 的正则在 `e394525` 修好后
+   立刻重算了，结论反转（1.029 → 1.279）。
 2. **站点还没有渲染这三个子树。** `site/src/lib/data.ts:417` 的 `vision` 这一行
    只取 `layers` 与 `hidden`。新字段 `validate.py` 全覆盖、`npm run build`
    也过（59 页不变），但页面上看不到。

@@ -334,7 +334,7 @@ arch:
       encoder_linear_gflops: 1896.9
       projector_linear_gflops: 37.58
       backbone_token_budget: 256
-      backbone_linear_gflops_per_token: 30.23
+      backbone_linear_gflops_per_token: 30.31
       image_as_text_tokens: 320
       attention_excluded: >-
         被排除的是 encoder 自注意力的 QK^T 与 AV，形式
@@ -350,11 +350,14 @@ arch:
         （w1 是门控 MLP 的两支合并，5632 = 2 × 2816），
         四项相加与清单里 128 个 blocks 线性张量的求和逐位相同。
         aligner 线性项 = 2 × 256 × (5120 × 9216 + 5120²) = 37,580,963,840。
-        主干分母 = 2 × (active_params.total 15,776,610,304 −
-        active_params.lm_head 661,913,600) = 30,229,393,408 ——
-        **不能用 derived 里的 flops.linear_per_token 31,553,220,608**，
+        主干分母 = 2 × (active_params.total 15,815,934,064 −
+        active_params.lm_head 661,913,600) = 30,308,040,928 ——
+        **不能用 derived 里的 flops.linear_per_token 31,631,868,128**，
         那一项含 lm_head（decode 口径）。
-        换算 = 256 + 1,934,436,073,472 / 30,229,393,408 = 256 + 64.0 = 320。
+        换算 = 256 + 1,934,436,073,472 / 30,308,040,928 = 256 + 63.8 = 320。
+        （分母在 main 的 e394525 之后从 30.23 升到 30.31：mHC 的 residual
+        系数每 token 都要走，原先整块被排除在激活参数外。+0.26%，
+        换算值取整后不变。）
         **9:1 的压缩比把主干的位置预算压到了全批最低的一档（256）**，
         代价是塔的相对占比升到 1.25（塔值 64 个位置当量、占 20%）——
         塔的绝对 FLOPs 和 Kimi / Qwen 那几档差不多（1896.9 对 1897.3 / 1456.5），

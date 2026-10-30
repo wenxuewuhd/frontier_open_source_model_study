@@ -1,7 +1,7 @@
 {
  "id": "kimi-vl-a3b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T08:51:17+00:00",
+ "generated_at": "2026-10-30T09:24:38+00:00",
  "inputs": {
   "facts_dir": "facts/kimi-vl-a3b",
   "config_present": true,

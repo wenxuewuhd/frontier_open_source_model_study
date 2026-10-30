@@ -255,7 +255,7 @@ arch:
       encoder_linear_gflops: 1896.9
       projector_linear_gflops: 27.92
       backbone_token_budget: 256
-      backbone_linear_gflops_per_token: 25.42
+      backbone_linear_gflops_per_token: 25.49
       image_as_text_tokens: 332
       attention_excluded: >-
         被排除的是 encoder 自注意力的 QK^T 与 AV，形式
@@ -276,15 +276,17 @@ arch:
         5632 = 2 × 2816），四项相加与清单里 128 个 blocks 线性张量的
         求和逐位相同。
         aligner 线性项 = 2 × 256 × (4096 × 9216 + 4096²) = 27,917,287,424。
-        主干分母 = 2 × (active_params.total 13,238,555,968 −
-        active_params.lm_head 529,530,880) = 25,418,050,176 ——
-        **不能用 derived 里的 flops.linear_per_token 26,477,111,936**，
+        主干分母 = 2 × (active_params.total 13,272,440,407 −
+        active_params.lm_head 529,530,880) = 25,485,819,054 ——
+        **不能用 derived 里的 flops.linear_per_token 26,544,880,814**，
         那一项含 lm_head（decode 口径）。
-        换算 = 256 + 1,924,772,397,056 / 25,418,050,176 = 256 + 75.7 = 332。
+        换算 = 256 + 1,924,772,397,056 / 25,485,819,054 = 256 + 75.5 = 332。
+        （分母在 main 的 e394525 之后从 25.42 升到 25.49：residual
+        系数计进常驻，+0.27%，换算值取整后不变。）
         **这是 12 份里塔占比第三高的一档**（332 / 256 = 1.30，塔占 23%）：
         同样的塔、同样的 9:1 压缩，而主干是全批第二小的
         （25.4 GFLOPs/token，只有 kimi-vl-a3b 的 4.49 更小）。
-        下一代 deepseek-v41-flash 的主干涨到 30.2，占比随之降到 1.25 ——
+        下一代 deepseek-v41-flash 的主干涨到 30.3，占比随之降到 1.25 ——
         塔一个字没改，占比却变了，差的是主干
     separability:
       weight_prefix: >-

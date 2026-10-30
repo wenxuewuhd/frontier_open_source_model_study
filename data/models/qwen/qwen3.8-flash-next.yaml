@@ -472,8 +472,8 @@ arch:
       encoder_linear_gflops: 1456.5
       projector_linear_gflops: 29.13
       backbone_token_budget: 441
-      backbone_linear_gflops_per_token: 114.47
-      image_as_text_tokens: 454
+      backbone_linear_gflops_per_token: 12.07
+      image_as_text_tokens: 564
       attention_excluded: >-
         被排除的是 encoder 自注意力的 QK^T 与 AV，形式
         4 × n² × hidden × layers。跨度定不下来：vision_config 里没有
@@ -484,18 +484,22 @@ arch:
         每层 15,224,832 = 411,070,464) = 1,456,499,294,208，与同代三档相同。
         projector 线性项 = 2 × 441 × (4608² + 2560 × 4608) = 29,132,587,008
         —— 出口 2560 是四档里最窄的，这一项比 27B 档的 39.54 小 26%。
-        主干分母 = 2 × (active_params.total 57,871,541,155 −
-        active_params.lm_head 635,699,200) = 114,471,683,910；
-        **不能用 flops.linear_per_token 115,743,082,310**，那一项含 lm_head。
-        换算 = 441 + 1,485,631,881,216 / 114,471,683,910 = 441 + 13.0 = 454。
-        **这是 Qwen 同代四档里塔开销占比最低的一档**（454 / 441 = 1.029）：
-        主干每 token 114.5 GFLOPs 是四档里最大的，同一座 4.5 亿参数的塔
-        摊到这个主干上只值 13 个 token 的位置当量。
-        跨族系看它是 12 份 vlm 里第二低 —— kimi-k3 的 1.016 更低
-        （主干 206.0 GFLOPs/token，塔只值 9 个位置当量）。
-        注意 active_params.total 本身带一个已知偏差 —— PLE 查表与
-        hyper-connections 被 subsystems.py 的正则错分（见 notes 与
-        open_questions），所以这个分母是上界，真实值略小、换算值略大
+        主干分母 = 2 × (active_params.total 6,671,295,360 −
+        active_params.lm_head 635,699,200) = 12,071,192,320；
+        **不能用 flops.linear_per_token 13,342,590,720**，那一项含 lm_head。
+        换算 = 441 + 1,485,631,881,216 / 12,071,192,320 = 441 + 123.1 = 564。
+        **本档的塔开销占比是 1.279，在 12 份里排第 8**（塔值 123 个位置当量、
+        占一张图 prefill 的 22%）—— 四档里**最高**的一档，不是最低。
+        根因是主干小：扣掉 lm_head 后每 token 只有 12.07 GFLOPs，
+        是四档里最小的（27B 两档 48.71、397B 档 30.63）。
+        **这一格在 2026-10-30 被改过一次，改动幅度 9.5 倍，见 R13。**
+        上一版把分母写成 114.47、换算写成 454，并据此说它是「四档最低、
+        12 份里第二低」—— 那是因为 PLE 查表的 512 亿参数被
+        `subsystems.py` 的正则归进 `other`、而 `other` 计进激活参数。
+        main 的 e394525 把 PLE 归进 `retrieval`（每 token 只 gather 少数行、
+        不计激活）、同时把 `residual` 的 6.40 亿计进常驻，
+        于是 active_params.total 从 578.7 亿掉到 66.7 亿。
+        **结论整个翻过来了**：它不是塔最轻的一档，是四档里塔最重的一档
     separability:
       weight_prefix: >-
         model.visual.（333 个张量，含 merger）；主干在 model.language_model.
@@ -754,11 +758,13 @@ open_questions:
     分辨率 672×672 上，真正的动态分桶规则在 preprocessor_config.json 里，
     那个文件不在 facts/。所以 tokens 下的数只能和同样钉在 672 的其它记录比
   - >-
-    **arch.vision.prefill 的主干分母带着 PLE / hyper-connections 的错分偏差。**
-    它取 2 × (active_params.total − lm_head)，而 active_params.total 里
-    PLE 查表被算成常驻、hyper-connections 被归进 attention / dense_ffn
-    （见 notes）。所以 114.47 GFLOPs/token 是上界，
-    image_as_text_tokens 454 相应是下界。subsystems.py 的正则修好后要重算这两格
+    **（已解）arch.vision.prefill 的主干分母原先带着 PLE 的错分偏差。**
+    上一版分母 114.47 GFLOPs/token 是把 PLE 查表的 512 亿参数当成常驻算进去的。
+    main 的 e394525 把 PLE 归进 retrieval（每 token 只 gather 少数行、不计激活）、
+    并把 residual 的 6.40 亿计进常驻，active_params.total 从 578.7 亿掉到 66.7 亿，
+    分母落到 12.07。两格已按新值重算（564 / 1.279），见 R13。
+    **留着这一条是因为结论反过来了**：本档从「四档里塔最轻」变成「四档里塔最重」，
+    引过旧值的下游分析要跟着改
   - >-
     视觉塔与主干**落盘层面**是否有 tied weights 未查。weight_map 里两个前缀
     不重名，这只排除了重名；存储共享要看 safetensors 头的数据偏移，本轮没读
@@ -1020,28 +1026,73 @@ review:
       encoder 可分离性三件事一格都没有
     finding: >-
       补 arch.vision 下 tokens / prefill / separability 三组，逐因子核过。
-      本档是 **Qwen 同代四档里塔开销占比最低的一档**：一张 672² 的图
-      相当于 454 个文本 token，只比它占的 441 个位置多 3%
-      （跨族系是 12 份里第二低，kimi-k3 的 1.016 更低）。
-      根因不在塔（塔与同代三档只差 merger.linear_fc2 一项，encoder 侧
-      1456.5 GFLOPs 四档相同），在主干：扣掉 lm_head 后每 token 114.5 GFLOPs
-      是四档里最大的，同一座 4.5 亿参数的塔摊上去只值 13 个位置当量。
-      和 397B 档（+11%）放在一起看，同一座塔的相对成本在同代内就差了近 4 倍 ——
-      **这个比值描述的是主干，不是视觉塔**。
+      **本条当时报的占比结论已被 R13 推翻，数字看 R13、不要引本条。**
+      当时写的是「Qwen 同代四档里塔开销占比最低、一张图 ≈ 454 个文本 token」，
+      依据是分母 114.47 GFLOPs/token —— 而那个分母把 PLE 查表的 512 亿参数
+      当成了常驻。真值是 12.07，占比 1.279、四档里**最高**。
+      本条保留的仍然成立的部分：塔与同代三档只差 merger.linear_fc2 一项，
+      encoder 侧 1456.5 GFLOPs 四档相同，所以**这个比值描述的是主干、
+      不是视觉塔** —— 这个判断没变，而且 R13 把它推得更远了。
       分片上本档反而是四档里最好的：333 个视觉张量全在第 1 个分片、
       同片只混了 16 个非视觉张量（131 个分片里只有这一个含视觉张量）；
       对比 qwen3.8-27b 混 59 个、qwen3.5-27b 混 503 个、397B 被切成两片。
       仍记 mixed 而不是 dedicated —— 有混入就不是纯视觉分片。
-      **一处要往下传的不确定**：主干分母来自 active_params.total，
-      而本档的 PLE 查表与 hyper-connections 被 subsystems.py 的正则错分
-      （notes 已记），所以 114.47 是上界、454 是下界，
+      **一处要往下传的不确定**（后来果然成真，见 R13）：主干分母来自
+      active_params.total，而本档的 PLE 查表与 hyper-connections 被
+      subsystems.py 的正则错分（notes 已记），所以 114.47 是上界、454 是下界，
       正则修好后这两格要重算。evidence 把 prefill.derivation 标成 judgement
-      就是为了让它进 Gate C、别被当成纯 derived 数
+      就是为了让它进 Gate C、别被当成纯 derived 数 ——
+      **这一步起了作用：正则一修好，这两格就被重算了**
     resolution: corrected
     changed_to: >-
       新增 arch.vision.tokens（1764 → 441，压缩比 4）、
-      arch.vision.prefill（一张图 ≈ 454 个文本 token，并写明这是四档最低
-      以及分母带 PLE/hyper-connections 偏差）、
+      arch.vision.prefill（当时填一张图 ≈ 454 个文本 token，
+      并写明分母带 PLE/hyper-connections 偏差 —— 该值已由 R13 改为 564）、
       arch.vision.separability（shard_isolation: mixed，但只混 16 个非视觉张量）；
       evidence 加八条，四格判断类进 Gate C；
       注意力跨度、默认分辨率、分母偏差、落盘 tied weights 四件事进 open_questions
+  - id: R13
+    field: arch.vision.prefill.backbone_linear_gflops_per_token
+    severity: wrong
+    claim: >-
+      114.47 GFLOPs/token，并据此说本档「Qwen 同代四档里塔开销占比最低、
+      跨族系 12 份里第二低」（一张图 ≈ 454 个文本 token，比值 1.029）
+    finding: >-
+      **错了 9.5 倍，而且结论整个反过来。**
+      114.47 取的是 2 × (active_params.total 57,871,541,155 − lm_head)，
+      而那个 active_params.total 把 **PLE 查表的 51,200,245,795 个参数
+      当成了常驻** —— `subsystems.py` 的正则认不出 PLE，把它归进 `other`，
+      而 `derive.py` 的常驻名单里有 `other`。
+      main 的 e394525 修了两处：PLE 归进 `retrieval`（每 token 只 gather
+      少数行、不计激活），`residual` 的 639,631,360 计进常驻。
+      于是 active_params.total 从 578.7 亿掉到 **66.7 亿**，
+      分母从 114.47 落到 **12.07**，一张图的文本 token 当量从 454 升到 **564**，
+      占比从 1.029 升到 **1.279**。
+      **方向是反的**：本档不是四档里塔最轻的，是四档里塔最**重**的
+      （27B 两档 1.070、397B 档 1.110），12 份里从第 2 低变成第 8。
+      塔占一张图 prefill 的 22%，不是 3%。
+      两件事值得记在这里：
+      (1) **这一条是 R12 自己预告的。** R12 当时把这个偏差写进了
+      `open_questions`、并特意把 `prefill.derivation` 标成 `judgement`
+      让它进 Gate C，理由就是「正则修好后这两格要重算」。
+      偏差没有被当成精修放过去，所以正则一落地就被抓回来了 ——
+      这是把已知不确定写成字段而不是埋在数里的直接收益。
+      (2) **但预告的方向写错了。** R12 说「114.47 是上界、454 是下界」，
+      意思是真值会小一点、换算会大一点 —— 幅度估成了「略」。
+      实际是 9.5 倍。根因是当时只看到「PLE 被错分」这个事实，
+      没有去看它的参数量占 active_params.total 多少
+      （512 亿 / 578.7 亿 = **88%**）。
+      **知道一个因子错了，不等于知道它错多少** —— 下次报「上界/下界」
+      要同时给出幅度，否则读者会按「不影响结论」处理。
+      分母变了之后，本档仍然成立的是 R12 那个判断本身：
+      塔与同代三档只差 `merger.linear_fc2` 一项、encoder 侧 1456.5 GFLOPs
+      四档相同，所以**占比描述的是主干、不是视觉塔**。
+      这次的变化恰恰是最强的一次证明：塔一个字没动，占比从 1.029 跳到 1.279
+    resolution: corrected
+    changed_to: >-
+      backbone_linear_gflops_per_token 114.47 → 12.07、
+      image_as_text_tokens 454 → 564；prefill.derivation 重写（给出新的
+      active_params 分解，并点明这一格被改过、幅度 9.5 倍）；
+      R12 里被推翻的那段加了指向本条的提示、不再可被单独引用；
+      对应的 open_question 从「待解」改成「已解 + 结论反转」，
+      保留它是因为引过旧值的下游分析要跟着改

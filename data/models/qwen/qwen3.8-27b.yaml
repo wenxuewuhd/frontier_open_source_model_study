@@ -258,6 +258,30 @@ arch:
 
 precision:
   weights_release: [BF16]
+  quantization:
+    per_subsystem:
+      attention: BF16
+      dense_ffn: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+      vision: BF16
+      draft: BF16
+    subsystem_method: >-
+      来自完整权重清单（18 分片 1199 条目）逐项统计，非抽样：每个条目都带 shape 与 dtype，
+      from_shapes.complete 为 true，**1199 条的 dtype 集合就是 {BF16} 一个值**，
+      scale_elements 为 0、清单里没有任何含 scale 的叶名。
+      所以七个子系统全是 BF16 是全量结论，不是代表值。
+      config 没有 quantization_config，不存在量化块与 scale 容器。
+      **判主体按张量参数量、不按名字**：各子系统里最大的那个张量分别是
+      dense_ffn 的 down_proj（89,128,960）、attention 的 q_proj（62,914,560）、
+      embed 与 lm_head（各 1,271,398,400）、vision 的 merger.linear_fc2（23,592,960）、
+      draft 的 mtp down_proj（89,128,960）、norm 的 input_layernorm（5,120），
+      全部 BF16；按 dtype 的参数量占比看七个桶都是 BF16 100.0%。
+      本代单一 dtype，所以不存在「挑中一个 [64] 的小向量把子系统精度报错」那类风险，
+      但统计口径仍按参数量加权做的。
+      **空着和「全是 BF16」在页面上渲染成同一个 `—`**，而「这一代未量化」
+      对 infra 是个结论、不是空白 —— 这是补这一格的理由
 
 platforms:
   - engine: transformers
@@ -350,6 +374,8 @@ evidence:
   arch.vision.separability.cross_prefix_sharing: judgement
   arch.position: derived
   precision: official
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
   platforms: official
   bottlenecks: judgement
   infra_signals: judgement
@@ -614,3 +640,35 @@ review:
       新增 arch.vision.tokens / prefill / separability 三组；
       evidence 加十条，四格判断类进 Gate C；
       encoder 注意力跨度、默认分辨率、落盘 tied weights 三件事进 open_questions
+  - id: R15
+    field: precision.quantization.per_subsystem
+    severity: missing
+    claim: >-
+      这一格空着。全仓 47 份有 45 份填了，缺的只有本档与 qwen3.8-2.4t-a95b ——
+      P1 那条通义线给自己新建的 11 份都填了，没回头补这两份 P0 时期的记录
+    finding: >-
+      **结论是「全 BF16」，不是「没查」。** 本会话独立重算过，没有引用他人给的列表：
+      1199 条张量的 **dtype 集合就是 {BF16} 一个值**，`scale_elements` 为 0，
+      清单里没有任何含 scale 的叶名，`from_shapes.complete` 为 true，
+      config 里没有 `quantization_config`。
+      七个子系统逐桶统计（按**参数量**加权，不按张量条数）都是 BF16 100.0%：
+      dense_ffn 17,112,760,320 / 192 条、attention 7,239,766,528 / 448 条、
+      embed 与 lm_head 各 1,271,398,400 / 1 条、vision 460,730,096 / 333 条、
+      draft 424,699,392 / 15 条、norm 674,816 / 209 条。
+      **判主体按张量大小而不是名字** —— README 记过那个坑：曾经挑中
+      `attn_sink`（`[64]` 的 FP32 向量）把注意力精度报成 FP32。
+      本代是单一 dtype，所以这里本来不会踩到；但口径仍按参数量加权做，
+      免得「这一代碰巧安全」变成下一代照抄的理由。
+      **vision 那一桶和本轮主线互相印证**：460,730,096 这个数同时是
+      arch.vision.params（R14 实测自同一份清单），333 条也与
+      arch.vision.separability 里数的 333 个 `model.visual.` 张量一致 ——
+      精度桶和参数量桶读的是同一批张量，两边对上了。
+      补这一格的理由不是凑齐字段：**空着和「全是 BF16」在页面上渲染成同一个
+      `—`**，而「这一代未量化」对 infra 是个结论
+    resolution: corrected
+    changed_to: >-
+      新增 precision.quantization.per_subsystem（七桶全 BF16）与
+      subsystem_method（写明 18 分片 1199 条全量穷举、dtype 集合单值、
+      零 scale，以及按参数量加权判主体的依据）；
+      evidence 加两条，都是 derived。格式照 qwen1.5-72b（同样 BF16-only），
+      多出 vision 与 draft 两桶
