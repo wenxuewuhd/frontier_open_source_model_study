@@ -1,0 +1,217 @@
+---
+/**
+ * GLM-5.3 · MLA + DSA 的生产侧与消费侧。
+ *
+ * 照 deepseek-v41-flash.astro 的形（两段式、横向分带、每框带量、加粗引导句、
+ * role=img + aria-label、marker id 带模型前缀），内容是 GLM 自己的结构。
+ *
+ * 这张图要说的事，和 DeepSeek 那张正好互为镜像：
+ *   DeepSeek V4.1  index_k 与 compress_kv **同源于 latent**（wk 512→128）
+ *   GLM-5.3        index K 与 MLA latent **不同源** —— indexer.wk 的入口维是
+ *                  6144（hidden），和 kv_a_proj_with_mqa 并列从 x 投影
+ * 而 q 侧两家都共用低秩（GLM 是 q_a 的 2048）。所以「共用/不共用」这条轴上，
+ * 两家在 q 侧一致、在 K 侧相反 —— 按 DeepSeek 的算子图排 GLM，
+ * 会以为 index K 能从缓存的 latent 里再投一次拿到，实际拿不到。
+ *
+ * 数据来源：本记录的 arch.attention / precision，加 facts/glm-5.3/shapes.json
+ * （141 分片 118629 条目的完整清单）。图上每个形状都取自清单里某个张量，
+ * 量化块取自「权重形状 ÷ 同名 weight_scale_inv 形状」，不凭印象画。
+ *
+ * 唯一不是实测的量是缓存的**字节**：KV 落盘精度厂商未披露，记录里按 config 的
+ * dtype=bfloat16 兜底（bytes_basis: dtype_fallback），所以图上字节一律标「兜底」，
+ * 元素宽度才是实测的。九份 GLM 模型卡正文里没有厂商公布的每 token KV 字节，
+ * 查法与边界见 docs/glm-kv-declared-sources.md。
+ */
+---
+
+<figure class="attn-fig">
+  <div class="figbox">
+    <svg class="dia" viewBox="0 0 940 376" role="img"
+         aria-label="GLM-5.3 生产侧：q 与 indexer q 共用 q_a 的 2048 维低秩；MLA 的 576 维 latent 每层自产；index K 另从 hidden 直接投影，与 latent 不同源，且只有 21 层有">
+      <defs>
+        <marker id="glm53-pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead"/></marker>
+        <marker id="glm53-pb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead-t"/></marker>
+        <marker id="glm53-pc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead-v"/></marker>
+      </defs>
+
+      <text x="18" y="18" class="lbl-s">① Query 侧 · 两路共用 q_a 的 2048 低秩</text>
+      <rect x="18" y="42" width="60" height="40" rx="3" class="box"/>
+      <text x="48" y="67" class="lbl" text-anchor="middle">x 6144</text>
+      <path d="M78 62 L98 62" class="arr" marker-end="url(#glm53-pa)"/>
+      <rect x="100" y="42" width="128" height="40" rx="3" class="box"/>
+      <text x="164" y="60" class="lbl-s" text-anchor="middle">q_a_proj 6144→2048</text>
+      <text x="164" y="75" class="lbl-x" text-anchor="middle">FP8 b[128,128]</text>
+      <path d="M228 62 L246 62" class="arr" marker-end="url(#glm53-pa)"/>
+      <rect x="248" y="42" width="96" height="40" rx="3" class="box"/>
+      <text x="296" y="60" class="lbl" text-anchor="middle">q_a_norm</text>
+      <text x="296" y="75" class="lbl-x" text-anchor="middle">2048 · BF16</text>
+
+      <path d="M344 52 L362 43" class="arr" marker-end="url(#glm53-pa)"/>
+      <path d="M344 72 L362 103" class="arr-v" marker-end="url(#glm53-pc)"/>
+      <rect x="364" y="26" width="152" height="34" rx="3" class="box"/>
+      <text x="440" y="47" class="lbl-s" text-anchor="middle">q_b_proj 2048→16384</text>
+      <rect x="364" y="86" width="152" height="34" rx="3" class="box-v"/>
+      <text x="440" y="107" class="lbl-v" text-anchor="middle">indexer.wq_b 2048→4096</text>
+
+      <path d="M516 43 L534 43" class="arr" marker-end="url(#glm53-pa)"/>
+      <rect x="536" y="26" width="140" height="34" rx="3" class="box"/>
+      <text x="606" y="41" class="lbl-s" text-anchor="middle">q 64×256</text>
+      <text x="606" y="54" class="lbl-x" text-anchor="middle">nope 192 + rope 64</text>
+      <path d="M516 103 L534 103" class="arr-v" marker-end="url(#glm53-pc)"/>
+      <rect x="536" y="86" width="140" height="34" rx="3" class="box-v"/>
+      <text x="606" y="107" class="lbl-v" text-anchor="middle">q_idx 32×128 = 4096</text>
+
+      <text x="686" y="47" class="lbl-x">→ 78/78 层都送入注意力</text>
+      <text x="686" y="107" class="lbl-v">→ 仅 21 个 full 层送入 Indexer</text>
+
+      <line x1="18" y1="138" x2="922" y2="138" class="arr-d"/>
+
+      <text x="18" y="158" class="lbl-s">② MLA KV 侧 · 78/78 层每层自产，无跨层共享</text>
+      <path d="M48 82 L48 176" class="arr" marker-end="url(#glm53-pa)"/>
+      <rect x="18" y="176" width="60" height="44" rx="3" class="box"/>
+      <text x="48" y="203" class="lbl" text-anchor="middle">x 6144</text>
+      <path d="M78 198 L98 198" class="arr" marker-end="url(#glm53-pa)"/>
+      <rect x="100" y="176" width="148" height="44" rx="3" class="box-o"/>
+      <text x="174" y="194" class="lbl-s" text-anchor="middle">kv_a_proj_with_mqa</text>
+      <text x="174" y="210" class="lbl-o" text-anchor="middle">6144→576 · b[128ceil,128]</text>
+      <path d="M248 198 L266 198" class="arr" marker-end="url(#glm53-pa)"/>
+      <rect x="268" y="176" width="104" height="44" rx="3" class="box-o"/>
+      <text x="320" y="194" class="lbl" text-anchor="middle">576</text>
+      <text x="320" y="210" class="lbl-o" text-anchor="middle">512 + 64</text>
+
+      <path d="M372 190 L390 182" class="arr" marker-end="url(#glm53-pa)"/>
+      <path d="M372 206 L390 216" class="arr" marker-end="url(#glm53-pa)"/>
+      <rect x="392" y="166" width="150" height="30" rx="3" class="box"/>
+      <text x="467" y="185" class="lbl-s" text-anchor="middle">kv_a_norm 512 · BF16</text>
+      <rect x="392" y="202" width="150" height="30" rx="3" class="box"/>
+      <text x="467" y="221" class="lbl-s" text-anchor="middle">RoPE θ 8e6 · 交错 64</text>
+
+      <path d="M542 199 L562 199" class="arr-t" marker-end="url(#glm53-pb)"/>
+      <rect x="564" y="176" width="176" height="44" rx="3" class="box-t"/>
+      <text x="652" y="194" class="lbl-t" text-anchor="middle">MLA latent cache</text>
+      <text x="652" y="210" class="lbl-x" text-anchor="middle">576 元素/层 · 兜底 1152 B</text>
+      <text x="750" y="194" class="lbl-x">× 78 层 = 44 928 元素/token</text>
+      <text x="750" y="210" class="lbl-x">权重 FP8，缓存精度未披露</text>
+
+      <line x1="18" y1="248" x2="922" y2="248" class="arr-d"/>
+
+      <text x="18" y="268" class="lbl-s">③ index K 侧 · 仅 21 层（L0 / L1 / L2 与 L2+4k，止于 L74）　入口维 6144，不经 ② 的 latent</text>
+      <path d="M48 220 L48 290" class="arr" marker-end="url(#glm53-pa)"/>
+      <rect x="18" y="290" width="60" height="44" rx="3" class="box"/>
+      <text x="48" y="317" class="lbl" text-anchor="middle">x 6144</text>
+      <path d="M78 312 L98 312" class="arr-v" marker-end="url(#glm53-pc)"/>
+      <rect x="100" y="290" width="148" height="44" rx="3" class="box-v"/>
+      <text x="174" y="308" class="lbl-s" text-anchor="middle">indexer.wk 6144→128</text>
+      <text x="174" y="324" class="lbl-v" text-anchor="middle">FP8 · scale [1,48]</text>
+      <path d="M248 312 L266 312" class="arr-v" marker-end="url(#glm53-pc)"/>
+      <rect x="268" y="290" width="150" height="44" rx="3" class="box-v"/>
+      <text x="343" y="308" class="lbl-s" text-anchor="middle">indexer.k_norm</text>
+      <text x="343" y="324" class="lbl-x" text-anchor="middle">weight + bias · 各 128 · BF16</text>
+      <path d="M418 312 L438 312" class="arr-v" marker-end="url(#glm53-pc)"/>
+      <rect x="440" y="290" width="160" height="44" rx="3" class="box-v"/>
+      <text x="520" y="308" class="lbl-v" text-anchor="middle">index K cache</text>
+      <text x="520" y="324" class="lbl-x" text-anchor="middle">128 元素/层 · 兜底 256 B</text>
+      <text x="610" y="308" class="lbl-x">× 21 层 = 2 688 元素/token</text>
+      <text x="610" y="324" class="lbl-x">合计 47 616 元素/token（主干口径）</text>
+
+    </svg>
+  </div>
+  <figcaption>
+    <b>图 1 · 生产侧。</b>index K 与 MLA latent <b>不同源</b>：<code>indexer.wk</code>
+    的入口维是 <b>6144</b>（hidden），和 <code>kv_a_proj_with_mqa</code> 并列从
+    <code>x</code> 投影 —— 而 DeepSeek V4.1 的 <code>index_k</code> 是
+    <code>wk 512→128</code>、挂在 latent 上。q 侧两家都共用低秩（这里是
+    <code>q_a</code> 的 2048），所以「共用」这条轴上两家 q 侧一致、K 侧相反：
+    按 DeepSeek 的算子图排 GLM，会以为 index K 能从已缓存的 latent 里再投一次拿到，
+    实际拿不到。两类缓存的层覆盖面也不同 —— latent 78/78 层，index K 只 21 层。
+  </figcaption>
+</figure>
+
+<figure class="attn-fig">
+  <div class="figbox">
+    <svg class="dia" viewBox="0 0 940 342" role="img"
+         aria-label="GLM-5.3 消费侧：21 个 full 层的 Indexer 读 index K 打分选出 top-2048 索引；78 层每层都用索引从自己那一层的 MLA latent 里 gather，经 kv_b_proj 升回 64 头后做注意力；57 个 shared 层借的是索引而不是 KV">
+      <defs>
+        <marker id="glm53-qa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead"/></marker>
+        <marker id="glm53-qb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead-t"/></marker>
+        <marker id="glm53-qc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead-v"/></marker>
+      </defs>
+
+      <text x="18" y="18" class="lbl-s">④ Indexer · 仅 21 个 full 层执行（57 个 shared 层连一个 indexer 张量都没有）</text>
+      <rect x="18" y="46" width="132" height="50" rx="3" class="box-v"/>
+      <text x="84" y="66" class="lbl-v" text-anchor="middle">index K cache</text>
+      <text x="84" y="82" class="lbl-x" text-anchor="middle">L 个位置 × 128</text>
+      <path d="M150 71 L170 71" class="arr-v" marker-end="url(#glm53-qc)"/>
+      <rect x="172" y="46" width="150" height="50" rx="3" class="box"/>
+      <text x="247" y="66" class="lbl" text-anchor="middle">einsum(q_idx, index K)</text>
+      <text x="247" y="82" class="lbl-x" text-anchor="middle">32 头共用同一份 key</text>
+      <path d="M247 20 L247 44" class="arr-v" marker-end="url(#glm53-qc)"/>
+      <text x="257" y="34" class="lbl-v">q_idx 32×128</text>
+
+      <path d="M322 71 L340 71" class="arr" marker-end="url(#glm53-qa)"/>
+      <rect x="342" y="46" width="148" height="50" rx="3" class="box-o"/>
+      <text x="416" y="66" class="lbl-s" text-anchor="middle">weights_proj 6144→32</text>
+      <text x="416" y="82" class="lbl-o" text-anchor="middle">BF16 · 唯一未量化的那张</text>
+      <path d="M490 71 L508 71" class="arr" marker-end="url(#glm53-qa)"/>
+      <rect x="510" y="46" width="124" height="50" rx="3" class="box-r"/>
+      <text x="572" y="76" class="lbl-s" text-anchor="middle">causal mask</text>
+      <path d="M634 71 L652 71" class="arr" marker-end="url(#glm53-qa)"/>
+      <rect x="654" y="46" width="124" height="50" rx="3" class="box-r"/>
+      <text x="716" y="66" class="lbl-s" text-anchor="middle">top-2048</text>
+      <text x="716" y="82" class="lbl-r" text-anchor="middle">index_topk</text>
+      <path d="M778 71 L798 71" class="arr-v" marker-end="url(#glm53-qc)"/>
+      <rect x="800" y="46" width="122" height="50" rx="3" class="box-v"/>
+      <text x="861" y="76" class="lbl-v" text-anchor="middle">idxs 2048</text>
+
+      <line x1="18" y1="122" x2="922" y2="122" class="arr-d"/>
+
+      <text x="18" y="142" class="lbl-s">⑤ 稀疏注意力 + 输出投影 · 78/78 层都做，每层读自己那一层的 latent</text>
+
+      <path d="M861 96 L861 160 L112 160 L112 192" class="arr-v" marker-end="url(#glm53-qc)"/>
+      <text x="486" y="156" class="lbl-v" text-anchor="middle">idxs 只决定「读哪 2048 个位置」，不搬 KV 数据</text>
+
+      <rect x="18" y="192" width="188" height="52" rx="3" class="box-t"/>
+      <text x="112" y="212" class="lbl-t" text-anchor="middle">gather(本层 latent, idxs)</text>
+      <text x="112" y="228" class="lbl-x" text-anchor="middle">2048 条 × 576 元素</text>
+
+      <path d="M206 218 L226 218" class="arr-t" marker-end="url(#glm53-qb)"/>
+      <rect x="228" y="192" width="166" height="52" rx="3" class="box"/>
+      <text x="311" y="210" class="lbl-s" text-anchor="middle">kv_b_proj 512→28672</text>
+      <text x="311" y="226" class="lbl-x" text-anchor="middle">28672 = 64 × (192 + 256)</text>
+
+      <path d="M394 218 L414 218" class="arr" marker-end="url(#glm53-qa)"/>
+      <rect x="416" y="186" width="172" height="64" rx="3" class="box-t"/>
+      <text x="502" y="206" class="lbl" text-anchor="middle">sparse_attn</text>
+      <text x="502" y="222" class="lbl-x" text-anchor="middle">K-nope 192 + V 256</text>
+      <text x="502" y="236" class="lbl-x" text-anchor="middle">rope 64 走 latent 尾段</text>
+      <path d="M502 162 L502 184" class="arr" marker-end="url(#glm53-qa)"/>
+      <text x="512" y="176" class="lbl-s">q 64×256</text>
+
+      <path d="M588 218 L608 218" class="arr" marker-end="url(#glm53-qa)"/>
+      <rect x="610" y="192" width="136" height="52" rx="3" class="box"/>
+      <text x="678" y="212" class="lbl-s" text-anchor="middle">o_proj 16384→6144</text>
+      <text x="678" y="228" class="lbl-x" text-anchor="middle">入口 64 × 256</text>
+      <path d="M746 218 L766 218" class="arr" marker-end="url(#glm53-qa)"/>
+      <rect x="768" y="192" width="154" height="52" rx="3" class="box"/>
+      <text x="845" y="212" class="lbl" text-anchor="middle">残差</text>
+      <text x="845" y="228" class="lbl-x" text-anchor="middle">FP8 b[128,128]</text>
+
+      <text x="18" y="276" class="lbl-x">57 个 shared 层：跳过整个 ④，拿上游最近一个 full 层算出的 idxs 进 ⑤ —— 但 gather 的是「自己那一层」的 576 维 latent，不是上游的</text>
+      <text x="18" y="296" class="lbl-x">MTP 块（第 78 层）自带一整套 indexer 与自己的 kv_a_proj_with_mqa，开 MTP 时按 79 / 22 层算（48 320 元素/token）</text>
+      <text x="18" y="320" class="lbl-x">topk 选的是「读哪些 token」而非「存哪些」—— 这个口径没有一手来源，缓存仍按 per-token 线性计费，见记录 open_questions</text>
+    </svg>
+  </div>
+  <figcaption>
+    <b>图 2 · 消费侧。</b>57 个 shared 层借的是<b>选择结果，不是 KV</b> ——
+    它们各自有完整的 576 维 latent（78/78 层逐层全量存），只是跳过 Indexer、
+    拿上游 full 层算出的 <code>idxs</code> 决定读自己缓存里的哪 2048 条。
+    这和 DeepSeek V4.1 的跨层共享正好相反：那边省的是「存多少层 KV」、打分仍逐层算；
+    这边 KV 一层都没省、省的是「算多少次选择」。两种「跨层复用」的容量模型不能互相代入。
+  </figcaption>
+</figure>
