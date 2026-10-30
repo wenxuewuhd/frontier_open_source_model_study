@@ -30,6 +30,55 @@ hf:
 
 lineage:
   track: main
+  predecessor: step-3.5-flash
+  changed_from_predecessor:
+    - axis: attention
+      text: >-
+        滑窗与全局 1:3、窗口 512 两件照搬前代，但三个尺寸都变了：主干 45 → 92 层、
+        head_dim 128 → 192、KV 组 8 → 4，于是全局层每层每 token 的 KV 元素 2048 → 1536。
+        全局层下标也从 ≡0 (mod 4)（前代 [0, 4, …, 44]）移到 ≡3 (mod 4)（本代 [3, 7, …, 91]）
+      benefit: >-
+        随上下文增长的 KV 元素 24,576 → 36,064（含区域摘要），而上下文从 262144 涨到 1048576 ——
+        单 token 多了 47%，上下文长了 4 倍
+    - axis: attention
+      text: >-
+        **前代「同一模型两套 query 头数」的做法被放弃**：前代全局层 64 头、滑窗层 96 头，
+        本代两型都是 64 头 —— config 的 attention_other_setting 仍在，但值与主配置逐项相同
+        （64 头 / 4 组 / 192），权重侧 q_proj [12288, 4096] 与 g_proj [64, 4096] 在 95/95 层同形。
+        逐头注意力门（g_proj + sigmoid）与逐头 q_norm / k_norm 则照旧保留
+    - axis: attention
+      text: >-
+        新增 DSA 稀疏索引器，只挂 23 个全局层：每 8 个 token 压一个 256 维区域摘要、
+        FP8_E4M3 存，按摘要选 topk 512 个区域。前代**没有任何稀疏结构**，
+        全局层是朴素的全量 GQA
+      benefit: 全局层的注意力读取量从「全长」降到最多 512 × 8 = 4096 个 token；缓存只多 736 元素/token（占 2.0%）
+    - axis: attention
+      text: >-
+        全局层 RoPE：partial_rotary 0.5（128 维里 64 维）→ 1/3（192 维里 64 维）——
+        **旋转维数两代都是 64**，变的是头宽；theta 5e6 → 1e7；
+        llama3 rope_scaling 的 factor 2.0 → 1.0、original_max_position_embeddings 131072 → 1048576
+        （即本代不再靠 scaling 外推，1M 是 original 本身）。
+        yarn_only_types 仍只列 full_attention
+    - axis: moe
+      text: >-
+        路由专家 288 → 352、中间维 1280 → 1536，top_k 8、共享专家 1、
+        sigmoid + router_bias 选路、routed scaling 3.0、need_fp32_gate 全部不变。
+        改掉的是层分布：前代主干最后一层 L44 是 MoE，本代 L91 是稠密
+      benefit: 总参数 199.38B → 602.97B，激活 11.46B → 26.58B（两侧都是带宽口径）
+    - axis: precision
+      text: >-
+        发布精度从纯 BF16 变成 FP8（quant_method fp8，只量化 85 层的路由专家，
+        L88–L90 的专家仍是 BF16）；norm 权重落盘 BF16 → FP32。
+        前代唯一的 FP32 张量是 42 个 moe.router_bias
+    - axis: context
+      text: 262144 → 1048576
+    - axis: modality
+      text: >-
+        纯语言 → 图文理解：加 Perception Encoder（47 层 / width 1536）与
+        vit_large_projector [4096, 6144]。这一步实际落在同代的多模态封装
+        Step-3.7-Flash 上 —— 它的文本侧 804 个张量与 step-3.5-flash 逐条同形同 dtype、
+        视觉塔 667 个张量与本记录逐条同形同 dtype，两边都是 0 处差异，
+        所以本仓不给它单独起记录（依据见 step-3.5-flash 的 notes）
 
 params:
   total: 602972927296.0
@@ -316,6 +365,7 @@ evidence:
   license: official
   hf: official
   lineage: official
+  lineage.changed_from_predecessor: derived
   params: derived
   params.counting_note: derived
   context: official
@@ -515,6 +565,24 @@ review:
     changed_to: >-
       新增一条 open_question 说明分量名不可引用（数值可以）。修法在 kv_table.py 或 derive.py
       的键集合，属仓库级改动，不在本记录内处理
+  - id: R13
+    field: lineage
+    severity: missing
+    claim: lineage 只有 track 一项（main），没有 predecessor、也没有相对前代的变化清单
+    finding: >-
+      Gate C 那一轮本记录是这一族唯一的记录，没有前代可接。本轮补录了
+      step-1 / step-3 / step-3.5-flash 三代之后，前代是 step-3.5-flash
+      （model_type step3p5 → step5，滑窗 1:3 与窗口 512、逐头门、q/k norm、
+      零中心 RMSNorm、sigmoid + router_bias 路由、MTP 3 层六件直接沿用）。
+      补进去的 changed_from_predecessor 每一条都对照两份的 config 与权重清单核过：
+      头数两型合一有 95/95 层的 q_proj / g_proj 同形为证，
+      旋转维数两代同为 64 由 0.5 × 128 与 1/3 × 192 两边算出，
+      norm 落盘精度 BF16 → FP32 由两份清单的 dtype 分布给出（本代 459 个 norm 张量全 F32）
+    resolution: corrected
+    changed_to: >-
+      lineage 补 predecessor: step-3.5-flash 与 8 条 changed_from_predecessor
+      （attention × 4、moe、precision、context、modality），evidence 加
+      lineage.changed_from_predecessor: derived。本记录其余字段未改
 
 notes: >-
   阶跃星辰家族的旗舰（Preview），model_type step5_vl。本仓第一份 StepFun 记录。
