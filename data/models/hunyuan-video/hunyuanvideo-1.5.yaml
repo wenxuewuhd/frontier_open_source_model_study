@@ -176,7 +176,22 @@ generation:
         每次前向只过一遍。它占主干 **32.71%** —— 按「每个参数过每个 token」算，
         线性项高 3.05 倍。
         per_text_token 是双流 txt 侧（attn_txt + ffn_txt + token_refiner + byt5_proj），
-        只过文本 token；本记录没给文本 token 数，所以线性项里暂缺这一项，是下界
+        只过文本 token。`buckets[].text_tokens` 已填 1985（= 1000 + 256 + 729，
+        来源见默认档的 note），这一项已进推导。
+
+        **但 1985 是个加权近似，不是精确值 —— 这里的参数并不都看同样多的 token。**
+        逐项实测（`shapes.json`）：双流 txt 侧 attn + ffn + qk_norm **2,718,918,144**
+        过全部 1985 个；`txt_in` token_refiner **108,058,624** 只过 LLM 那 1000 个；
+        `byt5_in` **11,412,352** 只过 256 个；`vision_in` **3,696,000** 只过 729 个。
+        精确的文本线性项是 2×(2.7189e9×1985 + 1.0806e8×1000 + 1.1412e7×256
+        + 3.696e6×729) = **1.1021e13**，而按单一 1985 算得 1.1400e13，**高 3.43%**。
+        文本项本身只占单步线性项的 1.8%，所以传到单步 FLOPs 上是 0.06%，可忽略 ——
+        **但它是口径近似而不是测量误差，写在这里以免下一份照抄这个做法时量级不同**。
+
+        另有两处 per_text_token 的分桶不纯，合计 1.15%，本次未改（会动已核过的数）：
+        (1) 它含 token_refiner 自己的 `adaLN_modulation` + `t_embedder` + `c_embedder`
+        共 **33,046,528**，这三项吃的是条件向量、每次前向只过一遍，口径上属 `per_sample`；
+        (2) 它**不含** `vision_in` 的 **3,696,000**，而那 729 个 vision token 确实随 token 数走
     patch_size: [1, 1, 1]
     refiner_layers: 2
     position: 3D RoPE，rope_dim_list [16, 56, 56]（t/h/w），rope_theta 256
@@ -327,6 +342,7 @@ generation:
     - width: 1280
       height: 720
       frames: 121
+      text_tokens: 1985
       fps: 24
       duration_s: 5.0416667
       default: true
@@ -335,7 +351,24 @@ generation:
         base 960 / stride 16，`generate_crop_size_list(960, 16)` 枚举面积约 960²、
         两边被 16 整除的档，再取与 16:9 最近的一档 —— 结果比值恰好是 0.5625，
         正中 16:9。121 帧与 24 fps 取自 `generate.py` 的默认值。
-        latent 31 × 45 × 80 = 111,600 token
+        latent 31 × 45 × 80 = 111,600 token。
+
+        **`text_tokens` 1985 = 1000 + 256 + 729，三个因子各有各的来源**
+        （逐因子验，不是一个总数）：
+        **1000** —— `hyvideo/pipelines/hunyuan_video_pipeline.py:1592`
+        `TextEncoder(max_length=1000)`，`:160` `self.text_len = text_encoder.max_length`，
+        `:303` 按 `self.text_len` 分词。它是**定长**：`text2tokens` 先按
+        `max_length + crop_start` 分词、`padding="max_length"`，
+        再在 `encode()` 里 `last_hidden_state[:, crop_start:]` 把模板前缀切掉，
+        正好剩 1000，与 prompt 实际长短无关。
+        **256** —— `config.json` 的 `byt5_max_length`，glyph byT5 分支，同样 padding 到定长。
+        **729** —— `config.json` 的 `vision_num_semantic_tokens`。
+        **t2v 档也有这 729 个**：`_prepare_vision_states`（`:712`）在
+        `reference_image is None` 时造的是 `torch.zeros(B, 729, 1152)` 而**不是 None**，
+        于是它照样过 `vision_in` 并被 `reorder_txt_token` 拼进 txt 流 ——
+        值是 0、注意力掩码是 0，但**序列长度与算力照付**。
+        三者在 `hunyuanvideo_1_5_transformer.py:761 / :793` 两次
+        `reorder_txt_token` 拼成同一条 txt 流，一起过 54 个双流块的 txt 侧
     - width: 1280
       height: 720
       frames: 241
@@ -480,13 +513,16 @@ performance:
 bottlenecks:
   - dimension: compute
     finding: >-
-      **一半的参数在为不到 1% 的 token 服务。** 双流 MMDiT 的 txt 侧与 img 侧
+      **一半的参数在为 1.75% 的 token 服务。** 双流 MMDiT 的 txt 侧与 img 侧
       参数逐字节相同，但 img 侧处理 111,600 个视频 token，txt 侧只处理
-      几百个文本 token（byT5 那路上限 256）
+      **1,985** 个（= LLM 1000 + byT5 256 + vision 729，来源见默认档的 note）
     quantified: >-
       `ffn_txt` 1,812,492,288 = `ffn_img`；`self_attention_txt` 906,425,856 =
       `self_attention_img`。两路合计占主干 65.3%，其中一半走文本。
-      默认档 720p×121 帧 → latent 31×45×80 = 111,600 个视频 token
+      默认档 720p×121 帧 → latent 31×45×80 = 111,600 个视频 token，
+      文本 1,985 个 —— 占两路 token 合计的 **1,985 / 113,585 = 1.75%**。
+      初稿写的是「不到 1%」与「几百个」，**那是在没数过文本 token 时的印象**；
+      填 `buckets[].text_tokens` 时实测出来是 1,985，差了一倍有余（见 R8）
     fix: >-
       按参数量分配 kernel 与量化预算会把一半力气投在 txt 侧。
       和 wan2.2-ti2v-5b 的 cross-attn 是同一类错误，但这一份更极端：
@@ -494,7 +530,7 @@ bottlenecks:
     visibility: public
   - dimension: compute
     finding: >-
-      注意力占单步算力的四分之三，而模型只有 8.3B ——
+      注意力占单步算力的 **90%**，而模型只有 8.3B ——
       根因是 patch_size (1,1,1)：VAE 压到 16× 之后 DiT 不再 patchify，
       序列长度是同线 minimax-h3 的 1.54 倍，而参数只有它的 1/4
     quantified: >-
@@ -761,6 +797,50 @@ review:
       `substitutable` 从 true 改成 **false**，name 改成「Qwen2.5-VL（报告称
       dual-channel text encoder 的视觉-语言那一路）」，note 写明两档来源的分歧与取舍。
       参数量仍只填这一个，另两个留空并写明是哪一种空（这部分未变）
+  - id: R8
+    field: bottlenecks[0]
+    severity: wrong
+    claim: >-
+      「一半的参数在为**不到 1%** 的 token 服务…txt 侧只处理**几百个**文本 token
+      （byT5 那路上限 256）」
+    finding: >-
+      **文本 token 实测 1,985，不是「几百」；占比 1.75%，不是「不到 1%」。**
+      填 `buckets[].text_tokens` 时按厂商参考实现逐因子核出来的：
+      LLM 那一路 **1000**（`hunyuan_video_pipeline.py:1592`
+      `TextEncoder(max_length=1000)`，定长 padding，模板前缀 `crop_start` 切掉后正好剩 1000）、
+      byT5 **256**（`config.json` 的 `byt5_max_length`）、
+      vision semantic **729**（`config.json` 的 `vision_num_semantic_tokens`）。
+
+      第三项最容易漏：**t2v 档也带这 729 个**。
+      `_prepare_vision_states`（`:712`）在 `reference_image is None` 时造的是
+      `torch.zeros(B, 729, 1152)` 而**不是 None**，照样过 `vision_in`、
+      被 `reorder_txt_token` 拼进 txt 流 —— 值是 0、掩码是 0，但序列长度与算力照付。
+      初稿只看到 byT5 的 256 就写了「几百个」，**没去数另外两路**。
+
+      这一条与 cogvideox-1.5-5b 的 R5 是同一类（severity `wrong`，不是 `stale`）：
+      当时手边就有 config 与参考实现，没核就下了比较结论
+    resolution: corrected
+    changed_to: >-
+      finding 改成「为 **1.75%** 的 token 服务…txt 侧只处理 **1,985** 个」，
+      quantified 补上 1,985 / 113,585 的算式与三路来源，并写明初稿错在哪
+  - id: R9
+    field: open_questions
+    severity: stale
+    claim: >-
+      「`derive.py` 的单步线性 FLOPs 对双流 MMDiT 偏高约一倍，注意力占四分之三，
+      单步真值约 6.42e15。要改共享文件，已报主会话」
+    finding: >-
+      **共享改法已落地，这条不再成立，而且它自己的三个数现在都不对。**
+      `backbone.param_scaling` 被 `derive.gen_workload` 消费、
+      `buckets[].text_tokens` 填上 1,985 之后，derive 给的线性项是 **6.202e14**，
+      与逐桶手算逐位吻合（2,727,511,584×111,600 + 2,871,435,648×1,985
+      + 2,723,964,928，再 ×2）；单步 **6.130e15**、注意力占 **90%**。
+      原文的「偏高约一倍」「真值 6.42e15」是 R4 已记的初稿错（真实是高 3.05 倍），
+      「注意力占四分之三」则是用那个偏高的线性项算出来的占比
+    resolution: corrected
+    changed_to: >-
+      open_question 标为已解决并保留原文对照；bottlenecks 里的
+      「注意力占单步算力的四分之三」改成 **90%**
 
 notes: >-
   **字节对账。** 14 个 safetensors 实测 numel×4 B 之和 371,757,753,484 B，
@@ -796,9 +876,14 @@ open_questions:
     写的是「HY1.5 480pSR」，即 480p→720p 那一级。仓里两级 SR 权重都有，
     所以两种说法可能各指一级，但报告没有点明
   - >-
-    `derive.py` 的单步线性 FLOPs 对双流 MMDiT 偏高约一倍（R4）。
-    注意力项是准的、「注意力占四分之三」这个结论不变，但线性项的真值是 9.12e14
-    而不是 1.859e15，单步合计真值约 6.42e15。要改共享文件，已报主会话
+    ~~`derive.py` 的单步线性 FLOPs 对双流 MMDiT 偏高约一倍（R4）。~~
+    **已解决。** `backbone.param_scaling` 落地、`buckets[].text_tokens` 填上之后，
+    derive 给的线性项是 **6.202e14**，与逐桶手算逐位吻合
+    （逐视频 token 2,727,511,584 × 111,600 + 逐文本 2,871,435,648 × 1,985
+    + 逐样本 2,723,964,928，再 ×2）。单步 **6.130e15**、注意力占 **90%**。
+    本条原先写的「偏高约一倍」「真值约 6.42e15」「注意力占四分之三」
+    **三个数现在都不对了** —— 前两个是 R4 已记的初稿错（真实是高 3.05 倍），
+    第三个是用当时那个偏高的线性项算出来的占比。留着原文是为了能对照看
   - >-
     **推导给的端到端 FLOPs 偏低约 18%（R6）**：三个阶段按同一个单步 FLOPs 相加，
     而 1080p SR 那段的 token 数是 247,163 不是 111,600。真值约 1.030e18。

@@ -1,9 +1,9 @@
 {
  "id": "hunyuanvideo-1.5",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T16:35:42+00:00",
+ "generated_at": "2026-10-30T17:18:11+00:00",
  "inputs": {
-  "facts_dir": "facts/hunyuanvideo-1.5",
+  "facts_dir": "/Users/yuan/Work/frontier-llm-tracking/frontier_open_source_model_study/facts/hunyuanvideo-1.5",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/hunyuan-video/hunyuanvideo-1.5.yaml",
@@ -103,15 +103,16 @@
   }
  ],
  "generation_workload": {
-  "status": "partial",
+  "status": "ok",
   "bucket": {
    "width": 1280,
    "height": 720,
    "frames": 121,
+   "text_tokens": 1985,
    "fps": 24,
    "duration_s": 5.0416667,
    "default": true,
-   "note": "**算出来的，不是抄的**：厂商的分桶逻辑 `target_size_config['720p']` 给 base 960 / stride 16，`generate_crop_size_list(960, 16)` 枚举面积约 960²、 两边被 16 整除的档，再取与 16:9 最近的一档 —— 结果比值恰好是 0.5625， 正中 16:9。121 帧与 24 fps 取自 `generate.py` 的默认值。 latent 31 × 45 × 80 = 111,600 token"
+   "note": "**算出来的，不是抄的**：厂商的分桶逻辑 `target_size_config['720p']` 给 base 960 / stride 16，`generate_crop_size_list(960, 16)` 枚举面积约 960²、 两边被 16 整除的档，再取与 16:9 最近的一档 —— 结果比值恰好是 0.5625， 正中 16:9。121 帧与 24 fps 取自 `generate.py` 的默认值。 latent 31 × 45 × 80 = 111,600 token。\n**`text_tokens` 1985 = 1000 + 256 + 729，三个因子各有各的来源** （逐因子验，不是一个总数）： **1000** —— `hyvideo/pipelines/hunyuan_video_pipeline.py:1592` `TextEncoder(max_length=1000)`，`:160` `self.text_len = text_encoder.max_length`， `:303` 按 `self.text_len` 分词。它是**定长**：`text2tokens` 先按 `max_length + crop_start` 分词、`padding=\"max_length\"`， 再在 `encode()` 里 `last_hidden_state[:, crop_start:]` 把模板前缀切掉， 正好剩 1000，与 prompt 实际长短无关。 **256** —— `config.json` 的 `byt5_max_length`，glyph byT5 分支，同样 padding 到定长。 **729** —— `config.json` 的 `vision_num_semantic_tokens`。 **t2v 档也有这 729 个**：`_prepare_vision_states`（`:712`）在 `reference_image is None` 时造的是 `torch.zeros(B, 729, 1152)` 而**不是 None**， 于是它照样过 `vision_in` 并被 `reorder_txt_token` 拼进 txt 流 —— 值是 0、注意力掩码是 0，但**序列长度与算力照付**。 三者在 `hunyuanvideo_1_5_transformer.py:761 / :793` 两次 `reorder_txt_token` 拼成同一条 txt 流，一起过 54 个双流块的 txt 侧"
   },
   "effective_compression": {
    "temporal": 4,
@@ -145,14 +146,15 @@
   "sequence_tokens": 111600.0,
   "sequence_tokens_is_lower_bound": false,
   "flops_per_step": {
-   "linear": 608786033478656.0,
+   "linear": 620185633001216.0,
    "linear_terms": {
-    "formula": "2 × (每视频 token 参数 × token 数 + 每样本参数 × 1)",
+    "formula": "2 × (每视频 token 参数 × token 数 + 每文本 token 参数 × 文本 token 数 + 每样本参数 × 1)",
     "factors": {
      "per_video_token": 2727511584,
      "per_sample": 2723964928,
      "per_text_token": 2871435648,
-     "tokens": 111600.0
+     "tokens": 111600.0,
+     "text_tokens": 1985
     },
     "note": "AdaLN 这类吃条件向量的参数每次前向只过一遍，不随 token 数增长"
    },
@@ -166,8 +168,8 @@
     },
     "note": "稠密全注意力口径。块稀疏（SSTA）或线性注意力要另按其形态折算，本函数不替你折 —— 折算比例是记录里的事实，不是公式里的常数"
    },
-   "total": 6118284831558656.0,
-   "attention_share": 0.9004972716637049
+   "total": 6129684431081216.0,
+   "attention_share": 0.8988225837766625
   },
   "end_to_end_terms": {
    "formula": "Σ各阶段(步数 × 每步前向次数 × 该段单步 FLOPs)",
@@ -207,9 +209,6 @@
    "文本编码一次（编码器参数量在 generation.text_encoders，本函数不计）",
    "VAE decode 一次（VAE 结构不在 config 里，解码器是 Transformer 时这一项不是小量）",
    "音频 VAE 与声码器"
-  ],
-  "notes": [
-   "per_text_token 声明了 2,871,435,648 但记录没给文本 token 数，线性项漏掉了这一项 —— 是下界"
   ]
  }
 }

@@ -238,6 +238,7 @@ generation:
     - width: 1360
       height: 768
       frames: 81
+      text_tokens: 226
       latent_frames: 22
       fps: 16
       duration_s: 5.0625
@@ -249,7 +250,10 @@ generation:
         pipeline 补一帧到 **22** 再在解码前丢掉。
         DiT 实际工作在 22 个 latent 帧上，所以进 token 数的是 22（见 R2）。
         latent 空间 768/8 × 1360/8 = 96×170，patch 2 → 48×85；
-        时间 22/2 = 11 → 视频 token **44,880**，加文本 226 → 序列 **45,106**
+        时间 22/2 = 11 → 视频 token **44,880**，加文本 226 → 序列 **45,106**。
+        `text_tokens` 填 226 是 `max_text_seq_length` 这个**定长**值：
+        这一份把 prompt 补齐 / 截断到 226，不是实际 prompt 长度随输入变 ——
+        所以它是档位的属性而不是某次调用的属性
 
   constraints:
     width_divisor: 16
@@ -591,13 +595,17 @@ open_questions:
     训练精度无一手来源。发布权重 DiT 全 BF16、文本编码器与 VAE 全 F32 是实测，
     卡上「BF16（推荐）…不支持 INT4」说的是**支持的推理精度**，不是训练格式
   - >-
-    **推导给的序列长度与 FLOPs 都是下界**，因为 schema 没有地方声明文本 token 数
-    （与 stepvideo 的 R6 同一个缺口，但这一份影响更大）：
-    这一份是 in-sequence，226 个文本 token 既进线性项也进注意力的平方项。
-    手算真值：序列 44,880 + 226 = 45,106，注意力因此比推导给的高 **1.01%**，
-    线性项高 2×12,585,984×226 = 5.7e9（可忽略）。
-    `max_text_seq_length` 是 226，已写在 backbone.note 里 ——
-    等 schema 有了 `text_tokens` 就能填
+    **`buckets[].text_tokens` 已填 226，但推导只消费了它的一半 ——
+    注意力那一侧仍是下界。** 这一份是 in-sequence，226 个文本 token
+    既进线性项也进注意力的平方项，而 `derive.gen_workload` 里
+    `seq = latent_tokens + audio_tokens` 不含文本：
+    线性项正确用上了 226（`linear_terms.factors.text_tokens` 可见），
+    `sequence_tokens` 与 `attention` 仍按 44,880 算。
+    手算真值：序列 44,880 + 226 = 45,106，注意力比推导给的高 **1.01%**
+    （1.0395e15 → 1.0500e15）；线性项那一侧差 5.7e9，可忽略。
+    同时 `sequence_tokens_is_lower_bound` 仍为 true、
+    提示语仍说「记录没给文本长度」—— **那句话现在是错的，记录给了。**
+    这是共享代码，本次只报不改（见共享笔记）
   - >-
     没有任何性能数据。卡上既没有耗时也没有显存，
     `performance[]` 因此是空的 —— 这与 stepvideo（卡上有两行实测）

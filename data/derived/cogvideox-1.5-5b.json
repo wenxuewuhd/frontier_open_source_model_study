@@ -1,12 +1,12 @@
 {
  "id": "cogvideox-1.5-5b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T17:07:07+00:00",
+ "generated_at": "2026-10-30T17:18:11+00:00",
  "inputs": {
   "facts_dir": "/Users/yuan/Work/frontier-llm-tracking/frontier_open_source_model_study/facts/cogvideox-1.5-5b",
   "config_present": false,
   "shapes_present": true,
-  "model_yaml": null,
+  "model_yaml": "data/models/cogvideo/cogvideox-1.5-5b.yaml",
   "ep_size": 1
  },
  "gate_b": {
@@ -58,39 +58,20 @@
   "incomplete_note": null
  },
  "kv_cache": {
-  "status": "unknown",
-  "why": "config 里没有 num_hidden_layers"
+  "status": "not_applicable",
+  "why": "非自回归生成模型：推理过程中无跨步复用的 KV，不适用本口径"
  },
  "kv_capacity_bytes_at_context": {},
  "kv_capacity_basis": null,
  "active_params": {
-  "status": "ok",
-  "total": 5570676352.0,
-  "total_with_embed": 5570676352.0,
-  "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的输入词表）；total_with_embed 含输入词表，用于和各家公布的「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
-  "expert_active": 0.0,
-  "expert_total": 0.0,
-  "expert_ratio": "dense，无 MoE",
-  "always_active": 5570676352.0,
-  "lm_head": 0.0,
-  "dense": true,
-  "excluded": {
-   "embed_tokens": 0.0,
-   "retrieval_table": 0.0,
-   "vision": 0.0,
-   "draft": 0.0
-  },
-  "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
+  "status": "not_applicable",
+  "why": "生成类每步对全部 latent token 做一次前向，没有「每 token 激活」这个量；单步负载见 generation_workload"
  },
- "flops": {
-  "linear_per_token": 11141352704.0,
-  "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
- },
+ "flops": {},
  "arithmetic_intensity": {},
  "ep_communication": {
-  "status": "ok",
-  "bytes_per_token": 0,
-  "why": "dense 模型，无专家并行通信"
+  "status": "not_applicable",
+  "why": "生成类不做 EP all-to-all；对应的通信是序列并行(Ulysses)的 all-to-all，口径不同，本脚本未建模"
  },
  "reconciliation": [
   {
@@ -105,13 +86,104 @@
   },
   {
    "item": "参数总量",
-   "status": "skip",
-   "why": "YAML 声明 缺失"
+   "YAML 声明": 5570676352.0,
+   "shapes 实测": 5570676352.0,
+   "delta_pct": 0.0,
+   "status": "ok"
   },
   {
    "item": "外部参数量对账",
    "status": "ok",
    "why": "与 HF 的 safetensors tally 逐位相同（5,570,676,352）"
   }
- ]
+ ],
+ "generation_workload": {
+  "status": "partial",
+  "bucket": {
+   "width": 1360,
+   "height": 768,
+   "frames": 81,
+   "text_tokens": 226,
+   "latent_frames": 22,
+   "fps": 16,
+   "duration_s": 5.0625,
+   "default": true,
+   "note": "卡的规格表给分辨率 1360×768、帧率 16 fps，§Quick Start 的示例给 `num_frames=81`。 **`latent_frames` 声明 22 而不是 21**：因果 VAE 给的是 (81−1)/4+1 = **21**，但 `patch_size_t` 是 2 要求偶数， pipeline 补一帧到 **22** 再在解码前丢掉。 DiT 实际工作在 22 个 latent 帧上，所以进 token 数的是 22（见 R2）。 latent 空间 768/8 × 1360/8 = 96×170，patch 2 → 48×85； 时间 22/2 = 11 → 视频 token **44,880**，加文本 226 → 序列 **45,106**。 `text_tokens` 填 226 是 `max_text_seq_length` 这个**定长**值： 这一份把 prompt 补齐 / 截断到 226，不是实际 prompt 长度随输入变 —— 所以它是档位的属性而不是某次调用的属性"
+  },
+  "effective_compression": {
+   "temporal": 8,
+   "spatial_h": 16,
+   "spatial_w": 16,
+   "note": "VAE 压缩率 × DiT patch。两者在记录里分开存，只在这里相乘 —— 合成一个数存进记录是范畴错误"
+  },
+  "latent_tokens": 44880.0,
+  "latent_tokens_terms": {
+   "formula": "[latent_frames = 22（记录声明，未套公式）] / p_t × (H / s_vae / p_h) × (W / s_vae / p_w)",
+   "factors": {
+    "frames": 81,
+    "height": 768,
+    "width": 1360,
+    "vae_temporal_compression": 4,
+    "vae_spatial_compression": 8,
+    "vae_causal": true,
+    "patch_t": 2,
+    "patch_h": 2,
+    "patch_w": 2
+   },
+   "per_axis": {
+    "t": 11.0,
+    "h": 48.0,
+    "w": 85.0
+   },
+   "latent_frames": 22.0,
+   "latent_frames_source": "declared",
+   "effective_temporal_ratio": 3.6818181818181817
+  },
+  "sequence_tokens": 44880.0,
+  "sequence_tokens_is_lower_bound": true,
+  "flops_per_step": {
+   "linear": 427159932811264.0,
+   "linear_terms": {
+    "formula": "2 × (每视频 token 参数 × token 数 + 每文本 token 参数 × 文本 token 数 + 每样本参数 × 1)",
+    "factors": {
+     "per_video_token": 4758830720,
+     "per_sample": 799259648,
+     "per_text_token": 12585984,
+     "tokens": 44880.0,
+     "text_tokens": 226
+    },
+    "note": "AdaLN 这类吃条件向量的参数每次前向只过一遍，不随 token 数增长"
+   },
+   "attention": 1039527994982400.0,
+   "attention_terms": {
+    "formula": "每层 QK^T 2·n²·d + (softmax·V) 2·n²·d = 4·n²·d，再乘层数",
+    "factors": {
+     "layers": 42,
+     "hidden": 3072,
+     "tokens": 44880.0
+    },
+    "note": "稠密全注意力口径。块稀疏（SSTA）或线性注意力要另按其形态折算，本函数不替你折 —— 折算比例是记录里的事实，不是公式里的常数"
+   },
+   "total": 1466687927793664.0,
+   "attention_share": 0.7087588131622247
+  },
+  "end_to_end_terms": {
+   "formula": "步数 × 每步前向次数 × 单步 FLOPs",
+   "factors": {
+    "steps": 50,
+    "forwards_per_step": 2,
+    "cfg_distilled": false,
+    "cfg_embedded": false
+   }
+  },
+  "flops_end_to_end": 1.466687927793664e+17,
+  "excluded": [
+   "文本编码一次（编码器参数量在 generation.text_encoders，本函数不计）",
+   "VAE decode 一次（VAE 结构不在 config 里，解码器是 Transformer 时这一项不是小量）",
+   "音频 VAE 与声码器"
+  ],
+  "notes": [
+   "文本 token 拼在同一条序列里，但记录没给文本长度 —— 序列长度是下界，注意力 FLOPs 同样是下界"
+  ]
+ }
 }
