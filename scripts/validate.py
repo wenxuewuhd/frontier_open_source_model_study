@@ -195,9 +195,15 @@ BASIS_VALUES = ["theoretical_floor", "vendor_declared", "declared_dtype",
                 "dtype_fallback", "mixed"]
 LABEL_SCAN = [os.path.join("site", "src"), "scripts"]
 # 读注册表的入口本身要写标签，不在检查范围里
+# 标签表的家。basis 的中文标签**不在 columns.json 里** —— 缺值三态和 basis 语义
+# 是两件事，混在一张注册表里会让「空格子是哪一种空」和「这个数按什么口径算」
+# 共用一套键，所以 basis 那一节是有意从 columns.json 摘掉的。
+# 它的家是 site/src/lib/data.ts 的 KV_BASIS_LABEL / KV_BASIS_NOTE（短标签与
+# 长解释放在一起，免得出现「标签查表、解释写 ternary」的半吊子状态）。
 LABEL_HOME = {os.path.join("scripts", "lib", "columns.py"),
               os.path.join("scripts", "validate.py"),
-              os.path.join("site", "src", "lib", "columns.ts")}
+              os.path.join("site", "src", "lib", "columns.ts"),
+              os.path.join("site", "src", "lib", "data.ts")}
 
 
 def label_table_hit(line):
@@ -232,16 +238,17 @@ def label_table_hit(line):
     return None
 
 
-def check_stray_labels(root, warnings):
+def check_stray_labels(root, errors):
     """第二份标签表：代码里不许把 basis 取值自己映射成中文。
 
     取值表已经有过多份各自不全的拷贝 —— `vendor_declared` 进了 derive.py 和 schema
     之后，三个用它的地方一个都没跟上，于是全仓证据第三强的那一档在页面上渲染成一个
     不带口径的裸数字。单位和口径必须跟着数字走，而跟不跟得上，取决于有没有人又抄一份。
 
-    **现在报 warning 不报 error**：站点侧还没有读注册表的入口（`site/src/lib/columns.ts`
-    不存在），所以那两份拷贝暂时是站点唯一的标签来源，删不得。入口落地、两处改成查
-    注册表之后，这里改成 errors。
+    **现在报 error**：两份拷贝都已收口到 `site/src/lib/data.ts` 的 `KV_BASIS_LABEL`，
+    家在 `LABEL_HOME` 里豁免，所以再出现第三份就是真的抄了一份。
+    收口时发现那两份的措辞本来就不一样（模型页「按厂商公布值」vs data.ts「厂商公布」）
+    —— 重复的代价不是多写几行，是同一个取值在站内有两种读法。
 
     已知边界：**逐行判，所以键和中文值分在两行的条目漏得掉**（`theoretical_floor:`
     换行再写值）。不致命 —— 一张表里总有写成一行的条目，表本身还是会被报出来；
@@ -267,10 +274,10 @@ def check_stray_labels(root, warnings):
                 if hits:
                     where = "、".join(f"{n}（{v}）" for n, v in hits[:6])
                     more = f" 等 {len(hits)} 处" if len(hits) > 6 else ""
-                    warnings.append(
+                    errors.append(
                         f"{rel}: 第 {where}{more} 行把 basis 取值自己映射成中文 —— "
-                        "又一份标签表。标签该从 data/schema/columns.json 读；"
-                        "站点侧的读取入口（site/src/lib/columns.ts）落地后这一条收紧成 error")
+                        "又一份标签表。改成从 site/src/lib/data.ts 的 KV_BASIS_LABEL / "
+                        "KV_BASIS_NOTE 查（那是 basis 标签唯一的家，不在 columns.json 里）")
 
 
 # 渲染跟踪字段的页面。新加一张这种表就要加进来 —— 不进来就没人检查它会不会
@@ -573,7 +580,7 @@ def main():
     errors, warnings, judgements, gaps = [], [], [], []
     check_absence_contract(errors, warnings)
     check_renderers(_root(args.data_dir), errors)
-    check_stray_labels(_root(args.data_dir), warnings)
+    check_stray_labels(_root(args.data_dir), errors)
     models = sorted(glob.glob(os.path.join(args.data_dir, "models", "**", "*.yaml"),
                               recursive=True))
     loaded = {}

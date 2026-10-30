@@ -370,18 +370,35 @@ def _():
         assert validate.label_table_hit(line) is None, f"误伤了散文：{line}"
 
 
-@case("标签·正例：现在剩下的两处都被报出来")
+@case("标签·反例：全仓现在一份多余的标签表都没有")
 def _():
-    w = []
-    validate.check_stray_labels(ROOT, w)
-    got = sorted(x.split(":")[0] for x in w)
-    # 原先是三处，含 scripts/derive.py 的 CLI 口径标签（只盖 5 个取值里的 2 个）。
-    # 那一处没有补成五个标签 —— 那样仓里会多出第四份 basis 标签表，正是这道闸在数的
-    # 东西。改成直接印 bytes_basis 原值，于是它不再是一张标签表，自然退出名单。
-    # 这条用例因此从 3 改成 2：**预期跟着真实状态走，不是把修复回退去迁就用例。**
-    # 剩下两处要等站点侧的 columns.ts 落地才能消。
-    want = ["site/src/lib/data.ts", "site/src/pages/models/[id].astro"]
-    assert got == want, f"实际报的是 {got}，应当是 {want}"
+    # 这条用例的期望值改过三次，每次都是真实状态变了：
+    #   3 处 → derive.py 的 CLI 改成直接印 bytes_basis 原值，不再是标签表
+    #   2 处 → [id].astro 的那份删掉改查 KV_BASIS_LABEL；data.ts 是家，进 LABEL_HOME
+    #   0 处 → 现在
+    # **预期跟着真实状态走，不是把修复回退去迁就用例。**
+    # 收口时才发现那两份的措辞本来就不一样（「按厂商公布值」vs「厂商公布」）——
+    # 重复的代价不是多写几行，是同一个取值在站内有两种读法。
+    errs = []
+    validate.check_stray_labels(ROOT, errs)
+    assert errs == [], f"又冒出标签表：{sorted(x.split(':')[0] for x in errs)}"
+
+
+@case("标签·正例：真多出一份时这道闸会红 —— 没见它红过的闸不算闸")
+def _():
+    # 上一条是反例（全仓干净）。反例单独立着是空的：如果 check_stray_labels 哪天
+    # 坏成永远返回空，它照样通过。所以这里放一个探针文件进扫描范围再撤掉。
+    probe = os.path.join(ROOT, "site", "src", "lib", "__regression_probe.ts")
+    try:
+        with open(probe, "w", encoding="utf-8") as f:
+            f.write("const X: Record<string,string> = { vendor_declared: '厂商公布' };\n")
+        errs = []
+        validate.check_stray_labels(ROOT, errs)
+        hit = [x for x in errs if "__regression_probe" in x]
+        assert hit, f"探针没被抓到，这道闸是哑的：{errs}"
+    finally:
+        if os.path.exists(probe):
+            os.remove(probe)
 
 
 # ============================================================ 跑

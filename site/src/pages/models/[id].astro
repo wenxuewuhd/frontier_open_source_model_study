@@ -7,7 +7,7 @@ import Prose from '../../components/Prose.astro';
 import {
   allModels, modelById, url, fmtCount, fmtBytes, fmtInt, fmtSci, FAMILY_LABEL,
   reviewStatus, SEVERITY_LABEL, RESOLUTION_LABEL, HORIZON_LABEL, SUBSYSTEMS,
-  kvCachePrecision,
+  kvCachePrecision, KV_BASIS_LABEL,
 } from '../../lib/data';
 
 const SUBSYSTEM_LABEL: Record<string, string> = Object.fromEntries(
@@ -25,15 +25,10 @@ const d = m.derived ?? null;
 const s = d?.from_shapes;
 const kv = d?.kv_cache;
 const kvPrec = kvCachePrecision(m);
-// 字节口径跟着数走：下限、兜底、声明精度是三种数，页面上丢了标签读者会直接当部署预算
-const KV_BASIS: Record<string, string> = {
-  theoretical_floor: '理论下限',
-  vendor_declared: '按厂商公布值',
-  dtype_fallback: '按模型 dtype 兜底',
-  declared_dtype: '按声明精度',
-  mixed: '口径混合',
-};
-const kvBasis = KV_BASIS[kv?.bytes_basis] ?? '';
+// 字节口径跟着数走：下限、兜底、声明精度是三种数，页面上丢了标签读者会直接当部署预算。
+// 标签表只此一份，在 lib/data.ts —— 这里原先另有一份，措辞还不一样
+// （「按厂商公布值」vs「厂商公布」），同一个取值在站内有两种读法
+const kvBasis = KV_BASIS_LABEL[kv?.bytes_basis] ?? '';
 const act = d?.active_params;
 const rec: any[] = d?.reconciliation ?? [];
 const mismatches = rec.filter((r) => r.status === 'MISMATCH');
