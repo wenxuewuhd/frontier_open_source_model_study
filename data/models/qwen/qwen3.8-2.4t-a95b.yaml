@@ -214,6 +214,39 @@ arch:
 
 precision:
   weights_release: [BF16, FP8_E4M3]
+  quantization:
+    per_subsystem:
+      expert: BF16
+      shared_expert: BF16
+      attention: BF16
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+      draft: BF16
+    subsystem_method: >-
+      来自完整权重清单（213 分片 1609 条目）逐项统计，非抽样：每个条目都带 shape 与 dtype，
+      failed_shards 为空，1609 条全是 BF16。所以各子系统 BF16 是全量结论而不只是代表值。
+      每个子系统的报值按**张量大小**挑主体（不是按名字长度 —— 那样会在注意力一桶里挑中
+      linear_attn.in_proj_qkv 而不是最大的 self_attn.q_proj）；这一份八个桶的 dtype 集合
+      都只有 BF16 一个元素，所以挑哪一条都一样，方法仍按本仓的规矩走一遍。
+      **条目数少是堆叠存储，不是清单不全**：512 个专家堆成 3 维张量
+      （gate_up_proj [512, 4096, 8192]、down_proj [512, 8192, 2048]），
+      一条就装下一层的全部专家，expert 一桶只有 184 条却占 2,370,821,947,392 参数
+      （总量的 96.9%），与 Step-5-Preview 同形态。
+      逐项求和得 2,446,182,725,504，与模型卡的「2.4T in total」对得上。
+      **norm 报 BF16 不是漏看了 F32**：前代 Qwen3.5-397B-A17B 的 norm 一桶标 MIXED，
+      是因为 45 层的 linear_attn.norm.weight 是 F32；本代同名张量 69 条全是 BF16，
+      其余 input_layernorm / post_attention_layernorm / q_norm / k_norm / model.norm
+      共 231 条也都是 BF16。两代是同名张量的逐条对比，不是桶的形状变了 ——
+      按「线性注意力的 norm 权重是 F32」写的核在这一代会读错。
+      没有 quantization_config，**scale 张量零个**（scale_elements 0），
+      所以 per_subsystem_scale 与 per_subsystem_block 都不填 —— 不是漏填，是没有可填的。
+      **weights_release 里的 FP8_E4M3 不在这份口径里**：它来自同模型的另一个发布仓
+      Qwen/Qwen3.8-2.4T-A95B-FP8（213 分片 2.27 TiB，见 sources 的模型卡注），
+      **本仓从没取过那个仓的清单**。上面这一列实测只覆盖主仓
+      Qwen/Qwen3.8-2.4T-A95B @ 207bd685a7e3，所以「声明发了 FP8」与「实测全是 BF16」
+      并排出现不是矛盾，是两个仓。两版的量化配置差异见 open_questions
 
 platforms:
   - engine: transformers
@@ -305,6 +338,9 @@ evidence:
   arch.moe.storage_note: derived
   arch.position: derived
   precision: official
+  # 实测自权重清单，不是厂商说法 —— 落在 precision: official 的前缀继承里会绕过 Gate C
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
   platforms: official
   bottlenecks: judgement
   infra_signals: judgement
