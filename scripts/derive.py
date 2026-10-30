@@ -1176,12 +1176,16 @@ def main():
             print(f"激活(可比官方)   {dtypes.fmt_count(act['total_with_embed'])}"
                   f"  (含输入词表 {dtypes.fmt_count(act['excluded']['embed_tokens'])})")
     if kv.get("status") in KV_USABLE:
-        # 采用了厂商公布值之后，本仓的兜底已经不参与报出去的数，别再挂兜底标
-        warn = (" [精度兜底]" if kv.get("dtype_assumed")
-                and kv.get("bytes_basis") != "vendor_declared" else "")
-        warn += " [厂商公布]" if kv.get("bytes_basis") == "vendor_declared" else ""
+        # 口径直接印 bytes_basis 的原值，不在这里维护一张中文标签表。
+        # 原先是三个 if 各挂一个中文标签（精度兜底 / 厂商公布 / 理论下限），
+        # 于是 declared_dtype 与 mixed 跑 CLI 时**一个口径标记都不带** ——
+        # 读的人会把它当成「这个数没有口径问题」。补成五个标签能修，
+        # 但那样仓里就有第四份 basis 标签表（另三份在 data.ts、[id].astro、
+        # docs/kv-cache-accounting.md），正是 validate 第 5 道闸在数的东西。
+        # CLI 是开发者工具，印原值反而更有用：和字段值、和 grep 的对象一致。
+        basis = kv.get("bytes_basis")
+        warn = f" [{basis}]" if basis else ""
         warn += " [含估算项]" if kv.get("status") == "partial" else ""
-        warn += " [理论下限]" if kv.get("bytes_basis") == "theoretical_floor" else ""
         fa = kv.get("full_attention_layers"); la = kv.get("linear_attention_layers")
         print(f"注意力显存       {kv['per_token_bytes']:.0f} B/token"
               f" + {dtypes.fmt_bytes(kv['per_sequence_bytes'])}/序列"

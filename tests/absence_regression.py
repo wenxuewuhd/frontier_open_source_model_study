@@ -364,13 +364,17 @@ def _():
         assert validate.label_table_hit(line) is None, f"误伤了散文：{line}"
 
 
-@case("标签·正例：现在剩下的三处都被报出来")
+@case("标签·正例：现在剩下的两处都被报出来")
 def _():
     w = []
     validate.check_stray_labels(ROOT, w)
     got = sorted(x.split(":")[0] for x in w)
-    want = ["scripts/derive.py", "site/src/lib/data.ts",
-            "site/src/pages/models/[id].astro"]
+    # 原先是三处，含 scripts/derive.py 的 CLI 口径标签（只盖 5 个取值里的 2 个）。
+    # 那一处没有补成五个标签 —— 那样仓里会多出第四份 basis 标签表，正是这道闸在数的
+    # 东西。改成直接印 bytes_basis 原值，于是它不再是一张标签表，自然退出名单。
+    # 这条用例因此从 3 改成 2：**预期跟着真实状态走，不是把修复回退去迁就用例。**
+    # 剩下两处要等站点侧的 columns.ts 落地才能消。
+    want = ["site/src/lib/data.ts", "site/src/pages/models/[id].astro"]
     assert got == want, f"实际报的是 {got}，应当是 {want}"
 
 
