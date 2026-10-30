@@ -14,6 +14,19 @@ sources:
     note: >-
       BF16 发布，59 分片。权重清单逐分片读头取全，23416 个张量，无读失败分片。
       仓里只有 configuration_minimax_m3_vl.py，没有 modeling 代码
+  - kind: modelcard
+    url: https://huggingface.co/MiniMaxAI/MiniMax-M3-MXFP8
+    locator: config.json / safetensors 分片头 @ d2be410f4832
+    accessed: '2026-10-30'
+    note: >-
+      厂商并行维护的 MXFP8 变体，清单逐分片读头取全，31 分片、45,838 个张量，
+      无读失败分片（facts/minimax-m3-mxfp8）。两项对账：counts_as_param 口径参数量
+      427,040,140,160 与主仓**逐位相同**；落盘张量字节 443,742,085,120 B = 413.27 GiB
+      （F8_E4M3 394.57 GiB + U8 12.33 GiB + BF16 6.19 GiB + F32 176.77 MiB），
+      对主仓 795.51 GiB 是 1.9249 倍。自检：U8 恰为 F8_E4M3 的 1/32
+      （394.57 / 32 = 12.33），与块 [1, 32]、每块一个 E8M0 字节闭合。
+      config 的 quantization_config 只有 4 个键（quant_method mxfp8 /
+      activation_scheme dynamic / weight_block_size [1, 32] / ignored_layers 62 条）
   - kind: repo
     url: https://github.com/huggingface/transformers/blob/main/src/transformers/models/minimax_m3_vl/modeling_minimax_m3_vl.py
     locator: MiniMaxM3VLAttention / MiniMaxM3VLIndexer / MiniMaxM3VLSparseCacheLayer
@@ -357,42 +370,20 @@ arch:
 precision:
   weights_release: [BF16, FP32, MXFP8]
   weights_release_scope:
-    BF16: { measured: true }
-    FP32: { measured: true }
+    BF16: { manifest_taken: true, in_precision_table: true }
+    FP32: { manifest_taken: true, in_precision_table: true }
     MXFP8:
-      measured: false
+      # 这一条就是拆字段的由头：清单取过（facts/minimax-m3-mxfp8，45,838 条），
+      # 但实测值没有并进上面的 per_subsystem 表。原来的单个 measured 只能填 false，
+      # 于是字段在说「没取过」—— 见 R18 / R20
+      manifest_taken: true
+      in_precision_table: false
       repo: MiniMaxAI/MiniMax-M3-MXFP8
       note: >-
-        厂商与主仓并行维护的 MXFP8 变体。**`measured: false` 在这里说的是本记录
-        `precision.quantization.per_subsystem` 那张表的覆盖范围 —— 那张表只描述主仓
-        MiniMaxAI/MiniMax-M3 @ 2026-10-26。它不等于「本仓没取过这个仓的数」：
-        清单已经单独取过**，facts/minimax-m3-mxfp8，rev
-        d2be410f483297907301ec94fdf0ca5385f9b169、取于 2026-10-30T11:16Z、
-        31 个分片、45,838 条。以下全部是在这份清单上的逐张量实测。
-        **与主仓是同一批权重**：名字集合是主仓 23,416 条的严格超集，多出的 22,422 条
-        全部是 weight_scale_inv，主仓独有 0 条；23,416 条共有张量**形状逐条相同**，
-        dtype 差异恰好 22,422 条且全部是 BF16 → F8_E4M3；counts_as_param 口径的参数量
-        427,040,140,160 两侧逐位相同。
-        **量化覆盖**：被量化的 22,422 条是 expert 21,888 / attention 240 /
-        shared_expert 171 / indexer 114 / dense_ffn 9，全部 F8_E4M3 配 U8 容器的 scale。
-        块按 weight.shape ÷ 同名 weight_scale_inv.shape 逐张量实测，
-        **全部 [1, 32]、零例外、无末块不满**，与 config 声明相符。
-        未量化的 994 条是 embed 1 / lm_head 1 / norm 355 / router 114
-        （57 个 gate.weight 与 57 个 e_score_correction_bias，FP32）/ vision 523，
-        与 config 的 ignored_layers（62 条：lm_head、model.embed_tokens、vision_tower、
-        multi_modal_projector、patch_merge_mlp 与 57 个 block_sparse_moe.gate）逐项吻合；
-        norm 不在 ignored_layers 里但同样未量化。
-        **落盘 443,742,085,120 B = 413.27 GiB**（F8_E4M3 394.57 GiB + U8 12.33 GiB +
-        BF16 6.19 GiB + F32 176.77 MiB），对主仓 795.51 GiB 是 1.9249 倍。
-        自检：scale 恰好是量化数据的 1/32（394.57 / 32 = 12.33），与块 [1, 32]、
-        每块一个 E8M0 字节闭合。
-        config 的 quantization_config **只有 4 个键**（quant_method mxfp8、
-        activation_scheme dynamic、weight_block_size [1, 32]、ignored_layers），
-        与实测无出入 —— 这一代不存在 M3.1-Flash 那种「专家那一半另写在
-        moe_quant_algo / group_size 上」的情况，但那一代的教训在这里同样适用：
-        这个结论是把 quantization_config **打印完整**之后得到的，不是看前几个键。
-        仓元数据 2026-10-30 查于 HF API：createdAt 2026-06-02、
-        lastModified 2026-10-26、52 个文件、下载 48,817
+        与主仓是同一批权重逐张量量化而来：22,422 条权重 F8_E4M3 配 U8 scale、
+        块实测全部 [1, 32] 零例外，落盘 413.27 GiB（主仓 BF16 是 795.51 GiB）。
+        清单取过但未并进上面的精度表，逐张量对账的全过程见核查 R18，
+        字节与参数量两项对账见 sources 里那条 MiniMax-M3-MXFP8
   quantization:
     per_subsystem:
       expert: BF16
@@ -563,9 +554,13 @@ reviewed:
     逐子系统归类与块比值用的是本仓 scripts/lib 的 subsystems.classify 与
     dtypes，不是另写一套判据；落盘字节有一条内部自检（scale 恰为量化数据的
     1/32，与块 [1, 32] 闭合），参数量两侧逐位相同是第二条。
-    **没有做的**：没有读 MXFP8 仓的参考实现，也没有把它的逐子系统表并进
-    precision.quantization.per_subsystem —— 那张表仍然只描述主仓，
-    原因见 R20。本记录 precision 段其余字段与 derived 全部未动
+          **没有做的**：没有读 MXFP8 仓的参考实现，也没有把它的逐子系统表并进
+      precision.quantization.per_subsystem —— 那张表仍然只描述主仓。
+      本记录 precision 段其余字段与 derived 全部未动。
+      **第四轮（2026-10-30，拆 measured 字段时）**：R20 从 deferred 改成已修，
+      内容未重验，只重排了容器（对账细节进 R18 的 finding、字节与参数量进
+      sources 的 MXFP8 条目、scope 的 note 只留一句结论）。
+      新增的闸 check_scope_coherence 与四个负例是这一轮实跑的
 
 review:
   - id: R17
@@ -826,13 +821,31 @@ review:
       取完没有回头改这里。按 skill 规则 8，免责声明只免掉它点名的那件事 ——
       它点名的那件事已经不成立，于是这条从「诚实的留空」退化成「错的声明」，
       正是本仓最该避免的那一类。**facts/ 在 gitignore 里、也不跟分支走**，
-      所以光看仓发现不了这份清单已经存在
+      所以光看仓发现不了这份清单已经存在。
+      **在那份清单上重做的逐张量对账**（归类与块比值都走仓内 scripts/lib 的
+      subsystems.classify 与 dtypes，不另写判据）：
+      (1) **与主仓同一批权重**——名字集合是主仓 23,416 条的严格超集，多出的
+      22,422 条全部是 weight_scale_inv、主仓独有 0 条；23,416 条共有张量
+      **形状逐条相同**；dtype 差异恰好 22,422 条且全部是 BF16 → F8_E4M3。
+      (2) **量化覆盖**——被量化的 22,422 条是 expert 21,888 / attention 240 /
+      shared_expert 171 / indexer 114 / dense_ffn 9，全部 F8_E4M3 配 U8 容器的
+      scale；块按 weight.shape ÷ 同名 weight_scale_inv.shape 逐张量实测，
+      **全部 [1, 32]、零例外、无末块不满**，与 config 声明相符。
+      (3) **未量化的 994 条**——embed 1 / lm_head 1 / norm 355 / router 114
+      （57 个 gate.weight 与 57 个 e_score_correction_bias，FP32）/ vision 523，
+      与 config 的 ignored_layers（62 条：lm_head、model.embed_tokens、
+      vision_tower、multi_modal_projector、patch_merge_mlp 与 57 个
+      block_sparse_moe.gate）**逐项吻合**；norm 不在 ignored_layers 里但同样未量化。
+      994 + 22,422 = 23,416 闭合。
+      字节与参数量两项对账放在 sources 里那条 MiniMax-M3-MXFP8，与别的记录取数同构
     resolution: corrected
     changed_to: >-
-      note 换成在那份清单上的逐张量实测（同一批权重的三项比对、量化覆盖与块、
-      未量化的 994 条与 ignored_layers 的逐项吻合、落盘 413.27 GiB 与 1/32 的
-      scale 自检），并写明 measured 仍为 false 是因为它说的是本记录
-      per_subsystem 那张表的覆盖范围，不是「取没取过数」
+      内容按容器分三处：逐张量对账的全过程进本条 finding（核查条目本来就是放
+      「怎么验的」的地方）、字节与参数量对账进 sources 的 MXFP8 仓条目、
+      weights_release_scope 的 note 只留一句结论加指路。
+      note 原先写成 1,571 字，而其余 9 份记录的同字段是 33–48 字 ——
+      内容没问题，装错了容器：那个 note 渲染在精度卡片下面，读者扫到它时要的是
+      「哦，还有个 MXFP8 变体，在那个仓，块是 [1, 32]」，不是一篇对账报告
 
   - id: R19
     field: lineage.changed_from_predecessor
@@ -860,10 +873,21 @@ review:
       scripts/validate.py 的 check_release_vs_measured 也只按
       `measured is False or container` 放行，所以把它改成 true 会让这条闸报错，
       而记录里并没有 MXFP8 的 per-dtype 字节。
-      要修得动 schema 与那道闸（例如拆成 measured_in_table / manifest_fetched
-      两个键，或让 scope 能带自己的 per_subsystem），
-      这是共享文件的设计题，不在本次范围
-    resolution: deferred
+            还有一处跟着说反话：站点 precision 页把 measured: false 渲染成「未取」、
+      tooltip 写「厂商发了，本仓没取清单」—— 对 M3-MXFP8 这句话是错的。
+      **已拆**：measured 删除，改成 manifest_taken（取没取过清单，纯事实）与
+      in_precision_table（进没进逐子系统精度表）两个布尔，都设为必填，不留别名 ——
+      留着别名就会有人继续填它，两套语义并存比原来更糟
+    resolution: corrected
+    changed_to: >-
+      动了四处：schema 的 weights_release_scope、validate.py 的
+      check_release_vs_measured（它实际依赖的是 in_precision_table，
+      manifest_taken 与它无关）、站点两处消费点（模型页三种说法、precision 页
+      新增「另仓已测」一档）、以及全仓 42 份记录 81 个 scope 条目。
+      拆开换来表达力也换来新错法（两个布尔自相矛盾），所以同时加了
+      check_scope_coherence：in_precision_table 为真而 manifest_taken 为假就报。
+      四个负例实跑验过会红：标 in_precision_table: true 说谎、两个布尔矛盾、
+      漏填 in_precision_table、以及照旧写 measured
 
 notes: >-
   MiniMax 家族的旗舰，model_type minimax_m3_vl，原生多模态。本仓最先录的一份

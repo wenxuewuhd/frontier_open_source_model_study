@@ -103,28 +103,47 @@
 「本仓只取了 BF16 那个仓」，而精度表只显示取数那个仓。
 
 **约定是「列厂商发布过的全部变体 + 每一项标记取没取过数」。**
-`precision.weights_release_scope`，每种精度一条 `{measured, repo?, container?, note?}`。
-`measured: false` 就是「厂商发过、本仓没取数」那一半，它让不可见的东西可见。
+`precision.weights_release_scope`，每种精度一条
+`{manifest_taken, in_precision_table, repo?, container?, note?}`。
+`in_precision_table: false` 就是「没进上面那张精度表」那一半，它让不可见的东西可见。
+
+**2026-10-30 拆字段**：原来只有一个 `measured`，而它同时背着两件事 ——
+「本仓取没取过这个仓的清单」与「它进没进逐子系统精度表」。MiniMax-M3 的 MXFP8
+恰好是「取过、没进表」，只能填 `false`，于是字段本身在说反话，照着它复述的人
+就写出了「本仓没有取过它的清单」这种错声明（`minimax-m3` 的 R18 / R20），
+站点 precision 页也跟着把它渲染成「未取 · 厂商发了，本仓没取清单」。
+**一个字段说反话比留空坏得多：留空会被人去查，说反话不会。**
+现在拆成两个布尔，都必填，`measured` 已删除不留别名。
+`scripts/validate.py` 的 `check_release_vs_measured` 认的是 `in_precision_table`
+（它比的是 `derived` 的 `weight_bytes_by_dtype`，所以只有「没进这张表」才构成交代）；
+`check_scope_coherence` 另外挡住「没取过清单却说进了表」这种拆开之后才写得出的矛盾。
 
 **40 份带 `weights_release` 的记录已经全部迁完**（另有 7 份 DeepSeek 没有这个字段，
-不涉及）。`measured` 从 `derived` 的 `from_shapes.weight_bytes_by_dtype` 算 —— 那是全量
-清单的 dtype 直方图，粒度和 `weights_release` 对得上。仓名只从各记录自己已有证据的散文里
+不涉及）。`in_precision_table` 从 `derived` 的 `from_shapes.weight_bytes_by_dtype` 算 —— 那是全量
+清单的 dtype 直方图，粒度和 `weights_release` 对得上（这句说的是 `in_precision_table`；
+`manifest_taken` 是人填的事实，算不出来）。仓名只从各记录自己已有证据的散文里
 取（HF 名单），不构造。带仓名的三份标 `judgement` 进 Gate C：断言「那个仓存在且装的是
 这种精度」是判断；其余标 `derived`，只是把清单里有没有这种 dtype 照实记下来。
 
-这和上面的三态是**同一个语义家族**，不另起一套词汇：`measured: false` 对应
-「查了但没有（在这个仓里）」，不是「没查」。
+这和上面的三态是**同一个语义家族**，不另起一套词汇：`in_precision_table: false`
+对应「查了但没有（在这张表里）」，不是「没查」——「没查」是 `manifest_taken: false`，
+这正是拆字段要把它们分开的原因。
 
 ### 和 `e4983d4` 那道闸的接缝
 
-`check_release_vs_measured` 认这个字段：某个变体标了 `measured: false`（在独立仓）
+`check_release_vs_measured` 认这个字段：某个变体标了 `in_precision_table: false`
 或带了 `container`（逻辑精度装在别的容器里），就算交代过，放行；没交代的报。
+**它不看 `manifest_taken`** —— 那个键记的是本仓取没取过清单，与「这张表里有没有」无关。
 
 **迁完之后这一条已经从 warning 收紧成 error** —— 没交代又对不上，现在没有任何正当理由。
 新录一份记录时，`weights_release` 里写了本仓清单查不到的精度，就必须同时说清它在哪个仓。
 
-放行只认 `measured: false` 和 `container` 两种。**`measured: true` 不算交代** ——
-声明了、实测清单里查无实据、却标「取过数」，那是自相矛盾，继续报。回归用例钉住了这条。
+放行只认 `in_precision_table: false` 和 `container` 两种。
+**`in_precision_table: true` 不算交代** —— 声明了、`derived` 里查无实据、
+却标「进了表」，那是自相矛盾，继续报。只写 `manifest_taken` 也不算交代。
+另有 `check_scope_coherence` 挡住 `in_precision_table: true` 配
+`manifest_taken: false`：没取过清单不可能有实测值进表。四条都有回归用例钉住，
+并各自拿负例实跑验过会红。
 
 ### 排雷：7 份声明与实测不符，其中 4 份不要改
 
@@ -160,7 +179,8 @@ glm 一代声明 `[BF16, FP32]`，FP32 只有 57,600 B（路由 gate 那一类�
 - **`weights_release` 里缺的变体没有补。** 口径说「列全部变体」，而 MiniMax-M3 的
   `MXFP8` 变体（记录散文里提到、本仓未录）**没有加进 `weights_release`** ——
   加一个变体要有来源，而散文里只说存在、没有仓名与日期。这是口径统一剩下的最后一块：
-  要补的是 M3 这一份，补法是先给 MXFP8 找到可定位的来源，再进 `weights_release`
-  并配 `measured: false`。**闸口管不到这一类**：它锚在本仓实测这一侧，只查得出
+  **这一块 2026-10-30 已经补完**：MXFP8 进了 `weights_release`，来源是
+  `MiniMaxAI/MiniMax-M3-MXFP8` @ `d2be410f4832`（清单 45,838 条也取了），
+  配 `manifest_taken: true` + `in_precision_table: false`。**闸口管不到这一类**：它锚在本仓实测这一侧，只查得出
   「声明了而清单里没有」，查不出「厂商发了而记录没声明」。这个单向性不是这道闸的
   局部毛病，是所有以本仓实测为锚的闸口的共同盲区 —— 写进 `model-audit` skill 规则 11 了。

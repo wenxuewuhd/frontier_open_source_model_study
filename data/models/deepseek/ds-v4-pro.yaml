@@ -237,6 +237,11 @@ precision:
     - 128
     weight_format: e4m3
     scale_format: ue8m0
+    # **FP4 这个名字是厂商的，块格式名不是。** 模型卡下载表写「FP4 + FP8 Mixed*」，脚注
+    # "MoE expert parameters use FP4 precision; most other parameters use FP8"，
+    # config 的 expert_dtype 也写 "fp4"。但块格式厂商一处都没命名 —— V4.1 的技术报告
+    # §2.4.4 点名 "OCP-standard MXFP4" 的是 indexer 缓存，不是权重。实测签名
+    # （[1,32] + E8M0 scale）与 OCP MXFP4 同构，那是本仓的判断，不写进这个字段（见核查 R11）
     expert_dtype: FP4
     per_subsystem:
       expert: FP4
@@ -256,6 +261,11 @@ precision:
       attention: '[128,128]'
       indexer: '[128,128]'
       draft: '[1,32]+[128,128]'
+    # **这一格的口径是落盘容器 dtype**，逐分片读头读出来的：清单里 .scale 张量的 dtype
+    # 字面就是 F8_E8M0，所以容器与逻辑精度在这份权重上重合。不是从上面的 scale_format
+    # ue8m0 推的 —— 那只约束取值不约束容器，V3.1 声明了 ue8m0 而 scale 张量实测仍是 FP32。
+    # Kimi-K3 的同类 scale 落盘是 U8 容器（config 的 scale_dtype 就写 torch.uint8），
+    # 与这里的 FP8_E8M0 是厂商存法之差，不是口径之差（见核查 R11）
     per_subsystem_scale:
       expert: FP8_E8M0
       shared_expert: FP8_E8M0
@@ -433,3 +443,19 @@ review:
     main KV 在本代还不是 FP4，而本代的格式厂商没有公布，所以那一半只能继续兜底。
   resolution: corrected
   changed_to: 补 precision.kv_cache_components.indexer（FP4 / 块 32 / E8M0 scale）；main KV 留空并进 open_questions，合计 bytes_basis 由 dtype_fallback 变 mixed
+- id: R11
+  field: precision.quantization.per_subsystem.expert
+  severity: imprecise
+  claim: 路由专家精度记 FP4，而实测的块与 scale 签名（[1,32] + E8M0）与 OCP MXFP4 同构
+  finding: >-
+    逐一手来源核过，FP4 这个记法是对的，不该改成 MXFP4。模型卡下载表给的是
+    「FP4 + FP8 Mixed*」加脚注 "MoE expert parameters use FP4 precision; most other
+    parameters use FP8"，config 的 expert_dtype 写 "fp4"；而 V4.1 技术报告 §2.4.4
+    点名 "OCP-standard MXFP4" 的是 indexer 缓存，权重侧报告通篇没给块格式命名。
+    于是本仓里 DeepSeek 记 FP4、Kimi-K3 记 MXFP4、MiniMax-M3.1-Flash 记 NVFP4 ——
+    **这个不一致是三家厂商自己的叫法之差，不是本仓的口径之差**，拉平会把厂商没说过的名字
+    写成厂商说的。scale 一格同时核了：FP8_E8M0 是清单里 .scale 张量的落盘 dtype 字面值，
+    与 Kimi 的 UINT8 同口径（两边都写落盘容器），只是两家存法不同
+  resolution: confirmed
+  changed_to: 原值全部保留；expert_dtype 与 per_subsystem_scale 上方各补一条注释，写明名字出处与 scale 的口径
+

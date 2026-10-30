@@ -30,6 +30,7 @@ from lib import yamlio  # noqa: E402
 
 import validate  # noqa: E402
 import fetch_hf  # noqa: E402
+from lib import cfgio  # noqa: E402
 
 
 # ------------------------------------------------------------ 小工具
@@ -177,38 +178,41 @@ def _():
     assert not errors, f"契约检查报错：{errors}"
 
 
-@case("二·正例：空着的 KV 精度分成「未公布」与「不适用」两种，没有「未录」")
+@case("二·正例：空着的 KV 精度按 kind 分成「未公布」与「不适用」，没有「未录」")
 def _():
-    # 期望值跟着真实状态走：第一份生成类记录（wan2.2-ti2v-5b）进来之后，
-    # 「空着的 KV 精度」不再只有一种含义。
-    #   自回归模型空着  = 厂商没公布落盘精度，字节按权重 dtype 兜底 → confirmed_absent
-    #   扩散模型空着    = 每步重算、根本不建 KV，没有这笔账 → not_applicable
+    # **这条用例断言的是规则，不是人口普查。**
+    # 原先写死「46 份」「47 份」，于是每进一份生成类记录就红一次 ——
+    # 红得有道理（分布确实变了），但每次都只能把数字加一，用例什么也没守住。
+    # 现在按 kind 推期望值：
+    #   生成类空着 = 每步重算、根本不建 KV，没有这笔账      → not_applicable
+    #   自回归空着 = 厂商没公布落盘精度，字节按权重 dtype 兜底 → confirmed_absent
     # **两者都不是 unsurveyed**，unsurveyed 才是「本仓还没查」。
     blank = [i for i, d in RECS.items() if not ((d.get("precision") or {}).get("kv_cache"))]
-    gen = [i for i in blank if RECS[i].get("kind") in ("video-gen", "image-gen")]
-    assert len(blank) == 47, f"空着的应当是 47 份，实际 {len(blank)}"
-    assert len(gen) == 1, f"其中生成类应当是 1 份，实际 {len(gen)}"
+    assert blank, "一份空着的都没有，判据多半失效了"
     for mid in blank:
+        is_gen = RECS[mid].get("kind") in ("video-gen", "image-gen")
+        want = "not_applicable" if is_gen else "confirmed_absent"
         a = columns.absence("kv_dtype", RECS[mid], derived(mid))
-        want = "not_applicable" if mid in gen else "confirmed_absent"
-        assert a["state"] == want, f"{mid} 的 KV 精度判成了 {a['state']}，应当是 {want}"
+        assert a["state"] == want, \
+            f"{mid}（kind={RECS[mid].get('kind')}）判成了 {a['state']}，应当是 {want}"
         assert not a["is_gap"], f"{mid}：这两态都是信息，不该算成缺口"
         assert a["why"], f"{mid}：判了却说不出凭什么"
 
 
-@case("二·正例：契约判出来的和站点侧手写的 kvCachePrecision 一致")
+@case("二·正例：契约判出来的两种说法与 kind 一一对应")
 def _():
-    # 站点侧 data.ts 的 kvCachePrecision 委托给同一份契约，注释里复述了当前的分布。
-    # 契约要能复现那个分布 —— 复现不了就说明注释与判据分叉了，
-    # 而这条线存在的理由就是消灭这种口径不一致。
-    # 分布随记录增减而变，改这里时**同步改 data.ts 那段注释**，两边一起动。
-    seen = collections.Counter()
+    # 同上，不数总数 —— 只查「标签 ↔ kind」这个对应关系没有串。
+    # 站点侧 data.ts 的 kvCachePrecision 委托给同一份契约，所以这里过了那边就一致。
+    pairs = collections.Counter()
     for mid, d in RECS.items():
         if (d.get("precision") or {}).get("kv_cache"):
             continue
-        seen[columns.absence("kv_dtype", d, derived(mid))["label"]] += 1
-    assert seen == collections.Counter({"未公布": 46, "不适用": 1}), \
-        f"契约判出来是 {dict(seen)}，data.ts 的注释说的是 46 份「未公布」、1 份「不适用」"
+        kind = "生成类" if d.get("kind") in ("video-gen", "image-gen") else "自回归"
+        pairs[(kind, columns.absence("kv_dtype", d, derived(mid))["label"])] += 1
+    bad = [k for k in pairs if k not in (("生成类", "不适用"), ("自回归", "未公布"))]
+    assert not bad, f"出现了不该有的组合：{bad}（全部：{dict(pairs)}）"
+    assert pairs[("自回归", "未公布")] > 0 and pairs[("生成类", "不适用")] > 0, \
+        f"两种组合要各有至少一份，否则这条用例没验到对应关系：{dict(pairs)}"
 
 
 @case("二·正例：三态都真的用得上 —— 没有一态是摆设")
@@ -277,9 +281,11 @@ def _():
     # 原先是三份通义。minimax-m3 是后加的第四份：厂商与主仓并行维护
     # MiniMaxAI/MiniMax-M3-MXFP8（2026-10-30 查 HF API 确认存在，31 个分片、
     # 下载 48,817），而本仓只取过主仓的清单。补进 weights_release 之后它
-    # 当然会落进这张名单 —— **这正是对的**：声明了、没测过、所以必须带
-    # measured: false 交代清楚。闸口照旧放行（它有 scope），这条用例查的是
-    # 更底下那一层：摘掉交代之后还认不认得出来。
+    # 当然会落进这张名单 —— **这正是对的**：声明了、没进精度表、所以必须带
+    # in_precision_table: false 交代清楚。闸口照旧放行（它有 scope），这条用例
+    # 查的是更底下那一层：摘掉交代之后还认不认得出来。
+    # （2026-10-30 拆字段前这个键叫 measured，它同时背着「取没取过清单」，
+    #  而 minimax-m3 恰好是「取过、没进表」，只能填 false —— 字段在说反话。）
     want = ["minimax-m3", "qwen3.5-27b", "qwen3.5-397b-a17b", "qwen3.8-2.4t-a95b"]
     assert sorted(got) == want, f"实际是 {sorted(got)}，应当是 {want}"
 
@@ -303,7 +309,8 @@ def _():
 def _():
     d = copy.deepcopy(RECS["qwen3.5-27b"])
     d["precision"]["weights_release_scope"] = {
-        "FP8_E4M3": {"measured": False, "repo": "Qwen/Qwen3.5-27B-FP8"},
+        "FP8_E4M3": {"manifest_taken": False, "in_precision_table": False,
+                     "repo": "Qwen/Qwen3.5-27B-FP8"},
     }
     after = release_errors(d)
     assert after, "还有一种没交代，应当继续报"
@@ -311,12 +318,57 @@ def _():
         f"应当只报剩下的 INT4：{after}"
 
 
-@case("三·正例：measured: true 不能当成交代 —— 那是在说谎")
+@case("三·正例：in_precision_table: true 不能当成交代 —— 那是在说谎")
 def _():
-    # 声明了、实测清单里没有、却标 measured: true：这是自相矛盾，不该被放行
+    # 声明了、derived 的 by_dtype 里没有、却标 in_precision_table: true：
+    # 这是自相矛盾，不该被放行
     d = copy.deepcopy(RECS["qwen3.8-2.4t-a95b"])
-    d["precision"]["weights_release_scope"] = {"FP8_E4M3": {"measured": True}}
-    assert release_errors(d), "标 measured: true 却查无实据，必须继续报"
+    d["precision"]["weights_release_scope"] = {
+        "FP8_E4M3": {"manifest_taken": True, "in_precision_table": True},
+    }
+    assert release_errors(d), "标 in_precision_table: true 却查无实据，必须继续报"
+
+
+@case("三·负例：拆字段之后，manifest_taken 单独不足以当交代")
+def _():
+    """这条是拆字段（2026-10-30）的核心回归。
+
+    旧字段下「取过清单」与「进了精度表」是同一个布尔，所以这两件事分不开。
+    拆开之后要保证闸口认的仍然是后者 —— 一个变体清单取过、但实测值没并进
+    逐子系统精度表，依旧要能用 in_precision_table: false 交代；
+    反过来只写 manifest_taken 而不写 in_precision_table，不能蒙混过关。
+    """
+    d = copy.deepcopy(RECS["qwen3.8-2.4t-a95b"])
+    # 只说取过清单，不说进没进表 —— 闸口应当照旧报
+    d["precision"]["weights_release_scope"] = {"FP8_E4M3": {"manifest_taken": True}}
+    assert release_errors(d), "只写 manifest_taken 不构成交代，必须继续报"
+    # 补上「没进表」才算交代清楚
+    d["precision"]["weights_release_scope"] = {
+        "FP8_E4M3": {"manifest_taken": True, "in_precision_table": False},
+    }
+    assert not release_errors(d), "manifest_taken: true + in_precision_table: false 是正当交代"
+
+
+@case("三·负例：两个布尔自相矛盾要被挡住")
+def _():
+    """没取过清单不可能有实测值进表。
+
+    这种错法在拆字段之前写不出来（只有一个布尔，没有第二个键可以和它冲突）——
+    拆开换来表达力，也换来新的错法，所以拆的同时就得把它挡住。
+    """
+    import validate as V
+    d = copy.deepcopy(RECS["minimax-m3"])
+    d["precision"]["weights_release_scope"]["MXFP8"] = {
+        "manifest_taken": False, "in_precision_table": True,
+    }
+    errs = []
+    V.check_scope_coherence(d, "<test>", errs)
+    assert errs and "自相矛盾" in errs[0], f"应当报自相矛盾，实际 {errs}"
+    # 真实记录里一条都不该有
+    for mid, rec in RECS.items():
+        e = []
+        V.check_scope_coherence(rec, mid, e)
+        assert not e, f"{mid} 报了：{e}"
 
 
 @case("三·正例：四份「逻辑精度 vs 容器」不被误报")
@@ -408,6 +460,71 @@ def _():
     finally:
         if os.path.exists(probe):
             os.remove(probe)
+
+
+# ================================ 读 config：声明可能嵌在 text_config 下
+#
+# Kimi 的四份 VLM（k2.5 / k2.6 / k2.7-code / k3）把整个 `quantization_config`
+# 嵌在 `text_config` 下，顶层只剩 `dtype: bfloat16`。仓里曾有四个消费点两套读法：
+# derive.py 拍平后取，fetch_dtypes / extract_layers / scaffold 只读顶层。
+# 后果不是报错 —— 是逐子系统精度表那几格渲染成「未录」，而 config 明写着
+# group_size 32。**「未录」让人以为去查就行，没人会想到判据本身读错了地方。**
+
+@case("读 config·正例：嵌在 text_config 下的 quantization_config 要找得到")
+def _():
+    import json as _json
+    # **判据不能依赖 facts/** —— 它在 gitignore 里、不随分支走，worktree 与新克隆
+    # 都没有。我第一版写成「一份都读不到就失败」，于是在任何干净 checkout 上都红。
+    # 逻辑本身由下面那条合成用例守；这里只在 facts 真的在的时候做实物校验。
+    want = {"kimi-k3", "kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code"}
+    for mid in want:
+        fp = os.path.join(ROOT, "facts", mid, "cfg.json")
+        if not os.path.exists(fp):
+            continue
+        cfg = _json.load(open(fp, encoding="utf-8"))
+        assert cfgio.quant_site(cfg) == "text_config", \
+            f"{mid} 的声明位置变了：{cfgio.quant_site(cfg)}"
+        q = cfgio.quant_cfg(cfg)
+        assert q, f"{mid}：嵌套的 quantization_config 没读到"
+        grp = next(iter((q.get("config_groups") or {}).values()), {}).get("weights", {})
+        assert grp.get("group_size") == 32, f"{mid}: group_size={grp.get('group_size')}"
+        assert grp.get("num_bits") == 4, f"{mid}: num_bits={grp.get('num_bits')}"
+
+
+@case("读 config·正例：合成的嵌套 config 也要读到（不依赖 facts/）")
+def _():
+    # 上一条要 facts/ 才验得了实物，而 facts/ 在 gitignore 里。这条守逻辑，
+    # 任何 checkout 上都跑得了 —— 把 quant_cfg 改回只读顶层，它会红。
+    cfg = {"dtype": "bfloat16",
+           "text_config": {"quantization_config": {
+               "format": "mxfp4-pack-quantized",
+               "config_groups": {"group_0": {"weights": {"num_bits": 4, "group_size": 32}}}}}}
+    assert cfgio.quant_site(cfg) == "text_config"
+    q = cfgio.quant_cfg(cfg)
+    assert q.get("format") == "mxfp4-pack-quantized"
+    assert q["config_groups"]["group_0"]["weights"]["group_size"] == 32
+
+
+@case("读 config·反例：顶层声明的照常读得到，位置记成 root")
+def _():
+    cfg = {"quantization_config": {"format": "pack-quantized"}, "text_config": {}}
+    assert cfgio.quant_site(cfg) == "root"
+    assert cfgio.quant_cfg(cfg)["format"] == "pack-quantized"
+
+
+@case("读 config·反例：两处都没有时返回 {} 而不是 None")
+def _():
+    # 调用方一律 .get()，返回 None 会炸在很远的地方
+    assert cfgio.quant_cfg({"dtype": "bfloat16"}) == {}
+    assert cfgio.quant_site({"dtype": "bfloat16"}) == "none"
+
+
+@case("读 config·正例：text_config 拍平后层数别名认 num_layers")
+def _():
+    # 扩散主干的 config 把层数叫 num_layers，不认的后果是 Gate B 的层数核对静默 skip
+    assert cfgio.flatten({"num_layers": 30})["num_hidden_layers"] == 30
+    # 两个键都有时不覆盖（glm-4-9b 是这种，两处值相同）
+    assert cfgio.flatten({"num_hidden_layers": 40, "num_layers": 40})["num_hidden_layers"] == 40
 
 
 # ======================================== 取数：别把几个模型合并成一个不存在的模型

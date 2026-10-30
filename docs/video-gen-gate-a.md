@@ -3,6 +3,12 @@
 > 状态：第 0 步产物，只做选题与字段需求勘探，**不改 schema、不改脚本、不录记录**。
 > 取数日期：2026-10-30。取数范围：HuggingFace 模型卡 / config / safetensors 头（range 读）/ 厂商参考实现 / 厂商 GitHub。
 > 对应 [PLAN.md](../PLAN.md) §2 覆盖范围「多模态 · 生成」、§3.2 生成类 schema、§7 的 P2。
+>
+> **修订（2026-10-30）**：§4.1 `minimax-h3` 的两处数在正式录那份记录时被证伪，已改。
+> 一是「Ref2VA 要两套 33B DiT、常驻约 104B / 137 GB」—— FL2VA 与 Ref2VA 是两个任务分区，
+> 一次只起一个，常驻是 69.24B / 134.13 GiB；二是「VAE 约 5.2B」—— 那是拿 10.42 GB 按 BF16 估的，
+> 703 条张量全是 F32，实测 2.60B。留痕在 `data/models/minimax-video/minimax-h3.yaml` 的 R1 / R4。
+> **本文件是选题阶段的勘探产物，候选的事实表以各自的正式记录为准。**
 
 本文件回答四件事：录哪几家几代（§1–§3）、每个入选候选到底什么在变（§4）、
 §3.2 的字段轮廓要改成什么（§5）、family 与命名怎么切（§6）。§7 是没查到或查不准的部分。
@@ -25,7 +31,7 @@
 
 | family | model_id | hf_repo | 发布日期 | 凭什么入选 |
 |---|---|---|---|---|
-| `minimax-video` | `minimax-h3` | `MiniMaxAI/MiniMax-H3` | 2026-07-28 | 音视频在**同一条注意力序列**里联合去噪；把一个 33B 的 Qwen3-VL-32B 全权重当文本编码器随仓发布；VAE 解码器本身是 36 层 Transformer（5.2B）。一次部署要驻留四个大模型 |
+| `minimax-video` | `minimax-h3` | `MiniMaxAI/MiniMax-H3` | 2026-07-28 | 音视频在**同一条注意力序列**里联合去噪；把一个 33B 的 Qwen3-VL-32B 全权重当文本编码器随仓发布；VAE 解码器本身是 36 层 Transformer（2.60B，全 F32）。一次部署要驻留四个大模型 |
 | `ltx` | `ltx-2` | `Lightricks/LTX-2` | 2026-01-03 | VAE 压到 8×32×32、128 latent 通道后 DiT 侧 patch=1；独立音频分支 + vocoder；官方同时发 FP8 与 NVFP4；两阶段 latent 上采样流水线 |
 | `ltx` | `ltx-2.3` | `Lightricks/LTX-2.3` | 2026-03-04 | 19B→22B 的增量**不在主干**：主干仍是 48 层 4096，涨的是 connector 与文本投影（权重实测，见 §4.3）。单文件把 DiT/VAE/audio VAE/vocoder 打包成一个 46 GB 文件，是「权重存储口径」的反例 |
 | `wan` | `wan2.2-t2v-a14b` | `Wan-AI/Wan2.2-T2V-A14B` | 2025-07-24 | 第一个把 MoE 引进视频 DiT 的开源模型，但**路由轴是时间步不是 token**：两套各 14B 的专家按 boundary 切换。这和 LLM 侧的 MoE 不是一回事，硬塞进 `arch.moe` 会造出假事实 |
@@ -73,7 +79,7 @@ VAE、注意力形态、文本编码器组合全换了。这些差异都落在**
 | `stepvideo-t2v-turbo` | 步数蒸馏档，进 `stepvideo-t2v-30b` 的蒸馏字段 |
 | `HunyuanVideo-I2V` / `-Avatar` / `-Custom` / `-Portrait` / `Hunyuan-GameCraft-1.0` | HunyuanVideo 13B 的任务变体 |
 | `HunyuanVideo-1.5` 的 11 个 transformer checkpoint | 480p/720p × t2v/i2v × {基座, CFG 蒸馏, 步数蒸馏, 稀疏} + 两个 SR，**全部进同一份记录的变体表**。唯独 `720p_i2v_distilled_sparse` 要在记录里点名 —— 它是目前唯一一个真开了 SSTA 的权重 |
-| `MiniMax-H3` 的 FL2VA / Ref2VA | 同一份记录的两个任务 checkpoint；但 Ref2VA 多带一套 33B `transformer_ref`，这要进权重存储口径 |
+| `MiniMax-H3` 的 FL2VA / Ref2VA | 同一份记录的两个任务 checkpoint。**一次部署只起其中一个**（sglang 的 `--model-variant`），所以不是「多带一套」—— 见下方 §4.1 的更正框 |
 | `SANA-Video_2.0_5B_720p_4step` / `SANA-Video_2B_480p` / `_2B_720p` | 步数档与参数档 |
 | `Lightricks/LTX-2.3-fp8` / `-nvfp4` | 厂商自己发的量化档，进 `ltx-2.3` 的 `precision.quantization`，不单开 |
 
@@ -249,7 +255,7 @@ arXiv 未在卡上给出。
 | 视觉 VAE | 时间因果；空间 16×、时间 4×、24 latent 通道，记作 **f16t4d24** | 卡 `official` |
 | config 对账 | `spatial_downsample_factors [2,2,2,2,1,1]` 积 = 16；`temporal [1,2,2,1,1,1]` 积 = 4；`latent_channels` 24 —— 与卡一致 | config `derived` |
 | 解码器形态 | **ViT 解码器**：36 层、32 heads × 64、RoPE（`decoder_rope_theta` 100）。卡说是在编码器训完后另训的，为了降低解码成本 | config + 卡 `official` |
-| VAE 权重量 | 10,415,475,936 B → 约 5.2B（BF16 口径） | index `derived` |
+| VAE 权重量 | 10,415,475,936 B / **2,603,868,984 参数**（703 条张量**全 F32**，逐条实测） | 权重头 `derived` |
 | 切片 | `clip_length` 17、`token_drop` 3 | config `derived` |
 | 音频 VAE | DAC 风格；32 kHz 输入，`encoder_rates [2,4,4,5,5]` 积 800 → **40 Hz latent**；32 latent 通道；左右声道共用同一套编解码器、各跑一遍后合成立体声 | config + 卡 `official` |
 
@@ -270,13 +276,35 @@ arXiv 未在卡上给出。
 
 - 卡的 checkpoint 表写 Precision = **BF16**（`official`）；官方无量化版本
 - 两个自包含 checkpoint：**FL2VA**（文生 / 首尾帧生）与 **Ref2VA**（多模态参考）
-- Ref2VA 侧仓里有 `transformer` 与 `transformer_ref` **两套各 66.28 GB** 的 DiT（`derived`）
+- 顶层 diffusers 布局里有 `transformer` 与 `transformer_ref` 两套各 66.28 GB 的 DiT，
+  但它们是**两个任务分区各自的主干，不是一次推理要同时加载的两套**（`derived`，见下方更正框）
 
 **一次部署的权重账**（`derived`，这是本条记录最值得报出去的数）
 
-Ref2VA 路径：DiT 33B + DiT-ref 33B + Qwen3-VL-32B 文本编码器 33B + 视觉 VAE 5.2B + 音频 VAE
-≈ **104B 参数、约 137 GB 落盘**，而卡同时说 33B 里约 13B 的 AdaLN 分支「推理时不需要加载」。
-**这两个口径不能相减得到一个「实际显存」数** —— 13B 是否真能省掉要按张量名分桶实测，本轮没做。
+> ⚠️ **本段在 2026-10-30 录 `minimax-h3` 时被证伪并改写。**
+> 原文写的是「Ref2VA 路径要 DiT 33B + DiT-ref 33B + 文本编码器 33B + VAE 5.2B
+> ≈ 104B / 约 137 GB」。两处都错：Ref2VA 不需要两套 DiT，VAE 也不是 5.2B。
+> 留痕见 `data/models/minimax-video/minimax-h3.yaml` 的 **R1** 与 **R4**。
+
+任一任务分区（FL2VA 或 Ref2VA）的常驻权重是**四块**，逐组件实测：
+
+| 组件 | 参数 | 字节 | 精度 |
+|---|---|---|---|
+| DiT | 33,122,992,896 | 66,280,430,080 | BF16 626 条 + F32 12 条 |
+| 文本编码器 Qwen3-VL-32B | 33,357,390,064 | 66,714,780,128 | 全 BF16 |
+| 视觉 VAE | 2,603,868,984 | 10,415,475,936 | 全 F32 |
+| 音频 VAE | 151,326,585 | 605,306,340 | 全 F32 |
+| **合计** | **69,235,578,529** | **144,015,992,484（134.13 GiB）** | |
+
+**`transformer_ref` 不在这个账里。** FL2VA 与 Ref2VA 是两个任务分区，一次只起一个：
+两份 `model_index.json` 各带 `_minimax_h3.partition`（fl2va / ref2va），
+各自的自包含目录下只有一个 transformer，sglang 的启动参数是 `--model-variant fl2va|ref2va`。
+用 HF tree API 的 LFS sha256 比对坐实：两套 DiT 的分片 **oid 无一重合**（同架构不同权重的两次微调），
+而文本编码器在 `FL2VA/`、`Ref2VA/`、顶层三处的 14 个 oid **两两相同**，仓里只存一份。
+
+卡同时说 33B 里约 13B 的 AdaLN 分支「推理时不需要加载」—— 那 13B 已逐张量验到
+**13,055,204,736，占主干 39.41%**。但**这两个口径不能相减得到一个「实际显存」数**：
+预计算之后实际还要驻留多少没有验过，`33.12B − 13.06B = 20.07B` 是范畴错误。
 
 **推理框架**（`official`，卡上列出）：SGLang、vLLM、diffusers、ComfyUI。
 sglang 示例 `--num-gpus 4 --ulysses-degree 4`，即 **Ulysses 序列并行**，不是 TP/EP。
@@ -619,7 +647,7 @@ MAGI-2 压的是**推导与归类**（MoE 账、mHC、sink、跨厂商复用的 
 | **主干结构** | 单流 + cross-attn（Wan）/ 20 双流 + 40 单流（HunyuanVideo）/ 54 双流 + 0 单流（HV1.5）/ 单流 packed 多模态序列（H3）/ 单流 + 独立音频分支 + 双向跨模态门控（LTX）/ 文本视频拼同一序列 + expert-adaLN（CogVideoX）/ `attention_type: parallel`（StepVideo）/ 线性-稠密混合（SANA） | 一个字符串不够。至少要 `{stream_design, double_blocks, single_blocks, layers, hidden, heads, head_dim, ffn, text_conditioning}`，其中 `text_conditioning` ∈ {cross_attn, in_sequence, dual_stream, adaln} |
 | **参数量** | LTX-2.3 的 22B 里主干只有 18.56B；H3 的 33B 里 13B 是推理可免的 AdaLN 分支；H3 Ref2VA 要驻留两套 DiT；Wan2.2 要驻留两套专家 | 复用 `params.total` + `breakdown` + `excludes` + `counting_note`，但 breakdown 的 key 要换成生成类子系统（§5.5），并新增**「一次部署实际驻留几套主干」**这一维 |
 | **文本编码器** | umT5-XXL / LLaVA-Llama3+CLIP / Qwen2.5-VL-7B（替代品）+byT5+SigLIP / Qwen3-VL-32B 取第 50 层 / Gemma-3-12B FP32 / Step-LLM 19.6B + HunyuanCLIP / Gemma-2-2B | 必须是**数组**（多编码器并用是常态），每项 `{role, name, hf_repo, params, hidden, shipped_with_weights, gated, release_dtype, hidden_layer_taken, substitutable, note}` |
-| **VAE** | 8×8×4/16ch → 16×16×4/{48,32,24}ch → 32×32×8/128ch → 16×16×8/64ch；H3 的解码器是 36 层 ViT 且 VAE 本身 5.2B | 结构化：`{spatial_compression, temporal_compression, latent_channels, causal, params, decoder_arch, hf_repo, ref_model_id}` |
+| **VAE** | 8×8×4/16ch → 16×16×4/{48,32,24}ch → 32×32×8/128ch → 16×16×8/64ch；H3 的解码器是 36 层 ViT 且 VAE 本身 2.60B（全 F32） | 结构化：`{spatial_compression, temporal_compression, latent_channels, causal, params, decoder_arch, hf_repo, ref_model_id}` |
 | **默认采样步数** | 40 / 50 / 8 / 12 / 3 / 6；两阶段流水线的步数是两段相加 | 要和 CFG 分开，且要能表达多阶段，见 §5.2 第 1、6 条 |
 | **分辨率 / 帧数 / 时长** | Wan 480P/720P@5s；H3 短边 768、4–15s、24fps；HV1.5 480p/720p + SR 到 1080p；LTX 宽高需被 32 整除、帧数 8n+1；StepVideo 544×992×204f；SANA 736×1280×193f | 要是**档位数组 + 默认标记 + 约束规则**：`buckets[]: {width, height, frames, fps, duration_s, default}` 外加 `constraints: {width_divisor, height_divisor, frame_formula}` |
 | **蒸馏 / 步数压缩** | HV1.5 同时有 CFG 蒸馏和步数蒸馏，且 CFG 蒸馏版**仍要 50 步**；LTX 的 stage-2 蒸馏是 LoRA | 拆成两个独立字段，见 §5.2 第 1 条 |
@@ -658,7 +686,8 @@ MAGI-2 压的是**推导与归类**（MoE 账、mHC、sink、跨厂商复用的 
    §3.2 的「端到端耗时」隐含了单段假设。每段要能各自带 `{model, steps, cfg, resolution, open_source}`。
 
 7. **`checkpoint_variants[]`** —— HunyuanVideo-1.5 的 11 个各 33 GB 全量 checkpoint、
-   Wan2.2 的高/低噪两套、H3 的 FL2VA/Ref2VA + `transformer_ref`。
+   Wan2.2 的高/低噪两套（**同时驻留**）、H3 的 FL2VA / Ref2VA 两个任务分区（**一次只起一个**）。
+   这两者形态相反，正是 `resident` 这个布尔要存在的理由。
    **权重存储要按「一次部署实际驻留几套」算，不是按单个 checkpoint 的文件大小**。
    这和 CLAUDE.md 的「参数量有三套口径」是同一类问题，生成类多了一根「变体」轴。
 
@@ -682,7 +711,7 @@ MAGI-2 压的是**推导与归类**（MoE 账、mHC、sink、跨厂商复用的 
     group offloading，不是 TP/EP。`platforms[].parallel` 是自由字符串可以装，
     但如果要做平台矩阵的筛选，需要把这几个维度结构化。
 
-12. **VAE 自身的参数量与解码形态** —— H3 的 VAE 是 5.2B 且解码器是 36 层 Transformer；
+12. **VAE 自身的参数量与解码形态** —— H3 的 VAE 是 2.60B（全 F32）且解码器是 36 层 Transformer；
     LTX-2.3 的 VAE 是 0.73B 卷积。**VAE decode 在 H3 上不是边角料，是一次独立的大计算**。
     §3.2 把 VAE 当成一个压缩率标量，漏掉了这一整块。
 
@@ -908,7 +937,7 @@ video_families:
     status: planned
     wave: 1
     note: 压力测试首录。音视频联合；文本编码器是随仓发布的 Qwen3-VL-32B 全权重；
-          Ref2VA 侧带第二套 33B transformer_ref；Context-IR 与 Regenerate-2K 未开源
+          FL2VA / Ref2VA 两个任务分区，一次只起一个；Context-IR 与 Regenerate-2K 未开源
 
   - family: ltx
     flagship: LTX-2.5

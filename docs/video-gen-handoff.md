@@ -58,6 +58,18 @@
 `wan2.2-ti2v-5b` → `minimax-h3` → `magi-2-preview`。分工与各自的 open question 见清单 §F。
 前两份只依赖已落地的部分，第三份依赖 A3b。
 
+**进度**：前两份都录完了，都不在本分支上 ——
+`wan2.2-ti2v-5b` 由主会话落在 `main`（d998220），
+`minimax-h3` 在分支 `v-minimax-h3` / worktree `wt-v-h3`（commit `b4d5d53`，未 push）。
+`magi-2-preview` 未开始，等 A3b。
+
+录 `minimax-h3` 时证伪了本分支 Gate A 的两处数（R1 / R4），已在 2026-10-30 改掉，
+见那份文档头部的修订说明。另外录出来四条共享代码缺口，已报给主会话：
+`fetch_hf.py` 没有「按组件取数」的概念（这个仓两套并列布局，全仓合并会把同一个 DiT
+按两套命名各算一遍，derive 报 216%）；`component()` 的前缀表是点号形式而仓里组件路径是斜杠；
+A3b 未做导致模型页「按子系统」表把 FFN 与 AdaLN 都算进 other；
+站点对生成类有三处既有缺口（`arch` 空节、KV 空行、`generation_workload` 整块未渲染）。
+
 ---
 
 ## 2. 依赖复核的完整结论（含我修正过的那一版）
@@ -118,7 +130,7 @@ git diff --stat 352c114..main -- scripts/lib/                 # 空
 
 组件级的账只靠 A3a 就能算，而第一批前两份记录要的正是组件级的账：
 
-- `minimax-h3` 要分开 DiT 33B / 文本编码器 33B / VAE 5.2B
+- `minimax-h3` 要分开 DiT 33.12B / 文本编码器 33.36B / 视觉 VAE 2.60B / 音频 VAE 0.15B
 - `ltx-2.3` 要分开主干 18.56B / connector 2.0B / 文本投影 1.16B
 
 只有 `magi-2-preview` 要的是 DiT **桶内**的专家 / mHC / 注意力拆分，那才是 A3b。

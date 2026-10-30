@@ -395,16 +395,18 @@ precision:
   - BF16
   - FP32
   weights_release_scope:
-    FP8_E4M3: { measured: true }
+    FP8_E4M3: { manifest_taken: true, in_precision_table: true }
     FP4:
-      measured: true
+      manifest_taken: true
+      in_precision_table: true
       container: INT8
       note: 逻辑精度 FP4 落盘时装在 INT8 容器里，清单里看到的是容器 dtype，不是声明错
-    BF16: { measured: true }
-    FP32: { measured: true }
+    BF16: { manifest_taken: true, in_precision_table: true }
+    FP32: { manifest_taken: true, in_precision_table: true }
   # KV 落盘精度。三个分量格式各不相同，单值装不下，kv_cache 记 MIXED、逐分量见下。
-  # 全局 KV 与 indexer 的格式是厂商公布的（模型卡 + 技术报告 §2.4.4）；滑窗那一份不是，
-  # 只有参考实现的伪量化调用作依据 —— 两档可信度不同，见核查 R36 / R38
+  # 全局 KV 与 indexer 的格式是厂商公布的（模型卡 + 技术报告 §2.4.4）；滑窗那一份只公布了精度
+  # （§2.4.4「We retain FP8 for the SWA KV cache」），块与 scale 仍只有参考实现的伪量化调用
+  # 作依据 —— 两档可信度不同，见核查 R36 / R38 / R42
   kv_cache: MIXED
   kv_cache_components:
     global_kv:
@@ -422,10 +424,12 @@ precision:
       block: 32
       scale_dtype: FP8_E8M0
       note: >-
-        **落盘格式未公布，这一格是 QAT 网格而非存储宽度。** 技术报告只讲全局 KV 与 indexer，
-        滑窗的唯一依据是参考实现 _window_kv 的 act_quant(kv, fp8_block_size=32, scale_fmt=ue8m0,
+        **精度是厂商公布的，块与 scale 不是。** 报告 §2.4.4 末段明说 "We retain FP8 for the SWA
+        KV cache due to its sensitivity to quantization"，所以 8 bit 这一半有一手来源；
+        但报告没给 E4M3 / E5M2、没给块大小、也没给 scale 格式。那三件的唯一依据是参考实现
+        _window_kv 的 act_quant(kv, fp8_block_size=32, scale_fmt=ue8m0,
         scale_dtype=float8_e8m0fnu, inplace=True) —— 而 inplace 伪量化只说明值被舍到 FP8 网格，
-        不说明存成多宽（见核查 R38）。按这个网格折算是每位置 512 + 16 = 528 B
+        不说明存成多宽（见核查 R38 / R42）。按这个网格折算是每位置 512 + 16 = 528 B
     source: >-
       一手来源是厂商模型卡与技术报告（DeepSeek_V41_Tech_Report.pdf @ 314113f8，2026-10-30 读）。
       报告 §2.4.4「FP4 Main KV Cache」：全局 KV 选 "E2M1 with one E4M3 scale per 16 channels,
@@ -434,7 +438,10 @@ precision:
       indexer 沿用 V4 一代的 "OCP-standard MXFP4"（E2M1 + 每 32 通道一个 E8M0 scale）。
       模型卡、报告摘要与结论三处都给出 global KV cache footprint (always in HBM) = 890 bytes per token，
       而本记录 1280 × 0.5625 + 320 × 0.53125 = 890.0 是从实测元素数独立复算命中这个公布值的。
-      滑窗那一格不在公布范围内，依据另有一档，见该分量的 note。
+      滑窗那一格的精度在公布范围内（§2.4.4 末段 "We retain FP8 for the SWA KV cache due to
+      its sensitivity to quantization"），块与 scale 不在，依据另有一档，见该分量的 note。
+      权重侧则相反：报告 16 处 FP4 全在讲缓存与 Figure 2 的算力折算，**没有一处给权重块格式命名**，
+      所以 precision.quantization 那边只能填元素格式 FP4（见核查 R41）。
       **不要照厂商随仓的 inference/ 读这几个格式**：那份自称 demo
       （inference/README.md 第一句 "A readable reference implementation rather than a production
       serving engine"），用 *_act_quant(..., inplace=True) 的伪量化代替打包存储 —— 原 dtype 回写、
@@ -460,6 +467,13 @@ precision:
       实际 2304，差 32 倍，权重被静默解错。逐子系统的实测值见 per_subsystem_block
     scale_format: ue8m0
     expert_dtype: FP4
+    # **FP4 这个名字是厂商的，块格式名不是。** config 的 expert_dtype 就写 "fp4"，
+    # 而技术报告通篇 16 处 FP4 全在讲缓存与 Figure 2 的算力折算，**权重侧一个块格式名都没给**；
+    # V4 一代的模型卡下载表给的也只是「FP4 + FP8 Mixed」加脚注
+    # "MoE expert parameters use FP4 precision; most other parameters use FP8"。
+    # 所以这一格填元素格式 FP4，不填 MXFP4 —— 哪怕实测签名（[1,32] + E8M0 scale）
+    # 与报告 §2.4.4 给 indexer 点名的 OCP MXFP4 完全同构。签名同构是本仓的判断，
+    # 名字是厂商的说法，两者不混进同一个字段（见核查 R41）
     per_subsystem:
       expert: FP4
       draft: FP4
@@ -485,7 +499,14 @@ precision:
       retrieval: '[1,32]+[32,32]'
       draft: '[1,32]+[32,32]'
     # scale 张量的精度和权重精度是两个值：FP4 权重配 FP8_E8M0 的 scale。
-    # 只报一个会让反量化实现猜错 scale 张量的大小
+    # 只报一个会让反量化实现猜错 scale 张量的大小。
+    # **这一格的口径是落盘容器 dtype**，逐分片读头读出来的（见 subsystem_method）：
+    # 清单里 47589 个 .scale 张量的 dtype 字面就是 F8_E8M0，所以容器与逻辑精度在这份权重上重合。
+    # 不是从 config 的 scale_fmt: ue8m0 推的 —— 那只约束取值不约束容器，
+    # V3.1 声明了 ue8m0 而 scale 张量实测还是 FP32，照声明算会算小 4 倍（见 ds-v3.1 记录）。
+    # 跨记录读这一列时注意同一个口径下各家存法不同：Kimi-K3 的同类 scale 落盘是 U8
+    # 容器（config 的 scale_dtype 就写 torch.uint8），MiniMax-M3.1-Flash 的 MXFP8
+    # 侧也是 U8 —— 那边的 UINT8 与这边的 FP8_E8M0 不是口径之差，是厂商存法之差
     per_subsystem_scale:
       expert: FP8_E8M0
       shared_expert: FP8_E8M0
@@ -606,6 +627,14 @@ evidence:
   precision.weights_release_scope: derived
   precision.quantization.packing_note: derived
   precision.quantization.block_size_note: derived
+  # 逐子系统那四格是从权重清单测出来的，不是厂商披露的：config 只给
+  # expert_dtype / weight_block_size / scale_fmt 三个单值，覆盖不到 compressor /
+  # retrieval / draft / vision，更不给 scale 张量的落盘 dtype。挂在 precision: official
+  # 的前缀继承下会让实测冒充披露 —— 同代四份兄弟记录与 apply_dtypes.py 写的都是 derived（见 R41）
+  precision.quantization.per_subsystem: derived
+  precision.quantization.per_subsystem_scale: derived
+  precision.quantization.per_subsystem_block: derived
+  precision.quantization.subsystem_method: derived
   # 读实现得来、本项目未直接核对代码，不能跟着 precision: official 走
   precision.kv_cache: judgement
   precision.kv_cache_components: judgement
@@ -1079,6 +1108,43 @@ review:
     1896.9 GFLOPs、一张图 ≈ 320 个文本 token，并写明压缩比的权衡）、
     arch.vision.separability（partial，第 1 片纯视觉但 3 个标记向量溢到第 2 片）；
     evidence 加十条，四格判断类进 Gate C
+- id: R41
+  field: precision.quantization.per_subsystem_scale
+  severity: miscategorized
+  claim: 逐子系统的权重精度、scale 精度与块四格挂在 `precision` 的 official 前缀继承下，不单独标证据档
+  finding: >-
+    这四格（per_subsystem / per_subsystem_scale / per_subsystem_block /
+    subsystem_method）是从 48 分片 96085 条清单测出来的，不是厂商披露的。config 的
+    quantization_config 只有四个单值（quant_method fp8、weight_block_size [32,32]、
+    scale_fmt ue8m0、expert_dtype fp4），覆盖不到 compressor / retrieval / draft /
+    vision，更不给 scale 张量的落盘 dtype —— 而 scale 这一格尤其不能从 scale_fmt 推：
+    V3.1 声明了 ue8m0 却实测 FP32 scale，照声明算小 4 倍（ds-v3.1 记录已立此案）。
+    同代四份兄弟记录（ds-v4-flash / -dspark / -vision-exp / ds-v4-pro）这四格全部标
+    derived，apply_dtypes.py 填这两格时写死的也是 derived，只有本记录漏了 ——
+    于是本仓旗舰记录上的实测值正按厂商披露的样子摆着。
+    名字一侧核过没问题：FP4 来自 config 的 expert_dtype "fp4"，V4 一代的模型卡下载表另有
+    「FP4 + FP8 Mixed」与脚注「MoE expert parameters use FP4 precision」；技术报告
+    16 处 FP4 全在讲缓存与 Figure 2 的算力折算，权重块格式一个名字都没给。
+    实测签名 [1,32] + E8M0 与报告给 indexer 点名的 OCP MXFP4 同构，但那是本仓的判断，
+    不改字段里的厂商说法
+  resolution: corrected
+  changed_to: >-
+    evidence 补四条 derived（per_subsystem / per_subsystem_scale /
+    per_subsystem_block / subsystem_method）；per_subsystem_scale 上方写明口径是
+    落盘容器 dtype、并说明它与 Kimi-K3 的 UINT8 是厂商存法之差而非口径之差；
+    expert_dtype 上方写明 FP4 这个名字的出处与为什么不改成 MXFP4
+- id: R42
+  field: precision.kv_cache_components.local_window.note
+  severity: wrong
+  claim: 滑窗 KV「落盘格式未公布」「技术报告只讲全局 KV 与 indexer」
+  finding: >-
+    报告 §2.4.4 末段明说 "We retain FP8 for the SWA KV cache due to its sensitivity to
+    quantization"，紧接着 "Compared with the FP8 main KV cache in DeepSeek-V4, this format
+    nearly halves the storage footprint"。所以滑窗的**精度**是公布的，不是没公布；
+    真正没公布的是 E4M3 还是 E5M2、块大小与 scale 格式，那三件仍只有参考实现的伪量化调用作依据。
+    「未公布」把三件没公布的事扩写成了四件，也让一条能引的一手来源看不见
+  resolution: corrected
+  changed_to: local_window 的 note 与 kv_cache_components.source 改写，精度一侧引报告原文，块与 scale 一侧保留原来的降档说明
 
 notes: 本记录是 P0-A 的 schema 压力测试用例：选它是因为它同时带有 MLA、细粒度 MoE、 跨层 KV 共享、稀疏选块、残差流改造、外置查表、自带草稿模型和混合精度， 字段覆盖最宽。schema
   撑不住的地方会先在这里暴露。

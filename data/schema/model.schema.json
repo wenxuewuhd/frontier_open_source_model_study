@@ -792,15 +792,19 @@
         },
         "weights_release_scope": {
           "type": "object",
-          "description": "weights_release 里每种精度的口径：它在哪个仓、本记录的实测清单有没有覆盖到。为什么需要这个字段：同一种情况本仓有两种相反的记法同时存在 —— 通义列厂商发布过的全部变体（含从没取数的独立仓，qwen3.5-27b 声明 [BF16, FP8_E4M3, INT4] 而清单实测只有 [BF16, FP32]），MiniMax-M3 只列本仓取数那个仓实测到的（weights_release: [BF16, FP32]，厂商另发的 MiniMax-M3-MXFP8 只写在 benefit 的散文里）。两种都讲得通，同时存在不行：读者无从知道一行「BF16」是「厂商只发过 BF16」还是「本仓只取了 BF16 那个仓」，而精度表只显示取数那个仓，于是 M3 在表上看着像莫名退回不量化。约定是「列全部变体 + 标记哪些取过数」，缺口由 scripts/check_meaning.py 报出来",
+          "description": "weights_release 里每种精度的口径：它在哪个仓、本记录的实测清单有没有覆盖到。为什么需要这个字段：同一种情况本仓有两种相反的记法同时存在 —— 通义列厂商发布过的全部变体（含从没取数的独立仓，qwen3.5-27b 声明 [BF16, FP8_E4M3, INT4] 而清单实测只有 [BF16, FP32]），MiniMax-M3 只列本仓取数那个仓实测到的（weights_release: [BF16, FP32]，厂商另发的 MiniMax-M3-MXFP8 只写在 benefit 的散文里）。两种都讲得通，同时存在不行：读者无从知道一行「BF16」是「厂商只发过 BF16」还是「本仓只取了 BF16 那个仓」，而精度表只显示取数那个仓，于是 M3 在表上看着像莫名退回不量化。约定是「列全部变体 + 标记哪些取过数」，缺口由 scripts/validate.py 的 check_release_vs_measured 报出来（声明了某精度、本记录 derived 的 weight_bytes_by_dtype 里没有、又没在这里交代，就是错误），两个布尔自相矛盾则由同文件的 check_scope_coherence 报；回归用例在 tests/absence_regression.py。**2026-10-30 拆字段**：原来的单个 measured 同时背着「取没取过数」与「进没进精度表」两件事，而 M3-MXFP8 恰好是「取过、没进表」，只能填 false，字段于是在说反话。现在拆成 manifest_taken 与 in_precision_table 两个布尔，measured 已删除、不留别名 —— 留着就会有人继续填它，两套语义并存比原来更糟",
           "additionalProperties": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["measured"],
+            "required": ["manifest_taken", "in_precision_table"],
             "properties": {
-              "measured": {
+              "manifest_taken": {
                 "type": "boolean",
-                "description": "本记录的实测清单（precision.quantization.per_subsystem 那一套）有没有覆盖这种精度。false 表示厂商发过但本仓没取数 —— 它在精度表上不可见，这个标记就是让它可见的那一半"
+                "description": "本仓取没取过这个仓的权重清单。**这是纯事实，与它进没进精度表无关。** 两件事原先压在一个 measured 布尔里：MiniMax-M3 的 MXFP8 是「清单取过、但没进精度表」，只能填 false，于是字段本身在说反话 —— 照着它复述的人就写出了「本仓没有取过它的清单」这种错声明（见 minimax-m3 的 R18 / R20）。一个字段说反话比留空坏得多：留空会被人去查，说反话不会"
+              },
+              "in_precision_table": {
+                "type": "boolean",
+                "description": "这个变体的实测值进没进本记录的逐子系统精度表（precision.quantization.per_subsystem 那一套）。**scripts/validate.py 的 check_release_vs_measured 认的是这一个**：它查「声明了某精度、而本记录 derived 的 weight_bytes_by_dtype 里没有」，false 就是对这种缺席的正当交代。为真而 manifest_taken 为假是自相矛盾 —— 没取过清单不可能有实测值进表，那道闸会报"
               },
               "repo": {
                 "type": "string",
@@ -833,8 +837,22 @@
           "additionalProperties": false,
           "properties": {
             "method": { "type": "string" },
-            "activation_scheme": { "enum": ["static", "dynamic"] },
-            "weight_block_size": { "type": "array", "items": { "type": "integer" } },
+            "activation_scheme": {
+              "description": "config 声明的激活量化口径。**none 不等于字段缺席** —— none 是厂商明说了不量化激活（compressed-tensors 的 input_activations: null），字段缺席是 config 里根本没这一项；页面上前者印 none，后者印「未声明」。Kimi-K3 是这件事的样本：模型卡声明 MXFP8 激活、config 写 null、落盘没有激活 scale，**三者不一致本身是结论**，字段填 config 说的那个，差异写进 open_questions",
+              "enum": ["static", "dynamic", "none"]
+            },
+            "weight_block_size": {
+              "type": "array", "items": { "type": "integer" },
+              "description": "config 声明的量化块 tile（FP8 式 config 的 weight_block_size）。**不要拿 group 粒度往这里塞** —— compressed-tensors 声明的是沿单轴的 group_size，config 的 block_structure 明写 null，翻译成 [1, N] 是替厂商把 group 归一成 block tile。group 粒度用下面的 group_size / group_strategy"
+            },
+            "group_size": {
+              "type": "integer",
+              "description": "compressed-tensors 声明的 group 粒度（config_groups.*.weights.group_size），沿输入维分组。与 weight_block_size 是两种声明法、不互相换算：前者一维分组，后者二维 tile"
+            },
+            "group_strategy": {
+              "type": "string",
+              "description": "compressed-tensors 的 strategy（group / channel / tensor / block）。只抄 config 原值，不归一"
+            },
             "weight_format": {
               "type": "string",
               "description": "量化权重的元素格式（config 的 fmt，如 e4m3）。和 scale_format 是两回事，混用会凭空造出一次格式迁移"

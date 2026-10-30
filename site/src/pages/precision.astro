@@ -46,14 +46,36 @@ const byShapes = (m: Model): Record<string, number> =>
   (m.derived as any)?.from_shapes?.params_by_subsystem ?? {};
 
 type Cell =
-  | { kind: 'dtype'; dtype: string }
+  /** `shown` 是格子上实际显示的格式名；`derived` 为真表示它是从签名推的，不是记录原值 */
+  | { kind: 'dtype'; dtype: string; shown: string; derived: boolean; sig?: string }
   | { kind: 'unsurveyed' }
   | { kind: 'not_applicable' };
 
 /** 一个子系统在这一份记录里是什么状态。判据见文件头。 */
+/**
+ * 格子上显示哪个名字。
+ *
+ * 初版格子只印记录的 `dtype`，于是 DeepSeek 那一排全是 `4` —— 而「它到底是
+ * MXFP4 还是 NVFP4」的答案在**右边第 17 列**，表宽 4727px，等于把判据和结论
+ * 放在了两头，读者根本走不到。**一张表要在视线落点上回答它自己提出的问题。**
+ *
+ * 所以 `dtype` 是裸元素格式（`FP4`）而签名又能定下块格式时，格子直接显示块格式名，
+ * 并标成推导（虚下边框 + title 写出三个因子）。记录自己已经给了名字的不动，
+ * 理由见 NAMED_BLOCK_FORMAT 那段 —— 推导只补空缺。
+ */
 function cellFor(m: Model, key: string): Cell {
   const d = perSub(m)[key];
-  if (d) return { kind: 'dtype', dtype: String(d) };
+  if (d) {
+    const dtype = String(d);
+    const q = prec(m).quantization ?? {};
+    const blk = (q.per_subsystem_block ?? {})[key];
+    const scl = (q.per_subsystem_scale ?? {})[key];
+    const f = blockFormat(dtype, blk, scl);
+    const sig = [dtype, blk ? `块 ${blk}` : '', scl ? `scale ${scl}` : ''].filter(Boolean).join(' · ');
+    return f
+      ? { kind: 'dtype', dtype, shown: f.replace(' 式', ''), derived: true, sig }
+      : { kind: 'dtype', dtype, shown: dtype, derived: false, sig };
+  }
   const params = byShapes(m)[key];
   if (params && params > 0) return { kind: 'unsurveyed' };
   return { kind: 'not_applicable' };
@@ -100,28 +122,93 @@ function lineageOrder(models: Model[]): { m: Model; depth: number }[] {
   return out;
 }
 
-/** 发布形态：厂商发了哪几档，本仓测没测过。`measured` 来自 weights_release_scope。 */
-function releases(m: Model): { dtype: string; measured?: boolean; note?: string }[] {
+/**
+ * 发布形态：厂商发了哪几档，本仓取没取过清单、进没进精度表。
+ *
+ * 两个布尔分开读，别合并。这一格原先只认一个 `measured`，于是 MiniMax-M3 的 MXFP8
+ * 在页面上打着「未取」、tooltip 写着「本仓没取清单」—— 而那份清单当时已经取过了
+ * （facts/minimax-m3-mxfp8，45,838 条）。字段说反话，页面就跟着说反话。
+ */
+function releases(m: Model): {
+  dtype: string; taken?: boolean; inTable?: boolean; note?: string;
+}[] {
   const list: string[] = prec(m).weights_release ?? [];
   const scope: Record<string, any> = prec(m).weights_release_scope ?? {};
   return list.map((d) => ({
     dtype: String(d),
-    measured: scope[d]?.measured,
+    taken: scope[d]?.manifest_taken,
+    inTable: scope[d]?.in_precision_table,
     note: scope[d]?.note,
   }));
 }
 
 /** 量化块与 scale：只有一部分记录有，没有的照三态走，不留裸 `—`。 */
-function blocks(m: Model): { sub: string; block?: string; scale?: string }[] {
+function blocks(m: Model): { sub: string; block?: string; scale?: string; fmt?: string }[] {
   const q = prec(m).quantization ?? {};
   const blk: Record<string, any> = q.per_subsystem_block ?? {};
   const scl: Record<string, any> = q.per_subsystem_scale ?? {};
   const keys = [...new Set([...Object.keys(blk), ...Object.keys(scl)])];
   return SUB_ORDER.filter((k) => keys.includes(k)).map((k) => ({
     sub: k,
-    block: blk[k] ? `[${[].concat(blk[k]).join(', ')}]` : undefined,
+    block: blk[k] ? String(blk[k]) : undefined,
     scale: scl[k] ? String(scl[k]) : undefined,
+    fmt: blockFormat((q.per_subsystem ?? {})[k], blk[k], scl[k]),
   }));
+}
+
+/**
+ * 块格式的名字由**签名**推出来，不取记录的 `dtype` 字段。
+ *
+ * 因为 `FP4` 不是一种存储格式，它是**元素格式**（E2M1：1 符号 + 2 指数 + 1 尾数）。
+ * NVFP4 与 MXFP4 的元素都是 E2M1，分开它们的是块大小与 scale：
+ *   块 16 + E4M3  → NVFP4 式（NVIDIA；严格的 NVFP4 还有第二级 FP32 全局 scale）
+ *   块 32 + E8M0  → MXFP4（OCP Microscaling 标准）
+ * 本仓的 dtype 字段记的是元素格式，所以 DeepSeek 全族的 4bit 都写作 `FP4`，
+ * 而它们其实分属两种块格式 —— 页面只印 `FP4` 等于把这个区别丢了。
+ *
+ * **只在签名完全对上时给名字，对不上就不给。** 推名字是推断，不是记录里的事实：
+ *   - scale 记成容器（如 `UINT8`，E8M0 的容器）时不推 —— 容器说明不了逻辑精度
+ *   - 块是混合的（`[1,32]+[32,32]`）时不推 —— 一个子系统里两种块，没有单一名字
+ * 页面上这个名字标成推导，读者要核就看并排的块与 scale 两列。
+ */
+function blockSize(block: unknown): number | undefined {
+  if (typeof block === 'number') return block;
+  if (typeof block !== 'string') return undefined;
+  if (block.includes('+')) return undefined; // 混合块，不给单一名字
+  const m = block.match(/(\d+)\s*\]?\s*$/);
+  return m ? Number(m[1]) : undefined;
+}
+
+/** 元素格式是第三个因子，**少验一个就会把 FP8 认成 MXFP4**。 */
+const IS_E2M1 = new Set(['FP4', 'MXFP4', 'NVFP4']);
+
+/**
+ * 记录自己已经给了块格式名的，不再推 —— **推导只用来补空缺，不用来复述，更不用来反驳。**
+ *
+ * `minimax-m3.1-flash` 的专家记作 `NVFP4`，而签名（块 16 + E4M3）在这里会推出
+ * 「NVFP4 式」。两者看着像同一句话，其实差一个关键事实：严格的 NVFP4 有**第二级
+ * FP32 全局 scale**，「…式」是专门留给没有它的那种。而那份记录实测到了
+ * 21,888 个 weight_global_scale 与同样多的 weight_packed 一一对应，**第二级 scale
+ * 在**，所以它是严格 NVFP4；DeepSeek 的全局 KV 才是「式」——技术报告原话
+ * "following NVFP4 but omitting its second-level global scale"。
+ * 推导值盖在记录值旁边会把这个区别抹平，所以 dtype 已是块格式名时直接让位。
+ */
+const NAMED_BLOCK_FORMAT = new Set(['MXFP4', 'NVFP4']);
+
+function blockFormat(dtype: unknown, block: unknown, scale: unknown): string | undefined {
+  // 初版只验了块与 scale 两个因子，于是 `FP8_E4M3 · 块 32 · scale E8M0` 的滑窗
+  // 被标成了 MXFP4 —— 那是 8 bit 元素，怎么也成不了 FP4。本仓「一个乘式逐因子验」
+  // 说的就是这个：三个因子只验两个，剩下那个照样能错一个量级。
+  // 元素不是 E2M1 就一律不给名字（MXFP8 之类另有定义，但本仓没有一手依据去断言）。
+  const dt = typeof dtype === 'string' ? dtype.toUpperCase() : '';
+  if (!IS_E2M1.has(dt)) return undefined;
+  if (NAMED_BLOCK_FORMAT.has(dt)) return undefined; // 记录已经给了名字，让位
+  const n = blockSize(block);
+  const sc = typeof scale === 'string' ? scale.toUpperCase() : '';
+  if (!n) return undefined;
+  if (n === 16 && sc === 'FP8_E4M3') return 'NVFP4 式';
+  if (n === 32 && sc === 'FP8_E8M0') return 'MXFP4';
+  return undefined;
 }
 
 /**
@@ -131,16 +218,21 @@ function blocks(m: Model): { sub: string; block?: string; scale?: string }[] {
  * 后者里 `dtype_fallback` 是**按模型权重 dtype 兜底的占位值**，不是查到的事实。
  * 一列里同时出现这两种东西，必须让读者一眼分得出哪行是声明、哪行是兜底。
  */
-function kvRows(m: Model): { comp: string; sig: string; declared: boolean }[] {
+function kvRows(m: Model): { comp: string; sig: string; fmt?: string; declared: boolean }[] {
   const comps = prec(m).kv_cache_components ?? {};
-  const out: { comp: string; sig: string; declared: boolean }[] = [];
+  const out: { comp: string; sig: string; fmt?: string; declared: boolean }[] = [];
   for (const [k, v] of Object.entries(comps)) {
     if (k === 'source' || !v || typeof v !== 'object') continue;
     const c: any = v;
     // 签名而不是名字：块与 scale 才区分得开 NVFP4（16 + E4M3）与 MXFP4（32 + E8M0）
     const bits = [c.dtype, c.block ? `块 ${c.block}` : '', c.scale_dtype ? `scale ${c.scale_dtype}` : '']
       .filter(Boolean);
-    out.push({ comp: k, sig: bits.join(' · '), declared: true });
+    out.push({
+      comp: k,
+      sig: bits.join(' · '),
+      fmt: blockFormat(c.dtype, c.block, c.scale_dtype),
+      declared: true,
+    });
   }
   if (out.length) return out;
   const basis = (m.derived as any)?.kv_cache?.bytes_basis;
@@ -261,9 +353,17 @@ const shortName = (m: Model, label: string) =>
     {Object.keys(DTYPE_CELL).map((d) => (
       <span><i class={`sw ${dtypeCell(d).cls}`}>{dtypeCell(d).short}</i>{d}</span>
     ))}
+    <span><i class="sw dt-fp4 drv">MX</i>底部虚线＝名字由签名推出，非记录原值</span>
     <span><i class="sw abs">·</i>不适用（这一代没有这块权重）</span>
     <span><i class="sw uns">?</i>未录（有权重，精度还没查）</span>
   </div>
+  <p class="small muted sigline">
+    <code>FP4</code> 是<b>元素格式</b>（E2M1），不是存储格式 —— NVFP4 与 MXFP4 的元素都是 E2M1，
+    分开它们的是<b>块大小与 scale</b>：块 16 + <code>E4M3</code> 是 NVFP4 式，
+    块 32 + <code>E8M0</code> 是 OCP MXFP4。表里标成
+    <b class="fmt">MXFP4</b> 这样的名字都是<b>由签名推出</b>的，不是记录的 <code>dtype</code> 字段；
+    签名对不上就不给名字，要核就看并排的块与 scale。
+  </p>
 
   {fams.map((f) => (
     <section>
@@ -300,10 +400,14 @@ const shortName = (m: Model, label: string) =>
                     {f.cols.map((k) => {
                       const c = cellFor(m, k);
                       if (c.kind === 'dtype') {
-                        const cell = dtypeCell(c.dtype);
+                        const cell = dtypeCell(c.shown);
                         return (
                           <td class="sub">
-                            <i class={`sw ${cell.cls}`} title={`${SUB_LABEL[k] ?? k}：${c.dtype}`}>
+                            <i
+                              class={`sw ${cell.cls}${c.derived ? ' drv' : ''}`}
+                              title={`${SUB_LABEL[k] ?? k}：${c.sig}`
+                                + (c.derived ? `\n→ ${c.shown}（由「元素 + 块 + scale」签名推出，记录只给了 ${c.dtype}）` : '')}
+                            >
                               {cell.short}
                             </i>
                           </td>
@@ -324,8 +428,13 @@ const shortName = (m: Model, label: string) =>
                       {rel.length ? rel.map((r) => (
                         <div class="rel">
                           <code>{r.dtype}</code>
-                          {r.measured === true && <span class="ok" title="本仓取过它的清单">实测</span>}
-                          {r.measured === false && <span class="muted" title="厂商发了，本仓没取清单">未取</span>}
+                          {r.inTable === true && <span class="ok" title="清单取过，实测值在这张精度表里">实测</span>}
+                          {r.inTable === false && r.taken === true && (
+                            <span class="muted" title="清单取过，但实测值没并进这张精度表">另仓已测</span>
+                          )}
+                          {r.inTable === false && r.taken !== true && (
+                            <span class="muted" title="厂商发了，本仓没取过这个仓的清单">未取</span>
+                          )}
                         </div>
                       )) : <span class="absent unsurveyed">未录</span>}
                     </td>
@@ -335,6 +444,11 @@ const shortName = (m: Model, label: string) =>
                           {SUB_LABEL[b.sub] ?? b.sub}
                           {b.block && <> <code>{b.block}</code></>}
                           {b.scale && <> · scale <code>{b.scale}</code></>}
+                          {b.fmt && (
+                            <b class="fmt" title="由「块 + scale」签名推出，不是记录的 dtype 字段">
+                              {b.fmt}
+                            </b>
+                          )}
                         </div>
                       )) : <span class="absent unsurveyed">未录</span>}
                     </td>
@@ -343,6 +457,11 @@ const shortName = (m: Model, label: string) =>
                         <div class={r.declared ? 'kvd' : 'kvf'}>
                           {r.comp && <span class="muted">{KV_COMP_LABEL[r.comp] ?? r.comp} </span>}
                           <code>{r.sig}</code>
+                          {r.fmt && (
+                            <b class="fmt" title="由「块 + scale」签名推出，不是记录的 dtype 字段">
+                              {r.fmt}
+                            </b>
+                          )}
                           {!r.declared && <span class="muted"> · 非声明</span>}
                         </div>
                       )) : <span class="absent unsurveyed">未录</span>}
@@ -403,9 +522,11 @@ const shortName = (m: Model, label: string) =>
     <p class="small">
       <strong>4 bit 认签名不认名字。</strong> NVFP4 与 MXFP4 在 <code>dtype</code> 字段上
       可能都写作 <code>FP4</code>，分开它们的是<b>块与 scale</b>：块 16 + <code>E4M3</code>
-      是 NVFP4 式，块 32 + <code>E8M0</code> 是 OCP MXFP4。所以格子里的字母只是提示，
-      判断要看并排的「量化块 / scale」列 —— 本仓里 DeepSeek 的路由专家记作 <code>FP4</code>、
-      Kimi-K3 的记作 <code>MXFP4</code>，而两者签名相同（<code>[1,32]</code> + E8M0）。
+      是 NVFP4 式，块 32 + <code>E8M0</code> 是 OCP MXFP4。
+      记录只给了元素格式而签名又定得下来时，<b>格子直接显示块格式名并在底部画一道虚线</b>，
+      悬停能看到三个因子与记录原值。<b>没有虚线的就是记录自己写的名字。</b>
+      本仓里 DeepSeek 的路由专家记作 <code>FP4</code>、Kimi-K3 的记作 <code>MXFP4</code>，
+      而两者签名相同（<code>[1,32]</code> + E8M0）—— 这个差是厂商之差，不是本仓之差。
     </p>
     <p class="small">
       <strong>训练精度这一列没有</strong>：{trainDeclared} 份有。厂商公布的
@@ -449,6 +570,10 @@ const shortName = (m: Model, label: string) =>
   }
   /* 两种空格子都不上色，靠边框区分「不适用」与「未录」—— 它们不是精度，
      给它们配色会让读者在图例里找一档并不存在的精度 */
+  /* 推导出来的格式名：底下一道虚线，和记录原值区分开。只靠字母的话
+     「MX 是厂商说的还是我们推的」就看不出来了 */
+  .sw.drv { box-shadow: inset 0 -2px 0 0 color-mix(in oklab, var(--dt-ink) 70%, transparent); }
+
   .sw.abs { background: none; border: 1px solid var(--line); color: var(--ink-3); }
   .sw.uns { background: none; border: 1px dashed var(--ink-3); color: var(--ink-3); }
 
@@ -469,6 +594,16 @@ const shortName = (m: Model, label: string) =>
 
   /* 声明与兜底必须一眼分得开：兜底那行整体压暗，并在文字上写明「非声明」——
      只靠颜色区分不够，这一格的内容本身就是「这个数可不可信」 */
+  /* 推出来的名字和记录里的原值必须看得出区别：原值走 <code>，推导值走这个 */
+  .fmt {
+    margin-left: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--judgement);
+    border-bottom: 1px dotted var(--judgement);
+  }
+  .sigline { max-width: 72ch; margin: -6px 0 18px; }
+
   .kvd { white-space: nowrap; }
   .kvf { white-space: nowrap; color: var(--ink-3); font-style: italic; }
 

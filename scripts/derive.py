@@ -26,6 +26,7 @@ from math import prod
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib import dtypes  # noqa: E402
+from lib import cfgio  # noqa: E402
 from lib import subsystems  # noqa: E402
 from lib.subsystems import classify, classify2  # noqa: E402
 
@@ -221,19 +222,10 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
 def text_cfg(cfg: dict) -> dict:
     """多模态模型把语言主干放在 text_config 下，拍平成一层方便取字段。
 
-    顺带认一个别名：**扩散主干的 config 把层数叫 `num_layers`**（Wan 的 WanModel
-    就是），而本仓四处取层数的地方都写死了 `num_hidden_layers`。不认它的后果不是
-    报错，是 Gate B 的「层数」那条静默变成 skip —— 双路对账少了一路而没人看得见。
-    只在 num_hidden_layers 缺席时补，所以两个键都有的记录（glm-4-9b 两处值相同）
-    行为不变；实扫 48 份，只有生成类记录是单有 num_layers 的。
+    实现在 lib/cfgio.py —— 读 config 的唯一入口。这里只留个名字，
+    免得四个脚本各写一套读法（已经发生过一次，见那个模块的头注释）。
     """
-    t = dict(cfg.get("text_config") or {})
-    for k, v in cfg.items():
-        if k not in ("text_config", "vision_config", "audio_config") and k not in t:
-            t[k] = v
-    if t.get("num_hidden_layers") is None and t.get("num_layers") is not None:
-        t["num_hidden_layers"] = t["num_layers"]
-    return t
+    return cfgio.flatten(cfg)
 
 
 def _kv_out(comp, status, atype, kv_dtype, layers, full_layers, linear_layers, notes):

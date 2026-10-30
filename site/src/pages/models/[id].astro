@@ -26,6 +26,15 @@ const d = m.derived ?? null;
 const s = d?.from_shapes;
 const kv = d?.kv_cache;
 const kvPrec = kvCachePrecision(m);
+// 生成类记录（扩散 DiT）与自回归模型的负载轴没有交集：没有 KV cache、
+// 没有 prefill/decode 之分、没有「每 token」这个单位。有的是
+// 「序列长度 × 步数 × 每步前向次数」。所以这两节要分开渲染，
+// 否则生成类页面上会出现一排空的 KV 行，而真正算出来的 latent token 数
+// 与单步 FLOPs 一个字都看不到（derive.py 一直在算，只是没人读）。
+const isGen = m.kind === 'video-gen' || m.kind === 'image-gen';
+const gw = d?.generation_workload;
+// FLOPs 用三位有效数字。不改共享的 fmtSci —— 它还给 norm_eps 那类用，那边要全精度
+const fl = (n: unknown) => (typeof n === 'number' && isFinite(n) ? n.toExponential(3) : '—');
 // 字节口径跟着数走：下限、兜底、声明精度是三种数，页面上丢了标签读者会直接当部署预算。
 // 标签表只此一份，在 lib/data.ts —— 这里原先另有一份，措辞还不一样
 // （「按厂商公布值」vs「厂商公布」），同一个取值在站内有两种读法
@@ -425,7 +434,9 @@ const rv = reviewStatus(m);
     {/* 发布变体的口径。这个字段原先一处都不渲染 —— 而它存在的理由恰恰是让
         「厂商发过但没进上面那张精度表」的档位在页面上可见：M3 主仓是 BF16，
         精度表照实报 BF16，读者看着像这一代莫名退回不量化，而厂商同时发了 MXFP8。
-        不渲染就等于把这个字段当注释写，闸口也查不出来。 */}
+        不渲染就等于把这个字段当注释写，闸口也查不出来。
+        三种说法而不是两种：manifest_taken 与 in_precision_table 是两件事，
+        「清单已取、但没进这张表」以前没法表达，只能跟「没取过」共用一句话。 */}
     {
       Object.keys(m.precision?.weights_release_scope ?? {}).length > 0 && (
         <div class="small muted" style="margin-top:10px">
@@ -438,7 +449,13 @@ const rv = reviewStatus(m);
               <strong>{prec}</strong>
               {sc?.repo ? ` · ${sc.repo}` : ''}
               {sc?.container ? ` · 落盘容器 ${sc.container}` : ''}
-              {` · ${sc?.measured ? '已进上面的精度表' : '不在上面的精度表内'}`}
+              {` · ${
+                sc?.in_precision_table
+                  ? '已进上面的精度表'
+                  : sc?.manifest_taken
+                    ? '清单已取，但不在上面的精度表内'
+                    : '本仓未取过清单，不在上面的精度表内'
+              }`}
               {sc?.note ? <> —— <Prose text={sc.note} /></> : null}
             </p>
           ))}
@@ -467,7 +484,94 @@ const rv = reviewStatus(m);
   </p>
 
   {
-    kv?.status && kv.status !== 'unknown' ? (
+    isGen && (gw?.status === 'ok' || gw?.status === 'partial') ? (
+      <>
+        <div class="grid c3">
+          <div class="card stat">
+            <div class="label">序列长度</div>
+            <div class="value">{Math.round(gw.sequence_tokens ?? gw.latent_tokens).toLocaleString()}</div>
+            <div class="sub">
+              latent token {Math.round(gw.latent_tokens).toLocaleString()}
+              {gw.audio_tokens ? ` + 音频 ${Math.round(gw.audio_tokens).toLocaleString()}` : ''}
+              {gw.sequence_tokens_is_lower_bound ? ' · 下界' : ''}
+            </div>
+          </div>
+          <div class="card stat">
+            <div class="label">单步 FLOPs</div>
+            <div class="value">{fl((gw.flops_per_step?.linear ?? 0) + (gw.flops_per_step?.attention ?? 0))}</div>
+            <div class="sub">
+              线性 {fl(gw.flops_per_step?.linear)} · 注意力 {fl(gw.flops_per_step?.attention)}
+              {gw.flops_per_step?.attention
+                ? `（占 ${Math.round(gw.flops_per_step.attention /
+                    (gw.flops_per_step.linear + gw.flops_per_step.attention) * 100)}%）`
+                : ''}
+            </div>
+          </div>
+          <div class="card stat">
+            <div class="label">端到端 FLOPs</div>
+            <div class="value">{gw.flops_end_to_end ? fl(gw.flops_end_to_end) : '—'}</div>
+            <div class="sub">
+              {gw.end_to_end_terms?.formula ?? '步数或每步前向次数未录，算不出'}
+            </div>
+          </div>
+        </div>
+
+        <div class="grid c2" style="margin-top:14px">
+          <div>
+            <h3>token 数怎么来的</h3>
+            {/* 逐因子列出来，Gate B 才核得动 —— 报一个乘积而不给因子，
+                等于要人重做一遍推导 */}
+            <p class="small muted" style="margin:0 0 6px"><code>{gw.latent_tokens_terms?.formula}</code></p>
+            <table>
+              <tbody>
+                {Object.entries(gw.latent_tokens_terms?.factors ?? {}).map(([k, v]) => (
+                  <tr><td>{k}</td><td class="num">{String(v)}</td></tr>
+                ))}
+                {gw.latent_tokens_terms?.latent_frames && (
+                  <tr><td>latent 帧数</td><td class="num">{gw.latent_tokens_terms.latent_frames}</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <h3>有效压缩率</h3>
+            <p class="small muted" style="margin:0 0 6px">
+              <Prose text={gw.effective_compression?.note ?? ''} />
+            </p>
+            <table>
+              <tbody>
+                <tr><td>时间</td><td class="num">{gw.effective_compression?.temporal}×</td></tr>
+                <tr><td>高</td><td class="num">{gw.effective_compression?.spatial_h}×</td></tr>
+                <tr><td>宽</td><td class="num">{gw.effective_compression?.spatial_w}×</td></tr>
+              </tbody>
+            </table>
+            {gw.bucket && (
+              <p class="small muted" style="margin-top:8px">
+                档位 {gw.bucket.width}×{gw.bucket.height}
+                {gw.bucket.frames ? ` × ${gw.bucket.frames} 帧` : ''}
+                {gw.bucket.fps ? ` @ ${gw.bucket.fps} fps` : ''}
+                {gw.bucket.duration_s ? `（${gw.bucket.duration_s.toFixed(2)} 秒）` : ''}
+              </p>
+            )}
+          </div>
+        </div>
+        {/* excluded 是数组 —— 端到端那个数**不含**这几项，不写出来读者会当成全量 */}
+        {Array.isArray(gw.excluded) && gw.excluded.length > 0 && (
+          <p class="small muted" style="margin-top:10px">
+            端到端不含：{gw.excluded.join('；')}
+          </p>
+        )}
+        {Array.isArray(gw.notes) && gw.notes.map((n: string) => (
+          <p class="small muted" style="margin-top:6px"><Prose text={n} /></p>
+        ))}
+      </>
+    ) : isGen ? (
+      <p class="small muted">
+        {/* 别替它编理由：derive 给了 why 就印 why，没给就说清是「没算出来」，
+            而不是「记录里没有 generation 块」—— 后者是个具体的、可能错的断言 */}
+        生成负载没算出来{gw?.why ? `：${gw.why}` : `（derive 返回 status=${gw?.status ?? '无'}，未给原因）`}
+      </p>
+    ) : kv?.status && kv.status !== 'unknown' ? (
       <>
         <div class="grid c3">
           <div class="card stat">

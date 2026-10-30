@@ -51,6 +51,7 @@ from math import prod
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib import cfgio  # noqa: E402
 from lib import dtypes  # noqa: E402
 from lib.subsystems import classify, is_tower  # noqa: E402
 from fetch_dtypes import CONTAINERS, blk_dim  # noqa: E402
@@ -220,8 +221,9 @@ def packed_format(cfg: dict):
     Kimi 走 compressed-tensors，位宽在 config_groups.<g>.weights.num_bits、
     格式名在顶层 format（mxfp4-pack-quantized）。
     认不出就返回 None —— 那时容器形状照原样记，**不替它猜逻辑宽度**。
+    声明的位置两处都找（Kimi 的 VLM 把整块嵌在 `text_config` 下），见 lib/cfgio.py。
     """
-    qc = cfg.get("quantization_config") or {}
+    qc = cfgio.quant_cfg(cfg)   # 顶层与 text_config 下都找，见 lib/cfgio.py
     ed = str(qc.get("expert_dtype", "")).lower()
     if ed == "fp4":
         return {"bits": 4, "dtype": "FP4"}

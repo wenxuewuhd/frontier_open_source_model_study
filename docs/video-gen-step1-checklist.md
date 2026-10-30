@@ -127,7 +127,7 @@ A3 不是一整块。它是两件性质不同的事，**只有后一半和 P1 �
 | **A3b 正则表扩展** | 往 `SUBSYSTEM` 里插新条目 | 碰，而且顺序敏感 | 等 P1 整合 |
 
 这个拆分有实际后果：**组件级的账 A3a 一落地就能算**。
-`minimax-h3`（要分开 DiT 33B / 文本编码器 33B / VAE 5.2B）和
+`minimax-h3`（要分开 DiT 33.12B / 文本编码器 33.36B / VAE 2.60B）和
 `ltx-2.3`（要分开主干 18.56B / connector 2.0B / 文本投影 1.16B）靠的都是组件层。
 只有 `magi-2-preview` 要的是 DiT **桶内**的专家 / mHC / 注意力拆分 —— 那才是 A3b。
 
@@ -394,7 +394,7 @@ MiniMax-H3 的卡自己把「VAE 压缩」和「patch 后的有效压缩」分�
 | 顺序 | model_id | 它压的是什么 | 依赖 |
 |---|---|---|---|
 | 1 | `wan2.2-ti2v-5b` | **对照组。** 单 checkpoint、单文本编码器、无音频、config 齐全 —— 整条线里最简单的一份。先用它确认改完的管线在「正常模型」上不出错，比先录最难的那个稳 | 第一段 |
-| 2 | `minimax-h3` | **压 schema 字段。** 四个大模型（DiT 33B ×2 + Qwen3-VL-32B 33B + VAE 5.2B）、未开源的两个模块、可预计算的 13B AdaLN、音视频双 scheduler、CFG 已蒸馏 | 第一段（组件级账靠 A3a） |
+| 2 | `minimax-h3` | ✅ **已录**（2026-10-30，分支 `v-minimax-h3`）。压 schema 字段：四块常驻权重（DiT 33.12B + Qwen3-VL-32B 33.36B + 视觉 VAE 2.60B + 音频 VAE 0.15B = 134.13 GiB）、未开源的两个模块、已验到 39.41% 的 AdaLN、音视频双 scheduler、CFG 已蒸馏 | 第一段（组件级账靠 A3a） |
 | 3 | `magi-2-preview` | **压脚本归类。** 36 层 ×3072 专家的 MoE 账、mHC 残差、attention sink、跨厂商复用的 Wan2.2 VAE、两阶段流水线 | **A3b**（DiT 桶内细分） |
 
 第 2 份要留的 open question（Gate A §7 已列）：H3 的默认步数卡上没写；

@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import { absence, columnSpec, isAbsent, withUnit, type Absent } from './columns';
+import { absence, isAbsent, withUnit, type Absent } from './columns';
 
 export { absence, isAbsent } from './columns';
 export type { Absent, AbsenceState } from './columns';
@@ -420,15 +420,6 @@ export function rowIsInformative(f: TrackedField, models: Model[]): boolean {
   );
 }
 
-/** 实测列测自哪个仓（scope=measured 的列才有），渲染器用它说明覆盖面。 */
-export function measuredScope(key: string, m: Model): string | undefined {
-  const spec = columnSpec(key);
-  if (spec?.scope !== 'measured' || !spec.scope_from) return undefined;
-  let cur: any = m;
-  for (const part of spec.scope_from.split('.')) cur = cur?.[part];
-  return typeof cur === 'string' ? cur : undefined;
-}
-
 /**
  * KV 缓存精度的显示值 —— 把「取不到」拆成两种说法。
  *
@@ -453,10 +444,13 @@ export function kvCachePrecision(m: Model): { text: string; declared: boolean } 
   if (v) return { text: v, declared: true };
   // 判据不写第二份：走 data/schema/columns.json 的 kv_dtype 规则，
   // Python 侧的闸口读的是同一份。回归用例钉住了两边判出来一样，分叉会被拦住。
-  // 当前 49 份里 47 份没写 precision.kv_cache，判成两种：
-  // **46 份「未公布」**（自回归模型，厂商没说落盘精度，字节按权重 dtype 兜底）
-  // 与 **1 份「不适用」**（wan2.2-ti2v-5b，扩散模型每步重算、根本不建 KV）。
-  // 这两种空必须分开 —— 前者说「这个数是占位值」，后者说「没有这笔账要规划」
+  //
+  // 没写 precision.kv_cache 的记录判成两种，**按 kind 分**：
+  //   自回归（llm / vlm / omni / dllm）→「未公布」：厂商没说落盘精度，字节按权重 dtype 兜底
+  //   生成类（video-gen / image-gen）  →「不适用」：每步重算，根本不建 KV
+  // 这两种空必须分开 —— 前者说「这个数是占位值」，后者说「没有这笔账要规划」。
+  // 不在这里写份数：每进一份生成类记录分布就变一次，写死的数字只会每次加一，
+  // 什么也守不住。回归用例查的是「标签 ↔ kind」的对应关系，不是总数
   return { text: absence('kv_dtype', m, m.derived).label, declared: false };
 }
 
