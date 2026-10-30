@@ -226,7 +226,7 @@ evidence:
 reviewed:
   date: '2026-10-30'
   scope: [official, derived, judgement]
-  reviewer: 本会话复算 + 两个独立核查代理分片对抗式复核
+  reviewer: 本会话复算（逐条读厂商实现源码 + 穷举全量权重清单）
   method: >-
     按 .claude/skills/model-audit 的取数与提问顺序过一遍。元素数一律**穷举全量清单**
     （facts/step-1/shapes.json，27 个分片逐分片读头、795 个张量），不用抽样产物。
