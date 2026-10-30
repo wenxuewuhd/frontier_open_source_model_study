@@ -174,6 +174,9 @@ precision:
     # group_size 32 / symmetric true 与之对应。
     # 注意：FP4 / MXFP4 / NVFP4 的元素都是 E2M1（浮点），本代是**整数**对称量化 ——
     # 所以这一格与那三个不是「同一个格式三个名字」，是真的另一种元素格式（见核查 R7）
+    group_size: 32
+    group_strategy: group
+    activation_scheme: none
     expert_dtype: INT4
     packing_note: >-
       路由专家的 INT4 权重 8 个装进一个 I32 容器（weight_packed 的末维是逻辑维的 1/8），
@@ -463,6 +466,27 @@ review:
       config 的 weights 段没有 scale_dtype 键，所以这一格纯实测、无声明可引
     resolution: confirmed
     changed_to: 原值保留；expert_dtype 与 per_subsystem_scale 上方各补一条注释，写明名字出处、元素格式是整数而非 E2M1、以及 scale 这一格的口径
+
+  - id: R8
+    field: precision.quantization（group_size / group_strategy / activation_scheme）
+    severity: missing
+    claim: >-
+      「量化块（config 声明）」与「激活量化」两格渲染成「未录」，说本仓没查过 config
+    finding: >-
+      查过了，是**没有字段可填**。这两列原先读的是 FP8 式 config 的键名
+      （weight_block_size / activation_scheme），而 compressed-tensors 声明的是
+      config_groups.group_0.weights.group_size 32 与 strategy group（block_structure 明写 null），
+      激活侧是 config_groups.group_0.input_activations 为 null。
+      schema 本轮新增了 group_size / group_strategy 两个字段、activation_scheme 加了 none，
+      这三格才有地方落。
+      **本代的 none 有两个来源互相印证**：config 的 input_activations 是 null，
+      而模型卡第 4 节原话就是 INT4 **weight-only** quantization —— 卡与 config 一致，
+      不像 K3 那边卡声明 MXFP8 激活、与 config 矛盾（见 kimi-k3 的 open_questions）。
+      顺带记一个定位：input_activations 在 config_groups.group_0 下，不在 quantization_config 顶层；
+      而本代的 quantization_config 是在**顶层**的（纯文本模型），从 k2.5 起因为是 VLM 才
+      嵌到 text_config 下 —— 这正是取数脚本只读顶层时漏掉 k2.5/k3 而没漏本代的原因
+    resolution: corrected
+    changed_to: 补 group_size 32 / group_strategy group / activation_scheme none，三格从「未声明」变真值
 
 notes: >-
   K2 线的精度拐点：结构与 kimi-k2-0905 逐位相同（还原打包后参数量一字不差），

@@ -389,6 +389,9 @@ precision:
     # 对比：DeepSeek 的专家实测签名与本代完全同构（块 32 + E8M0 一级 scale、元素 E2M1），
     # 而那边厂商只说「FP4」、从不给块格式命名，于是本仓那几份记 FP4 ——
     # **两边的名字之差是厂商之差，不是本仓之差**（见核查 R23）
+    group_size: 32
+    group_strategy: group
+    activation_scheme: none
     scale_format: torch.uint8
     expert_dtype: MXFP4
     packing_note: >-
@@ -997,6 +1000,32 @@ review:
       （有 method 就证明 config 读过，所以缺键应判「未声明」而不是「未录」），
       那是共享文件，已写进交接笔记交主会话
 
+  - id: R25
+    field: precision.quantization（group_size / group_strategy / activation_scheme）
+    severity: missing
+    claim: >-
+      「量化块（config 声明）」与「激活量化」两格渲染成「未录」；
+      而那条讲 MXFP8 的 open_question 把 input_activations 的位置写松了
+    finding: >-
+      两格都不是没查过，是**没有字段可填**：这两列原先读 FP8 式 config 的键名
+      （weight_block_size / activation_scheme），而本代声明的是
+      text_config.quantization_config.config_groups.group_0.weights 的 group_size 32 与
+      strategy group（block_structure 明写 null），激活侧是同一个 group_0 下的
+      input_activations 为 null。schema 本轮新增 group_size / group_strategy、
+      activation_scheme 加了 none，才有地方落。
+      **本代填 none 与前两代填 none 的证据强度不同**：k2-thinking / k2.5 的卡自己写的就是
+      INT4 weight-only，卡与 config 一致；本代的卡规格表却写「MXFP4 weights / MXFP8
+      activations」，与 config 的 null 矛盾，落盘也没有任何激活 scale。
+      按本仓规矩字段抄 config（none），三方不一致那层结论留在 open_questions ——
+      不一致本身是结论，但结论的位置不是字段值。
+      顺带收紧定位：原 open_question 写「quantization_config 的 input_activations 与
+      kv_cache_scheme 都是 null」，实际 input_activations 在 config_groups.group_0 下、
+      kv_cache_scheme 才在 quantization_config 顶层。两个键都在，但不在同一层
+    resolution: corrected
+    changed_to: >-
+      补 group_size 32 / group_strategy group / activation_scheme none；
+      那条 open_question 改写成三方并列并给出逐层定位
+
 notes: >-
   Kimi 家族的旗舰，model_type kimi_k3（语言主干 kimi_linear），原生多模态。本仓第一份 Kimi 记录，
   也是第一份「三样新结构叠在一起」的旗舰：KDA 线性注意力与 MLA 3:1 混合、AttnRes 残差、
@@ -1027,6 +1056,12 @@ open_questions:
     from the SFT stage onward, MXFP4 weights with MXFP8 activations」说的是 SFT 之后的
     量化感知训练，不能当成预训练精度
   - >-
-    厂商声明的 MXFP8 激活在落盘里没有任何证据（quantization_config 的 input_activations
-    与 kv_cache_scheme 都是 null，清单里没有激活 scale 张量）。engine 侧是否真按 MXFP8 跑、
-    EP 载荷是否因此再减半，未核
+    **激活精度三方不一致，这本身是结论。** 卡的规格表 Quantization 行声明
+    「MXFP4 weights / MXFP8 activations」（动机写的是 broad hardware compatibility）；
+    config 声明的是不量化激活 —— text_config.quantization_config.config_groups.group_0
+    的 input_activations 是 null，顶层的 kv_cache_scheme 也是 null（两个键不在同一层）；
+    落盘清单里没有任何激活 scale 张量。
+    字段 activation_scheme 填的是 config 说的那个值 none，三方的差异放在这里。
+    engine 侧是否真按 MXFP8 跑、EP 载荷是否因此再减半，未核。
+    对照：k2-thinking / k2.5 没有这个矛盾 —— 那两代的卡自己写的就是 INT4 weight-only，
+    与 config 的 null 一致，所以那两份的 none 比本份硬

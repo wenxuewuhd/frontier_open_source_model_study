@@ -311,6 +311,9 @@ precision:
     # group_size 32 / symmetric true 与之对应。
     # 注意：FP4 / MXFP4 / NVFP4 的元素都是 E2M1（浮点），本代是**整数**对称量化 ——
     # 所以这一格与那三个不是「同一个格式三个名字」，是真的另一种元素格式（见核查 R9）
+    group_size: 32
+    group_strategy: group
+    activation_scheme: none
     expert_dtype: INT4
     packing_note: >-
       与 kimi-k2-thinking 同一套：8 个 INT4 装一个 I32 容器（weight_packed 末维是逻辑维的 1/8），
@@ -628,6 +631,23 @@ review:
       config 的 weights 段没有 scale_dtype 键，所以这一格纯实测、无声明可引
     resolution: confirmed
     changed_to: 原值保留；expert_dtype 与 per_subsystem_scale 上方各补一条注释，写明名字出处、元素格式是整数而非 E2M1、以及 scale 这一格的口径
+
+  - id: R10
+    field: precision.quantization（group_size / group_strategy / activation_scheme）
+    severity: missing
+    claim: 「量化块（config 声明）」与「激活量化」两格渲染成「未录」
+    finding: >-
+      与 kimi-k2-thinking 的 R8 同一件事，判据也同一套：config_groups.group_0.weights 的
+      group_size 32 / strategy group（block_structure null），
+      config_groups.group_0.input_activations 为 null，而模型卡说的是同 K2-Thinking 的
+      INT4 weight-only —— 卡与 config 一致。
+      本份与 R8 那份有一处**位置**差异值得记：本代是 VLM，quantization_config 嵌在
+      text_config 下，而 k2-thinking 的在顶层。只读顶层的取数脚本因此漏掉本代与 k3、
+      没漏 k2-thinking。并进本记录的 kimi-k2.6 / kimi-k2.7-code 两个清单也核过了，
+      量化声明与本代逐字相同（同样嵌在 text_config 下、同样 group 32 / type int / 4 bit），
+      没有需要单独说的量化差分
+    resolution: corrected
+    changed_to: 补 group_size 32 / group_strategy group / activation_scheme none
 
 notes: >-
   旗舰线与视觉线在这一代合流：语言主干 = kimi-k2-thinking（剥前缀后只差 61 个
