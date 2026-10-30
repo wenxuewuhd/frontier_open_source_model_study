@@ -26,6 +26,7 @@ scripts/
   derive.py         config + 权重清单 -> 负载特征 + 交叉核对
   validate.py       schema + 证据覆盖 + 防泄漏
   kv_table.py       tracking.yaml + derived -> docs 的缓存对照表（--check 查过期）
+  refresh_check.py  双周刷新：比 HF sha 与张量名集合，列出上游有变化的记录（只读）
   mk_ops_table.py   算子表 YAML -> xlsx
 tests/fixtures/     渲染用的合成样例
 data-private/       内部 overlay（不进仓库）：算子表、自测性能、硬件相关分析
@@ -75,6 +76,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python scripts/validate.py
 .venv/bin/python scripts/kv_table.py              # 改过缓存数之后重生成 docs 里的对照表
 .venv/bin/python scripts/kv_table.py --check      # 只查过期，给 CI 用
+.venv/bin/python scripts/refresh_check.py --orphans  # 双周刷新：哪些仓的 sha 变了、变的是权重还是结构
 .venv/bin/python scripts/mk_ops_table.py <算子表.yaml>
 ```
 
