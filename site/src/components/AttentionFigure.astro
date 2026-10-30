@@ -1,0 +1,27 @@
+---
+/**
+ * 旗舰模型的注意力架构图：有就画，没有就什么都不渲染。
+ *
+ * 每个旗舰一份 `attention/<id>.astro`，文件名就是记录 id。这里按 id 查表分发，
+ * 所以**加一张图不用改这个文件，也不用改 [id].astro** —— 六个家族可以各写各的，
+ * 互不碰同一份代码。这是有意的：共享文件上并写必撞。
+ *
+ * 每份图自己只负责 <figure class="attn-fig"> 里的内容，样式全部走
+ * styles/attn-figure.css 的公共类，不自带 <style>。
+ *
+ * 画图的约定在两处，都是能跑的代码不是散文：配色与类在 styles/attn-figure.css 的
+ * 头注释，分带 / 带量 / figcaption / marker id 的写法在 attention/deepseek-v41-flash.astro。
+ */
+import '../styles/attn-figure.css';
+
+interface Props {
+  id: string;
+}
+const { id } = Astro.props;
+
+const FIGS = import.meta.glob<{ default: any }>('./attention/*.astro', { eager: true });
+const hit = FIGS[`./attention/${id}.astro`];
+const Fig = hit?.default ?? null;
+---
+
+{Fig && <Fig />}

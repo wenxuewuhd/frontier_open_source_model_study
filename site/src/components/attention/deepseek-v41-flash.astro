@@ -1,0 +1,205 @@
+---
+/**
+ * DeepSeek-V4.1-Flash · CSA 的生产侧与消费侧。
+ *
+ * 这份是**另外五个旗舰照着写的参照**，所以约定都在这里，不在别处：
+ *
+ * - 两段式：生产侧回答「谁产 KV、产什么形状、什么 dtype」，
+ *   消费侧回答「谁读、怎么选、怎么拼」。一张图只回答一侧。
+ * - 横向分带，每带一个 ①②③ 编号标题（.lbl-s），带间用 .arr-d 虚线隔开。
+ * - **每个盒子都带量**：投影形状、头数 × 维度、dtype 与块、缓存宽度、条目字节。
+ *   没有量的框不要画 —— 那就退化成示意图了，而示意图这份仓不缺。
+ * - figcaption 用加粗引导句说出这张图唯一最该记住的那件事。
+ * - role="img" + 一句 aria-label 概括全图。
+ * - marker id 带模型前缀（ds41-*）—— 同页两张图的 defs 会共存，不带前缀会互相覆盖。
+ *
+ * 数据来源：data/derived/deepseek-v41-flash.layers.json 与本记录的 arch.attention。
+ * 图上每个数都能在那两处查到，不凭印象画。
+ */
+---
+
+<figure class="attn-fig">
+  <div class="figbox">
+    <svg class="dia" viewBox="0 0 940 376" role="img"
+         aria-label="CSA 生产侧：query 分主 q 与 indexer q 两路；滑窗 KV 每层自产；压缩侧的 latent 分出 compress_kv 与 index_k 两个同源分支">
+      <defs>
+        <marker id="ds41-pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead"/></marker>
+        <marker id="ds41-pb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead-t"/></marker>
+      </defs>
+
+      <text x="18" y="18" class="lbl-s">① Query 侧 · 每层都有</text>
+      <rect x="18" y="42" width="66" height="40" rx="3" class="box"/>
+      <text x="51" y="67" class="lbl" text-anchor="middle">x</text>
+      <path d="M84 62 L106 62" class="arr" marker-end="url(#ds41-pa)"/>
+      <rect x="108" y="42" width="100" height="40" rx="3" class="box"/>
+      <text x="158" y="67" class="lbl" text-anchor="middle">wq_a</text>
+      <path d="M208 62 L226 62" class="arr" marker-end="url(#ds41-pa)"/>
+      <rect x="228" y="42" width="90" height="40" rx="3" class="box"/>
+      <text x="273" y="67" class="lbl" text-anchor="middle">qr 1280</text>
+
+      <path d="M318 52 L336 43" class="arr" marker-end="url(#ds41-pa)"/>
+      <path d="M318 72 L336 103" class="arr" marker-end="url(#ds41-pa)"/>
+      <rect x="338" y="26" width="128" height="34" rx="3" class="box"/>
+      <text x="402" y="47" class="lbl" text-anchor="middle">wq_b · 主</text>
+      <rect x="338" y="86" width="128" height="34" rx="3" class="box-v"/>
+      <text x="402" y="107" class="lbl" text-anchor="middle">wq_b · indexer</text>
+
+      <path d="M466 43 L486 43" class="arr" marker-end="url(#ds41-pa)"/>
+      <rect x="488" y="26" width="150" height="34" rx="3" class="box"/>
+      <text x="563" y="47" class="lbl-s" text-anchor="middle">q 64×512 + RoPE 后 64</text>
+      <path d="M466 103 L486 103" class="arr" marker-end="url(#ds41-pa)"/>
+      <rect x="488" y="86" width="150" height="34" rx="3" class="box-v"/>
+      <text x="563" y="107" class="lbl-s" text-anchor="middle">q 32×128 + RoPE + MXFP4</text>
+
+      <text x="648" y="47" class="lbl-x">→ 送入稀疏注意力</text>
+      <text x="648" y="107" class="lbl-v">→ 送入 Indexer（仅 index_source 层）</text>
+
+      <line x1="18" y1="138" x2="922" y2="138" class="arr-d"/>
+
+      <text x="18" y="158" class="lbl-s">② 滑窗 KV 侧 · 每层自产一份，定长 128</text>
+      <path d="M51 82 L51 176" class="arr" marker-end="url(#ds41-pa)"/>
+      <rect x="18" y="176" width="66" height="40" rx="3" class="box"/>
+      <text x="51" y="201" class="lbl" text-anchor="middle">x</text>
+      <path d="M84 196 L106 196" class="arr" marker-end="url(#ds41-pa)"/>
+      <rect x="108" y="176" width="120" height="40" rx="3" class="box"/>
+      <text x="168" y="201" class="lbl-s" text-anchor="middle">wkv 5120→512</text>
+      <path d="M228 196 L248 196" class="arr" marker-end="url(#ds41-pa)"/>
+      <rect x="250" y="176" width="110" height="40" rx="3" class="box"/>
+      <text x="305" y="201" class="lbl-s" text-anchor="middle">kv_norm + RoPE</text>
+      <path d="M360 196 L380 196" class="arr" marker-end="url(#ds41-pa)"/>
+      <rect x="382" y="176" width="140" height="40" rx="3" class="box"/>
+      <text x="452" y="201" class="lbl-s" text-anchor="middle">act_quant FP8</text>
+      <path d="M522 196 L542 196" class="arr-t" marker-end="url(#ds41-pb)"/>
+      <rect x="544" y="176" width="170" height="40" rx="3" class="box-t"/>
+      <text x="629" y="201" class="lbl-t" text-anchor="middle">window ring · 128 位置</text>
+
+      <line x1="18" y1="238" x2="922" y2="238" class="arr-d"/>
+
+      <text x="18" y="258" class="lbl-s">③ 压缩 KV 侧 · 仅 L2 / L8 / L14 / L20 执行</text>
+      <path d="M51 216 L51 276" class="arr" marker-end="url(#ds41-pa)"/>
+      <rect x="18" y="276" width="66" height="44" rx="3" class="box"/>
+      <text x="51" y="303" class="lbl" text-anchor="middle">x</text>
+      <path d="M84 298 L106 298" class="arr" marker-end="url(#ds41-pa)"/>
+      <rect x="108" y="276" width="120" height="44" rx="3" class="box-o"/>
+      <text x="168" y="294" class="lbl" text-anchor="middle">Compressor</text>
+      <text x="168" y="310" class="lbl-o" text-anchor="middle">r : 1 池化</text>
+      <path d="M228 298 L248 298" class="arr" marker-end="url(#ds41-pa)"/>
+      <rect x="250" y="276" width="86" height="44" rx="3" class="box-o"/>
+      <text x="293" y="303" class="lbl" text-anchor="middle">latent 512</text>
+
+      <path d="M336 292 L349 281" class="arr" marker-end="url(#ds41-pa)"/>
+      <path d="M336 306 L349 339" class="arr" marker-end="url(#ds41-pa)"/>
+
+      <rect x="352" y="264" width="160" height="34" rx="3" class="box"/>
+      <text x="432" y="285" class="lbl-s" text-anchor="middle">RoPE θ = 160 000</text>
+      <path d="M512 281 L530 281" class="arr" marker-end="url(#ds41-pa)"/>
+      <rect x="532" y="264" width="150" height="34" rx="3" class="box"/>
+      <text x="607" y="285" class="lbl-s" text-anchor="middle">FP4 b16 + e4m3</text>
+      <path d="M682 281 L700 281" class="arr-t" marker-end="url(#ds41-pb)"/>
+      <rect x="702" y="264" width="150" height="34" rx="3" class="box-t"/>
+      <text x="777" y="285" class="lbl-t" text-anchor="middle">compress_kv cache</text>
+      <text x="862" y="285" class="lbl-x">512 维正文</text>
+
+      <rect x="352" y="322" width="160" height="34" rx="3" class="box"/>
+      <text x="432" y="336" class="lbl-s" text-anchor="middle">wk 512→128</text>
+      <text x="432" y="350" class="lbl-s" text-anchor="middle">k_norm + RoPE</text>
+      <path d="M512 339 L530 339" class="arr" marker-end="url(#ds41-pa)"/>
+      <rect x="532" y="322" width="150" height="34" rx="3" class="box"/>
+      <text x="607" y="343" class="lbl-s" text-anchor="middle">MXFP4 b32 + e8m0</text>
+      <path d="M682 339 L700 339" class="arr-v" marker-end="url(#ds41-pb)"/>
+      <rect x="702" y="322" width="150" height="34" rx="3" class="box-v"/>
+      <text x="777" y="343" class="lbl-v" text-anchor="middle">index_k cache</text>
+      <text x="862" y="343" class="lbl-x">128 维摘要</text>
+    </svg>
+  </div>
+  <figcaption>
+    <b>图 1 · 生产侧。</b><code>index_k</code> 和 <code>compress_kv</code>
+    <b>同源于 latent</b> —— 一个是 512 维正文，一个是 <code>wk</code> 投影出来的
+    128 维摘要。<code>index_k</code> 与 query 无关；query 侧另有一路独立的
+    <code>wq_b</code> 产出 32×128 的 indexer query。
+  </figcaption>
+</figure>
+
+<figure class="attn-fig">
+  <div class="figbox">
+    <svg class="dia" viewBox="0 0 940 330" role="img"
+         aria-label="CSA 消费侧：Indexer 读 index_k 打分选出 top-512 索引；稀疏注意力用该索引从 compress_kv 里 gather 512 条，与滑窗拼接后做单次 softmax">
+      <defs>
+        <marker id="ds41-qa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead"/></marker>
+        <marker id="ds41-qb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead-t"/></marker>
+      </defs>
+
+      <text x="18" y="18" class="lbl-s">④ Indexer · 仅 index_source 层　（index_k 是被读的，不是这里产的）</text>
+      <rect x="18" y="46" width="140" height="50" rx="3" class="box-v"/>
+      <text x="88" y="66" class="lbl-v" text-anchor="middle">index_k cache</text>
+      <text x="88" y="82" class="lbl-x" text-anchor="middle">L 个位置 × 128</text>
+      <path d="M158 71 L178 71" class="arr-v" marker-end="url(#ds41-qa)"/>
+      <rect x="180" y="46" width="156" height="50" rx="3" class="box"/>
+      <text x="258" y="66" class="lbl" text-anchor="middle">einsum(q_idx, index_k)</text>
+      <text x="258" y="82" class="lbl-x" text-anchor="middle">32 head 共用同一份 key</text>
+      <path d="M258 20 L258 44" class="arr-v" marker-end="url(#ds41-qa)"/>
+      <text x="268" y="32" class="lbl-v">q_idx 32 × 128</text>
+
+      <path d="M336 71 L356 71" class="arr" marker-end="url(#ds41-qa)"/>
+      <rect x="358" y="46" width="130" height="50" rx="3" class="box"/>
+      <text x="423" y="76" class="lbl-s" text-anchor="middle">ReLU × w_h 求和</text>
+      <path d="M488 71 L508 71" class="arr" marker-end="url(#ds41-qa)"/>
+      <rect x="510" y="46" width="150" height="50" rx="3" class="box-r"/>
+      <text x="585" y="68" class="lbl-s" text-anchor="middle">causal mask</text>
+      <text x="585" y="84" class="lbl-r" text-anchor="middle">+ 候选 mask（L20 之后）</text>
+      <path d="M660 71 L680 71" class="arr" marker-end="url(#ds41-qa)"/>
+      <rect x="682" y="46" width="140" height="50" rx="3" class="box"/>
+      <text x="752" y="76" class="lbl-s" text-anchor="middle">top-512 + sort</text>
+      <path d="M822 71 L842 71" class="arr-t" marker-end="url(#ds41-qb)"/>
+      <rect x="844" y="46" width="78" height="50" rx="3" class="box-t"/>
+      <text x="883" y="76" class="lbl" text-anchor="middle">idxs</text>
+
+      <line x1="18" y1="122" x2="922" y2="122" class="arr-d"/>
+
+      <text x="18" y="142" class="lbl-s">⑤ 稀疏注意力 + 输出投影 · 每层都做</text>
+      <path d="M883 96 L883 162 L110 162 L110 226" class="arr-t" marker-end="url(#ds41-qb)"/>
+      <text x="500" y="158" class="lbl-t" text-anchor="middle">idxs → 决定 gather 哪 512 条</text>
+
+      <rect x="18" y="172" width="168" height="44" rx="3" class="box-t"/>
+      <text x="102" y="199" class="lbl-t" text-anchor="middle">window ring · 128</text>
+      <rect x="18" y="228" width="168" height="50" rx="3" class="box-t"/>
+      <text x="102" y="248" class="lbl-t" text-anchor="middle">gather(compress_kv)</text>
+      <text x="102" y="264" class="lbl-x" text-anchor="middle">512 条 × 288 B</text>
+
+      <path d="M186 194 L192 194 L192 213 L210 213" class="arr" marker-end="url(#ds41-qa)"/>
+      <path d="M186 253 L192 253 L192 237 L210 237" class="arr" marker-end="url(#ds41-qa)"/>
+      <rect x="214" y="200" width="130" height="50" rx="3" class="box"/>
+      <text x="279" y="220" class="lbl" text-anchor="middle">concat KV</text>
+      <text x="279" y="238" class="lbl-x" text-anchor="middle">128 + 512</text>
+
+      <path d="M344 225 L366 225" class="arr" marker-end="url(#ds41-qa)"/>
+      <rect x="368" y="196" width="180" height="58" rx="3" class="box-t"/>
+      <text x="458" y="218" class="lbl" text-anchor="middle">sparse_attn</text>
+      <text x="458" y="236" class="lbl-t" text-anchor="middle">单次 softmax + 可学习 sink</text>
+      <path d="M458 172 L458 194" class="arr" marker-end="url(#ds41-qa)"/>
+      <text x="468" y="184" class="lbl-s">q 64 × 512</text>
+
+      <path d="M548 225 L570 225" class="arr" marker-end="url(#ds41-qa)"/>
+      <rect x="572" y="200" width="110" height="50" rx="3" class="box"/>
+      <text x="627" y="230" class="lbl" text-anchor="middle">o 64×512</text>
+      <path d="M682 225 L702 225" class="arr" marker-end="url(#ds41-qa)"/>
+      <rect x="704" y="200" width="104" height="50" rx="3" class="box"/>
+      <text x="756" y="230" class="lbl-s" text-anchor="middle">wo_a · 8 组</text>
+      <path d="M808 225 L826 225" class="arr" marker-end="url(#ds41-qa)"/>
+      <rect x="828" y="200" width="94" height="50" rx="3" class="box"/>
+      <text x="875" y="230" class="lbl-s" text-anchor="middle">wo_b → 5120</text>
+
+      <text x="18" y="306" class="lbl-x">非源层跳过 ④ 与 gather 的选择：直接读 shared_attn 的 compress_kv 与 topk_idxs，只保留自己的 q 与 window ring</text>
+    </svg>
+  </div>
+  <figcaption>
+    <b>图 2 · 消费侧。</b>Indexer 的输入是 <b>index_k cache（读）</b>和
+    <b>q_idx（算）</b>，输出只有索引；真正的 KV 数据流在 ⑤ —— 用索引从
+    <code>compress_kv</code> gather 512 条，与 128 位置滑窗拼成一个张量，
+    走一次 softmax。
+  </figcaption>
+</figure>

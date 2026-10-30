@@ -2,6 +2,7 @@
 import Base from '../../layouts/Base.astro';
 import Evidence from '../../components/Evidence.astro';
 import Facts from '../../components/Facts.astro';
+import AttentionFigure from '../../components/AttentionFigure.astro';
 import LayerMap from '../../components/LayerMap.astro';
 import Prose from '../../components/Prose.astro';
 import {
@@ -420,6 +421,10 @@ const rv = reviewStatus(m);
       </>
     )
   }
+
+  {/* 注意力架构图：有 components/attention/<id>.astro 就画，没有就整段不出现。
+      加一张图只要新建那个文件，不用改这里 —— 六个家族可以各写各的，不碰同一份代码 */}
+  <AttentionFigure id={m.id} />
 
   <h2>推导负载</h2>
   <p class="small muted">
