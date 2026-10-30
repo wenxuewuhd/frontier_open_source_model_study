@@ -1,7 +1,7 @@
 {
  "id": "minimax-h3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T15:46:52+00:00",
+ "generated_at": "2026-10-30T16:04:32+00:00",
  "inputs": {
   "facts_dir": "/Users/yuan/Work/frontier-llm-tracking/frontier_open_source_model_study/facts/minimax-h3",
   "config_present": false,
@@ -103,7 +103,7 @@
    "fps": 24,
    "duration_s": 10.125,
    "default": true,
-   "note": "取自厂商可复现脚本（short_edge 768 / 16:9 / duration 10）**的官方输出样片** assets/t2va.mp4 实测。脚本本身不含像素网格，网格由服务端按 aspect_ratio 对齐 —— 1344 与 768 都被 32 整除。243 帧 / 12288 timescale / 512 ticks 每样本 = 精确 24 fps"
+   "note": "取自厂商可复现脚本（short_edge 768 / 16:9 / duration 10）**的官方输出样片** assets/t2va.mp4 实测。脚本本身不含像素网格，网格由服务端按 aspect_ratio 对齐 —— 1344 与 768 都被 32 整除。243 帧 / 12288 timescale / 512 ticks 每样本 = 精确 24 fps。 **latent 帧数 72**：C = (243+12)/17 = 15 块，T = 5×15 − 3 = 72（见 R3）。 latent token 72 × 24 × 42 = 72,576 —— 注意 derived JSON 里是 61,992，偏低 17%， 原因见 R6"
   },
   "effective_compression": {
    "temporal": 4,
