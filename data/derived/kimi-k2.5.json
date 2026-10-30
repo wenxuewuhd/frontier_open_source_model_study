@@ -1,0 +1,169 @@
+{
+ "id": "kimi-k2.5",
+ "generated_by": "scripts/derive.py",
+ "generated_at": "2026-10-30T05:55:32+00:00",
+ "inputs": {
+  "facts_dir": "facts/kimi-k2.5",
+  "config_present": true,
+  "shapes_present": true,
+  "model_yaml": "data/models/kimi/kimi-k2.5.yaml",
+  "ep_size": 8
+ },
+ "from_shapes": {
+  "available": true,
+  "complete": true,
+  "tensor_count": 208550,
+  "params_total": 139029243888.0,
+  "params_by_subsystem": {
+   "norm": 1006592.0,
+   "dense_ffn": 396361728.0,
+   "attention": 6168444928.0,
+   "router": 165173760.0,
+   "expert": 126835891200.0,
+   "shared_expert": 2642411520.0,
+   "lm_head": 1174405120.0,
+   "embed": 1174405120.0,
+   "vision": 471143920.0
+  },
+  "scale_elements": 31708938240.0,
+  "weight_bytes_total": 595148192736.0,
+  "weight_bytes_by_subsystem": {
+   "norm": 2013184.0,
+   "dense_ffn": 792723456.0,
+   "attention": 12336889856.0,
+   "router": 330393600.0,
+   "expert": 570761441280.0,
+   "shared_expert": 5284823040.0,
+   "lm_head": 2348810240.0,
+   "embed": 2348810240.0,
+   "vision": 942287840.0
+  },
+  "weight_bytes_by_dtype": {
+   "BF16": 87804535776.0,
+   "FP32": 92160.0,
+   "INT32": 507343564800.0
+  },
+  "weight_dtype_containers": {},
+  "experts_seen": 384,
+  "expert_storage": "individual",
+  "layers_present": 61,
+  "mtp_layers_seen": [],
+  "mtp_attention_suffixes": [],
+  "draft_blocks_seen": 0,
+  "layer_index_max": 61,
+  "layers_missing": [],
+  "moe_layers_seen": 60,
+  "unknown_dtypes": [],
+  "packing_applied": {},
+  "packing_suspect": [],
+  "incomplete_note": null
+ },
+ "kv_cache": {
+  "status": "ok",
+  "attention_type": "MLA",
+  "kv_dtype": "bfloat16",
+  "layers": 61,
+  "full_attention_layers": 61,
+  "linear_attention_layers": 0,
+  "per_token_bytes": 70272,
+  "per_sequence_bytes": 0,
+  "per_token_elems": 35136,
+  "per_token_elems_bound": "exact",
+  "components": {
+   "full_attention": {
+    "layers": 61,
+    "bytes_per_layer": 1152,
+    "bytes_per_token": 70272,
+    "dtype": "bfloat16",
+    "elements_per_token": 35136,
+    "terms": {
+     "latent": 512,
+     "qk_rope_head_dim": 64,
+     "formula": "(latent + qk_rope_head_dim) * bytes"
+    }
+   }
+  },
+  "notes": [],
+  "dtype_assumed": true,
+  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML",
+  "bytes_basis": "dtype_fallback"
+ },
+ "kv_capacity_bytes_at_context": {
+  "4096": 287834112,
+  "32768": 2302672896,
+  "262144": 18421383168
+ },
+ "kv_capacity_basis": "dtype_fallback",
+ "active_params": {
+  "status": "ok",
+  "total": 13190218048.0,
+  "total_with_embed": 14364623168.0,
+  "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的输入词表）；total_with_embed 含输入词表，用于和各家公布的「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
+  "expert_active": 2642414400.0,
+  "expert_total": 126835891200.0,
+  "expert_ratio": "8/384",
+  "always_active": 10547803648.0,
+  "lm_head": 1174405120.0,
+  "dense": false,
+  "excluded": {
+   "embed_tokens": 1174405120.0,
+   "retrieval_table": 0.0,
+   "vision": 471143920.0,
+   "draft": 0.0
+  },
+  "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
+ },
+ "flops": {
+  "linear_per_token": 26380436096.0,
+  "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
+ },
+ "arithmetic_intensity": {
+  "decode_weight_bytes_per_token": 56463907977.41033,
+  "decode_flops_per_byte": 0.4672088249108456,
+  "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
+ },
+ "ep_communication": {
+  "status": "ok",
+  "ep_size": 8,
+  "moe_layers": 60,
+  "bytes_per_token": 13762560,
+  "bytes_per_layer": 229376,
+  "formula": "2(dispatch+combine) * top_k * hidden * bytes * moe_layers",
+  "note": "EP=1 时为 0；跨机时该量按互联带宽折算成时间，是 decode 尾延迟的主因之一"
+ },
+ "reconciliation": [
+  {
+   "item": "路由专家数",
+   "config": 384.0,
+   "shapes": 384.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "专家存储布局",
+   "status": "ok",
+   "why": "individual（逐专家独立张量）"
+  },
+  {
+   "item": "层数",
+   "config": 61.0,
+   "shapes": 61.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "参数总量",
+   "YAML 声明": 1026879376368.0,
+   "shapes 实测": 139029243888.0,
+   "delta_pct": -86.46,
+   "status": "MISMATCH"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "MISMATCH",
+   "HF tally": 1026879376368,
+   "本仓": 139029243888.0,
+   "why": "HF 的 tally 由它自己从分片头统计、不依赖本仓代码，所以对不上时问题在本仓侧：不等于本仓参数量，也不等于本仓参数量加 scale（170,738,182,128）。先查本仓的子系统归类、打包还原与 scale 判据"
+  }
+ ]
+}
