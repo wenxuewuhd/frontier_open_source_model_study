@@ -177,30 +177,38 @@ def _():
     assert not errors, f"契约检查报错：{errors}"
 
 
-@case("二·正例：46 份空着的 KV 精度判成「查了但没有」，不是「未录」")
+@case("二·正例：空着的 KV 精度分成「未公布」与「不适用」两种，没有「未录」")
 def _():
+    # 期望值跟着真实状态走：第一份生成类记录（wan2.2-ti2v-5b）进来之后，
+    # 「空着的 KV 精度」不再只有一种含义。
+    #   自回归模型空着  = 厂商没公布落盘精度，字节按权重 dtype 兜底 → confirmed_absent
+    #   扩散模型空着    = 每步重算、根本不建 KV，没有这笔账 → not_applicable
+    # **两者都不是 unsurveyed**，unsurveyed 才是「本仓还没查」。
     blank = [i for i, d in RECS.items() if not ((d.get("precision") or {}).get("kv_cache"))]
-    assert len(blank) == 46, f"空着的应当是 46 份，实际 {len(blank)}"
+    gen = [i for i in blank if RECS[i].get("kind") in ("video-gen", "image-gen")]
+    assert len(blank) == 47, f"空着的应当是 47 份，实际 {len(blank)}"
+    assert len(gen) == 1, f"其中生成类应当是 1 份，实际 {len(gen)}"
     for mid in blank:
         a = columns.absence("kv_dtype", RECS[mid], derived(mid))
-        assert a["state"] == "confirmed_absent", \
-            f"{mid} 的 KV 精度判成了 {a['state']}，而真相是厂商没公布、字节按权重 dtype 兜底"
-        assert not a["is_gap"], f"{mid}：这一态是信息，不该算成缺口"
-        assert a["why"], f"{mid}：判成「查了但没有」却说不出凭什么"
+        want = "not_applicable" if mid in gen else "confirmed_absent"
+        assert a["state"] == want, f"{mid} 的 KV 精度判成了 {a['state']}，应当是 {want}"
+        assert not a["is_gap"], f"{mid}：这两态都是信息，不该算成缺口"
+        assert a["why"], f"{mid}：判了却说不出凭什么"
 
 
 @case("二·正例：契约判出来的和站点侧手写的 kvCachePrecision 一致")
 def _():
-    # 站点侧 data.ts 的 kvCachePrecision 是手写的、只管 KV 这一行，注释里写着
-    # 「当前 48 份里 46 份走『未公布』、0 份走『不适用』」。契约要能复现同一个结论 ——
-    # 复现不了就说明两边在说不同的话，而这条线存在的理由就是消灭这种口径不一致。
+    # 站点侧 data.ts 的 kvCachePrecision 委托给同一份契约，注释里复述了当前的分布。
+    # 契约要能复现那个分布 —— 复现不了就说明注释与判据分叉了，
+    # 而这条线存在的理由就是消灭这种口径不一致。
+    # 分布随记录增减而变，改这里时**同步改 data.ts 那段注释**，两边一起动。
     seen = collections.Counter()
     for mid, d in RECS.items():
         if (d.get("precision") or {}).get("kv_cache"):
             continue
         seen[columns.absence("kv_dtype", d, derived(mid))["label"]] += 1
-    assert seen == collections.Counter({"未公布": 46}), \
-        f"契约判出来是 {dict(seen)}，站点侧手写的结论是 46 份「未公布」、0 份「不适用」"
+    assert seen == collections.Counter({"未公布": 46, "不适用": 1}), \
+        f"契约判出来是 {dict(seen)}，data.ts 的注释说的是 46 份「未公布」、1 份「不适用」"
 
 
 @case("二·正例：三态都真的用得上 —— 没有一态是摆设")

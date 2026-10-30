@@ -1,0 +1,383 @@
+id: wan2.2-ti2v-5b
+family: wan
+kind: video-gen
+display_name: Wan2.2-TI2V-5B
+released: '2025-07-18'
+license: apache-2.0
+visibility: public
+
+# 本仓第一份生成类记录。几个口径判断在这里定下，后面十一份照这个来：
+#
+# 1. **params.total 只算 DiT。** VAE 与文本编码器是 .pth（pickle），读不了清单，
+#    它们的规模进 generation.vae / generation.text_encoders，不混进 params。
+#    理由是本仓的 params 一向是「实测自权重清单」，掺进一个按文件大小估的数会让
+#    整列不可比。两者的字节在 notes 里单独对账。
+# 2. **不建 arch 块。** DiT 的层数/宽度/头数在 generation.backbone 里。
+#    arch 是自回归语言模型的形状（vocab、KV cache、MoE 路由），
+#    往里塞 DiT 会让家族页把两种「层」放进同一列比。
+# 3. **没有 KV cache 这笔账。** 扩散模型每一步重算全部 token，
+#    跨步不复用任何东西。这不是「未录」，是结构上不存在。
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B
+    locator: README.md §Introduction 与 §(2) Efficient High-Definition Hybrid TI2V @ 921dbaf3f167
+    accessed: '2026-10-30'
+    note: >-
+      VAE 压缩率 4×16×16（文中写作 16×16×4，T×H×W 顺序与本仓相反，已换算）、
+      加 patch 后总压缩 4×32×32、720P 明确为 **1280×704**（「Unlike other tasks,
+      the 720P resolution of the Text-Image-to-Video task is `1280*704` or `704*1280`」）、
+      24 fps。卡上没有步数、CFG 与帧数，那三个取自参考实现。
+      卡上给了一条端到端：单张消费级卡（4090）生成 5 秒 720P「under 9 minutes」，
+      但没给步数与精度，**不能当性能基准用**，只作量级参照
+  - kind: repo
+    url: https://github.com/Wan-Video/Wan2.2/blob/main/wan/configs/wan_ti2v_5B.py
+    locator: ti2v_5B 全量字段 + configs/__init__.py 的 SUPPORTED_SIZES['ti2v-5B']
+    accessed: '2026-10-30'
+    note: >-
+      厂商参考实现（来源优先级第三档，低于技术报告与模型卡）。采样口径取自这里：
+      sample_steps 50 / sample_guide_scale 5.0 / sample_shift 5.0 /
+      frame_num 121 / sample_fps 24。
+      **结构字段与权重清单逐项对上了**，所以它在结构上可信：
+      patch_size (1,2,2) = patch_embedding.weight 的后三维；
+      dim 3072 / ffn_dim 14336 / num_heads 24 / num_layers 30 与 config.json 逐字相同；
+      qk_norm: true 对应清单里的 self_attn.norm_q / norm_k；
+      cross_attn_norm: true 对应 cross_attn.norm_q / norm_k。
+      vae_stride (4,16,16) 与模型卡的 4×16×16 一致。
+      window_size (-1,-1) 即不开窗，self-attention 是满的
+  - kind: modelcard
+    url: https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B
+    locator: diffusion_pytorch_model-0000{1,2,3}-of-00003.safetensors 的头 @ 921dbaf3f167
+    accessed: '2026-10-30'
+    note: >-
+      权重清单逐分片读头取全：3 分片 **825 个张量**，无读失败分片。
+      全部 F32，无 scale 容器、无打包容器，numel 即参数数。
+      这是仓里唯一能实测的一块 —— VAE 与 T5 是 .pth
+
+hf:
+  repo: Wan-AI/Wan2.2-TI2V-5B
+  sha: 921dbaf3f1674a56f47e83fb80a34bac8a8f203e
+  last_modified: '2025-08-07T10:22:24.000Z'
+  pipeline_tag: text-to-video
+  gated: false
+
+lineage:
+  track: side
+  # wan family 的旗舰是 Wan2.2-T2V-A14B（27B MoE）。这一档是**同代不同 VAE**，
+  # 按视频线的 policy「VAE 或注意力形态变了的同代档位单独录」立记录，不是档位缩放：
+  # A14B 用 4×8×8/16ch，这一档用 4×16×16/48ch，latent token 数差 4 倍。
+  # 差分基线 wan2.1-t2v-14b 与旗舰 wan2.2-t2v-a14b 都还没录，
+  # 所以 predecessor 暂缺 —— 等那两份进来再补 changed_from_predecessor。
+
+params:
+  total: 4999787712
+  # 稠密主干，每一次前向都过全部权重 —— 没有 MoE 路由、没有跨步复用，
+  # 所以激活参数恒等于总量。显式写出来，免得推导去走「权重总量」那条
+  # 标着「含文本编码器/VAE 时会高估」的兜底（这个仓里不含，但不该靠巧合）
+  active_decode: 4999787712
+  active_prefill: 4999787712
+  breakdown:
+    ffn: 2642933760
+    cross_attention: 1133015040
+    self_attention: 1133015040
+    adaln_modulation: 67424256
+    text_proj: 22026240
+    unpatchify_head: 596160
+    patch_embed: 592896
+    norm: 184320
+  counting_note: >-
+    **只含 DiT 主干**，按完整权重清单（3 分片 825 条目）逐项统计。
+    全 F32、无 scale 容器、无打包容器，所以 numel 即参数数，
+    4,999,787,712 × 4 B = 19,999,150,848 B；三个分片的 HTTP 实际大小
+    合计 19,999,234,384 B，差 83,536 B 正好是三个 safetensors 头。
+
+    **VAE 与文本编码器不在这个数里**，因为它们是 `.pth`（pickle），
+    读不了清单：`Wan2.2_VAE.pth` 2,818,839,170 B、
+    `models_t5_umt5-xxl-enc-bf16.pth` 11,361,920,418 B。
+    规模与来源记在 generation.vae 与 generation.text_encoders，
+    字节对账见 notes。**所以「5B」说的是 DiT，不是一次推理要驻留的全部权重** ——
+    三者相加 34,179,904,370 B（31.83 GiB），是「5B」按 F32 算的 1.71 倍。
+
+    分桶口径：self_attention 与 cross_attention 各含 q/k/v/o 四个
+    [3072,3072] 投影加 bias，以及 norm_q / norm_k 两个 [3072] 的 QK-norm；
+    adaln_modulation 含逐层 modulation [1,6,3072]、time_embedding、
+    time_projection [18432,3072] 与 head.modulation。
+
+generation:
+  backbone:
+    stream_design: single
+    layers: 30
+    double_blocks: 0
+    single_blocks: 30
+    hidden: 3072
+    heads: 24
+    head_dim: 128
+    ffn: 14336
+    text_conditioning: cross_attn
+    patch_size: [1, 2, 2]
+    position: 3D RoPE（freq_dim 256，t/h/w 三轴分配）
+    note: >-
+      **cross-attention 与 self-attention 的参数量逐字节相同**
+      （各 1,133,015,040，占总量 22.66%）—— 两边都是满的 q/k/v/o [3072,3072]，
+      没有 GQA（k 与 v 都是 3072 宽，24 个 KV 头 = 24 个 Q 头，是 MHA）。
+      但**算力差 53 倍**：self-attention 跑在 27,280 个视频 token 上，
+      cross-attention 只对 512 个文本 token（text_len 512）。
+      27,280 / 512 = 53.3，而注意力矩阵那一项是 O(n·m)。
+      按参数量给这两块分配优化预算会错一个量级。
+      每层 FFN 88,097,792 参数，比两块注意力之和（75,534,336）还大 17%。
+
+  vae:
+    spatial_compression: 16
+    temporal_compression: 4
+    latent_channels: 48
+    causal: true
+    decoder_arch: unknown
+    name: Wan2.2-VAE
+    note: >-
+      latent_channels 48 不是从卡上抄的，是**权重实测**：
+      `patch_embedding.weight` 形状 [3072, 48, 1, 2, 2]，
+      `head.head.weight` 形状 [192, 3072] 而 192 = 48 × 1 × 2 × 2 —— 进出都是 48 通道。
+      压缩率 4×16×16 在模型卡与参考实现的 `vae_stride` 两处一致。
+      **时间因果**：帧数写成 4n+1（121 = 4×30+1），首帧单独编码，
+      所以 latent 帧数是 (121−1)/4+1 = 31 而不是 30.25。
+      **params 未录**：权重在 `Wan2.2_VAE.pth` 里（2,818,839,170 B），
+      是 pickle 不是 safetensors，读头拿不到清单。dtype 未声明，
+      所以连「字节 ÷ 每元素字节」这条路也走不通 —— 不填比填一个估值好。
+      decoder_arch 同理未知
+
+  text_encoders:
+    - role: primary
+      name: umT5-XXL（encoder-only）
+      hf_repo: google/umt5-xxl
+      hidden: 4096
+      shipped_with_weights: true
+      release_dtype: BF16
+      params: 5680960209
+      note: >-
+        hidden 4096 是**权重实测**：`text_embedding.0.weight` 形状 [3072, 4096]，
+        即进 DiT 的文本特征是 4096 维。
+        params 是**推算不是实测**：随仓文件 `models_t5_umt5-xxl-enc-bf16.pth`
+        11,361,920,418 B ÷ 2 B（文件名自称 bf16）= 5,680,960,209，
+        pickle 自身的开销会让真值略小。仓里只放了 google/umt5-xxl 的
+        tokenizer 四件套，没有它的 config，所以层数与头数未知。
+        **它比 DiT 还大**（按参数 1.14 倍、按字节 0.57 倍，因为 DiT 是 F32），
+        参考实现给单卡档位的建议是 `--t5_cpu`，即把它放 CPU 上错峰跑
+
+  sampling:
+    steps: 50
+    cfg:
+      scale: 5.0
+      distilled: false
+      embedded: false
+      forwards_per_step: 2
+    scheduler: flow matching（UniPC / DPM++，参考实现两种都带）
+    shift: 5.0
+    note: >-
+      **端到端是 50 步 × 2 次前向 = 100 次 5B 主干前向**，不是 50 次。
+      CFG 未蒸馏、未嵌入，所以条件与无条件各跑一遍。
+      这一项是生成类负载账里最容易漏的因子：漏掉它整条算少一半。
+      步数与 CFG 强度取自参考实现（第三档来源），模型卡两者都没写
+
+  buckets:
+    - width: 1280
+      height: 704
+      frames: 121
+      fps: 24
+      duration_s: 5.0416667
+      default: true
+      note: >-
+        参考实现 SUPPORTED_SIZES['ti2v-5B'] 只有 1280×704 与 704×1280 两档，
+        都是 720P。frames 121 与 fps 24 取自 ti2v_5B 配置；
+        duration_s = 121 / 24 = 5.0417 秒，模型卡口语写作「5 秒」
+    - width: 704
+      height: 1280
+      frames: 121
+      fps: 24
+      duration_s: 5.0416667
+      note: 竖版，与横版同像素量，token 数相同
+
+  constraints:
+    width_divisor: 32
+    height_divisor: 32
+    frame_formula: 4n+1
+    note: >-
+      除数 32 = VAE 空间压缩 16 × DiT patch 2，两者相乘才是有效压缩率。
+      1280/32 = 40、704/32 = 22，都整除。
+      帧数 4n+1 来自时间因果 VAE 的首帧单独编码
+
+precision:
+  weights_release: [FP32]
+  weights_release_scope:
+    FP32:
+      measured: true
+      repo: Wan-AI/Wan2.2-TI2V-5B
+      note: >-
+        825 个张量**无一例外**全是 F32，这在本仓所有记录里是独一份 ——
+        语言模型线从 2024 年起就没有全 F32 发布的了。
+        代价直接可见：5.0B 参数占 18.63 GiB，若按 BF16 发布只要 9.31 GiB。
+        参考实现给单卡档位的建议里有 `--convert_model_dtype`，
+        即**官方预期你在载入时自己转精度**，发布格式不是部署格式
+  inference_default: FP32
+
+bottlenecks:
+  - dimension: compute
+    finding: >-
+      按参数量分配注意力侧的优化预算会错一个量级：
+      cross-attention 与 self-attention 参数**逐字节相同**，但前者只对 512 个
+      文本 token，后者对 27,280 个视频 token
+    quantified: >-
+      默认档 1280×704×121 帧 → latent 31×44×80，patch (1,2,2) 后
+      31×22×40 = 27,280 个 token。注意力矩阵项 self:cross = 27,280:512 = 53.3:1
+    fix: 稀疏化与 kernel 工作全部压在 self-attention 上；cross-attention 走常规实现即可
+    visibility: public
+  - dimension: host-io
+    finding: >-
+      「5B」只说 DiT。一次推理要驻留 DiT + VAE + umT5-XXL 三套权重，共 31.83 GiB，
+      **放不进 24 GB 的 4090** —— 所以官方单卡档位必须 offload，
+      PCIe 搬运因此成为约束。维度记 host-io 而不是容量，是因为它已经溢出、
+      真正要规划的是搬什么、什么时候搬
+    quantified: >-
+      DiT 19,999,150,848 B（F32 实测）+ VAE 2,818,839,170 B + T5 11,361,920,418 B
+      = 34,179,904,370 B（31.83 GiB）。按参数算 DiT 5.0B、T5 约 5.68B
+    fix: >-
+      参考实现单卡档位用 `--t5_cpu` 把文本编码器放 CPU —— 它每次生成只跑一遍，
+      而 DiT 要跑 100 遍，错峰的代价最小
+    visibility: public
+  - dimension: compute
+    finding: 端到端是 100 次主干前向，不是 50 次 —— CFG 未蒸馏，每步条件与无条件各一遍
+    quantified: steps 50 × forwards_per_step 2 = 100
+    fix: >-
+      CFG 蒸馏是这条线最直接的 2 倍收益，同族 HunyuanVideo-1.5 与 MiniMax-H3
+      都已经做了（前者发了蒸馏档，后者发布权重本身就是蒸馏的）
+    visibility: public
+
+infra_signals:
+  - text: >-
+      生成类模型的负载轴和自回归语言模型**没有交集**：没有 KV cache、没有 prefill/decode
+      之分、没有「每 token」这个单位。有的是「序列长度 × 步数 × 每步前向次数」，
+      而序列长度由 VAE 压缩率与 DiT patch 相乘决定。这三个因子必须分开存、只在推导时相乘
+    evidence: judgement
+  - text: >-
+      时间因果 VAE 的 latent 帧数是 (F−1)/t+1 不是 F/t。
+      本档 121 帧按前者得 31、按后者得 30.25 —— 2% 的差看着像精度误差，
+      实际是口径错误，会一路传进 FLOPs 和显存估算
+    evidence: derived
+
+evidence:
+  id: official
+  family: official
+  kind: judgement
+  display_name: official
+  released: official
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  params.counting_note: derived
+  generation: official
+  generation.backbone.head_dim: derived
+  generation.backbone.note: derived
+  generation.vae.latent_channels: derived
+  generation.vae.note: derived
+  # text_encoders 里 params 是按文件大小推的、hidden 是权重实测，
+  # 两者都不是官方声明 —— 证据路径不支持数组下标，所以整块标 derived
+  generation.text_encoders: derived
+  generation.sampling: official
+  generation.buckets: official
+  generation.constraints: derived
+  precision: official
+  precision.weights_release_scope: derived
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-30'
+  method: >-
+    Gate B 双路：config.json（12 个字段）与权重清单（3 分片 825 张量）逐项对读，
+    再与厂商参考实现 wan_ti2v_5B.py 第三路交叉。
+    结构字段三路一致：patch (1,2,2) 既在 patch_embedding.weight 的后三维里、
+    也在参考实现里；dim/ffn/heads/layers 四项 config 与参考实现逐字相同；
+    qk_norm 与 cross_attn_norm 两个布尔在清单里有对应张量。
+    字节对账：实测 numel × 4 B 与三个分片的 HTTP Content-Length 差 83,536 B（= 头）。
+    Gate C：判断类字段 7 处，逐条在 evidence 里标了 judgement 或 derived。
+
+review:
+  - id: R1
+    field: params.total
+    severity: imprecise
+    claim: 「Wan2.2-TI2V-5B 是 5B 模型」
+    finding: >-
+      5B 说的是 DiT。一次推理要驻留三套权重，按参数 DiT 5.0B、
+      文本编码器 umT5-XXL 约 5.68B（**比 DiT 还大**）、VAE 未知。
+      按字节 34,179,904,370 B，是 DiT 单独的 1.71 倍。
+      这不是厂商说错，是「模型大小」这个说法在生成类系统上本来就不完整
+    resolution: corrected
+    changed_to: >-
+      params.total 只填 DiT 并在 counting_note 写明排除了什么、为什么；
+      另外两块的规模进 generation.vae 与 generation.text_encoders；
+      bottlenecks 里单列一条 memory
+  - id: R2
+    field: generation.vae.params
+    severity: missing
+    claim: VAE 的参数量应该能填
+    finding: >-
+      填不了。`Wan2.2_VAE.pth` 是 pickle 不是 safetensors，读头拿不到清单；
+      文件大小 2,818,839,170 B 知道，但**dtype 未声明**，
+      所以连「字节 ÷ 每元素字节」这条退路也没有。
+      文本编码器那边能推是因为文件名自称 `bf16`，VAE 没有这个线索。
+      **这是整条视频线的通例不是例外**：DiT 在 safetensors 里，
+      VAE 与文本编码器往往是 .pth
+    resolution: open
+    changed_to: >-
+      留空并在 note 写明是哪一种空（读不了清单，不是没查）。
+      要填只能下载整包反序列化，而那是 pickle，代价与风险都不小
+  - id: R3
+    field: generation.sampling
+    severity: unsupported
+    claim: 步数 50、CFG 5.0、帧数 121 有官方依据
+    finding: >-
+      模型卡这三项**一个都没写**，全部取自厂商参考实现
+      `wan/configs/wan_ti2v_5B.py`，是来源优先级的第三档。
+      本仓规则说参考实现可能是 demo 而非部署口径。
+      但这一份的参考实现在**结构字段上与权重清单逐项对上了**
+      （patch、dim、ffn、heads、layers、qk_norm、cross_attn_norm 七项），
+      所以它至少不是凭空写的
+    resolution: confirmed
+    changed_to: >-
+      保留，但在 sources 里标明档位、在 sampling.note 写明「模型卡两者都没写」。
+      若后续出技术报告，这三项要按报告重核
+
+notes: >-
+  **本仓第一份生成类记录，几个口径在这里定下。**
+
+  字节对账（三块相加对 usedStorage）：
+  DiT 19,999,234,384 + VAE 2,818,839,170 + T5 11,361,920,418 + tokenizer 21,454,081
+  + 其余小文件 1,406,444 = 34,203,123,497 B，
+  而 HF 的 usedStorage 是 54,202,656,185 B，**差 19,999,532,688 B**。
+  这个差额与 DiT 三分片的大小（19,999,234,384 B）只差 298,304 B ——
+  即 usedStorage 多算了约一份 DiT。仓有 8 个提交，其中两次是
+  `Upload folder using huggingface_hub`（2025-07-24 与 2025-07-27），
+  **旧修订版的 LFS 对象仍计进 usedStorage**。
+  所以 usedStorage 在这条线上**不是**「当前修订版的权重总字节」，
+  不能直接拿来对账 —— 要逐文件取 HTTP 大小。
+
+  取数提醒：这个仓有顶层 config.json（只含 DiT 的 12 个字段）、一个 index、
+  3 个分片，是视频线里最规整的一个。
+  同族 ltx-2 / ltx-2.3 要带 `--include` 才能取，见 tracking.yaml 的 note。
+
+open_questions:
+  - >-
+    VAE 的参数量、层数与解码器形态都不知道（见 R2）。`Wan2.2_VAE.pth` 是 pickle，
+    读头拿不到清单，dtype 也没声明。这会影响「VAE decode 是不是边角料」这个判断 ——
+    同族 MiniMax-H3 的解码器是 36 层 Transformer（5.2B），那就完全不是边角料了
+  - >-
+    umT5-XXL 的层数与头数不知道：仓里只放了 tokenizer 四件套，没有它的 config。
+    params 5,680,960,209 是按文件大小 ÷ 2 推的，不是实测
+  - >-
+    模型卡那句「单张 4090 生成 5 秒 720P under 9 minutes」没给步数与精度，
+    **不能当性能基准**。若按本记录的 50 步 × 2 次前向，那是 100 次 5B F32 前向，
+    9 分钟意味着每次前向 5.4 秒 —— 量级上说得通，但没有一手依据，没有写进 performance
+  - >-
+    训练精度无一手来源。发布权重全 F32 是实测，但那说的是落盘格式不是训练格式

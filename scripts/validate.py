@@ -238,6 +238,63 @@ def label_table_hit(line):
     return None
 
 
+def check_family_registry(root, errors):
+    """schema 的 family 枚举与站点的 FAMILY_LABEL / FAMILY_ORDER 必须一一对应。
+
+    **漏一个的后果是静默的。** `site/src/pages/families/[family].astro` 的
+    getStaticPaths 是 `FAMILY_ORDER.filter(f => fams.has(f))` —— 不在 FAMILY_ORDER
+    里的家族不报错、不建页，整个家族页凭空消失，而五道闸全绿。
+    视频线第一份记录落地时就这么丢过一次 wan：schema 有 15 个家族，
+    data.ts 只有 7 个，模型页建出来了、家族页没有。
+
+    这是「同一份名单在两处各写一遍」的第三个实例（前两个是 basis 标签表与
+    kv_table 的漂移守卫）。名单本身没法收口到一处 —— schema 是 JSON、
+    站点是 TS，没有共同的运行时；所以改成在这里对账。
+    """
+    import re as _re
+    sp = os.path.join(root, "data", "schema", "model.schema.json")
+    dp = os.path.join(root, "site", "src", "lib", "data.ts")
+    try:
+        schema_fams = set(json.load(open(sp, encoding="utf-8"))
+                          ["properties"]["family"]["enum"])
+    except (OSError, KeyError, ValueError) as e:
+        errors.append(f"data/schema/model.schema.json: 读不到 family 枚举（{e}）")
+        return
+    try:
+        ts = open(dp, encoding="utf-8").read()
+    except OSError as e:
+        errors.append(f"site/src/lib/data.ts: 读不到（{e}）")
+        return
+
+    def _block(name):
+        i = ts.find(name)
+        if i < 0:
+            return None
+        j = ts.find("};", i) if "Record<string, string>" in ts[i:i + 80] else ts.find("];", i)
+        return ts[i:j] if j > 0 else None
+
+    lab = _block("FAMILY_LABEL")
+    order = _block("FAMILY_ORDER")
+    if lab is None or order is None:
+        errors.append("site/src/lib/data.ts: 找不到 FAMILY_LABEL 或 FAMILY_ORDER")
+        return
+    # 键可以带引号也可以不带（hunyuan-video 这种带连字符的必须带）
+    lab_keys = set(_re.findall(r"^\s*'([a-z0-9-]+)'\s*:", lab, _re.M)) | \
+               set(_re.findall(r"^\s*([a-z][a-z0-9]*)\s*:", lab, _re.M))
+    order_keys = set(_re.findall(r"'([a-z0-9-]+)'", order))
+
+    for name, got in (("FAMILY_LABEL", lab_keys), ("FAMILY_ORDER", order_keys)):
+        miss = schema_fams - got
+        extra = got - schema_fams
+        if miss:
+            errors.append(f"site/src/lib/data.ts 的 {name} 缺 {sorted(miss)} —— "
+                          "schema 的 family 枚举有、这里没有。"
+                          "FAMILY_ORDER 缺的那个家族**不会报错，只是整个家族页不建**")
+        if extra:
+            errors.append(f"site/src/lib/data.ts 的 {name} 多出 {sorted(extra)} —— "
+                          "schema 的 family 枚举里没有这些值，记录填不进来")
+
+
 def check_stray_labels(root, errors):
     """第二份标签表：代码里不许把 basis 取值自己映射成中文。
 
@@ -581,6 +638,7 @@ def main():
     check_absence_contract(errors, warnings)
     check_renderers(_root(args.data_dir), errors)
     check_stray_labels(_root(args.data_dir), errors)
+    check_family_registry(_root(args.data_dir), errors)
     models = sorted(glob.glob(os.path.join(args.data_dir, "models", "**", "*.yaml"),
                               recursive=True))
     loaded = {}

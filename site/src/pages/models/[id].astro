@@ -643,7 +643,10 @@ const rv = reviewStatus(m);
               </div>
               <div><Prose text={b.finding} /></div>
               {b.quantified && <div class="small num" style="margin-top:6px"><Prose text={b.quantified} /></div>}
-              {b.fix && <div class="small muted" style="margin-top:6px"><strong>可修</strong>：{b.fix}</div>}
+              {/* finding / quantified / fix 三个都是散文字段，三个都要走 Prose。
+                  这里原先是裸 {b.fix}，于是反引号和 ** 在产物上照原样印出来 ——
+                  同一个块里两个解析一个不解析，谁也不会想到去查第三个 */}
+              {b.fix && <div class="small muted" style="margin-top:6px"><strong>可修</strong>：<Prose text={b.fix} /></div>}
             </div>
           ))}
         </div>

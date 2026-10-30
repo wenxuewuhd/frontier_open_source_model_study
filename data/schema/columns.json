@@ -63,7 +63,7 @@
       "unit": null,
       "absent": {
         "state": "unsurveyed",
-        "rules": [
+        "rules": [{ "state": "not_applicable", "why": "非自回归生成模型，没有 KV 可压缩 —— 每一步重算全部 token", "test": {"src": "derived", "op": "eq", "path": "kv_cache.status", "values": ["not_applicable"]} }, { "state": "not_applicable", "why": "生成类模型没有词表：输入是 latent 张量与文本编码器的隐状态，不是 token id", "test": {"src": "rec", "op": "eq", "path": "kind", "values": ["video-gen", "image-gen"]} }, 
           {
             "state": "not_applicable",
             "why": "非 latent 注意力，结构上没有 KV 低秩压缩",
@@ -85,7 +85,7 @@
       "unit": null,
       "absent": {
         "state": "unsurveyed",
-        "rules": [
+        "rules": [{ "state": "not_applicable", "why": "非自回归生成模型，不走 KV/Q 低秩分解这一路", "test": {"src": "derived", "op": "eq", "path": "kv_cache.status", "values": ["not_applicable"]} }, 
           {
             "state": "not_applicable",
             "why": "这一代的 Q 投影不走低秩分解",
@@ -151,7 +151,7 @@
       "quantity": "随上下文线性增长的每 token 缓存元素数",
       "absent": {
         "state": "unsurveyed",
-        "rules": [
+        "rules": [{ "state": "not_applicable", "why": "非自回归生成模型，输出投影不做低秩分组", "test": {"src": "derived", "op": "eq", "path": "kv_cache.status", "values": ["not_applicable"]} }, 
           {
             "state": "not_applicable",
             "why": "非自回归生成模型，推理过程中没有跨步复用的 KV",
@@ -298,7 +298,7 @@
       "absent": {
         "state": "not_applicable",
         "why": "纯语言模型，没有视觉塔",
-        "rules": [
+        "rules": [{ "state": "not_applicable", "why": "生成类记录不建 arch 块，残差形态（若有特别设计）写在 generation.backbone.note", "test": {"src": "rec", "op": "eq", "path": "kind", "values": ["video-gen", "image-gen"]} }, { "state": "not_applicable", "why": "稠密模型，没有路由可言", "test": {"src": "rec", "op": "absent", "path": "arch.moe"} }, 
           {
             "state": "unsurveyed",
             "why": "是多模态记录，但视觉塔的规格还没录",
@@ -325,7 +325,7 @@
       "scope": "config",
       "absent": {
         "state": "unsurveyed",
-        "rules": [
+        "rules": [{ "state": "not_applicable", "why": "生成类模型没有上下文窗口。它的「长度」是 latent token 数，由分辨率/帧数 ÷ VAE 压缩 ÷ patch 决定，见 generation.buckets", "test": {"src": "rec", "op": "eq", "path": "kind", "values": ["video-gen", "image-gen"]} }, 
           {
             "state": "confirmed_absent",
             "why": "config 没有声明量化块 —— 这一代不带 config 级量化声明，实测值看下面的逐子系统行",
@@ -381,7 +381,7 @@
       "unit": null,
       "absent": {
         "state": "unsurveyed",
-        "rules": [
+        "rules": [{ "state": "not_applicable", "why": "非自回归生成模型，不建 KV，没有落盘精度要规划", "test": {"src": "derived", "op": "eq", "path": "kv_cache.status", "values": ["not_applicable"]} }, 
           {
             "$comment": "这一代根本不建 KV，就没有这笔账 —— 和「厂商没公布」是两个结论：前者说明没有缓存要规划，后者说明字节那一列是按模型 dtype 兜底的占位值。判据只认缓存账已经算过且两种字节都是零，不从别处推。",
             "state": "not_applicable",

@@ -80,11 +80,32 @@ export const FAMILY_LABEL: Record<string, string> = {
   kimi: 'Kimi',
   qwen: 'Qwen',
   stepfun: '阶跃星辰',
+  // 视频生成线。用产品线名不用厂商名，所以 minimax-video / hunyuan-video 带后缀
+  // —— 同厂的语言模型 family 叫 minimax，两者不能撞名。
+  wan: '通义万相',
+  'hunyuan-video': '混元视频',
+  'minimax-video': 'MiniMax 视频',
+  ltx: 'LTX',
+  cogvideo: 'CogVideo',
+  stepvideo: 'Step-Video',
+  'sana-video': 'SANA-Video',
+  magi: 'MAGI',
   other: '其他',
 };
 
-/** 家族展示顺序。追踪范围固定，所以写死而不是按字母排。 */
-export const FAMILY_ORDER = ['deepseek', 'qwen', 'glm', 'minimax', 'kimi', 'stepfun', 'other'];
+/**
+ * 家族展示顺序。追踪范围固定，所以写死而不是按字母排。
+ *
+ * **这份名单必须与 data/schema/model.schema.json 的 family 枚举一致**，
+ * 闸口两边都查（validate.py 的 check_family_registry）。漏一个的后果是静默的：
+ * families/[family].astro 的 getStaticPaths 按这份名单过滤，不在名单里的家族
+ * **不报错、不建页**，只是整个家族页凭空消失。wan 就这么丢过一次。
+ */
+export const FAMILY_ORDER = [
+  'deepseek', 'qwen', 'glm', 'minimax', 'kimi', 'stepfun',
+  'wan', 'hunyuan-video', 'minimax-video', 'ltx', 'cogvideo', 'stepvideo', 'sana-video', 'magi',
+  'other',
+];
 
 function walkYaml(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
@@ -431,8 +452,11 @@ export function kvCachePrecision(m: Model): { text: string; declared: boolean } 
   const v = dtype(m.precision?.kv_cache);
   if (v) return { text: v, declared: true };
   // 判据不写第二份：走 data/schema/columns.json 的 kv_dtype 规则，
-  // Python 侧的闸口读的是同一份。回归用例钉住了两边判出来一样
-  // （46 份「未公布」、0 份「不适用」），分叉会被拦住
+  // Python 侧的闸口读的是同一份。回归用例钉住了两边判出来一样，分叉会被拦住。
+  // 当前 49 份里 47 份没写 precision.kv_cache，判成两种：
+  // **46 份「未公布」**（自回归模型，厂商没说落盘精度，字节按权重 dtype 兜底）
+  // 与 **1 份「不适用」**（wan2.2-ti2v-5b，扩散模型每步重算、根本不建 KV）。
+  // 这两种空必须分开 —— 前者说「这个数是占位值」，后者说「没有这笔账要规划」
   return { text: absence('kv_dtype', m, m.derived).label, declared: false };
 }
 
@@ -514,14 +538,34 @@ export const KV_BASIS_NOTE: Record<string, string> = {
 };
 
 export const TRACKED_FIELDS: TrackedField[] = [
-  { key: 'layers', label: '层数', axis: 'scale', group: 'spec', get: (m) => m.arch?.layers },
-  { key: 'hidden', label: 'hidden', axis: 'scale', group: 'spec', get: (m) => m.arch?.hidden },
+  // 生成类记录没有 arch 块 —— DiT 的层数/宽度/头数在 generation.backbone 里
+  // （arch 是自回归语言模型的形状：vocab、KV cache、MoE 路由）。
+  // 这几列对两种 kind 都有真值，所以取值器回落到 backbone，**不是**标成「不适用」：
+  // 那会说「这个模型没有层数」，而它有 30 层。
+  // 真的不存在的那些列（词表、上下文、KV 各项）走 columns.json 的缺值规则。
+  { key: 'layers', label: '层数', axis: 'scale', group: 'spec',
+    get: (m) => m.arch?.layers ?? m.generation?.backbone?.layers },
+  { key: 'hidden', label: 'hidden', axis: 'scale', group: 'spec',
+    get: (m) => m.arch?.hidden ?? m.generation?.backbone?.hidden },
   { key: 'vocab', label: '词表', axis: 'scale', group: 'spec', get: (m) => m.arch?.vocab },
-  { key: 'attn_type', label: '注意力类型', axis: 'attention', group: 'spec', get: (m) => m.arch?.attention?.type },
+  { key: 'attn_type', label: '注意力类型', axis: 'attention', group: 'spec',
+    get: (m) => m.arch?.attention?.type
+      ?? (m.generation?.backbone
+        // 生成类这一列说的是「文本条件怎么进主干」—— 它决定注意力序列长度是 n 还是
+        // n+m，而注意力是 O(n²)，所以这个轴和语言模型的 MLA/GQA 是同一类信息：
+        // 都在回答「这一代的注意力要搬多少」
+        ? `${m.generation.backbone.stream_design ?? '—'} · 文本走 ${m.generation.backbone.text_conditioning ?? '—'}`
+        : undefined) },
   { key: 'heads', label: '头数 / KV 头', axis: 'attention', group: 'spec',
     get: (m) => (m.arch?.attention?.num_heads
-      ? `${m.arch.attention.num_heads} / ${m.arch.attention.num_kv_heads ?? '—'}` : undefined) },
-  { key: 'head_dim', label: 'head_dim', axis: 'attention', group: 'spec', get: (m) => m.arch?.attention?.head_dim },
+      ? `${m.arch.attention.num_heads} / ${m.arch.attention.num_kv_heads ?? '—'}`
+      : m.generation?.backbone?.heads
+        // 扩散 DiT 没有 GQA 的概念（Wan2.2-TI2V-5B 实测 k/v 都是满宽，24 头 = 24 KV 头），
+        // 但别的候选未必，所以照样印两个数而不是一个
+        ? `${m.generation.backbone.heads} / ${m.generation.backbone.heads}`
+        : undefined) },
+  { key: 'head_dim', label: 'head_dim', axis: 'attention', group: 'spec',
+    get: (m) => m.arch?.attention?.head_dim ?? m.generation?.backbone?.head_dim },
   { key: 'kv_lora', label: 'KV latent 秩', axis: 'attention', group: 'spec', get: (m) => m.arch?.attention?.kv_lora_rank },
   { key: 'q_lora', label: 'Q 低秩', axis: 'attention', group: 'spec', get: (m) => m.arch?.attention?.q_lora_rank },
   { key: 'o_lora', label: '输出低秩 / 组', axis: 'attention', group: 'spec',

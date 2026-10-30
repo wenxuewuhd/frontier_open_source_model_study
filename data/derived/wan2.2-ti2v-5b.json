@@ -1,0 +1,177 @@
+{
+ "id": "wan2.2-ti2v-5b",
+ "generated_by": "scripts/derive.py",
+ "generated_at": "2026-10-30T15:15:05+00:00",
+ "inputs": {
+  "facts_dir": "facts/wan2.2-ti2v-5b",
+  "config_present": true,
+  "shapes_present": true,
+  "model_yaml": "data/models/wan/wan2.2-ti2v-5b.yaml",
+  "ep_size": 1
+ },
+ "from_shapes": {
+  "available": true,
+  "complete": true,
+  "tensor_count": 825,
+  "params_total": 4999787712.0,
+  "params_by_subsystem": {
+   "attention": 2265661440.0,
+   "norm": 552960.0,
+   "dense_ffn": 2642933760.0,
+   "other": 90639552.0
+  },
+  "params_total_container": 4999787712.0,
+  "params_container_by_subsystem": {
+   "attention": 2265661440.0,
+   "norm": 552960.0,
+   "dense_ffn": 2642933760.0,
+   "other": 90639552.0
+  },
+  "scale_elements": 0.0,
+  "weight_bytes_total": 19999150848.0,
+  "weight_bytes_by_subsystem": {
+   "attention": 9062645760.0,
+   "norm": 2211840.0,
+   "dense_ffn": 10571735040.0,
+   "other": 362558208.0
+  },
+  "weight_bytes_by_dtype": {
+   "FP32": 19999150848.0
+  },
+  "weight_dtype_containers": {},
+  "experts_seen": 0,
+  "expert_storage": null,
+  "layers_present": 30,
+  "mtp_layers_seen": [],
+  "mtp_attention_suffixes": [],
+  "draft_blocks_seen": 0,
+  "layer_index_max": 30,
+  "layers_missing": [],
+  "moe_layers_seen": 0,
+  "unknown_dtypes": [],
+  "packing_applied": {},
+  "packing_suspect": [],
+  "incomplete_note": null
+ },
+ "kv_cache": {
+  "status": "not_applicable",
+  "why": "非自回归生成模型：推理过程中无跨步复用的 KV，不适用本口径"
+ },
+ "kv_capacity_bytes_at_context": {},
+ "kv_capacity_basis": null,
+ "active_params": {
+  "status": "not_applicable",
+  "why": "生成类每步对全部 latent token 做一次前向，没有「每 token 激活」这个量；单步负载见 generation_workload"
+ },
+ "flops": {},
+ "arithmetic_intensity": {},
+ "ep_communication": {
+  "status": "not_applicable",
+  "why": "生成类不做 EP all-to-all；对应的通信是序列并行(Ulysses)的 all-to-all，口径不同，本脚本未建模"
+ },
+ "reconciliation": [
+  {
+   "item": "路由专家数",
+   "status": "ok",
+   "why": "dense 模型，无 MoE"
+  },
+  {
+   "item": "层数",
+   "config": 30.0,
+   "shapes": 30.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "参数总量",
+   "YAML 声明": 4999787712.0,
+   "shapes 实测": 4999787712.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "skip",
+   "why": "repoinfo.json 里没有 safetensors tally"
+  }
+ ],
+ "generation_workload": {
+  "status": "ok",
+  "bucket": {
+   "width": 1280,
+   "height": 704,
+   "frames": 121,
+   "fps": 24,
+   "duration_s": 5.0416667,
+   "default": true,
+   "note": "参考实现 SUPPORTED_SIZES['ti2v-5B'] 只有 1280×704 与 704×1280 两档， 都是 720P。frames 121 与 fps 24 取自 ti2v_5B 配置； duration_s = 121 / 24 = 5.0417 秒，模型卡口语写作「5 秒」"
+  },
+  "effective_compression": {
+   "temporal": 4,
+   "spatial_h": 32,
+   "spatial_w": 32,
+   "note": "VAE 压缩率 × DiT patch。两者在记录里分开存，只在这里相乘 —— 合成一个数存进记录是范畴错误"
+  },
+  "latent_tokens": 27280.0,
+  "latent_tokens_terms": {
+   "formula": "[(F - 1) / t_vae + 1  （时间因果 VAE：首帧单独编码）] / p_t × (H / s_vae / p_h) × (W / s_vae / p_w)",
+   "factors": {
+    "frames": 121,
+    "height": 704,
+    "width": 1280,
+    "vae_temporal_compression": 4,
+    "vae_spatial_compression": 16,
+    "vae_causal": true,
+    "patch_t": 1,
+    "patch_h": 2,
+    "patch_w": 2
+   },
+   "per_axis": {
+    "t": 31.0,
+    "h": 22.0,
+    "w": 40.0
+   },
+   "latent_frames": 31.0
+  },
+  "sequence_tokens": 27280.0,
+  "sequence_tokens_is_lower_bound": false,
+  "flops_per_step": {
+   "linear": 272788417566720.0,
+   "linear_terms": {
+    "formula": "2 × 激活参数 × 序列 token 数",
+    "factors": {
+     "active_params": 4999787712,
+     "source": "params.active_decode（记录声明）",
+     "tokens": 27280.0
+    }
+   },
+   "attention": 274341298176000.0,
+   "attention_terms": {
+    "formula": "每层 QK^T 2·n²·d + (softmax·V) 2·n²·d = 4·n²·d，再乘层数",
+    "factors": {
+     "layers": 30,
+     "hidden": 3072,
+     "tokens": 27280.0
+    },
+    "note": "稠密全注意力口径。块稀疏（SSTA）或线性注意力要另按其形态折算，本函数不替你折 —— 折算比例是记录里的事实，不是公式里的常数"
+   },
+   "total": 547129715742720.0,
+   "attention_share": 0.5014191155813681
+  },
+  "end_to_end_terms": {
+   "formula": "步数 × 每步前向次数 × 单步 FLOPs",
+   "factors": {
+    "steps": 50,
+    "forwards_per_step": 2,
+    "cfg_distilled": false,
+    "cfg_embedded": false
+   }
+  },
+  "flops_end_to_end": 5.4712971574272e+16,
+  "excluded": [
+   "文本编码一次（编码器参数量在 generation.text_encoders，本函数不计）",
+   "VAE decode 一次（VAE 结构不在 config 里，解码器是 Transformer 时这一项不是小量）",
+   "音频 VAE 与声码器"
+  ]
+ }
+}
