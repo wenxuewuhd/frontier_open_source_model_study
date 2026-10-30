@@ -11,6 +11,9 @@ sources:
     url: https://huggingface.co/Qwen/Qwen3.8-27B
     locator: config.json @ 1d4bf0f2ff60
     accessed: 2026-10-28
+    note: >-
+      许可取自 HF tags license:apache-2.0 与 cardData license: apache-2.0。
+      同代旗舰是 license:other（qwen3.8-max），两档许可不同
 
 hf:
   repo: Qwen/Qwen3.8-27B
@@ -19,13 +22,56 @@ hf:
 
 lineage:
   track: side
+  predecessor: qwen3.8-2.4t-a95b
+  changed_from_predecessor:
+    - axis: moe
+      text: >-
+        FFN 由 MoE 换成 dense：主干 64 层与草稿块都是 gate_proj / up_proj / down_proj 三个独立
+        2 维投影（中间维 17408）。旗舰独有的 14 个张量名族 —— 堆叠的 experts.gate_up_proj
+        [512, 4096, 8192] 与 experts.down_proj、router mlp.gate、shared_expert.* 与
+        shared_expert_gate（主干与草稿块各一套）—— 这里一个都没有
+      benefit: >-
+        差的是机制不是规格：dense GEMM 对三维堆叠 grouped GEMM + router + 共享专家，
+        算子集合不同，不是同一套算子换形状。这是收录这一档的主要理由，也是它和本仓删掉的
+        五份 DeepSeek 刷新（config 逐字段相同、张量名集合相同）不是一类的原因
+    - axis: modality
+      text: >-
+        多一整条视觉前端：visual.* 共 21 个张量名族 —— 27 个 ViT 块（qkv / proj / 两层非门控 MLP /
+        两个带 bias 的 norm）、patch_embed（[1152, 3, 2, 16, 16]，3D 卷积）、pos_embed 与 merger，合计 460,730,096 参数。
+        merger 把 2×2 个 patch 拼成 4608（= 1152 × 4）再投到主干 hidden 5120
+      benefit: >-
+        旗舰是纯文本，视觉塔的算子（带 bias 的 LayerNorm、GELU、3D patch 卷积、patch merge）
+        在这一档才出现
+    - axis: attention
+      text: >-
+        位置编码换成 interleaved mRoPE（mrope_section [11, 11, 10]，旗舰是普通 RoPE）。
+        注意力与线性注意力的张量名族与旗舰完全相同（归一前缀后两档共有 32 族），只换形状：
+        full 层 24 头（旗舰 64），线性层 value 头 48（旗舰 128），key:value 头数比 1:3 对 1:8
+      benefit: >-
+        注意力侧除 mRoPE 外不带来新算子。它在缓存账上的用处是给了第二个 key:value 比：
+        「conv1d 通道数 = in_proj_qkv 输出维」在 1:8 与 1:3 两档同时成立，才能当规律用（R1）
 
 params:
+  total: 27.0e+9
+  excludes: [vision, draft]
+  breakdown:
+    dense_ffn: 17112800000.0
+    attention: 7239770000.0
+    embed: 1271400000.0
+    lm_head: 1271400000.0
+    vision: 460730000.0
+    draft: 424699000.0
+    norm: 674816.0
   counting_note: >-
-    按完整权重清单统计（18 分片 1199 张量）。含 1 层 MTP；不含独立的量化 scale
-    （本版以 BF16 发布，无量化 scale 张量）。实测总量 27.8B、权重存储 51.75 GiB。
-    激活参数两个口径：带宽口径 25.6B、可比官方口径 26.9B（含输入词表）。
-    模型卡未以单一数字披露总参数量，故 params 不填声明值，交叉核对相应跳过。
+    total 取自模型名（27B），属厂商声明；breakdown 是本仓按完整权重清单（18 分片 1199 张量，
+    全 BF16、无量化 scale）实测的分项，取 6 位有效数字。实测全量 27,781,427,952，与 HF 的
+    safetensors tally 逐位相同，含视觉塔（460,730,096）与 1 个草稿块（424,699,392）。
+    名字不按全量算：全量对 27B 是 +2.89%，取整是 28B，也超出 Gate B 的 2% 容差。
+    扣哪几项是判断 —— 只扣视觉 27.32B（+1.19%）、只扣草稿 27.36B（+1.32%）取整也都是 27B；
+    excludes 取两者都扣，即语言主干 26,895,998,464（−0.39%），偏差最小，也和「名字指语言模型」
+    的读法一致。原来不填声明值，Gate B 的参数总量一项 skip，「名字不按全量算」这件事就一直看不见。
+    权重存储 51.75 GiB。激活参数两个口径：带宽口径 25.6B、可比官方口径 26.9B（含输入词表）——
+    dense 模型的可比官方口径恰等于语言主干总量。
 
 context:
   max: 262144
@@ -37,13 +83,20 @@ arch:
   norm: RMSNorm
   norm_eps: 1.0e-06
   activation: SwiGLU
-  position: RoPE，partial_rotary_factor 0.25（只对 1/4 维度加 rope）
+  position: >-
+    interleaved mRoPE，theta 1e7，partial_rotary_factor 0.25（只对 1/4 维度加 rope）：
+    256 × 0.25 = 64 维即 32 个频率对，mrope_section [11, 11, 10] 正好分完 32 对
 
   attention:
     type: hybrid
     num_heads: 24
     num_kv_heads: 4
     head_dim: 256
+    head_dim_note: >-
+      full attention 层的 q_proj 是 [12288, 5120]，12288 = 2 × 24 头 × 256 —— 输出维翻倍，
+      一半是 query、一半是输出门（config 的 attn_output_gate: true）。o_proj 入口
+      6144 = 24 × 256 只对应 query 那一半。按 num_heads × head_dim 推 q_proj 会低一半。
+      线性层的输出门是另一个张量 in_proj_z [6144, 5120]（= 48 value 头 × 128），不在 q 里
     partial_rotary_factor: 0.25
     layer_pattern: 3:1 linear:full，每 4 层一个 full attention
     hybrid:
@@ -54,7 +107,10 @@ arch:
       note: >-
         这是本记录的关键结构。16 层 full attention 的 KV 随上下文线性增长，
         48 层线性注意力只带每序列固定的递归状态。两者增长方式不同，
-        容量规划必须分开算。
+        容量规划必须分开算。以上层数都是主干口径（64 主干层 + 1 草稿块）：
+        草稿块 mtp.layers.0 带一套与主干 full attention 同名的 q/k/v/o 投影、没有 linear_attn，
+        所以开草稿侧时累积 KV 的是 17 层、65536 → 69632 B/token，线性状态仍是 48 层。
+        本记录与 data/derived/ 都按主干口径记账。
     output_gate:
       enabled: true
       type: swish
@@ -67,9 +123,14 @@ arch:
       conv_kernel_dim: 4
       state_dtype: FP32
       state_layout_note: >-
-        config 只给出头数与头维，不给状态张量布局。推导脚本按
-        [num_value_heads, key_head_dim, value_head_dim] 估算，并标为含估算项。
-        用于容量规划前需按实现核实。
+        config 只给出头数与头维，不给矩阵状态的布局 —— 但这句只管矩阵状态一项，
+        其余因子都在权重清单里：每层 linear_attn.A_log [48] 与 dt_bias [48]，衰减参数每状态头
+        一个，故状态头数为 48（即 value 头数）；in_proj_qkv [10240, 5120] = q 16×128 + k 16×128
+        + v 48×128；48/48 层 conv1d.weight 都是 [10240, 1, 4]，首维恒等于 in_proj_qkv 的输出维
+        （短卷积是 depthwise、作用在整条 qkv 流上），每层 conv 状态 = 4 × 10240 × 4 B（FP32），
+        窗长按全窗计是上界。推导脚本按 [num_value_heads, key_head_dim, value_head_dim] 估矩阵状态，
+        key_head_dim 与 value_head_dim 都是 128，维序不影响容量；要按实现核的是实际存储
+        是否就是这一个张量。
 
   ffn:
     type: dense
@@ -90,7 +151,6 @@ arch:
     fusion: patch merge 后投影到主干 hidden
 
 precision:
-  training: BF16
   weights_release: [BF16]
 
 platforms:
@@ -109,6 +169,8 @@ bottlenecks:
       混合结构把长上下文的 KV 压力大幅转移：只有 1/4 的层累积 KV cache，
       其余层的状态与上下文长度无关。代价是引擎要同时管理两种生命周期不同的
       显存对象，而且线性层的状态无法像 KV 那样按 block 分页复用。
+    quantified: >-
+      16 层累积 KV、48 层带固定状态（主干口径，64 主干层 + 1 草稿块；开草稿侧累积 KV 为 17 层）
     visibility: public
   - dimension: operator-gap
     finding: >-
@@ -152,10 +214,16 @@ evidence:
   license: official
   hf: official
   lineage: official
+  lineage.changed_from_predecessor: derived
   params: official
-  params.counting_note: derived
+  params.breakdown: derived
+  params.excludes: judgement
+  params.counting_note: judgement
   context: official
   arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.attention.head_dim_note: derived
   arch.attention.type: judgement
   arch.attention.layer_pattern: derived
   arch.attention.hybrid.layer_types_count: derived
@@ -174,19 +242,155 @@ evidence:
   open_questions: judgement
 
 notes: >-
-  较小档位，不是家族旗舰（旗舰见 qwen3.8-2.4t-a95b）。保留它是因为它是
-  同代里下载量最高的一个，且带视觉塔与 dense FFN，和旗舰形成结构对照。
-  本记录是 P0-D 的 schema 普适性测试用例。原计划找一个「结构朴素」的旗舰作对照，
-  但调研发现 2026 年的旗舰已无朴素结构：Qwen3.8 全线是混合线性注意力，
-  GLM-5.3 是 MLA + DSA 稀疏。于是改选与 V4.1 差异最大的这一个，
-  它在三个轴上都和 V4.1 不同：dense FFN（无 moe 块）、混合线性注意力、不同的视觉融合路径。
+  较小档位，不是家族旗舰（旗舰见 qwen3.8-2.4t-a95b）。收录理由是与旗舰的可核差异，
+  逐条见 lineage.changed_from_predecessor：差的是机制不是规格 —— dense FFN 对堆叠 grouped GEMM
+  + router + 共享专家、整条视觉前端、mRoPE。注意力与线性注意力一侧与旗舰同名同构，只换形状。
+  本记录最初是 P0-D 的 schema 普适性测试用例：与 V4.1 在三个轴上都不同
+  （dense FFN、混合线性注意力、视觉融合路径）。
 
 open_questions:
   - >-
-    线性注意力的状态张量布局未在 config 中给出，推导值是按常见布局的估算。
-    要用于容量规划需按实现核实
-  - params.total 未在模型卡中以单一数字披露，当前以权重清单实测为准
+    矩阵状态的实际存储是否就是一个 [48, 128, 128] 的 FP32 张量需按实现确认
+    （两维都是 128，维序不影响容量）；状态头数与 conv 通道数已由权重清单确定
   - >-
-    full_attention_interval 为 4，但 layer_types 的首尾是否严格按周期排布
-    需与实现确认（本记录按 config 的 layer_types 逐层统计，不依赖周期假设）
+    27B 扣哪几项是判断：只扣视觉或只扣草稿取整也是 27B，excludes 取两者都扣（偏差最小），
+    没有一手说明
   - KV cache 的实际存储精度未披露，推导时按模型 dtype 兜底
+  - >-
+    训练精度没有一手来源：config 的 dtype: bfloat16 说的是发布权重，模型卡正文未核，
+    故不填 precision.training
+  - >-
+    config 的 output_gate_type: swish 只有一个键，而门在权重里有两处（full 层 q_proj 的
+    后一半、线性层的 in_proj_z）。swish 作用在哪一处或两处，未按实现核
+
+reviewed:
+  date: '2026-10-30'
+  scope:
+    - official
+    - derived
+    - judgement
+  reviewer: 上一会话两个独立核查代理 + 本会话复算
+  method: >-
+    上一会话两个核查代理按 .claude/skills/model-audit 的提问顺序各自过两份 Qwen 记录，
+    提出本块与 qwen3.8-2.4t-a95b 的 review 所列发现。进记录的每个数本会话都在 facts/ 上重算过：
+    conv1d / in_proj_qkv 首维的逐层恒等（48/48）、A_log 形状（48/48）、q_proj 的形状
+    （17/17，含草稿块）、参数分项与四种扣法的偏差、HF tags 与 cardData 里的许可字段、
+    视觉塔的张量名族与块数（27）、full 层位置（权重里 self_attn 恰在 L3+4k，16 层）、
+    以及与旗舰的归一化张量名族比对（R10）。
+    derive.py 以默认 --ep 1 重跑，0 处不一致，外部 safetensors tally 逐位相同。
+review:
+  - id: R1
+    field: arch.attention.linear_state
+    severity: wrong
+    claim: 每序列线性状态 145.50 MiB（derive.py 的 conv 项 = conv_kernel_dim × key 头数 × key_head_dim × 4 B）
+    finding: >-
+      短卷积是 depthwise、作用在整条 qkv 流上。48/48 层 conv1d.weight 都是 [10240, 1, 4]，
+      首维恒等于 in_proj_qkv [10240, 5120] 的输出维 = 2×16×128 + 48×128。原公式只数了
+      2048 通道，conv 项少算 5 倍（每层 32768 B → 163840 B）。旗舰在 key:value 1:8 下同一恒等式
+      也成立（69/69 层），两档比值不同而同时成立
+    resolution: corrected
+    changed_to: >-
+      derive.py 的 conv 项改按 qkv 通道数计。每层 3,309,568 B，48 层 158,859,264 B
+      = 151.50 MiB/序列（+3.96%）。窗长仍按全窗 4 计，是上界
+  - id: R2
+    field: arch.attention.linear_state.state_layout_note
+    severity: overreach
+    claim: 「config 只给出头数与头维，不给状态张量布局……用于容量规划前需按实现核实」
+    finding: >-
+      「config 不给」被写成了「没有来源」。这份比旗舰那份更彻底：连旗舰引过的
+      A_log / dt_bias 证状态头数都没有，整个线性状态都挂在「需按实现核实」下。
+      而 conv 通道数与状态头数都直接写在权重清单的形状里，免责声明只该免掉矩阵状态的维序一项
+    resolution: corrected
+    changed_to: 注释改为逐因子列出清单来源（A_log [48]、in_proj_qkv、conv1d），只把矩阵状态的实际存储留给实现核
+  - id: R3
+    field: license
+    severity: wrong
+    claim: 交接说明称两份 Qwen 的 license apache-2.0 都与一手来源矛盾
+    finding: >-
+      对本记录不成立：facts/qwen3.8-27b/repoinfo.json 的 tags 是 license:apache-2.0、
+      cardData 是 license: apache-2.0。矛盾只在旗舰（license:other，qwen3.8-max）。
+      两档许可不同，不能从一档推另一档
+    resolution: refuted
+    changed_to: 原值保留，一手来源写进 sources[0].note
+  - id: R4
+    field: precision.training
+    severity: unsupported
+    claim: training BF16，继承 precision official
+    finding: config 只有 dtype 一键（bfloat16），说的是发布权重；本仓读过的来源里没有训练精度
+    resolution: corrected
+    changed_to: 删掉 precision.training，加一条 open question 说明无一手来源
+  - id: R5
+    field: arch.attention.hybrid.note
+    severity: imprecise
+    claim: 「16 层 full attention 的 KV 随上下文线性增长」，未说明口径
+    finding: >-
+      清单里另有 1 个草稿块 mtp.layers.0，带着与主干 full attention 同名的 q/k/v/o 投影、
+      没有 linear_attn，开草稿侧时它也累积 KV。16 来自 config 的 layer_types（主干 64 层）
+    resolution: corrected
+    changed_to: >-
+      保留主干口径，在 hybrid.note 与 kv-capacity 的 quantified 里写明
+      「64 主干层 + 1 草稿块，开草稿侧累积 KV 17 层、69632 B/token」
+  - id: R6
+    field: evidence
+    severity: miscategorized
+    claim: arch 的 official 前缀继承覆盖 activation / norm
+    finding: >-
+      SwiGLU 是 hidden_act: silu 配 gate/up 两路投影的推断，RMSNorm 是从 rms_norm_eps 与
+      无 bias 的 norm 权重推的，都不是官方披露。继承 official 让它们绕过 Gate C
+    resolution: corrected
+    changed_to: >-
+      两者与新增的 head_dim_note、params.breakdown、lineage.changed_from_predecessor 标 derived；
+      params.excludes 与 counting_note 标 judgement
+  - id: R7
+    field: params.total
+    severity: missing
+    claim: 「模型卡未以单一数字披露总参数量，故 params 不填声明值，交叉核对相应跳过」
+    finding: >-
+      名字里的 27B 就是厂商声明值。不填它，Gate B 的参数总量一项 skip，于是一个口径事实
+      一直看不见：全量 27,781,427,952 对 27B 是 +2.89%，超出 2% 容差，取整是 28B ——
+      名字不按全量算。扣掉视觉（460,730,096）与草稿（424,699,392）是 26,895,998,464，−0.39%。
+      只扣其中一项取整也是 27B（+1.19% / +1.32%），所以扣哪几项仍是判断
+    resolution: corrected
+    changed_to: >-
+      补 total 27e9、excludes [vision, draft] 与七项 breakdown，counting_note 写明四种扣法的偏差。
+      Gate B 的参数总量一项由 skip 变为 ok
+  - id: R8
+    field: arch.attention.output_gate
+    severity: missing
+    claim: output_gate enabled、type swish，没有形状说明
+    finding: >-
+      17/17 个 q_proj（16 主干 full 层 + 草稿块）都是 [12288, 5120] = 2 × 24 × 256，
+      比 num_heads × head_dim 大一倍，o_proj 入口仍是 6144。线性层的门是 in_proj_z [6144, 5120]
+    resolution: corrected
+    changed_to: 新增 head_dim_note 写明 q_proj 的两半与线性层的 in_proj_z；swish 作用在哪一处留 open question
+  - id: R9
+    field: arch.position
+    severity: missing
+    claim: 「RoPE，partial_rotary_factor 0.25」
+    finding: >-
+      config 的 rope_parameters 是 mrope_interleaved: true、mrope_section [11, 11, 10]、
+      rope_theta 1e7。旗舰是普通 RoPE，这是两档之间一处机制差异，记录里没有
+    resolution: corrected
+    changed_to: 改为 interleaved mRoPE，并写明 64 维 rope = 32 个频率对、恰被 [11, 11, 10] 分完
+  - id: R10
+    field: notes
+    severity: unsupported
+    claim: 「保留它是因为它是同代里下载量最高的一个」
+    finding: >-
+      下载量不是结构理由，也没有在本仓任何取数里核过。核查代理给了一个结构理由：
+      「与旗舰共有的归一化张量名族只有 13 个（全是 MTP 胶水与 lm_head）」。复算不成立 ——
+      13 是没把 model.language_model. 与 model. 两种前缀归一的产物。归一后旗舰 46 族、
+      本档 59 族、共有 32 族：注意力、线性注意力、norm、embed 与 MTP 的注意力部分全部同名。
+      差异只在 FFN（旗舰独有 14 族：堆叠 experts、router、shared_expert*）与视觉
+      （本档独有 27 族：21 个 visual.* 加 6 个 dense FFN）。结论（该留）不变，论据换成这份清单
+    resolution: corrected
+    changed_to: >-
+      收录理由改写进 lineage.changed_from_predecessor（三条：moe / modality / attention，
+      predecessor 设为旗舰），notes 只留指针。删掉「下载量最高」
+  - id: R11
+    field: notes
+    severity: overreach
+    claim: 「Qwen3.8 全线是混合线性注意力」
+    finding: 本仓只录了 Qwen3.8 的两档，其余档位没有核过
+    resolution: corrected
+    changed_to: 删掉这句，notes 只说本档与旗舰的关系

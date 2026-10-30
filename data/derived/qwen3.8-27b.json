@@ -1,7 +1,7 @@
 {
  "id": "qwen3.8-27b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T16:01:58+00:00",
+ "generated_at": "2026-10-30T01:08:44+00:00",
  "inputs": {
   "facts_dir": "facts/qwen3.8-27b",
   "config_present": true,
@@ -65,7 +65,7 @@
   "full_attention_layers": 16,
   "linear_attention_layers": 48,
   "per_token_bytes": 65536,
-  "per_sequence_bytes": 152567808,
+  "per_sequence_bytes": 158859264,
   "per_token_elems": 32768,
   "per_token_elems_bound": "exact",
   "components": {
@@ -83,14 +83,14 @@
    },
    "linear_state": {
     "layers": 48,
-    "bytes_per_layer": 3178496,
-    "bytes_per_sequence": 152567808,
+    "bytes_per_layer": 3309568,
+    "bytes_per_sequence": 158859264,
     "dtype": "FP32",
     "terms": {
      "matrix_state": "num_value_heads(48) * key_head_dim(128) * value_head_dim(128) * bytes(4)",
-     "conv_state": "conv_kernel_dim(4) * heads * key_head_dim"
+     "conv_state": "conv_kernel_dim(4) * qkv_channels(10240 = 2 * 16 * 128 + 48 * 128) * bytes(4)"
     },
-    "assumption": "递归状态按 [num_value_heads, key_head_dim, value_head_dim] 估，conv 状态按卷积窗估。实际布局依实现而定，需核实后再用于容量规划"
+    "assumption": "递归状态按 [num_value_heads, key_head_dim, value_head_dim] 估；conv 状态的通道数取自权重清单（= in_proj_qkv 输出维），窗长按 conv_kernel_dim 全窗计，是上界 —— 实现若只存 k-1 个位置会略低。矩阵状态那一侧的布局仍依实现而定，需核实后再用于容量规划"
    }
   },
   "notes": [
@@ -101,9 +101,9 @@
   "bytes_basis": "dtype_fallback"
  },
  "kv_capacity_bytes_at_context": {
-  "4096": 421003264,
-  "32768": 2300051456,
-  "262144": 17332436992
+  "4096": 427294720,
+  "32768": 2306342912,
+  "262144": 17338728448
  },
  "kv_capacity_basis": "dtype_fallback",
  "active_params": {
@@ -154,8 +154,15 @@
   },
   {
    "item": "参数总量",
-   "status": "skip",
-   "why": "YAML 声明 缺失"
+   "YAML 声明": 27000000000.0,
+   "shapes 实测(扣除 vision+draft)": 26895998464.0,
+   "delta_pct": -0.39,
+   "status": "ok"
+  },
+  {
+   "item": "口径说明",
+   "status": "ok",
+   "why": "声明值不含 vision+draft；含在内的实测总量为 27.8B"
   },
   {
    "item": "外部参数量对账",
@@ -165,7 +172,7 @@
   {
    "item": "KV 层覆盖口径",
    "status": "ok",
-   "why": "公式按主干 64 层算（config num_hidden_layers）；清单里另有 1 个草稿块，带着与主干注意力同名的 4 个投影，即它们也产出 KV。开草稿侧时容量要按 65 层算 —— 记录里要写明用哪个口径"
+   "why": "公式按主干 16 层 full attention 算（主干共 64 层，其余是不累积 KV 的线性层）；清单里另有 1 个草稿块，带着与主干 full attention 同名的 4 个投影，即它们也产出 KV。开草稿侧时累积 KV 的层要按 17 层算 —— 记录里要写明用哪个口径"
   }
  ]
 }

@@ -335,7 +335,14 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None,
     sb = dtypes.nbytes(sdt)
     if linear_layers and nvh and kd and vd and sb:
         mat = nvh * kd * vd * sb
-        cv = conv * (nkh or nvh) * kd * sb if conv else 0
+        # 短卷积是 depthwise，作用在整条 qkv 流上 —— 通道数 = q + k + v 三段之和，
+        # 不是 key 那一段。原先写成 (nkh or nvh) * kd 只数了 key 一段，旗舰少 10 倍、
+        # 27B 少 5 倍。权重清单给的恒等式把它钉死了：conv1d.weight 的首维
+        # 恒等于 in_proj_qkv 的输出维（旗舰 69/69 层、27B 48/48 层，零例外）。
+        # q 段按 key 头数展开（q 与 k 同形），v 段按 value 头数 —— 两个模型的
+        # key/value 头数比不同（1:8 与 1:3），两档同时成立才说明这是规律不是巧合。
+        qkv_ch = 2 * (nkh or nvh) * kd + nvh * vd
+        cv = conv * qkv_ch * sb if conv else 0
         comp["linear_state"] = {
             "layers": linear_layers,
             "bytes_per_layer": mat + cv,
@@ -344,10 +351,15 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None,
             "terms": {
                 "matrix_state": f"num_value_heads({nvh}) * key_head_dim({kd})"
                                 f" * value_head_dim({vd}) * bytes({sb})",
-                "conv_state": f"conv_kernel_dim({conv}) * heads * key_head_dim" if conv else None,
+                "conv_state": (
+                    f"conv_kernel_dim({conv}) * qkv_channels({qkv_ch}"
+                    f" = 2 * {nkh or nvh} * {kd} + {nvh} * {vd}) * bytes({sb})"
+                ) if conv else None,
             },
-            "assumption": "递归状态按 [num_value_heads, key_head_dim, value_head_dim] 估，"
-                          "conv 状态按卷积窗估。实际布局依实现而定，需核实后再用于容量规划",
+            "assumption": "递归状态按 [num_value_heads, key_head_dim, value_head_dim] 估；"
+                          "conv 状态的通道数取自权重清单（= in_proj_qkv 输出维），"
+                          "窗长按 conv_kernel_dim 全窗计，是上界 —— 实现若只存 k-1 个位置会略低。"
+                          "矩阵状态那一侧的布局仍依实现而定，需核实后再用于容量规划",
         }
         status = "partial"
         notes.append("线性注意力的状态布局依实现而定，此处是按常见布局的估算")
@@ -654,7 +666,17 @@ def reconcile(cfg_t: dict, shp: dict, declared: dict, external: dict = None,
         # 但每次 derive 都把两个数摆出来，让 Gate B 的人决定按哪个口径写
         mtp_attn = shp.get("mtp_attention_suffixes") or []
         blocks = shp.get("draft_blocks_seen") or 0
-        if mtp_attn and blocks and kv and kv.get("layers"):
+        # 混合结构只有 full attention 层累积 KV，「主干 N 层 + 草稿块」会把 N 读成 KV 层数、
+        # 高估好几倍。草稿块匹配的是主干注意力的同名投影，所以它加的是 full 层
+        full = kv.get("full_attention_layers") if kv else None
+        if mtp_attn and blocks and full:
+            out.append({"item": "KV 层覆盖口径", "status": "ok",
+                        "why": f"公式按主干 {full} 层 full attention 算（主干共 {kv['layers']} 层，"
+                               f"其余是不累积 KV 的线性层）；清单里另有 {blocks} 个草稿块，"
+                               f"带着与主干 full attention 同名的 {len(mtp_attn)} 个投影，"
+                               f"即它们也产出 KV。开草稿侧时累积 KV 的层要按 "
+                               f"{full + blocks} 层算 —— 记录里要写明用哪个口径"})
+        elif mtp_attn and blocks and kv and kv.get("layers"):
             out.append({"item": "KV 层覆盖口径", "status": "ok",
                         "why": f"公式按主干 {kv['layers']} 层算（config "
                                f"num_hidden_layers）；清单里另有 {blocks} 个草稿块，"
