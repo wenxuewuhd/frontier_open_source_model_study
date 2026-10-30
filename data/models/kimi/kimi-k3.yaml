@@ -382,6 +382,13 @@ precision:
     FP32: { manifest_taken: true, in_precision_table: true }
   quantization:
     method: compressed-tensors（mxfp4-pack-quantized）
+    # **MXFP4 这个名字是厂商的，不是本仓按签名推的。** 模型卡第 4 节标题就叫
+    # 「Native MXFP4 Quantization」，规格表 Quantization 行写「MXFP4 weights / MXFP8
+    # activations (quantization-aware training)」；config 的 format 另写
+    # mxfp4-pack-quantized。方法名不等于格式名，但这里两样都有，所以字段照抄厂商的名字。
+    # 对比：DeepSeek 的专家实测签名与本代完全同构（块 32 + E8M0 一级 scale、元素 E2M1），
+    # 而那边厂商只说「FP4」、从不给块格式命名，于是本仓那几份记 FP4 ——
+    # **两边的名字之差是厂商之差，不是本仓之差**（见核查 R23）
     expert_dtype: MXFP4
     packing_note: >-
       路由专家的 FP4 权重两个一字节装进 U8 容器（weight_packed 末维是逻辑维的一半），
@@ -397,6 +404,10 @@ precision:
       norm: BF16
       residual: BF16
       vision: BF16
+    # **这一格的口径是落盘容器 dtype**，与 DeepSeek 那几份同口径：那边清单里 .scale 的 dtype
+    # 字面是 F8_E8M0，这边字面是 U8（config 的 scale_dtype 也写 torch.uint8），
+    # 两边都写落盘容器，差的是厂商存法，不是本仓口径。U8 里装的按 MX 规范是 E8M0 指数，
+    # 但清单只能证明容器 —— 那层语义来自规范而不是这份权重，所以不写进字段（见 block_size_note）
     per_subsystem_scale:
       expert: UINT8
     per_subsystem_block:
@@ -939,6 +950,30 @@ review:
       一个 per-token 字节数不说 batch 就不完整
     resolution: corrected
     changed_to: quantified 末尾补 batch 口径声明与 1/4/8/32/128 五档的占比与每 token 字节数
+
+  - id: R23
+    field: precision.quantization.expert_dtype
+    severity: imprecise
+    claim: >-
+      专家精度记 MXFP4，而 quantization.method 写的是 compressed-tensors（mxfp4-pack-quantized）——
+      **方法名不等于格式名**，所以这个名字可能是本仓从方法名或从签名顺过来的
+    finding: >-
+      不是。MXFP4 是厂商自己的名字，且在比 config 更高的档上：模型卡第 4 节标题就叫
+      「Native MXFP4 Quantization」，规格表 Quantization 行原文「MXFP4 weights / MXFP8
+      activations (quantization-aware training)」（2026-10-30 重读卡核过原文）。
+      config 的 format mxfp4-pack-quantized 与 num_bits 4 / type float / group_size 32 /
+      scale_dtype torch.uint8 是旁证，不是唯一来源。
+      顺带核了跨记录的一致性：**DeepSeek 的专家与本代签名完全同构**
+      （元素 E2M1、块 32、一级 E8M0 scale），而那边厂商只给「FP4 + FP8 Mixed」、
+      技术报告 §2.4.4 点名 OCP MXFP4 的是 indexer 缓存而不是权重，于是那几份记 FP4。
+      **所以本仓里同一个签名两个名字，差的是厂商的叫法，不是本仓的口径** ——
+      拉平成一个会把某一边厂商没说过的名字写成厂商说的。
+      scale 那一格同样核过：UINT8 与 DeepSeek 的 FP8_E8M0 是同一个口径（都写落盘容器
+      dtype），这边清单 247,296 个 weight_scale 字面是 U8、config 的 scale_dtype 也写
+      torch.uint8，不是真 uint8 定点；按 MX 规范里头装的是 E8M0 指数，但清单只能证明容器，
+      那层语义仍不写进字段
+    resolution: confirmed
+    changed_to: 原值保留；expert_dtype 与 per_subsystem_scale 上方各补一条注释，写明名字出处（模型卡第 4 节）与两处口径的对应关系
 
 notes: >-
   Kimi 家族的旗舰，model_type kimi_k3（语言主干 kimi_linear），原生多模态。本仓第一份 Kimi 记录，

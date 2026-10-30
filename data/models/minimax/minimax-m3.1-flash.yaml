@@ -311,7 +311,13 @@ precision:
       6144/384 = 16；w2 逻辑 [6144, 3072] ÷ [6144, 192]），
       注意力 240 条、indexer 120 条、共享专家 171 条、稠密 FFN 9 条、草稿块 35 条
       都是 [1, 32]。块 16 配 E4M3 scale 加一个 FP32 全局 scale 是 NVFP4 的标准形态，
-      块 32 配 E8M0 才是 MX 系；两者都与 config 对应的那组键一致。量化张量缺 scale 的数量是 0，孤立 scale 也是 0
+      块 32 配 E8M0 才是 MX 系；两者都与 config 对应的那组键一致。量化张量缺 scale 的数量是 0，孤立 scale 也是 0。
+      **第二级全局 scale 这一半本轮也实测了**：专家侧 21,888 条 weight_global_scale 与
+      21,888 条 input_global_scale 都在清单里，都是 F32 标量（shape []），与 21,888 条
+      weight_packed 一一对应、零缺失。所以本代是**严格 NVFP4**，不是「NVFP4 式」——
+      区别于 DeepSeek V4.1-Flash 的全局 KV，那边技术报告 §2.4.4 原话是
+      "following NVFP4 but omitting its second-level global scale"，本仓那份记录因此写「NVFP4 式细块」。
+      签名齐全这件事反过来给 config 的 moe_quant_algo NVFP4 做了背书（见核查 R22）
     per_subsystem:
       expert: NVFP4
       attention: FP8_E4M3
@@ -324,6 +330,10 @@ precision:
       norm: BF16
       router: FP32
       vision: BF16
+    # **这一格的口径是落盘容器 dtype**，与 DeepSeek / Kimi 那几份同口径（见 subsystem_method
+    # 末段）。本记录里两种值并存，是因为这份权重里两套格式的 scale 真的存成了两种容器：
+    # 专家的 weight_scale 字面是 F8_E4M3（NVFP4 的一级 scale），MXFP8 侧字面是 U8。
+    # 专家侧另有第二级 FP32 全局 scale，它不是逐块的，所以不进这一格、记在 block_size_note 里
     per_subsystem_scale:
       expert: FP8_E4M3
       attention: UINT8
@@ -868,3 +878,31 @@ review:
       indexer 占 98.46%；M3-MXFP8 的张量名集合是 M3 的超集、差集恰为 22422 条
       weight_scale_inv，23416 条共有张量形状逐条相同，HF tally 总量与 M3 参数量逐位相同
     resolution: confirmed
+
+  - id: R22
+    field: precision.quantization.per_subsystem.expert
+    severity: imprecise
+    claim: >-
+      专家精度记 NVFP4，而这个名字只来自 config 的 moe_quant_algo（模型卡从不提）；
+      签名对得上 NVFP4，但**严格的 NVFP4 还有第二级 FP32 全局 scale**，记录没给这一半的证据，
+      所以可能该像 DeepSeek 那样降成「NVFP4 式」
+    finding: >-
+      不该降 —— 签名是齐的。本轮把完整清单（89,729 条）的专家侧张量拆到叶名核过：
+      每条量化权重同时带 weight_packed（U8，末维逻辑维的一半）、weight_scale（F8_E4M3，
+      块 16）、**weight_global_scale（F32 标量，shape []）**与 input_global_scale（F32 标量），
+      四类各 21,888 条、一一对应、零缺失。第二级全局 scale 确实存在，所以本代是严格 NVFP4。
+      这正是它与 DeepSeek V4.1-Flash 全局 KV 的分界：那边报告 §2.4.4 原话
+      "following NVFP4 but omitting its second-level global scale"，所以那份记录写「NVFP4 式」，
+      这份不写。
+      名字的出处仍按原样登记在 config 一档（R21 已立此案：卡只打 mxfp8 / 8-bit 两个标签，
+      2026-10-30 重读卡确认卡正文一处 NVFP4 都没有），只是现在实测签名给它做了背书，
+      不再是「只有 config 说」。
+      顺带核了跨记录的名字一致性：DeepSeek 记 FP4、Kimi-K3 记 MXFP4、本记录记 NVFP4，
+      三个名字各自来自各自的一手来源（DeepSeek 的卡与 config 只给元素格式、报告不给权重块格式；
+      Kimi 的卡第 4 节标题就叫 Native MXFP4 Quantization；本记录的名字出自 config 的
+      moe_quant_algo / moe_quant_format）。**不一致是厂商之差，不是本仓之差**，不拉平
+    resolution: confirmed
+    changed_to: >-
+      原值保留；block_size_note 末尾补第二级全局 scale 的实测（两类各 21,888 条 F32 标量）
+      与「严格 NVFP4 vs NVFP4 式」的分界，per_subsystem_scale 上方补一条口径注释
+      （这一格写落盘容器 dtype，全局 scale 不逐块、不进这一格）

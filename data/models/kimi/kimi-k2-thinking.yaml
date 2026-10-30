@@ -169,6 +169,11 @@ precision:
     FP32: { manifest_taken: true, in_precision_table: true }
   quantization:
     method: compressed-tensors（pack-quantized，weight-only）
+    # **INT4 这个名字是厂商的，而且它与本仓其余 4 bit 格子不是同一种 4 bit。** 模型卡第 4 节
+    # 标题「Native INT4 Quantization」（记录的 sources 已引）；config 的 num_bits 4 / **type int** /
+    # group_size 32 / symmetric true 与之对应。
+    # 注意：FP4 / MXFP4 / NVFP4 的元素都是 E2M1（浮点），本代是**整数**对称量化 ——
+    # 所以这一格与那三个不是「同一个格式三个名字」，是真的另一种元素格式（见核查 R7）
     expert_dtype: INT4
     packing_note: >-
       路由专家的 INT4 权重 8 个装进一个 I32 容器（weight_packed 的末维是逻辑维的 1/8），
@@ -184,6 +189,9 @@ precision:
       embed: BF16
       lm_head: BF16
       norm: BF16
+    # 口径与本仓其余量化记录一致：写落盘容器 dtype。本代 scale 是真 BF16 张量
+    # （清单字面 BF16），容器与逻辑精度重合，且 config 的 weights 段**没有 scale_dtype 键** ——
+    # 这一格纯实测，无厂商声明（见核查 R7）
     per_subsystem_scale:
       expert: BF16
     per_subsystem_block:
@@ -438,6 +446,23 @@ review:
       weight-bandwidth 改写：保留两代 −0.15% 的结论（它回答的是「跨代省不省带宽」这个问题），
       补上「2 倍是对 BF16 基线、且限定 low-latency mode」的复算与 1.92 倍闭合，
       并点明若非专家一起量化则是 3.56 倍。原先「本仓没有依据选一个来源」那句撤掉
+
+  - id: R7
+    field: precision.quantization.expert_dtype
+    severity: imprecise
+    claim: 专家精度记 INT4，与本仓其余 4 bit 记录（FP4 / MXFP4 / NVFP4）并排在同一列里
+    finding: >-
+      名字一侧核过没问题，且这一格与那三个的差别比名字更深。名字出自模型卡第 4 节标题
+      「Native INT4 Quantization」（sources 已引），config 的 weights 段另写 num_bits 4 /
+      type int / group_size 32 / symmetric true（2026-10-30 重读卡与 config 核过）。
+      **关键区别：FP4 / MXFP4 / NVFP4 的元素都是 E2M1 浮点，本代 type 是 int** ——
+      本仓同一列里既有元素格式（FP4）、又有块格式（MXFP4 / NVFP4）、又有本代这种
+      另一类元素格式（INT4），三种粒度混在一格。混着不是错（每个名字都来自各自的一手来源），
+      但读这一列时不能按「同一个签名的不同叫法」去归并。
+      scale 一格顺带核了：BF16 是清单字面的落盘 dtype，与其余记录同口径；
+      config 的 weights 段没有 scale_dtype 键，所以这一格纯实测、无声明可引
+    resolution: confirmed
+    changed_to: 原值保留；expert_dtype 与 per_subsystem_scale 上方各补一条注释，写明名字出处、元素格式是整数而非 E2M1、以及 scale 这一格的口径
 
 notes: >-
   K2 线的精度拐点：结构与 kimi-k2-0905 逐位相同（还原打包后参数量一字不差），
