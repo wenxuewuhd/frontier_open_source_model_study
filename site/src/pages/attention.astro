@@ -34,31 +34,52 @@ const kvOf = (m: Model) => {
 };
 
 /**
- * 家族内按谱系排：从没有（族内）前代的记录起，深度优先，主线子代在支线前，同类按发布日期。
- * 这样一条支线紧跟在它的前代后面，不会按时间插进主线中间。
+ * 家族内按谱系排：主线按发布日期铺成不缩进的主干，支线挂在它自己的前代下面并缩进一层。
+ *
+ * **原先的写法假设「一旦是支线，整棵子树都是支线」，Qwen 恰好违反了这个假设。**
+ * 它的主线中途换了分支：到 Qwen2 为止旗舰是稠密的 72B，MoE（`qwen1.5-moe-a2.7b` →
+ * `qwen2-57b-a14b`）是旁支实验；从 `qwen3-235b-a22b` 起 MoE 才变成旗舰。
+ * 于是全仓唯一一个 `track: main` 挂在 `track: side` 前代下的记录就出现在这里。
+ * 旧写法按祖先继承 depth、并把整棵 side 子树排在 main 子树之后，后果是
+ * **Qwen 真正的旗舰线被缩进、而且排在已经降为支线的稠密线后面**。数据没错，是渲染表达不了。
+ *
+ * 所以判据改成看**节点自己的 track**，不看祖先：
+ *   - 主干 = 自己是 main 的，加上族内没有前代的（否则会漏掉根是支线的家族），按发布日期排
+ *   - 其余（支线）挂在前代下面，depth = 前代 + 1，同层按发布日期
+ * 递归到主干节点就停 —— 它属于主干，不属于谁的子树。
+ *
+ * 一个支线仍然可能比后面的主干节点发布得晚（Qwen 的稠密线一直走到 2026-08），
+ * 那是「支线紧跟前代」这条取舍本来就有的代价，缩进会让它读得出来。
+ *
+ * 顺带修掉一件旧注释写了、旧代码没做到的事：**支线本来并没有紧跟前代**。
+ * 同层里支线排在主线之后，而主线会继续往下嵌套，于是支线被挤到整棵子树的最末尾 ——
+ * `glm-4.7-flash` 离它的前代 `glm-4.7` 隔了 4 个位置，`kimi-vl-a3b` 与
+ * `kimi-linear-48b` 掉到全族最后。六个家族里有四个受此影响。
  */
 function lineageOrder(models: Model[]): { m: Model; depth: number }[] {
   const ids = new Set(models.map((m) => m.id));
   const kids = new Map<string, Model[]>();
-  const roots: Model[] = [];
   for (const m of models) {
     const p = m.lineage?.predecessor;
     if (p && ids.has(p)) {
       if (!kids.has(p)) kids.set(p, []);
       kids.get(p)!.push(m);
-    } else roots.push(m);
+    }
   }
-  const cmp = (a: Model, b: Model) => {
-    const sa = a.lineage?.track === 'side' ? 1 : 0;
-    const sb = b.lineage?.track === 'side' ? 1 : 0;
-    return sa - sb || (a.released ?? '').localeCompare(b.released ?? '');
+  const byDate = (a: Model, b: Model) =>
+    (a.released ?? '').localeCompare(b.released ?? '');
+  const isTrunk = (m: Model) => {
+    const p = m.lineage?.predecessor;
+    return m.lineage?.track !== 'side' || !p || !ids.has(p);
   };
   const out: { m: Model; depth: number }[] = [];
   const walk = (m: Model, depth: number) => {
     out.push({ m, depth });
-    for (const k of (kids.get(m.id) ?? []).sort(cmp)) walk(k, depth + (k.lineage?.track === 'side' ? 1 : 0));
+    for (const k of (kids.get(m.id) ?? []).slice().sort(byDate)) {
+      if (!isTrunk(k)) walk(k, depth + 1);
+    }
   };
-  roots.sort((a, b) => (a.released ?? '').localeCompare(b.released ?? '')).forEach((r) => walk(r, 0));
+  models.filter(isTrunk).slice().sort(byDate).forEach((t) => walk(t, 0));
   return out;
 }
 
