@@ -97,6 +97,10 @@ arch:
     kv_sharing:
       declared_per_token_bytes:
         value: 48068
+        tier: tech_report
+        covers: per_token
+        basis: >-
+          全局 KV（MLA latent + indexer），随上下文线性增长。本代无滑窗分量。上下文长度与批大小图注未给，每 token 量与这两者无关
         source: >-
           DeepSeek-V4.1-Flash 技术报告 Figure 1(b)「Global KV Cache Per Token (Bytes)」的数据标签
           （图文件 assets/dsv41_kv_cache.png @ 314113f8，2026-10-30 读）：DeepSeek-V1 389,120 /

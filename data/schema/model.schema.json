@@ -251,10 +251,19 @@
               "type": "object",
               "description": "厂商公布的每 token 全局 KV 字节数（模型卡 / 技术报告 / 其中的图）。这是缓存侧唯一不依赖本仓代码的外部锚：元素数与落盘格式两侧都由本仓决定，错了只会得到一个自洽的错数。参数量那边有 HF 的 safetensors tally 接住过一次整仓级的错，缓存侧此前什么都没有。本仓每个分量都有公布格式时用它对账，否则直接采用它（bytes_basis 记 vendor_declared）",
               "additionalProperties": false,
-              "required": ["value", "source"],
+              "required": ["value", "source", "tier", "covers"],
               "properties": {
                 "value": { "type": "number", "description": "字节 / token" },
-                "source": { "type": "string", "description": "出处与定位：模型卡、技术报告的节号或图号，连同图里的数据标签" },
+                "source": { "type": "string", "description": "出处与定位：技术报告的节号 / 表号 / 图号，或模型卡的章节，连同图里的数据标签。**只给一句「模型卡说」不够** —— 没有定位就无法复核，也无法判断它说的是哪个口径" },
+                "tier": {
+                  "description": "来源档次，按本仓的来源优先级：tech_report=技术报告（带节号/表号/图号，常能在源内部自校验，例如图注的比值与数据标签逐个对上）；model_card=模型卡正文；other=其它一手材料。**厂商参考实现与引擎实现都不是这个字段的合法来源**，它们回答不了「厂商声称多少」",
+                  "enum": ["tech_report", "model_card", "other"]
+                },
+                "covers": {
+                  "description": "这个数覆盖缓存的哪一部分，决定它能不能被采用。per_token=只含随上下文线性增长的那一半（DeepSeek 那张图标题写明 Global KV Cache Per Token，就是这一类）；includes_per_sequence=还含每序列固定的分量（线性注意力的递归状态、滑窗缓冲区）；unstated=来源没说。**本仓 17 份记录有每序列固定分量，两个分量口径不同、不能相加**，所以只有 per_token 能被 derive.py 采用进 per_token_bytes，另两种只登记不采用",
+                  "enum": ["per_token", "includes_per_sequence", "unstated"]
+                },
+                "basis": { "type": "string", "description": "公布时的前提：上下文长度、精度、批大小、是否含 indexer / 压缩器等。来源没交代就写明没交代 —— 没有基准的数不能跨代比，那是本仓「不同口径之间不算倍数」那条规矩管的事" },
                 "note": { "type": "string" }
               }
             },

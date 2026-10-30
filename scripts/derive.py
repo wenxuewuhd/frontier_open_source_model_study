@@ -930,7 +930,16 @@ def reconcile(cfg_t: dict, shp: dict, declared: dict, external: dict = None,
         # 缓存侧的外部对账。只有本仓能逐分量算出字节时才是真对账 —— 采用了公布值的
         # 情况下两边必然相等，那时报 ok 是假的，改成把两个数并排摆出来
         if kv and kv.get("declared_per_token_bytes"):
-            if kv.get("bytes_basis") == "theoretical_floor":
+            if kv.get("declared_covers") != "per_token":
+                # 没采用的情况：两个数各算各的，并排摆出来但不判对错 ——
+                # 覆盖面不同的两个量本来就不该比，比了就是范畴错误
+                out.append({"item": "外部 KV 字节对账", "status": "ok",
+                            "why": f"厂商公布 {kv['declared_per_token_bytes']:,.0f} B/token，"
+                                   f"covers={kv.get('declared_covers')!r} —— 覆盖面与本仓的"
+                                   f"每 token 口径不同或来源未交代，**未采用**；"
+                                   f"本仓逐分量算得 {kv.get('per_token_bytes', 0):,.0f} B 保持不变。"
+                                   "两个数覆盖面不同，不比对、也不算倍数"})
+            elif kv.get("bytes_basis") == "theoretical_floor":
                 add("外部 KV 字节对账", kv["declared_per_token_bytes"],
                     kv.get("per_token_bytes"), "厂商公布", "本仓逐分量算", tol=0.005)
             else:
@@ -1030,7 +1039,19 @@ def main():
             want = float(decl["value"])
             kv["declared_per_token_bytes"] = want
             kv["declared_source"] = decl.get("source")
-            if kv.get("bytes_basis") != "theoretical_floor":
+            kv["declared_tier"] = decl.get("tier")
+            kv["declared_covers"] = decl.get("covers")
+            # covers 决定它能不能进 per_token_bytes 这个槽。本仓 47 份里有 17 份带
+            # 「每序列固定」分量（线性注意力的递归状态、滑窗缓冲区），两个分量口径不同、
+            # 不能相加。公布值若把它们算在一起、或来源根本没交代，塞进 per_token_bytes
+            # 就是把一个更大的量当成每 token 量，再乘上下文长度会一路放大。
+            # 这类只登记不采用 —— 字段留着，口径不动。
+            if decl.get("covers") != "per_token":
+                kv.setdefault("notes", []).append(
+                    f"厂商公布 {want:,.0f} B/token，但 covers={decl.get('covers')!r} —— "
+                    "不是「只含随上下文线性增长的那一半」，不采用进 per_token_bytes，"
+                    "本仓逐分量算出的值与 bytes_basis 保持不变。只登记备查")
+            elif kv.get("bytes_basis") != "theoretical_floor":
                 kv["computed_per_token_bytes"] = kv.get("per_token_bytes")
                 kv["per_token_bytes"] = want
                 kv["bytes_basis"] = "vendor_declared"

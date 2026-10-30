@@ -1,7 +1,7 @@
 {
  "id": "ds-v4-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T08:47:42+00:00",
+ "generated_at": "2026-10-30T09:07:19+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-flash",
   "config_present": true,
@@ -145,6 +145,8 @@
   "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML",
   "declared_per_token_bytes": 3514.0,
   "declared_source": "DeepSeek-V4.1-Flash 技术报告 Figure 1(b)「Global KV Cache Per Token (Bytes)」的数据标签 （图文件 assets/dsv41_kv_cache.png @ 314113f8，2026-10-30 读）：DeepSeek-V1 389,120 / DeepSeek-V3.2 48,068 / DeepSeek-V4-Flash 3,514 / DeepSeek-V4.1-Flash 890。 图注给的四个比值 8.1× / 13.7× / 3.9× / 437× 与这四个数逐个自洽，报告摘要与结论 也两处复述 890 与「roughly 1/4 of DeepSeek-V4-Flash」",
+  "declared_tier": "tech_report",
+  "declared_covers": "per_token",
   "computed_per_token_bytes": 5893.0
  },
  "kv_capacity_bytes_at_context": {

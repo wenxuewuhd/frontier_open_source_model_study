@@ -119,6 +119,11 @@ arch:
     kv_sharing:
       declared_per_token_bytes:
         value: 890
+        tier: tech_report
+        covers: per_token
+        basis: >-
+          全局 KV（随上下文线性增长的那一半）。本代另有滑窗缓冲区 2,906,112 B/序列，每序列固定、不随 token
+          增长，图上那个数不含它。上下文长度与批大小图注未给，但每 token 量与这两者无关
         source: >-
           DeepSeek-V4.1-Flash 技术报告 Figure 1(b)「Global KV Cache Per Token (Bytes)」的数据标签
           （图文件 assets/dsv41_kv_cache.png @ 314113f8，2026-10-30 读）：DeepSeek-V1 389,120 /
