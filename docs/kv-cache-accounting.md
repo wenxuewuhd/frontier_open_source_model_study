@@ -36,7 +36,7 @@
 | 版本 | 元素/token | 字节/token | basis |
 |---|---|---|---|
 | DeepSeek-V4-Flash | **3,440** | 6,880 B | `dtype_fallback` |
-| DeepSeek-V4-Pro | **9,724** | 19,448 B | `dtype_fallback` |
+| DeepSeek-V4-Pro | **4,924** | 9,848 B | `dtype_fallback` |
 | DeepSeek-V4.1-Flash | **1,600** | 890 B | `theoretical_floor` |
 <!-- kv-basis 生成区结束 -->
 

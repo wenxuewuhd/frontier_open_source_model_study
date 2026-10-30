@@ -1,7 +1,7 @@
 {
  "id": "ds-v4-pro",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T16:01:57+00:00",
+ "generated_at": "2026-10-30T02:01:57+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-pro",
   "config_present": true,
@@ -91,50 +91,54 @@
   "layers": 61,
   "full_attention_layers": 61,
   "linear_attention_layers": 0,
-  "per_token_bytes": 19448,
+  "per_token_bytes": 9848,
   "per_sequence_bytes": 7995392,
-  "per_token_elems": 9724,
+  "per_token_elems": 4924,
   "per_token_elems_bound": "exact",
   "components": {
    "global_kv": {
-    "bytes_per_token": 15608,
-    "elements_per_token": 7804,
+    "bytes_per_token": 7928,
+    "elements_per_token": 3964,
     "bytes_basis": "dtype_fallback",
     "terms": {
-     "elements_per_token": 7804,
+     "elements_per_token": 3964,
      "bytes_per_element": 2,
      "source": "完整权重清单实测"
     }
    },
    "indexer": {
-    "bytes_per_token": 3840,
-    "elements_per_token": 1920,
+    "bytes_per_token": 1920,
+    "elements_per_token": 960,
     "bytes_basis": "dtype_fallback",
     "terms": {
-     "elements_per_token": 1920,
+     "elements_per_token": 960,
      "bytes_per_element": 2,
      "source": "完整权重清单实测"
     }
    },
    "local_window": {
     "bytes_per_sequence": 7995392,
+    "elements_per_sequence": 3997696,
     "bytes_basis": "dtype_fallback",
     "terms": {
-     "note": "滑窗局部 KV，每序列固定，不随上下文增长。记录直接给的字节数，按模型 dtype 算"
+     "elements_per_sequence": 3997696,
+     "bytes_per_element": 2,
+     "source": "完整权重清单实测",
+     "note": "滑窗局部 KV，每序列固定，不随上下文增长"
     }
    }
   },
   "notes": [
-   "按完整权重清单逐层量出来的每 token 元素数。compressor.ape 的第一维就是该层压缩比，每 token 元素 = wkv 输出宽度 / 比值（比值 4: 30 层, wkv 宽 1024, ape 有 -> 256 元素/token；比值 128: 31 层, wkv 宽 512, ape 有 -> 4 元素/token）。attn.wkv 那一份是 sliding_window 的局部 KV，每序列固定、不随上下文增长，单列在 local_window_bytes_per_sequence，不计入 per_token。按未压缩宽度乘总层数会高估五倍以上"
+   "元素口径，主干 61 层。每 token 元素 = 条目宽 / 压缩比，条目宽取 compressor.norm 的宽度：比值 4 的 30 层 compressor.wkv / ape 宽 1024，但 compressor.norm [512]（重叠窗口，依据见 ds-v4-flash 的 R1）。 全局 KV = 30 × 512/4 + 31 × 512/128 = 3840 + 124 = 3964；indexer = 30 × 128/4 = 960。 attn.wkv 那一份是滑窗局部 KV，每序列固定：61 × 128 × 512 = 3997696 元素/序列，开草稿侧加 mtp.0 为 62 层 4063232"
   ],
   "bytes_basis": "dtype_fallback",
   "dtype_assumed": true,
   "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
  },
  "kv_capacity_bytes_at_context": {
-  "4096": 87654400,
-  "32768": 645267456,
-  "1048576": 20400701440
+  "4096": 48332800,
+  "32768": 330694656,
+  "1048576": 10334371840
  },
  "kv_capacity_basis": "dtype_fallback",
  "active_params": {
