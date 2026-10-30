@@ -35,13 +35,13 @@
 <!-- kv-basis | 由 scripts/kv_table.py 生成，勿手改 -->
 | 版本 | 元素/token | 字节/token | basis |
 |---|---|---|---|
-| DeepSeek-V4-Flash | **6,800** | 13,600 B | `dtype_fallback` |
+| DeepSeek-V4-Flash | **3,440** | 6,880 B | `dtype_fallback` |
 | DeepSeek-V4-Pro | **9,724** | 19,448 B | `dtype_fallback` |
 | DeepSeek-V4.1-Flash | **1,600** | 890 B | `theoretical_floor` |
 <!-- kv-basis 生成区结束 -->
 
 V4 一代的字节是按模型权重 dtype（BF16）兜底来的，V4.1 的是 FP4 + scale 精确计数。
-属于结构的只有 **6800 / 1600 = 4.25 倍**；另外 3.6 倍是「V4.1 查到了落盘格式、V4 还在兜底」——
+属于结构的只有 **3440 / 1600 = 2.15 倍**（V4-Flash 的元素数在 ds-v4-flash 的 R1 由 6800 改为 3440：比值 4 层的条目宽是 compressor.norm 的 512，不是 wkv 输出的 1024）；另外 3.6 倍是「V4.1 查到了落盘格式、V4 还在兜底」——
 调研进度的差。V4 的实际落盘精度**没有来源**，也不必去补：按元素口径写，这个未知就不影响结论。
 
 页面侧由 `data.ts` 的 `diff: 'same-basis'` 守卫拦住（两侧 basis 不同就不出 from→to），

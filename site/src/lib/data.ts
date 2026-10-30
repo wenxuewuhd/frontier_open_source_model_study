@@ -387,8 +387,8 @@ export const TRACKED_FIELDS: TrackedField[] = [
       return k ? `${k.length} 层` : undefined;
     } },
   // 跨代比 KV 结构用元素数，不用字节：字节 = 元素 × 精度，而各代的精度来源不一
-  // （V4 按 BF16 兜底，V4.1 查到了落盘格式）。V4 → V4.1 按字节是 15.3 倍，
-  // 属于结构的只有元素那 4.25 倍。只计随上下文增长的分量，滑窗与线性状态是每序列常量
+  // （V4 按 BF16 兜底，V4.1 查到了落盘格式）。V4-Flash → V4.1 按字节是 6880 → 890，7.7 倍，
+  // 属于结构的只有元素那 2.15 倍。只计随上下文增长的分量，滑窗与线性状态是每序列常量
   { key: 'kv_elems', label: 'KV 元素 / token', axis: 'attention', group: 'spec',
     get: (m) => {
       const kv = m.derived?.kv_cache;

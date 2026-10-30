@@ -12,6 +12,11 @@ sources:
   url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash
   locator: config.json @ 60d8d70770c6
   accessed: '2026-10-29'
+- kind: repo
+  url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash/blob/60d8d70770c6776ff598c94bb586a859a38244f1/inference/model.py
+  locator: inference/model.py @ 60d8d70 —— class Compressor（overlap = compress_ratio == 4、coff）、class Indexer、Attention.kv_cache_size
+  accessed: '2026-10-30'
+  note: 厂商仓里自带的参考推理实现，与权重同一个 rev。缓存条目宽度与条目数以它为准
 hf:
   repo: deepseek-ai/DeepSeek-V4-Flash
   sha: 60d8d70770c6776ff598c94bb586a859a38244f1
@@ -26,38 +31,49 @@ lineage:
   - axis: attention
     text: 放弃 MLA 的 KV 上投影 —— 权重清单里 kv_b_proj / k_b_proj / v_b_proj 零命中，config 也不再声明 kv_lora_rank。改为
       1 个 KV 头直接在 512 维 latent 上做注意力，即 MQA-on-latent：省掉每步的上投影，代价是 Q 要先投到 latent 空间
-    benefit: decode 每步省掉一次把 512 维 latent 还原成 128×192 KV 的大矩阵乘，注意力权重本身也小一截，而 KV 仍只存 latent —— 带宽优势保留、算力代价去掉。代价是
-      Q 必须先投到 latent 空间，q 路径变宽
+    benefit: >-
+      去掉的是 V3.2 的 kv_b_proj [32768, 512]（128 头 × (nope 128 + v 128)，rope 64 维不经它）。按参考写法它每步把 latent
+      升回逐头 KV；按吸收式写法（把它并进 Q 与 O）decode 本来就不逐步上投影 —— 所以对吸收式实现，V4 是把吸收形态直接固化进了
+      权重，而不是新省出一次矩阵乘（judgement，V3.2 的实现没读）。KV 仍只存 latent。代价是 Q 必须先投到 latent 空间，q 路径变宽
   - axis: attention
     text: 新增 attn_sink（每层一个可学习 sink 进 softmax 分母，config 里没有这个开关）；输出投影低秩化为 wo_a / wo_b（o_lora_rank
       1024，分 8 组）；新增滑窗 128；新增 KV 压缩器 attn.compressor.*（41 / 43 层，Flash 的 L0/L1 没有），压缩比沿层交替 4 / 128，compressor.ape
       的第一维就是该层比值
-    benefit: sink 给 softmax 一个固定出口，长序列下避免注意力被迫摊到无关 token；输出投影低秩化省掉一个 hidden×hidden 的大矩阵；滑窗 128 让每层都有不随上下文增长的局部
+    benefit: sink 给 softmax 一个固定出口，长序列下避免注意力被迫摊到无关 token；输出投影低秩化：满秩的 [4096, 32768] 是 134.2M 参数/层，wo_a [8192, 4096] + wo_b [4096, 8192] 合计 67.1M，省一半（不是「一个 hidden×hidden」，那只有 16.8M）；滑窗 128 让每层都有不随上下文增长的局部
       KV；逐层压缩比交替 4/128 把大部分层的全局 KV 压到很小
   - axis: attention
     text: indexer 保留，但 K 的产出方式变了：没有独立的 indexer.wk，改由 attn.indexer.compressor.wkv [256, hidden] + ape
       [4, 256] 产出，且只在 21 / 43 层上（compress_ratios == 4 的层）。topk 2048→512
-    benefit: K 投影没有消失，是换了形态并被压过：条目宽 256、4 个 token 共用一个，每 token 64 元素，相比 V3.2 每层 128 元素 × 62 层是大幅下降。真正省下来的是「层数减半
-      + 条目聚合」两件事，不是「不再自带 K 投影」
+    benefit: >-
+      K 投影没有消失，是换了形态并被压过：条目宽 128（indexer.compressor.norm [128]；wkv 输出 256 是比值 4 的重叠窗口带来的 2 倍，
+      见 index_kv_source）、4 个 token 一个条目，每 token 32 元素。主干口径对比：V3.2-Exp 61 层 × 128 = 7808 元素/token，
+      V4-Flash 21 层 × 32 = 672。真正省下来的是「层数减半 + 条目聚合」两件事，不是「不再自带 K 投影」
   - axis: moe
-    text: 打分 sigmoid→sqrtsoftplus；top-k 8→6；取消专家分组（n_group/topk_group 不再声明，noaux_tc 少了 group 维度，已不是同一个算子）；config
+    text: 打分 sigmoid→sqrtsoftplus；top-k 8→6；routed_scaling_factor 2.5→1.5；取消专家分组（n_group/topk_group 不再声明，noaux_tc 少了 group 维度，已不是同一个算子）；config
       不再有 first_k_dense_replace，43 层每一层都有完整的 ffn.experts.*；第 0/1/2 层额外带一张 ffn.gate.tid2eid [129280,
       6] 查表，但打分投影仍在
-    benefit: dense 前缀不是被「取消」而是被原地换掉：3 个查表层正好落在 V3 一代 first_k_dense_replace=3 占的那三个槽位。top-k 8→6 配合分组取消，每
-      token 的 all-to-all 载荷从 13.30 MB 降到 4.23 MB（2·top_k·hidden·bytes·层数，BF16 口径）—— 这是 V4 对 EP 通信最大的一笔节省，比任何路由机制改动都直接
+    benefit: >-
+      dense 前缀不是被「取消」而是被原地换掉：3 个查表层正好落在 V3 一代 first_k_dense_replace=3 占的那三个槽位。
+      每 token 的 all-to-all 载荷 2·top_k·hidden·bytes·MoE 层数（BF16 口径）从 13,303,808 B 降到 4,227,072 B（3.15 倍），
+      拆开是 top_k 8/6 = 1.33 × hidden 7168/4096 = 1.75 × MoE 层 58/43 = 1.35 —— top-k 是三个因子里最小的，分组不在公式里，
+      hidden 与层数是 Flash 的档位不是 V4 的机制。同代同规模的 V4-Pro（top_k 6、hidden 7168、61 层）是 10,493,952 B，只比 V3.2 低 1.27 倍
   - axis: residual
     text: 新增 mHC 残差：残差流扩成 4 份并行拷贝（hc_mult 4），每层带 hc_attn_* / hc_ffn_* 系数，lm_head 前另有一组 hc_head_*
     benefit: 残差流变 4 份，等效加深信息通路而不加层数。代价对 infra 非常直接：所有逐元素算子、norm、残差加法的形状都乘 4，激活显存同步放大
   - axis: precision
     text: 路由专家权重降到 FP4（expert_dtype fp4），非专家仍 FP8_E4M3；scale 张量后缀由 weight_scale_inv 改为 scale，存储也真的换成了
-      8 bit 的 F8_E8M0（V3.1 起声明 ue8m0，但那几代的 scale 张量实测仍是 FP32）
-    benefit: 专家占了绝大部分权重，降到 FP4 把权重存储与带宽再砍一半；scale 同时从 FP32 收到 8 bit，省掉的 scale 带宽在块变小的时候尤其值钱。代价是 FP4
-      两个一字节打包，参数量、带宽账、EP 切分三处都要先解包
+      8 bit 的 F8_E8M0（V3.1 起声明 ue8m0，但那几代的 scale 张量实测仍是 FP32 —— V3.2-Exp 是完整清单上的全量结论，V3.1 是抽样）
+    benefit: >-
+      专家占了绝大部分权重，降到 FP4 把权重存储与带宽再砍近一半：含 [1,32] 的 E8M0 scale 每参数 0.53125 B（0.5 + 1/32）。
+      scale 换成 8 bit 只抵消了一部分：块从 [128,128] 变成专家的 [1,32] 后 scale 个数涨了 512 倍，scale 总字节反而从
+      V3.2-Exp 的 166,366,336 B 涨到 8,858,737,664 B（约 53 倍，8.25 GiB）。代价是 FP4 两个一字节打包，参数量、带宽账、EP 切分三处都要先解包
   - axis: context
     text: 163840 → 1048576，原生训练长度 65536
     benefit: 原生 64K 外推到 1M。这个长度只有配合稀疏注意力与逐层压缩才算得动，三件事是一套而不是三件独立的改动
   - axis: decoding
-    text: MTP 独立成 mtp.* 命名空间，不再借用层索引
+    text: >-
+      MTP 独立成 mtp.* 命名空间，不再借用层索引。拼接胶水由 eh_proj 换成 e_proj + h_proj（各 [4096, 4096]），
+      不再有 shared_head —— mtp.0 只带 norm 与 hc_head_*，embed / head 与主干共用
     benefit: MTP 从「第 61 层」变成独立命名空间，加载与切分不再和主干层混在一起
   - axis: scale
     text: Flash 定位：层数 61→43，hidden 7168→4096，专家数仍 256 但中间维保持 2048
@@ -76,8 +92,14 @@ params:
     router: 47426000.0
     residual: 33884200.0
     norm: 446080.0
-  counting_note: 按完整权重清单（69187 张量）逐项统计。total 不含草稿侧 6.6B；含在内的实测总量为 290.9B，权重存储 148.6 GiB。注意路由专家以 FP4
-    两个一字节打包存放，safetensors 的 numel 是容器数，已按 per_subsystem 的逻辑精度还原；直接求和会把专家参数少算一半。
+  counting_note: >-
+    total 与 breakdown 都是本仓按完整权重清单逐项求和的实测值（取 6 位有效数字），不是厂商声明值，所以 Gate B 的参数总量一项
+    （delta 0.0）是实测比实测。清单 69187 个条目 = 35020 个权重张量 + 34167 个 F8_E8M0 的 .scale 容器（不计参数、计存储）。
+    路由专家以 FP4 两个一字节打包存放，safetensors 的 numel 是容器数，已按逻辑精度还原；直接求和会把专家参数少算一半。
+    total 不含草稿侧 6.6B；含在内的实测总量 290,944,616,402，与 HF 的 safetensors tally 逐位相同 —— 那边不含 scale
+    （没有 F8_E8M0 一栏），I8 一栏 283,467,841,536 恰是容器数 141,733,920,768 的 2 倍，即同样按 FP4 还原了打包。
+    breakdown.attention 合并了 attention 4.60B、compressor 0.26B、indexer 0.23B 三项（data/derived/ 里分列）。
+    权重存储 148.6 GiB，其中 scale 8.25 GiB
 context:
   max: 1048576
   train_native: 65536
@@ -87,8 +109,8 @@ arch:
   vocab: 129280
   norm: RMSNorm
   norm_eps: 1.0e-06
-  activation: SwiGLU（hidden_act silu，gate/up/down 三件套）
-  position: RoPE theta 10000 + YaRN 外推
+  activation: SwiGLU（hidden_act silu，w1/w3/w2 三件套），带截断 swiglu_limit 10.0
+  position: RoPE theta 10000 + YaRN 外推；压缩条目另用 compress_rope_theta 160000
   attention:
     type: MQA-latent
     num_heads: 64
@@ -99,15 +121,22 @@ arch:
     o_groups: 8
     sliding_window: 128
     head_dim: 512
+    head_dim_note: >-
+      head_dim 512 同时是 KV 条目宽（attn.wkv 与 compressor.norm 都是 512）、query 每头宽（wq_b [32768, 1024] = 64 × 512）
+      与 V 每头宽（wo_a 每组输入 4096 = 8 头 × 512）。64 维 rope 在 512 之内（清单里 K 侧没有独立的 rope 投影）。
+      num_kv_heads 1 × 512 是一个条目的宽度，不是每 token 的缓存 —— 每 token 见 measured_per_token
     sparse:
       mechanism: indexer 打分取 topk 后在选中 token 上做全注意力。只在 21 / 43 层上有 indexer —— 权重里的规律是 indexer 存在 ⟺
         compress_ratios[l] == 4，零例外。这一代没有独立的 indexer.wk，index K 由 attn.indexer.compressor.wkv 产出
       index_n_heads: 64
       index_head_dim: 128
       index_topk: 512
-      index_kv_dim: 64
-      index_kv_source: layers.N.attn.indexer.compressor.wkv.weight 输出维 256，但 indexer.compressor.ape
-        是 [4, 256] —— 4 个 token 共用一个 256 维条目，每 token 实为 64 元素。index_kv_dim 记的是每 token 值，不是条目宽度
+      index_kv_dim: 32
+      index_kv_source: >-
+        layers.N.attn.indexer.compressor.wkv.weight 输出维 256，但这是比值 4 的重叠窗口带来的 2 倍（参考实现 Compressor 的
+        coff = 1 + overlap，压缩时前一半取重叠窗口、后一半取当前窗口，合成一个 head_dim 宽的条目）；条目宽以
+        indexer.compressor.norm.weight [128] 为准，参考实现的 Indexer.kv_cache 是 [B, max_seq_len // 4, 128]。
+        4 个 token 一个 128 维条目，每 token 32 元素。index_kv_dim 记的是每 token 值，不是条目宽度
     kv_sharing:
       compress_ratios:
       - 0
@@ -157,14 +186,21 @@ arch:
       note: 权重清单里 kv_b_proj / k_b_proj / v_b_proj 零命中，config 也不声明 kv_lora_rank：这一代没有 KV 上投影，不是 MLA。compress_ratios
         的项数 = 主干层数 + MTP 层数。
       measured_per_token:
-        global_kv: 5456
-        indexer: 1344
-        local_window_bytes_per_sequence: 5636096
-        note: '按完整权重清单逐层量出来的每 token 元素数。compressor.ape 的第一维就是该层压缩比，每 token 元素 = wkv 输出宽度 / 比值（比值 4:
-          21 层, wkv 宽 1024, ape 有 -> 256 元素/token；比值 128: 20 层, wkv 宽 512, ape 有 -> 4 元素/token）。attn.wkv
-          那一份是 sliding_window 的局部 KV，每序列固定、不随上下文增长，单列在 local_window_bytes_per_sequence，不计入 per_token。按未压缩宽度乘总层数会高估五倍以上'
-      layer_coverage: compressor 在 41 / 43 层（存在 ⟺ compress_ratios[l] != 0）；indexer 在 21 / 43 层（存在
-        ⟺ compress_ratios[l] == 4）。attn.wkv 与 attn_sink 则在全部 43 层。三者覆盖面不同，不能混着说「逐层」
+        global_kv: 2768
+        indexer: 672
+        local_window_elems_per_sequence: 2818048
+        note: >-
+          元素口径，主干 43 层。每 token 元素 = 条目宽 / 压缩比，条目宽取 compressor.norm 的宽度，不取 wkv 输出宽度：
+          比值 4 的 21 层 compressor.wkv / wgate / ape 宽 1024，但 compressor.norm [512] —— 参考实现在 ratio == 4 时用重叠窗口
+          （coff = 2），压缩后合成一个 head_dim 512 的条目，Attention.kv_cache 是 [B, window + max_seq_len // ratio, 512]。
+          全局 KV = 21 × 512/4 + 20 × 512/128 = 2688 + 80 = 2768；indexer = 21 × 128/4 = 672。
+          attn.wkv 那一份是 sliding_window 的局部 KV，每序列固定、不随上下文增长：43 × 128 × 512 = 2818048 元素/序列，
+          开草稿侧加 mtp.0 为 44 层 2883584。按未压缩宽度乘总层数会高估五倍以上；按 wkv 输出宽度算条目会再高估一倍（R1）
+      layer_coverage: >-
+        主干口径（43 层，另有 1 个 MTP 块 mtp.0）：compressor 在 L2–L42 共 41 层（存在 ⟺ compress_ratios[l] != 0）；
+        indexer 在 L2, L4, …, L42 共 21 层（存在 ⟺ compress_ratios[l] == 4）；attn.wkv 与 attn_sink 在 L0–L42 全部 43 层，
+        mtp.0 也有一份。mtp.0 没有 compressor 与 indexer（compress_ratios[43] = 0），开草稿侧只多一层滑窗 KV、per_token 不变。
+        四类覆盖面不同，不能混着说「逐层」。这两条 ⟺ 规律只在本清单的 43 层 + mtp.0 上验过
     attn_sink: 每头一个可学习 sink（layers.N.attn.attn_sink，全部层及 MTP 层）。它进 softmax 分母，改变算子签名；config 里没有这个开关，只能从权重清单发现
   ffn:
     type: moe
@@ -182,10 +218,13 @@ arch:
         router」——查表与打分各自承担什么，形状定不了，需看实现。V4.1 起 tid2eid 退场
     storage_note: 逐专家独立张量（layers.N.ffn.experts.<n>.w{1,2,3}），不是堆叠。grouped GEMM 因此吃 2 维权重列表而非 3 维张量，EP
       切分是切张量列表
-    balance: 无辅助损失，靠逐专家可学习偏置 ffn.gate.bias 调节（第 3 层起，共 41 个）
+    balance: 无辅助损失，靠逐专家可学习偏置 ffn.gate.bias 调节。41 个 = 主干 L3–L42 的 40 个 + mtp.0 的 1 个；hash 层 L0–L2 没有
   residual:
     type: mHC
     multiplier: 4
+    sinkhorn_iters: 20
+    eps: 1.0e-06
+    coef_proj: 每层 hc_attn_fn 与 hc_ffn_fn 各一个 [24, 16384] F32（16384 = 4 × hidden），43 层合计每步读 135,266,304 B，不切分
     note: 残差流扩成 hc_mult 份并行拷贝，每层带 hc_attn_* / hc_ffn_* 系数张量；V4 到 V4-Flash-Vision-Exp 在 lm_head 前还有一组
       hc_head_*，V4.1 起撤掉。残差宽度乘 4 会改掉所有逐元素算子与 norm 的形状
   decoding:
@@ -224,9 +263,15 @@ precision:
       attention: FP8_E8M0
       indexer: FP8_E8M0
       draft: FP8_E8M0
-    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 14 个分片头
+    subsystem_method: >-
+      早先按抽样填（每个子系统 6 个代表张量，读 14 个分片头）。已用完整清单按 lib/subsystems.py（mtp_from=43）按元素数复核
+      （I8 按 FP4 ×2 还原、不计 scale）：代表值都不变，但有几个子系统是混的 —— indexer 78.0% FP8_E4M3 / 22.0% BF16
+      （indexer.compressor 与 weights_proj 未量化）、router 95.1% BF16 / 4.9% I64（3 张 tid2eid 查表）、compressor 99.5% BF16、
+      draft 97.5% FP4 / 2.5% FP8。抽样时 router 的 I64 占 16.8%，是因为只抽到第 0–5 层 —— 覆盖面不是占比
 infra_signals:
-- text: MLA → MQA-on-latent 是整条线上最值得注意的反转：V2 用上投影换带宽，V4 又把它去掉。沿用 MLA 的注意力算子会直接对不上权重
+- text: >-
+    MLA → MQA-on-latent：V2 起用上投影换带宽，V4 把上投影从权重里去掉。对已经用吸收式 MLA 做 decode 的实现，变化主要是
+    K 宽 576 → 512（rope 收进 latent）加上 sink 与滑窗，而不是推倒重来；对按参考写法逐步上投影的实现，算子会直接对不上权重
   evidence: judgement
   horizon: now
   axis: attention
@@ -243,13 +288,19 @@ evidence:
   family: official
   kind: derived
   display_name: official
-  released: official
+  released: derived
   license: official
   hf: official
   lineage: judgement
   params: derived
   context: official
+  context.train_native: judgement
   arch: official
+  arch.attention.head_dim_note: derived
+  arch.attention.kv_sharing.note: derived
+  arch.residual.note: derived
+  arch.residual.type: derived
+  arch.residual.coef_proj: derived
   arch.attention.type: derived
   arch.norm: derived
   arch.activation: derived
@@ -283,12 +334,156 @@ reviewed_elsewhere:
     （indexer 按总层数 43 算而实测只在比值为 4 的 21 层；indexer 宽度没除压缩比；
     把 sliding_window=128 的局部 KV 当全局 KV 逐 token 计费）。改出来的
     arch.attention.kv_sharing.measured_per_token（global_kv 5456 + indexer 1344）
-    就在本记录里。R23 顺带实测了本记录的 FP4 路由专家块是 [1,32]
+    就在本记录里（其后被本记录自己的 R1 改正：比值 4 层的条目宽按 wkv 输出算高了一倍，现为 2768 + 672）。R23 顺带实测了本记录的 FP4 路由专家块是 [1,32]
     （w1 [2048,2048] I8 对 scale [2048,128]，还原打包后 4096/128=32、2048/2048=1），
     不是 config 声明的 [128,128]。
-    只覆盖这两处：注意力显存口径与路由专家的量化块。本记录其余字段仍未核查
+    只覆盖这两处：注意力显存口径与路由专家的量化块。本记录其余字段的核查见本记录自己的 reviewed / review
 notes: 谱系里最大的一次不连续，几乎每个维度都动了。对 infra 最要紧的是三件：KV 上投影消失（注意力算子换签名）、专家降到 FP4（打包存储，参数量不能直接求和）、mHC 把残差流宽度乘
   4（所有逐元素算子的形状都变）。另外 attn_sink 不在 config 里，只能从权重清单发现；hash 层的数量在 config 里（num_hash_layers=3），但它的张量形态与所在层要靠权重清单。
+  另有一件不是结构变化、但会让加载直接失败的事：权重命名整体换了一套 —— model.layers.N.self_attn.* / mlp.* → layers.N.attn.* / ffn.*，
+  gate/up/down_proj → w1/w3/w2，e_score_correction_bias → ffn.gate.bias，embed_tokens / lm_head → embed / head，
+  input_layernorm → attn_norm，kv_a_layernorm → kv_norm，weight_scale_inv → scale。按旧名字匹配的工具（scale 判据、子系统归类）也要跟着改。
 open_questions:
-- 未取权重清单（只有张量名），参数量与 FP4 打包形态待核
+- KV 的实际落盘精度未进记录，derive.py 按 BF16 兜底（dtype_fallback）。参考实现在写缓存前对非 rope 的 448 维做块 64 的 act_quant、压缩器另有 fp4_act_quant 分支，生产 kernel 是否真落 FP8 / FP4 没有核
+- >-
+  参考实现的 Compressor 还带每序列固定的 FP32 状态 kv_state / score_state [B, coff·ratio, coff·head_dim]（攒够 ratio 个 token 才出一个条目）。
+  按这个形状：比值 4 层 2 × 8 × 1024 + indexer 侧 2 × 8 × 256、比值 128 层 2 × 128 × 512，主干合计 3,051,520 元素 / 12.2 MB 每序列。
+  这是参考实现的写法，生产实现可以重算而不存，所以只记在这里、不进 measured_per_token
+- 训练精度没有一手来源，故不填 precision.training
+- context.train_native 65536 取自 rope_scaling.original_max_position_embeddings，那是 YaRN 的原始长度，是否等于训练长度未见说明
 - tid2eid [129280, 6] 与同层的 gate.weight 如何配合（查表定专家集、打分定组合权重？）形状定不了，需看上游实现
+reviewed:
+  date: '2026-10-30'
+  scope:
+  - official
+  - derived
+  - judgement
+  reviewer: 一个只读核查代理找候选，本会话在 facts/ 与厂商参考实现上逐条复算后写入
+  method: >-
+    核查代理过完整清单（69187 条目）、config、repoinfo 与 derived，给出候选与复现脚本；V4-Pro 与 DSpark 两份的代理各自独立报了
+    同一条条目宽度问题（R1）。写进本记录的都由本会话重跑：四个 V4 一代仓逐层的 compressor.wkv / norm / ape 与 indexer.compressor
+    形状（按比值分组）、厂商仓自带的 inference/model.py @ 60d8d70（Compressor / Indexer / Attention 的缓存形状，下载到 scratchpad
+    只读不执行）、scale 条目数与字节、HF tally 按 dtype 的口径、config 键、gate.bias 层号、mtp.0 的张量构成、按元素数的逐子系统精度、
+    all-to-all 载荷三因子分解。reviewed_elsewhere 指向的 R28 / R23 不重复审，只在 R1 处改正了 R28 的一个因子。
+review:
+- id: R1
+  field: arch.attention.kv_sharing.measured_per_token
+  severity: wrong
+  claim: 「每 token 元素 = wkv 输出宽度 / 比值（比值 4：21 层，wkv 宽 1024 → 256 元素/token）」，global_kv 5456、indexer 1344（来自 V4.1 记录的 R28）
+  finding: >-
+    R28 改了三个因子（层集合、除以比值、滑窗不计 per_token），漏了第四个：一个条目多宽。比值 4 的 21 层 compressor.wkv / wgate / ape
+    是 1024 宽，但 compressor.norm 是 [512]；indexer.compressor.wkv 是 256，norm 是 [128]。比值 128 的层 wkv = norm = 512，
+    翻倍只跟着比值 4 走。厂商参考实现把它说死了：Compressor 里 overlap = (compress_ratio == 4)、coff = 1 + overlap，wkv / ape /
+    kv_state 都是 coff × head_dim 宽，压缩时前一半取上一窗口、后一半取当前窗口，合成一个 head_dim 宽的条目再过 RMSNorm(head_dim)；
+    Attention.kv_cache 是 [B, window + max_seq_len // ratio, head_dim]，Indexer.kv_cache 是 [B, max_seq_len // ratio, 128]。
+    所以全局 KV = 21 × 512/4 + 20 × 512/128 = 2768，indexer = 21 × 128/4 = 672，合计 3440 元素 / 6880 B（BF16 兜底），
+    原值 13600 B 高一倍。四个 V4 一代仓（Flash / Pro / DSpark / Vision-Exp）形状模式相同；V4.1 没有比值 4 的层、wkv = norm = 512，不受影响
+  resolution: corrected
+  changed_to: >-
+    global_kv 2768、indexer 672，note 写明条目宽取 compressor.norm 与参考实现的缓存形状；滑窗改为元素口径
+    local_window_elems_per_sequence 2818048（同 V4.1 的 R33）。V4.1 记录补 R34 留痕，README 与 docs 的跨代对照随之改为 3440 / 2.15 倍
+- id: R2
+  field: arch.attention.sparse.index_kv_dim
+  severity: wrong
+  claim: index_kv_dim 64；「4 个 token 共用一个 256 维条目」
+  finding: 条目宽 128（indexer.compressor.norm [128]，参考实现 Indexer.kv_cache 末维 128），256 是重叠窗口的 2 倍。每 token 128 / 4 = 32
+  resolution: corrected
+  changed_to: index_kv_dim 32，index_kv_source 与 lineage 的 indexer 一条同步改写；对 V3.2-Exp 的比较改为同一主干口径（7808 → 672）
+- id: R3
+  field: arch.attention.kv_sharing.layer_coverage
+  severity: imprecise
+  claim: 「attn.wkv 与 attn_sink 则在全部 43 层」
+  finding: 两者各 44 个 = 43 主干 + mtp.0。mtp.0 没有 compressor 与 indexer（compress_ratios[43] = 0）。derive 报「开草稿侧时按 44 层算」只对滑窗成立
+  resolution: corrected
+  changed_to: 写成明确的层集合，补主干口径与 mtp.0 的说明
+- id: R4
+  field: lineage.changed_from_predecessor
+  severity: overreach
+  claim: 「top-k 8→6 配合分组取消……这是 V4 对 EP 通信最大的一笔节省」
+  finding: >-
+    算术对（13,303,808 → 4,227,072 B），归因不对：3.15 倍 = top_k 1.33 × hidden 1.75 × MoE 层数 1.35，top-k 是最小的因子，
+    分组不在公式里（README 自己写过载荷与分组无关），hidden 与层数是 Flash 的档位。同代 V4-Pro 只比 V3.2 低 1.27 倍
+  resolution: corrected
+  changed_to: 列出三个因子与 Pro 的对照
+- id: R5
+  field: lineage.changed_from_predecessor
+  severity: wrong
+  claim: 「scale 同时从 FP32 收到 8 bit，省掉的 scale 带宽在块变小的时候尤其值钱」
+  finding: 方向反了：块从 [128,128] 变成专家的 [1,32]，scale 个数涨 512 倍、每个只小 4 倍，scale 总字节从 V3.2-Exp 的 166,366,336 B 涨到 8,858,737,664 B（约 53 倍）
+  resolution: corrected
+  changed_to: 写明 scale 总量反增，FP4 + scale 每参数 0.53125 B
+- id: R6
+  field: lineage.changed_from_predecessor
+  severity: imprecise
+  claim: 「省掉一个 hidden×hidden 的大矩阵」；「decode 每步省掉一次把 512 维 latent 还原成 128×192 KV 的大矩阵乘」
+  finding: >-
+    满秩输出投影是 [4096, 32768] 134.2M，wo_a + wo_b 67.1M，省的是一半，hidden×hidden 只有 16.8M。V3.2 的 kv_b_proj 是 [32768, 512]
+    = 128 × (128 + 128)，不是 128 × 192；吸收式 decode 本就不逐步上投影，「每步省掉」只对参考写法成立
+  resolution: corrected
+  changed_to: 两处都改成按形状说，吸收式那半句标 judgement
+- id: R7
+  field: precision.quantization.subsystem_method
+  severity: stale
+  claim: 「抽样：每个子系统 6 个代表张量，共读 14 个分片头」
+  finding: >-
+    已有完整清单。按元素数复核代表值不变，但 indexer 是 78% FP8 / 22% BF16，router 是 95% BF16 / 4.9% I64（tid2eid）。
+    抽样时 router 的 I64 占 16.8%，因为只抽到第 0–5 层
+  resolution: corrected
+  changed_to: 写明全量复核与几个混合子系统
+- id: R8
+  field: params.counting_note
+  severity: imprecise
+  claim: 「按完整权重清单（69187 张量）」；「权重存储 148.6 GiB」
+  finding: >-
+    69187 是条目：35020 个权重张量 + 34167 个 .scale 容器。total 是实测值，Gate B 那一项是实测比实测；外部核对是 HF tally
+    290,944,616,402（逐位相同、不含 scale、I8 一栏已按 FP4 还原）。148.6 GiB 含 8.25 GiB scale。breakdown.attention 合并了三个子系统
+  resolution: corrected
+  changed_to: 补上这些数与口径
+- id: R9
+  field: open_questions
+  severity: stale
+  claim: 「未取权重清单（只有张量名），参数量与 FP4 打包形态待核」
+  finding: shapes.json 是完整清单（69187 条目、无读失败分片），打包已还原，参数量与 HF tally 逐位相同
+  resolution: corrected
+  changed_to: 换成 KV 落盘精度、参考实现的压缩器状态、训练精度、train_native 来源四条
+- id: R10
+  field: arch
+  severity: missing
+  claim: 没有 head_dim_note；activation / position / residual 缺 config 键
+  finding: >-
+    config 有 swiglu_limit 10.0（截断 SwiGLU）、compress_rope_theta 160000、hc_sinkhorn_iters 20、hc_eps 1e-6、
+    routed_scaling_factor 1.5（V3.2-Exp 是 2.5，lineage 没写）；hc_*_fn [24, 16384] F32 每步合计读 135 MB。V4.1 记录都有，这份没有
+  resolution: corrected
+  changed_to: 补 head_dim_note、activation / position 的截断与压缩 rope、residual 的 sinkhorn_iters / eps / coef_proj、lineage 的 routed_scaling_factor
+- id: R11
+  field: arch.moe.balance
+  severity: imprecise
+  claim: 「第 3 层起，共 41 个」
+  finding: 41 个 gate.bias = 主干 L3–L42 的 40 个 + mtp.0 的 1 个
+  resolution: corrected
+  changed_to: 拆成 40 + 1
+- id: R12
+  field: lineage.changed_from_predecessor
+  severity: missing
+  claim: decoding 一条只写「MTP 独立成 mtp.* 命名空间」
+  finding: >-
+    拼接胶水由 eh_proj 换成 e_proj + h_proj [4096, 4096]、不再有 shared_head；权重命名也整体换了一套（layers.N.attn.* / ffn.*、
+    w1/w3/w2、gate.bias、embed / head、attn_norm / kv_norm、.scale）。V4.1 记录的 R29 指出过 bias 改名在全部记录里都没写
+  resolution: corrected
+  changed_to: decoding 一条补胶水变化，命名整体更换写进 notes
+- id: R13
+  field: evidence
+  severity: miscategorized
+  claim: released、kv_sharing.note、residual.type / note 继承 official
+  finding: >-
+    released 2026-04-22 是 repoinfo 的 createdAt；kv_sharing.note（零命中）与 residual.note（hc_head_* 的有无）来自清单，
+    residual.type「mHC」不是 config 键。context.train_native 65536 是把 YaRN 的 original_max_position_embeddings 读成了训练长度
+  resolution: corrected
+  changed_to: 前四者标 derived，train_native 标 judgement 并留 open question
+- id: R14
+  field: infra_signals
+  severity: overreach
+  claim: 「MLA → MQA-on-latent 是整条线上最值得注意的反转……沿用 MLA 的注意力算子会直接对不上权重」
+  finding: 吸收式 MLA 的 decode 本来就是在 latent 上做 MQA（K 576 / V 512），对它而言变化是 K 宽 576 → 512 加 sink 与滑窗，不是推倒重来
+  resolution: corrected
+  changed_to: 区分吸收式与逐步上投影两种实现

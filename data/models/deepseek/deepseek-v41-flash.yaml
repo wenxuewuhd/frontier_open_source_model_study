@@ -798,6 +798,18 @@ review:
     只跑主干时 40 层 2641920 B。窗口宽 512 与 window 128 两个因子另行核过，没变
   resolution: corrected
   changed_to: 改为元素口径字段 local_window_elems_per_sequence = 2818048（含 MTP 3 块），字节由 derive.py 按落盘格式折算
+- id: R34
+  field: '-'
+  severity: wrong
+  claim: R28 的结论「Flash 实为 13600 B/token（全局 5456 + indexer 1344 元素），Pro 19448」
+  finding: >-
+    R28 改对了三个因子，第四个错在 R28 自己：比值 4 的层的条目宽。V4 一代比值 4 的层 compressor.wkv 输出 1024、indexer.compressor.wkv
+    输出 256，但对应的 compressor.norm 是 [512]、[128]；厂商参考实现（DeepSeek-V4-Flash inference/model.py @ 60d8d70）在 ratio == 4
+    时用重叠窗口，coff = 2 只是中间宽度，落进缓存的条目是 head_dim 宽。Flash 实为全局 2768 + indexer 672 = 3440 元素（6880 B 兜底），
+    Pro 3964 + 960 = 4924（9848 B）。改动与依据记在 ds-v4-flash 的 R1。本代（V4.1）没有比值 4 的层，四个源层 wkv = norm = 512，
+    本记录的 1280 + 320 与 lineage 里对通用 MLA 公式的 14.4 倍都不受影响；README / docs 里 V4 → V4.1 的结构倍数随之由 4.25 变为 3440 / 1600 = 2.15
+  resolution: corrected
+  changed_to: 新数写在 ds-v4-flash / ds-v4-pro 等 V4 一代记录里；本记录 R28 的原文保留作留痕
 
 notes: 本记录是 P0-A 的 schema 压力测试用例：选它是因为它同时带有 MLA、细粒度 MoE、 跨层 KV 共享、稀疏选块、残差流改造、外置查表、自带草稿模型和混合精度， 字段覆盖最宽。schema
   撑不住的地方会先在这里暴露。
