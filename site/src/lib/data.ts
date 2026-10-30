@@ -419,6 +419,25 @@ export const KV_BASIS_LABEL: Record<string, string> = {
   mixed: '口径混合',
 };
 
+/**
+ * 每个 basis 的一句话解释，给需要展开说的地方用（逐层图的表头说明那类）。
+ *
+ * 和 KV_BASIS_LABEL 放在一起是有意的：短标签和长解释是同一件事的两种长度，
+ * 分开放就会出现「标签查表、解释写 ternary」的半吊子状态 —— 逐层图原先正是这样，
+ * `basis === 'theoretical_floor' ? 理论下限 : 按模型 dtype 兜底`，
+ * 于是 vendor_declared 的那一行被解释成「记录没给落盘精度」，
+ * 而那恰恰是厂商公布、本仓算不出来的那一行。**不是漏标签，是标反。**
+ */
+export const KV_BASIS_NOTE: Record<string, string> = {
+  theoretical_floor:
+    '精确计数，但不含分页、环页与对齐粒度，实际部署在它之上，不能直接当显存预算',
+  vendor_declared:
+    '采用厂商公布值，本仓按分量算不出同一个数（差额落在落盘格式未公布的那个分量上）',
+  declared_dtype: '按记录里声明的 KV 精度算，不是兜底假设',
+  dtype_fallback: '记录没给落盘精度，按模型 dtype 兜底，不是实际格式',
+  mixed: '各分量口径不同，整行不能当作单一口径读，也不能和别的代比倍数',
+};
+
 export const TRACKED_FIELDS: TrackedField[] = [
   { key: 'layers', label: '层数', axis: 'scale', group: 'spec', get: (m) => m.arch?.layers },
   { key: 'hidden', label: 'hidden', axis: 'scale', group: 'spec', get: (m) => m.arch?.hidden },

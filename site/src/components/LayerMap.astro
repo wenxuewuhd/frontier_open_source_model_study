@@ -7,7 +7,7 @@
  * 两档对页面底色不足 3:1，字母是必须的辅助编码，不是装饰。
  */
 import Evidence from './Evidence.astro';
-import { fmtBytes } from '../lib/data';
+import { fmtBytes, KV_BASIS_LABEL, KV_BASIS_NOTE } from '../lib/data';
 
 interface Props {
   L: Record<string, any>;
@@ -83,7 +83,8 @@ const srcLayers = cols.filter((l: any) => l.cache.global_kv || l.cache.index_k);
 const tot = L.cache_totals ?? {};
 const lw = tot.local_window;
 const kvs = L.kv_storage ?? {};
-const floor = tot.global_kv?.bytes_basis === 'theoretical_floor';
+const basis = tot.global_kv?.bytes_basis;
+const floor = basis === 'theoretical_floor';
 const perTokenBytes = (tot.global_kv?.per_token_bytes_sum ?? 0) + (tot.index_k?.per_token_bytes_sum ?? 0);
 // 一条 = 一个条目（全局 KV、index K）或一个窗口位置（滑窗），宽度取任一源层 / 任一层的实测值
 const anyLayer = (key: string) => cols.find((l: any) => l.cache[key])?.cache[key]?.entry_elems;
@@ -283,7 +284,7 @@ const classRoles = (c: any) => {
           <tr>
             <th>层</th><th class="num">压缩比</th>
             <th class="num">全局 KV / token</th><th class="num">index K / token</th>
-            <th class="num">合计 / token{floor ? '（理论下限）' : ''}</th>
+            <th class="num">合计 / token{basis ? `（${KV_BASIS_LABEL[basis] ?? basis}）` : ''}</th>
             <th class="num alt">条目宽（未折算）</th>
           </tr>
         </thead>
@@ -304,7 +305,7 @@ const classRoles = (c: any) => {
             <td class="num">{tot.global_kv?.per_token_elems_sum} 元素 · {fmtB(tot.global_kv?.per_token_bytes_sum)}</td>
             <td class="num">{tot.index_k?.per_token_elems_sum} 元素 · {fmtB(tot.index_k?.per_token_bytes_sum)}</td>
             <td class="num">
-              <b>{fmtB(perTokenBytes)}</b>{floor && <span class="muted"> 理论下限</span>}
+              <b>{fmtB(perTokenBytes)}</b>{basis && <span class="muted"> {KV_BASIS_LABEL[basis] ?? basis}</span>}
             </td>
             <td class="num alt">{tot.global_kv?.entry_elems_sum} + {tot.index_k?.entry_elems_sum}</td>
           </tr>
@@ -318,9 +319,9 @@ const classRoles = (c: any) => {
       </p>
       <p class="small muted">
         字节 = 元素数 × 下表的落盘格式（含 scale）。
-        {floor
-          ? <>这是<strong>理论下限</strong>：精确计数，但不含分页、环页与对齐粒度，实际部署在它之上，不能直接当显存预算（缺口见核查区 <b>R31</b>）。</>
-          : <>记录没给落盘精度，按模型 dtype 兜底，不是实际格式。</>}
+        {basis && <>这一列的口径是<strong>{KV_BASIS_LABEL[basis] ?? basis}</strong>
+          {KV_BASIS_NOTE[basis] ? `：${KV_BASIS_NOTE[basis]}` : ''}
+          {floor ? <>（缺口见核查区 <b>R31</b>）</> : ''}。</>}
       </p>
 
       {storage.length > 0 && (
@@ -346,7 +347,11 @@ const classRoles = (c: any) => {
                   {r.width ? `${r.width} × ${+r.s.bytes_per_element.toFixed(4)} = ${fmtB(r.width * r.s.bytes_per_element)}` : '—'}
                   {r.width && r.s.scale_bytes_per_element ? <span class="muted">（scale 占 {fmtB(r.width * r.s.scale_bytes_per_element)}）</span> : ''}
                 </td>
-                <td>{r.s.basis === 'theoretical_floor' ? <>理论下限 <Evidence tag="judgement" /></> : '模型 dtype 兜底'}</td>
+                {/* 查表，不写 ternary：原先是「=== theoretical_floor ? 理论下限 : 模型 dtype 兜底」，
+                    于是 vendor_declared 与 mixed 落进 else 被标成「模型 dtype 兜底」——
+                    不是漏标签，是标错。口径表只此一份，见 lib/data.ts 的 KV_BASIS_LABEL */}
+                <td>{KV_BASIS_LABEL[r.s.basis] ?? r.s.basis ?? '—'}
+                    {r.s.basis === 'theoretical_floor' ? <> <Evidence tag="judgement" /></> : ''}</td>
               </tr>
             ))}
           </tbody>
@@ -362,7 +367,7 @@ const classRoles = (c: any) => {
           滑窗局部 KV 另计，每序列固定、不随上下文增长：
           主干 {lw.main?.layers} 层 {fmtBytes(lw.main?.bytes_per_sequence)}
           {lw.mtp && <> + MTP {lw.mtp.layers} 块 {fmtBytes(lw.mtp.bytes_per_sequence)}（投机解码时常驻）</>}
-          {' '}= {fmtBytes(lw.bytes_per_sequence)}{lw.bytes_basis === 'theoretical_floor' ? '，理论下限' : '，按模型 dtype 兜底'}。
+          {' '}= {fmtBytes(lw.bytes_per_sequence)}{lw.bytes_basis ? `，${KV_BASIS_LABEL[lw.bytes_basis] ?? lw.bytes_basis}` : ''}。
         </p>
       )}
       {
