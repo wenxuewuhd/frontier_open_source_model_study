@@ -1,0 +1,821 @@
+id: step-3
+family: stepfun
+kind: vlm
+display_name: Step-3
+released: '2025-07-28'
+license: apache-2.0
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/stepfun-ai/step3
+    locator: config.json / README.md @ e2d67fc936dc
+    accessed: '2026-10-30'
+    note: >-
+      BF16 发布（另有 stepfun-ai/step3-fp8 量化变体，不另起记录）。89 个分片、1663 个张量，
+      逐分片读头取全、无读失败分片，按名去重后 1663 = index 的 weight_map 条目数。
+      模型卡给的规格表：61 层（含 5 个稠密层）、hidden 7168、注意力机制 MFA、
+      低秩 query 维 2048、64 个 query 头、head_dim 256、48 专家 top-3 + 1 共享、
+      65536 上下文、总参数 LLM 316B / VLM 321B、激活 38B
+  - kind: repo
+    url: https://huggingface.co/stepfun-ai/step3/tree/e2d67fc936dc60f8f606f2429728f1dea503e10d
+    locator: modeling_step3.py（Step3vAttention / Step3vRMSNorm）、configuration_step3.py、docs/deploy_guidance.md
+    accessed: '2026-10-30'
+    note: >-
+      厂商随仓发布的实现与部署指南，下载到本地只读、未执行。MFA 的投影次序、
+      KV 头数、缓存精度、以及「AFD 未进开源部署路径」都从这里读
+  - kind: paper
+    url: https://arxiv.org/abs/2507.19427
+    locator: Step3 System 论文（模型卡与部署指南都指向它作为 MFA / AFD 的出处）
+    accessed: '2026-10-30'
+    note: >-
+      只作为 MFA / AFD 两个名词的官方出处引用。**论文本体本轮没读** ——
+      本记录里凡与 AFD 有关的话都只依据模型卡与部署指南的原文，不依据论文内容
+
+hf:
+  repo: stepfun-ai/step3
+  sha: e2d67fc936dc60f8f606f2429728f1dea503e10d
+  last_modified: '2026-01-29T07:41:03.000Z'
+  pipeline_tag: image-text-to-text
+  gated: false
+
+lineage:
+  track: main
+  predecessor: step-1
+  successor: step-3.5-flash
+  changed_from_predecessor:
+    - axis: attention
+      text: >-
+        稠密 GQA（8 KV 组 × 128）换成 MFA：KV 只剩 **1 组 × 256**，而 query 侧做低秩分解
+        hidden 7168 → q_proj [2048, 7168] → inter_norm [2048] → wq [16384, 2048] = 64 头 × 256。
+        每层每 token 的 KV 元素从 2048 降到 512
+      benefit: >-
+        每 token KV 元素 180,224 → 31,232（元素口径，5.77 倍）。代价是 o_proj 入口宽到 16384
+        （64 × 256），注意力权重本身从 28.79B 降到 10.33B 但单层投影更宽
+    - axis: moe
+      text: 88 层全稠密（FFN 31232）换成 61 层里 56 层 MoE：48 路由专家 top-3 + 1 共享专家（各 5120 中间维），稠密层只剩 L0–L3 与 L60
+      benefit: 总参数 131.95B → 320.97B，而每 token 激活 131.03B → 37.92B（带宽口径）
+    - axis: attention
+      text: 位置编码从 ALiBi 式加性偏置换成 RoPE（rope_theta 500000，逐层同一套，无 partial rotary、无 rope_scaling）
+    - axis: modality
+      text: 加视觉塔：CLIP 式 63 层 / width 1792（带 class token 与可学习位置表），两级卷积下采样后经 vit_large_projector [7168, 8192] 投到主干
+    - axis: context
+      text: 32768 → 65536
+    - axis: scale
+      text: hidden 12288 → 7168、层数 88 → 61、词表 74752 → 128815（模型卡注明 tokenizer 用 DeepSeek V3 的）
+
+params:
+  total: 320969912832.0
+  breakdown:
+    expert: 295950090240.0
+    attention: 10330046464.0
+    shared_expert: 6165626880.0
+    vision: 4675374592.0
+    dense_ffn: 1981808640.0
+    embed: 923345920.0
+    lm_head: 923345920.0
+    router: 19267584.0
+    norm: 1006592.0
+  counting_note: >-
+    按 index 的 weight_map 全量清单（89 个分片、1663 个条目，逐分片读头取全）逐项统计，无读失败分片。
+    全部 BF16，无 scale 张量、无打包容器，numel 即参数数。
+    **与 HF 的 safetensors tally 320,969,912,832 逐位相同。**
+    两侧口径都对上了厂商声明：实测总量 320.97B ≈ 模型卡「Total Parameters (VLM) 321B」；
+    扣掉视觉塔（vision_model.* 与 vit_* 共 765 个张量、4,675,374,592）得 316,294,538,240
+    ≈ 模型卡「Total Parameters (LLM) 316B」。两个声明值同时成立，是塔边界的一条**弱**佐证：
+    厂商两个值都取整到整数 B，差值 5B 对实测塔的 4.675B 相差 7%，
+    凡是落在约 3.5B–5.5B 之间的塔边界都能同时满足这两个取整，所以它排除不了邻近的划法。
+    塔边界真正的依据是名字前缀穷举（vision_model.* 与 vit_*，765 个张量，无交叉）。
+    逐因子（每一项都能从形状复算）：
+    expert = 56 层 × 3 × 48 × 5120 × 7168 = 295,950,090,240；
+    attention = 61 层 × (2048×7168 + 16384×2048 + 2 × 256×7168 + 7168×16384) = 10,330,046,464；
+    shared_expert = 56 层 × 3 × 5120 × 7168 = 6,165,626,880；
+    vision = 4,675,374,592（765 个张量，见上）；
+    dense_ffn = 5 层 × 3 × 18432 × 7168 = 1,981,808,640；
+    embed = lm_head = 128815 × 7168 = 923,345,920（两份独立张量，不共享）；
+    router = 56 层 × 48 × 7168 = 19,267,584；
+    norm = (61 × 2 + 1) × 7168 + 61 × 2048 = 1,006,592 —— 每层三个 norm 张量里
+    **inter_norm 只有 2048 宽**（它作用在 MFA 的低秩 latent 上，不是 hidden 宽），
+    按 3 × 7168 算会多 437,248。九项相加 = 320,969,912,832 = total。
+    **breakdown 里的 vision 是修正值，不是 derive.py 当前的分桶**：lib/subsystems.py 有两处
+    命中不到这一份（视觉塔 63 层 > 主干 61 层，使 classify 的 mtp_from 层号捷径把
+    vision_model.transformer.layers.61/62 共 24 个张量判成 draft；vision 正则的 `vit\.`
+    要求字面点号，漏掉 vit_downsampler / vit_downsampler2 共 4 个张量，落进 other）。
+    于是 data/derived/step-3.json 里会显示 vision 4,208,158,720 + draft 135,853,568 +
+    other 331,362,304，三者之和恰等于本记录的 vision 4,675,374,592。
+    params.total 不受影响（分桶不改总和），Gate B 的参数总量与外部对账都是 0 差异。
+    修法与行号写在交接笔记里，属仓库级改动，不在本记录内处理
+
+context:
+  max: 65536
+
+arch:
+  layers: 61
+  hidden: 7168
+  vocab: 128815
+  norm: >-
+    常规 RMSNorm，以 1 为中心（参考实现 Step3vRMSNorm），权重落盘 BF16。
+    与前代 Step-1 同；后两代（Step-3.5 / Step-5）改成零中心 × (1 + w)
+  norm_eps: 1.0e-05
+  activation: >-
+    SwiGLU，无截断：参考实现的 Step3vMLP.forward 与 Step3vMoEMLP.get_expert_output
+    都是裸的 `down_proj(silu(gate_proj(x)) * up_proj(x))`，没有 clamp；
+    config 里也没有 swiglu_limits / swiglu_limits_shared，那是下一代 Step-3.5 才有的字段
+  position: >-
+    RoPE，rope_theta 500000，**逐层同一套**：config 里 rope_theta 是单个标量不是数组，
+    没有 partial_rotary_factors、没有 rope_scaling、没有 layer_types。
+    参考实现对 query（wq 之后的 64 × 256）与 key（1 × 256）全旋转 256 维
+
+  attention:
+    type: MQA
+    num_heads: 64
+    num_kv_heads: 1
+    head_dim: 256
+    v_head_dim: 256
+    q_lora_rank: 2048
+    head_dim_note: >-
+      **MFA（Multi-Matrix Factorization Attention，模型卡原文）的落盘形状，逐层穷举 0 例外（61/61）**：
+      q_proj [2048, 7168] 是**降维**（hidden → share_q_dim 2048）、
+      wq [16384, 2048] 是**升维**（2048 → 64 头 × 256）—— 名字与直觉相反，
+      按「q_proj 就是 query 投影」读会把 64 头 × 256 错当成 2048。
+      两者之间是 inter_norm [2048]（RMSNorm，作用在低秩 latent 上）。
+      k_proj / v_proj 都是 [256, 7168]，即 **1 个 KV 组 × 256**，不是 num_attention_groups × head_dim；
+      o_proj [7168, 16384] 入口是 64 × 256。QK 与 V 每头都是 256。
+      写缓存的 K 是 k_proj 的输出（RoPE 之后），256 维；没有 q_norm / k_norm、没有输出门。
+      注意 **config 的 num_attention_groups: 1 并没有被实现读** ——
+      参考实现 Step3vAttention 把 self.num_key_value_heads 写死成 1，
+      config 那一项改成别的值也不会改变形状
+    layer_pattern: >-
+      61 层全部同一种注意力：无滑窗、无稀疏、无跨层共享，投影形状完全相同（61 层一个签名）。
+      config 里没有 layer_types。作用域：本代 —— 下一代 Step-3.5-Flash 起按滑窗与全局 3:1 分了两型
+    kv_sharing:
+      layer_coverage: >-
+        61 层**全部**产出随上下文线性增长的全量 K/V，没有每序列固定的分量。
+        与前代 Step-1 一样只有一个分量，但条目宽度从 2048 降到 512
+
+  ffn:
+    type: moe
+    intermediate: 18432
+    layer_pattern: >-
+      L0–L3 与 **L60** 稠密（mlp.gate_proj [18432, 7168]），L4–L59 共 56 层 MoE
+      （config moe_layers_enum，权重侧 56 个 moe.* 与 5 个 mlp.* 逐一吻合）。
+      模型卡的「Number of Dense Layers 5」指的就是这 5 层。
+      **主干最后一层不是 MoE** —— 按 first_k_dense 4 推「其余都是 MoE」会多算一层 48 专家，
+      derive.py 的 EP 通信量正是这么算的（57 层而非 56），差一层
+
+  moe:
+    routed_experts: 48
+    shared_experts: 1
+    top_k: 3
+    intermediate: 5120
+    first_k_dense: 4
+    dense_intermediate: 18432
+    routing: >-
+      softmax 路由，**写死在参考实现里、没有任何可配项**：Step3vMoEMLP.forward 直接
+      `F.softmax(router_logits, dim=1, dtype=torch.float)` 再 topk，然后把权重 cast 回输入 dtype。
+      即打分恒在 FP32 里做（但不是靠 config 开关 —— 这一代没有 need_fp32_gate 这个字段），
+      选中权重**不再归一化**（全 48 路 softmax 之后直接取 top-3，实现里没有 renormalize 这一步）。
+      注意 **config 的 norm_expert_weight: false 并没有被实现读** ——
+      modeling_step3.py 里这个名字 0 次出现（num_attention_groups 同样 0 次），
+      行为与声明一致是巧合不是因果。
+      没有 router_bias、没有 sigmoid 门、没有 routed scaling，三件都是下一代 Step-3.5 才加的。
+      moe.gate.weight [48, 7168] 落盘 BF16
+    balance: 无声明（config 里没有任何 aux-loss 或 bias 字段，权重里也没有 expert_bias / e_score_correction 一类张量）
+    storage_note: >-
+      堆叠存储：每层 moe.gate_proj / up_proj [48, 5120, 7168]、down_proj [48, 7168, 5120]，
+      一个张量装一层全部 48 个专家，gate 与 up 分开不融合。共享专家叫 share_expert（单数），
+      中间维 5120 与路由专家同宽。名字里没有 experts。
+      48 取自 168 个堆叠张量的首维（穷举、0 例外），不取自 config.moe_num_experts ——
+      derive.py 的 config 侧对账因键名不同被 skip，这一项不在 Gate B 的覆盖内
+
+  decoding:
+    mtp_layers: 0
+    mtp_layers_note: >-
+      config 没有 num_nextn_predict_layers，清单里也没有 eh_proj / enorm / hnorm / shared_head
+      任何一类 MTP 胶水张量。主干层索引止于 60。
+      **derived JSON 里的 mtp_layers_seen [61, 62] 与 draft_blocks_seen 2 是假阳性** ——
+      那是视觉塔第 61、62 层被 classify 的层号捷径误判（见 params.counting_note）。
+      MTP 是下一代 Step-3.5-Flash 才有的
+
+  vision:
+    encoder: >-
+      CLIP 式：带 class token（vision_model.embeddings.class_embedding [1, 1792]）
+      与可学习位置表 [2705, 1792]，LayerNorm 与各投影都带 bias。以上实测自权重清单。
+      参考实现把塔委托给 vision_encoder.py 的 StepCLIPVisionTransformer
+      （modeling_step3.py 第 42 行只有 import），**那个文件本轮没下载、类体没读**；
+      `step3_vision_encoder` 是 configuration_step3.py 里 Step3VisionEncoderConfig 的
+      model_type **类属性**，不是仓内 config.json 的键（它的 vision_config 没有 model_type）
+    layers: 63
+    hidden: 1792
+    num_heads: 16
+    patch_size: 14
+    intermediate: 15360
+    out_hidden: 7168
+    params: 4675374592.0
+    fusion: >-
+      QKV 融合成一个 [5376, 1792] 的投影（1792 × 3），注意力与 FFN 都带 bias，LayerNorm 带 bias
+      —— 与下一代起用的 Perception Encoder（无 cls token、LayerScale、resblocks 命名）是两套不同的塔。
+      两级卷积下采样：vit_downsampler [4096, 1792, 2, 2] 是 kernel 2、
+      **stride 取自 config 的 understand_projector_stride（2）**；
+      vit_downsampler2 [8192, 4096, 3, 3] 是 kernel 3、**stride 2 与 padding 1 都写死在实现里**
+      （modeling_step3.py 第 686–698 行）—— 两级里只有第一级的 stride 可配。
+      再经 vit_large_projector [7168, 8192] 投到主干宽度。
+      **out_hidden 的 7168 不是 config 的 output_hidden_size**：那一项是 4096，
+      是塔每 token 的输出宽度；两级下采样把通道推到 4096 → 8192，projector 才是
+      Linear(output_hidden_size × 2 = 8192, text hidden = 7168)（第 700–704 行）。
+      schema 的 out_hidden 问「投影到主干前的输出维度」，所以填 7168（实测自权重），
+      但它与同名 config 键不是一个数 —— 照 config 读会把 projector 的出口当成 4096。
+      token 数可以从这两行卷积推出来：位置表 2705 = 1 个 class token + 52²，
+      52 →（k2, s2）→ 26 →（k3, s2, p1）→ 13，13² = **169** = config 的 image_token_len（全局视图）。
+      另有 patch_token_len 81，而模型卡说多 patch 预处理默认开启，
+      所以单图的 token 数是 169 + 81 × patch 数，**169 不是上限**，
+      schema 的 max_image_tokens 因此不填。
+      config 的 vision_config.intermediate_size 15360 与权重 mlp.fc1 [15360, 1792] 一致
+      （注意 configuration_step3.py 里这一项的**默认值**写的是 3072，仓里的 config.json 覆盖成 15360，
+      按默认值读会少算 5 倍）
+
+precision:
+  weights_release: [BF16]
+  quantization:
+    per_subsystem:
+      expert: BF16
+      shared_expert: BF16
+      attention: BF16
+      dense_ffn: BF16
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+      vision: BF16
+    subsystem_method: >-
+      全量清单穷举（1663/1663 个张量），不是抽样：**单一 dtype**，1663 个条目全部 BF16，
+      没有 FP32、没有 FP8、没有 scale。norm 与 router 也是 BF16。
+      仓里另有 stepfun-ai/step3-fp8 是 FP8 量化变体，本记录不覆盖它
+
+platforms:
+  - engine: vLLM
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    parallel: TP16 或 DP16/TP1
+    caveat: >-
+      需要 nightly（部署指南点名 vllm-project/vllm#21998 合入之后的版本）。
+      BF16 版约需 642 GB 显存、最小部署单元 16×H20；FP8 版约 326 GB、8×H20。
+      部署指南原文：「Step3 only has single kv head, so attention data parallelism **can be**
+      adopted to reduce the kv cache memory usage」。文档把 TP 与 DP+TP 列为同一个最小部署
+      单元下的两个并列选项（「with **either** Tensor Parallel (TP) **or** Data Parallel +
+      Tensor Parallel (DP+TP)」），**没有说更推荐哪个**
+    ref:
+      kind: doc
+      url: https://huggingface.co/stepfun-ai/step3/blob/e2d67fc936dc60f8f606f2429728f1dea503e10d/docs/deploy_guidance.md
+    visibility: public
+  - engine: SGLang
+    engine_version: '>=0.4.10'
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    parallel: TP16
+    caveat: 部署指南原文「0.4.10 or later is needed for SGLang」，装法是 `pip3 install "sglang[all]>=0.4.10"`；BF16 版同样 16×H20 起
+    ref:
+      kind: doc
+      url: https://huggingface.co/stepfun-ai/step3/blob/e2d67fc936dc60f8f606f2429728f1dea503e10d/docs/deploy_guidance.md
+    visibility: public
+  - engine: Transformers
+    engine_version: '4.54.0'
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    caveat: >-
+      模型卡「Inference with Hugging Face Transformers」一节给了版本配方
+      （「python=3.10, torch>=2.1.0, and transformers=4.54.0」）与可运行片段，
+      并写明「We currently only support bf16 inference, and multi-patch for image
+      preprocessing is supported by default. This behavior is aligned with vllm and sglang」。
+      需要 trust_remote_code（仓里带 modeling_step3.py / vision_encoder.py）
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/stepfun-ai/step3
+    visibility: public
+  - engine: TensorRT-LLM
+    hardware: NVIDIA
+    status: unknown
+    caveat: 部署指南里这一节只写了「Coming soon...」
+    ref:
+      kind: doc
+      url: https://huggingface.co/stepfun-ai/step3/blob/e2d67fc936dc60f8f606f2429728f1dea503e10d/docs/deploy_guidance.md
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      MFA 把 KV 压到每层 1 组 × 256：61 层全部产出全量 K/V、无滑窗无稀疏，
+      但单层条目只有 512 个元素。这一族四代里，这是唯一一代把 KV 组数压到 1 的
+    quantified: >-
+      元素口径逐因子：每层 2（K 与 V）× 1 组 × 256（k_proj / v_proj 输出维，61/61 层穷举一致）
+      = 512 元素，× 61 层 = **31,232 元素/token**，无每序列固定分量。
+      按 BF16 折算 62,464 B/token，65536 上下文满长度 3.81 GiB/序列。
+      **字节那一列的口径是 `dtype_fallback`（按模型权重 dtype 兜底）**：
+      厂商没有一处说过 KV 缓存精度 —— 模型卡那句「We currently only support bf16 inference」
+      在 Transformers 用法一节里、下一句是「This behavior is aligned with vllm and sglang」，
+      讲的是推理与权重精度，不是缓存；部署指南也只给引擎命令、不设 --kv-cache-dtype。
+      可读的参考实现里又没有带格式的缓存分配（第 607 行唯一的 DynamicCache、无 dtype 形参），
+      所以 basis 老实留兜底，**字节这一列不与任何别代比**。
+      跨代比**只用元素那一列**：前代 Step-1 180,224（5.77 倍）、
+      后代 Step-3.5-Flash 24,576、Step-5-Preview 36,064 元素/token。
+      比之前先对齐账的形状：本代与 Step-1 只有一个分量，后两代是混合结构，
+      那两个数**只是它们随上下文增长的那一个分量**，各自另有每序列固定的
+      34,603,008 与 54,263,808 元素（Step-5 的 36,064 里还含 736 个按 1/8 摊的 FP8 区域摘要）
+    visibility: public
+  - dimension: kv-capacity
+    finding: >-
+      只有 1 个 KV 组，TP 切不开它 —— TP=N 的每个 rank 都得持一整份全局 KV，整机 N 倍。
+      这是 Step-5-Preview 那条「TP=8 而 KV 组只有 4 → 整机 2×」的极端形态：
+      组数降到 1，复制倍数就等于 TP 度数。
+      厂商部署指南对此只说 attention 侧**可以**走 DP 来降 KV 显存（原文 can be adopted）；
+      TP 与 DP+TP 在文档里是同一个最小部署单元下的两个并列选项，**没有表达偏好**。
+      这一条记在 kv-capacity 而不是 tp-comm：内容与数字全是复制之后的**容量**，没有通信量
+    quantified: >-
+      按 TP16 布局（部署指南给的 BF16 最小部署单元就是 16×H20、约 642 GB），
+      31,232 元素/token 的逻辑 KV 在整机上是 16 份：约 999,424 B/token、65536 上下文 61.0 GiB。
+      改 DP16/TP1 后每个 rank 只持自己那批序列的一份，整机不复制。
+      复制倍数来自并行布局，与分页粒度无关 —— 上面那条「字节口径是 declared_dtype」
+      的说明也盖不住它（skill 规则 8：免责只免掉它点名的那件事）
+    fix: 想避开这个倍数就把 attention 侧改成 DP（DP16/TP1）；文档把它列为可选，不是推荐
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      MFA 的 query 路径是「降维 → RMSNorm → 升维」三段，比常规 q_proj 多一次 GEMM
+      和一次归一化，而且 norm 作用在 2048 维的 latent 上（不是逐头）。
+      按「q_proj 输出就是 64 头 × 256」实现的融合 QKV 算子在这里对不上：
+      q_proj 的输出是 2048，中间还夹着一个 norm，三段不能并成一个 GEMM
+    visibility: public
+
+infra_signals:
+  - text: >-
+      MFA 是这一族唯一一次把 KV 组压到 1 的尝试，而且没有延续：下一代 Step-3.5-Flash
+      回到 8 组 × 128，Step-5-Preview 用 4 组 × 192。单组的代价是 TP 切不开缓存、
+      必须改走 DP attention，部署拓扑被结构绑死 —— 这大概是它没被继承的原因之一，
+      但厂商没有公开说明，这一句是判断
+    evidence: judgement
+    horizon: settled
+    axis: attention
+  - text: >-
+      AFD（Attention-FFN Disaggregation）在模型卡里与 MFA 并列为「co-design」的两半，
+      但**开源侧拿不到它**：部署指南原文说只提供 TP 与 DP+TP，AFD「仍在与开源社区联合开发中」。
+      即注意力与 FFN 分开部署这件事在这一代只是论文与闭源推理栈里的事实，
+      公开权重配开源引擎复现不出来 —— 跟踪这条路线要盯引擎侧的 PR，不是模型仓
+    evidence: official
+    horizon: watch
+    axis: attention
+  - text: >-
+      一个 321B 模型只用 48 个专家 top-3、中间维 5120（粗粒度），而下一代直接跳到
+      288 专家 top-8、中间维 1280（细粒度）。同一家在半年内从粗粒度切到细粒度，
+      grouped GEMM 的形状从 [48, 5120, 7168] 变成 [288, 1280, 4096] ——
+      专家数涨 6 倍、单专家窄 4 倍，算子的 tile 选择与 EP 切分策略要重做
+    evidence: derived
+    horizon: settled
+    axis: moe
+
+evidence:
+  id: official
+  family: official
+  kind: official
+  display_name: official
+  released: official
+  license: official
+  hf: official
+  lineage: official
+  lineage.changed_from_predecessor: derived
+  params: derived
+  params.counting_note: derived
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.num_kv_heads: derived
+  arch.attention.v_head_dim: derived
+  arch.attention.q_lora_rank: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.attention.kv_sharing.layer_coverage: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.routing: derived
+  arch.moe.balance: derived
+  arch.moe.first_k_dense: derived
+  arch.moe.storage_note: derived
+  arch.decoding.mtp_layers: derived
+  arch.decoding.mtp_layers_note: derived
+  arch.vision.encoder: derived
+  arch.vision.out_hidden: derived
+  arch.vision.params: derived
+  arch.vision.fusion: derived
+  precision: official
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-30'
+  scope: [official, derived, judgement]
+  reviewer: 本会话复算（逐条读厂商实现源码 + 穷举全量权重清单），再加两个独立代理分片对抗式复核
+  method: >-
+    按 .claude/skills/model-audit 的取数与提问顺序过一遍。元素数与参数量一律**穷举全量清单**
+    （facts/step-3/shapes.json，89 个分片逐分片读头、1663 个张量），不用抽样产物。
+    本会话独立复核的是：1663 条的 dtype 普查与 HF 的逐 dtype tally 逐位相同；
+    61/61 层的 MFA 五个投影宽度；168 个堆叠专家张量的首维；5 个稠密层与 56 个 MoE 层的下标集合；
+    KV 乘式的每个因子；视觉塔边界（实测总量减塔 = 316,294,538,240，对上模型卡的 316B，
+    而总量对上 321B，两个声明值同时闭合）；
+    以及**另起一轮 HTTP range 读全部 89 个分片的头、逐名计数**，确认跨文件重名张量 0 个。
+    MFA 的投影次序、KV 头数写死成 1、softmax 路由、缓存精度来自直接读厂商 remote-code 实现
+    （modeling_step3.py / configuration_step3.py，只读未执行），行号记在各条 finding 里；
+    AFD 与部署拓扑的结论来自模型卡与 docs/deploy_guidance.md 的原文。
+    **arXiv 2507.19427 本轮没读**，所以记录里没有任何依据论文内容的数字。
+    Gate B：derive.py --model 0 处不一致（层数、参数总量、外部 tally 三项全 ok；
+    路由专家数因 config 键名是 moe_num_experts 而被 skip，这一项不在覆盖内）
+    **第二轮**：两个独立代理分片对抗式复核（一个只看注意力与缓存账、一个只看参数量 / MoE / 精度 / 平台 / 排除依据），各自从权重清单与厂商源码重新验、不看本会话的结论。本记录因此新增 R11–R21 十一条，
+    其中 R18 把一条 open_question 解掉了（视觉塔的下采样链）。
+
+review:
+  - id: R1
+    field: arch.moe.routing
+    severity: imprecise
+    claim: >-
+      「softmax 路由（参考实现里 custom_routing_function 为 None 时走 F.softmax + topk；
+      config 的 norm_expert_weight 为 false，即选中权重不再归一化）…… 打分精度无
+      need_fp32_gate 之类的声明」
+    finding: >-
+      结论对，归因错，而且错在会误导下一个人的地方。(a) 这一代**没有**
+      custom_routing_function 这个间接层 —— 那是下一代 Step-3.5 的结构；
+      Step3vMoEMLP.forward 第 365–366 行直接 `F.softmax(router_logits, dim=1,
+      dtype=torch.float)` 再 topk，然后 cast 回输入 dtype。(b) 打分**恒在 FP32 里做**
+      （就是上面那个 `dtype=torch.float`），而我原话说「无 need_fp32_gate 之类的声明」，
+      读起来像在说打分不是 FP32 —— 没有那个开关是对的，但精度结论反了。
+      (c) `norm_expert_weight` 在 modeling_step3.py 里 **0 次出现**（`num_attention_groups`
+      同样 0 次）：不归一化是因为实现里压根没有 renormalize 这一步，不是因为 config 写了 false。
+      把行为归因到一个没被读的键上，正是 skill 规则 9 要防的那类
+    resolution: corrected
+    changed_to: >-
+      routing 重写：说明 softmax 写死在实现里、打分恒 FP32、无 renormalize 这一步，
+      并点明 norm_expert_weight 与 num_attention_groups 两个键都没被实现读
+  - id: R2
+    field: arch.activation
+    severity: imprecise
+    claim: SwiGLU，无截断（参考实现里 MoE 与稠密 FFN 都没有 clamp）
+    finding: >-
+      成立，但原话没给可复核的落点。实际是两处：Step3vMLP.forward（第 322–323 行）
+      与 Step3vMoEMLP.get_expert_output（第 352–355 行）都是裸的
+      `down_proj(silu(gate_proj(x)) * up_proj(x))`，没有 clamp 分支；
+      config.json 里也没有 swiglu_limits / swiglu_limits_shared 两个键
+    resolution: corrected
+    changed_to: activation 补上两个函数名与「config 无这两个键」
+  - id: R3
+    field: arch.vision.max_image_tokens
+    severity: wrong
+    claim: max_image_tokens 169
+    finding: >-
+      169 是 config 的 `image_token_len`（全局视图的 token 数），**不是单图上限**。
+      另有 `patch_token_len: 81`，而模型卡原文说多 patch 预处理默认开启
+      （「multi-patch for image preprocessing is supported by default」），
+      所以单图是 169 + 81 × patch 数。填进 max_image_tokens 会让下游按 169 做 prefill 预算
+    resolution: corrected
+    changed_to: 删掉 max_image_tokens 这一格，三个 token 数与多 patch 的关系写进 vision.fusion
+  - id: R4
+    field: arch.vision.params
+    severity: imprecise
+    claim: 视觉塔 4,675,374,592 参数
+    finding: >-
+      有两个厂商声明值同时闭合作为独立确认：实测总量 320,969,912,832 ≈ 模型卡
+      「Total Parameters (VLM) 321B」；减去视觉塔（vision_model.* 与 vit_* 共 765 个张量、
+      4,675,374,592）得 316,294,538,240 ≈ 模型卡「Total Parameters (LLM) 316B」。
+      两侧同时对上，说明塔的边界（哪些张量算塔）划对了 —— 这比只核一侧强
+    resolution: confirmed
+    changed_to: 原值成立，不改
+  - id: R5
+    field: params.breakdown
+    severity: miscategorized
+    claim: breakdown 的 vision 是 4,675,374,592，与 derive.py 当前的分桶不一致
+    finding: >-
+      不一致是真的，而且根因在 lib/subsystems.py 不在本记录。两处：
+      (a) `classify()` 的层号捷径在所有名字正则之前执行，而本代**视觉塔 63 层 > 主干 61 层**，
+      于是 vision_model.transformer.layers.61/62 共 24 个张量（135,853,568）被判成 draft，
+      并让 from_shapes 报出 mtp_layers_seen [61, 62] / draft_blocks_seen 2 ——
+      一个**没有 MTP 的模型**上的假阳性；
+      (b) vision 正则的 `vit\.` 要求字面点号，漏掉 bare `vit_downsampler` / `vit_downsampler2`
+      共 4 个张量（331,362,304），落进 other，而 derive.py 的 active_params 把 other
+      算进 always，带宽口径因此报 38,249,345,024 而不是 37,917,982,720（偏高 0.87%，
+      而厂商声明 38B —— 错的那个反而更像对的）。
+      两处改动已逐张量验过：只有本代受影响，28 个张量重新归类，
+      step-1 / step-3.5-flash / step-5-preview 三份 0 变化。params.total 不受影响
+    resolution: open
+    changed_to: >-
+      breakdown 写**修正值**（口径正确、且与两个厂商声明值闭合），
+      counting_note 与最后一条 open_question 写明与当前 derive 分桶的差额；
+      改法与行号报回主会话整合，属仓库级改动
+  - id: R6
+    field: arch.attention.head_dim_note
+    severity: imprecise
+    claim: q_proj 是降维、wq 是升维、inter_norm 在两者之间；KV 只有 1 组 × 256
+    finding: >-
+      逐行核过，全部成立，而且比记录原话更硬：
+      第 412 行 `q_proj = nn.Linear(hidden_size, self.q_size)` 而 q_size = share_q_dim = 2048；
+      第 417 行 `inter_norm = Step3vRMSNorm(self.q_size)`；
+      第 419 行 `wq = nn.Linear(self.q_size, head_dim * num_attention_heads)` = 2048 → 16384。
+      forward 第 433 / 437 / 438 行按 q_proj → inter_norm → wq 的次序走。
+      第 403 行 `self.num_key_value_heads = 1` 是**字面量写死**，
+      `num_attention_groups` 在整个 modeling 文件里 0 次出现 —— 把 config 那一项改掉也不改形状。
+      权重侧 61/61 层穷举：q_proj [2048, 7168]、wq [16384, 2048]、k_proj / v_proj [256, 7168]、
+      o_proj [7168, 16384]，0 例外。RoPE 是全旋转（apply_rotary_pos_emb 第 169–193 行
+      对整条 head_dim 做 rotate_half，config 无 partial_rotary_factor）
+    resolution: confirmed
+    changed_to: 原值成立，不改
+  - id: R7
+    field: bottlenecks[0].quantified
+    severity: imprecise
+    claim: 31,232 元素/token，62,464 B/token，65536 上下文 3.81 GiB
+    finding: >-
+      三个因子各自独立找了来源：条目宽 2 × 1 组 × 256 = 512（k_proj / v_proj 输出维 256，
+      61/61 层穷举一致，没有 q_norm / k_norm 改宽度）；层覆盖 61 层（config 无 layer_types、
+      无滑窗、无稀疏，清单里 61 层一个签名）；一个条目覆盖 1 个 token
+      （第 446 行把 RoPE 之后的 key/value 直接 update 进 DynamicCache，无压缩无窗口）。
+      512 × 61 = 31,232，× 2 B = 62,464，× 65536 = 3.81 GiB，与 derive.py 的公式路一致。
+      与前代 Step-1 的 5.77 倍是**元素口径对元素口径**（180,224 / 31,232），不跨 basis
+    resolution: confirmed
+    changed_to: 原值成立，不改
+  - id: R8
+    field: infra_signals[1].text
+    severity: imprecise
+    claim: AFD 在模型卡里与 MFA 并列，但开源部署路径里拿不到
+    finding: >-
+      两半都有原文。模型卡：「Through the co-design of Multi-Matrix Factorization Attention
+      (MFA) and Attention-FFN Disaggregation (AFD), Step3 maintains exceptional efficiency」；
+      docs/deploy_guidance.md 第 5 行：「our open-source deployment guide only includes TP and
+      DP+TP deployment methods. The AFD (Attn-FFN Disaggregated) approach mentioned in our paper
+      is still under joint development with the open-source community」。
+      记录里没有任何依据 AFD 的量化数字，arXiv 2507.19427 只作名词出处 —— 论文本体没读，
+      这一点在 sources[2] 与 notes 里都写了
+    resolution: confirmed
+    changed_to: 原值成立，不改
+  - id: R9
+    field: arch.ffn.layer_pattern
+    severity: imprecise
+    claim: 稠密层是 L0–L3 与 L60 共 5 层，MoE 是 L4–L59 共 56 层
+    finding: >-
+      权重侧穷举：带 `mlp.gate_proj` 的层下标恰 {0, 1, 2, 3, 60}，
+      带 `moe.gate_proj` 的层下标恰 4…59（56 个），两集合不相交、并集 = 0…60，0 例外；
+      与 config 的 moe_layers_enum 逐一相同，与模型卡「Number of Dense Layers 5」一致。
+      顺带核了专家数：168 个堆叠张量（56 层 × gate/up/down）的首维**全是 48**（穷举 0 例外），
+      56 个 moe.gate.weight 全是 [48, 7168]。
+      **主干最后一层是稠密**这件事值得单列：按 first_k_dense 4 推「其余都是 MoE」会多算一层，
+      derive.py 的 EP 通信量正是按 57 层算的（4,902,912 B/token 而非 4,816,896）
+    resolution: confirmed
+    changed_to: 原值成立，不改；layer_pattern 里已写明 derive.py 差那一层
+  - id: R10
+    field: bottlenecks[1].quantified
+    severity: imprecise
+    claim: TP16 下整机 16 份 KV，约 999,424 B/token、65536 上下文 61.0 GiB
+    finding: >-
+      1 个 KV 组在张量并行下切不开，所以复制倍数 = TP 度数：62,464 × 16 = 999,424 B/token，
+      × 65536 = 65,498,222,592 B = 61.0 GiB，算术成立。
+      TP16 这个档位不是假设出来的 —— 部署指南给的 BF16 最小部署单元就是 16×H20（约 642 GB），
+      而同一份文档明说「Step3 only has single kv head, so attention data parallelism can be
+      adopted to reduce the kv cache memory usage」，即厂商自己把 DP 当成这件事的解法。
+      复制倍数来自并行布局，记录里写明了它与分页粒度无关（这一条在 R17 里被进一步收紧：
+      原文把「can be adopted」读成了「推荐」，且这一项原本挂在 tp-comm 上）
+    resolution: confirmed
+    changed_to: 原值成立，不改
+  - id: R11
+    field: arch.vision.out_hidden
+    severity: miscategorized
+    claim: out_hidden 7168，没有单独的 evidence 条目，落在 arch 的 official 前缀继承里
+    finding: >-
+      7168 **不是** config 的 vision_config.output_hidden_size —— 那一项是 **4096**。
+      链条是：塔输出 4096 → 两级下采样把通道推到 4096 再到 8192 →
+      vit_large_projector = Linear(output_hidden_size × 2 = 8192, text hidden = 7168)
+      （modeling_step3.py 第 700–704 行）。schema 的 out_hidden 问的是「投影到主干前的输出维度」，
+      所以 7168 是对的值，但它实测自权重、与同名 config 键不是一个数。
+      挂在 arch: official 的前缀继承下，它不会出现在 --list-judgements 里（CLAUDE.md 点名过这件）。
+      本记录已经写了 intermediate_size 默认值 3072 vs 仓内 15360 那个陷阱，
+      却漏了这个「字段名照着 config 键起、数却不是那个键」的更隐蔽的一个
+    resolution: corrected
+    changed_to: >-
+      evidence 加一条 arch.vision.out_hidden: derived；两个数的关系写进 arch.vision.fusion
+  - id: R12
+    field: arch.vision.fusion
+    severity: imprecise
+    claim: 「stride 由 config 的 understand_projector_stride 2 给」
+    finding: >-
+      只有第一级是。modeling_step3.py 第 686–698 行：
+      vit_downsampler = Conv2d(1792, 4096, kernel_size=2, stride=config.understand_projector_stride)，
+      而 vit_downsampler2 = Conv2d(4096, 8192, kernel_size=3, **stride=2, padding=1**) ——
+      第二级的 stride 与 padding 都是字面量。原话会让人以为改那个 config 项能同时改两级
+    resolution: corrected
+    changed_to: fusion 写明两级里只有第一级的 stride 可配，第二级写死
+  - id: R13
+    field: arch.vision.encoder
+    severity: imprecise
+    claim: 「参考实现 StepCLIPVisionTransformer，config model_type step3_vision_encoder」
+    finding: >-
+      两处引错了来源。(a) StepCLIPVisionTransformer 在 modeling_step3.py 里**只有 import**
+      （第 42 行），类体在 vision_encoder.py —— 那个文件不在 sources[1].locator 里、
+      本轮没下载、没读。按 skill 规则 9，引一个没读过的类名就是拿注释当证据。
+      (b) `step3_vision_encoder` 是 configuration_step3.py 第 7 行
+      Step3VisionEncoderConfig 的 model_type **类属性**，不是仓内 config.json 的键
+      （它的 vision_config 里没有 model_type）。
+      这一格里实打实的那几条（class token、[2705, 1792] 位置表、各处 bias）都是实测自权重的
+    resolution: corrected
+    changed_to: encoder 改成先列权重可测的事实，再写明那个类没读、model_type 是类属性不是 config 键
+  - id: R14
+    field: params.counting_note
+    severity: overreach
+    claim: 「两个声明值同时闭合，是视觉塔边界的**独立确认**」
+    finding: >-
+      这个检验比「独立确认」弱得多。厂商两个值都取整到整数 B（321B / 316B），
+      差值 5B 对实测塔 4,675,374,592 相差 7%；凡是落在约 3.5B–5.5B 之间的塔边界
+      都能让两边同时round 对，所以它排除不了邻近的划法。
+      塔边界真正的依据是名字前缀穷举（vision_model.* 与 vit_*，765 个张量，与主干无交叉）
+    resolution: corrected
+    changed_to: counting_note 把它降级成「一条弱佐证」，并写明真正的依据是前缀穷举
+  - id: R15
+    field: precision.kv_cache_components.source
+    severity: overreach
+    claim: 把模型卡的「We currently only support bf16 inference」当作 KV 缓存精度的依据之一
+    finding: >-
+      那句话（md/step3.md 第 72 行）在 Transformers 用法一节里，下一句是
+      「This behavior is aligned with vllm and sglang」—— 讲的是推理与权重精度，
+      **没有提 KV 缓存**，而引擎的 KV 精度是另一个开关（--kv-cache-dtype 之类）。
+      记录自己的 open_questions 第一条正好在问 vLLM / SGLang 有没有给这一代开 FP8 KV ——
+      如果那句引文真能当 KV 的依据，这个 open question 就不该存在。
+      拿一句权重精度的话去支撑 KV 精度，是把同一条证据用了两次
+    resolution: corrected
+    changed_to: source 里写明那句话不作为本字段依据，并说清它讲的是什么
+  - id: R16
+    field: bottlenecks[0].quantified
+    severity: miscategorized
+    claim: >-
+      「3.81 GiB/序列（单份逻辑 KV 的下限，不含分页与对齐粒度）」，
+      以及把四代元素数并列为「同口径对照」
+    finding: >-
+      与 step-1 的 R10 是同一对问题。(a)「下限、不含分页与对齐粒度」是
+      docs/kv-cache-accounting.md 给 `theoretical_floor` 的定义原话，
+      而 derive.py 给本记录的 bytes_basis 是 **`declared_dtype`**
+      （data/derived/step-3.json 可查；derive 摘要也不给本记录打「[理论下限]」）。
+      (b) 后两代是混合结构，引用的 24,576 / 36,064 只是它们随上下文增长的那一个分量，
+      各自另有 34,603,008 / 54,263,808 元素/序列
+    resolution: corrected
+    changed_to: >-
+      quantified 点名 declared_dtype、写明字节列不可跨代比；
+      元素对照补上后两代的每序列固定分量与「先对齐账的形状」
+  - id: R17
+    field: bottlenecks[1]
+    severity: overreach
+    claim: >-
+      dimension 记 tp-comm；finding 说「厂商部署指南因此**推荐** attention 侧走 DP 而不是 TP16」；
+      fix 写「按部署指南走 DP+TP 而不是纯 TP」
+    finding: >-
+      三处。(a) 文档没有表达偏好：md/step3-deploy.md 第 12 与 15 行把 TP 与 DP+TP 写成
+      同一个最小部署单元下的两个并列选项（「with **either** … **or** …」），
+      第 28 行那句「We recommend to use the following command」笼罩其后所有命令块，
+      而第 50 行只说 DP「**can be** adopted to reduce the kv cache memory usage」。
+      记录在 platforms[vLLM].caveat 里把第 50 行引对了，然后又加了一句「即推荐 …」—— 那一句是过读。
+      (b) 这一项挂在 `tp-comm` 上，但内容与全部数字（999,424 B/token、61.0 GiB）都是
+      复制之后的**容量**，没有任何通信量；而 tp-comm 这个枚举值在全仓没有别的使用者，
+      等于用错的口径给它定了先例。
+      (c) 它引了一条「理论下限不含分页粒度」的免责，而按 R16 本记录的 basis 是 declared_dtype、
+      从没做过那条免责 —— skill 规则 8：免责只免掉它点名的那件事，这里点的那件根本不存在
+    resolution: corrected
+    changed_to: >-
+      dimension 改 kv-capacity；finding 与 fix 改成「文档把 DP 列为可选（can be adopted）、
+      没有表达偏好」；免责那句改成「与分页粒度无关」；platforms[vLLM].caveat 去掉「即推荐」的 gloss
+  - id: R18
+    field: open_questions
+    severity: imprecise
+    claim: 「169 = 13² 与 2704 = 52² 之间是 4 倍边长，与两级卷积的具体 stride 组合没有逐步核对」
+    finding: >-
+      那两行卷积自己就把它解了（modeling_step3.py 第 686–698 行）：
+      52 →（kernel 2, stride 2）→ 26 →（kernel 3, stride 2, padding 1）→ 13，13² = 169
+      = config 的 image_token_len。即 169 完全可以从权重与实现复算，不必留成 open question。
+      同一处顺带纠正了 stride 的归属（见 R12）
+    resolution: corrected
+    changed_to: 该 open_question 标注已解掉并写出推导；链条搬进 arch.vision.fusion
+  - id: R19
+    field: platforms
+    severity: missing
+    claim: 只列了 vLLM / SGLang / TensorRT-LLM
+    finding: >-
+      漏了模型卡里文档最全的一条路径：「Inference with Hugging Face Transformers」一节
+      给了版本配方（python=3.10、torch>=2.1.0、transformers=4.54.0）与可运行片段。
+      step-1 与 step-3.5-flash 都列了 Transformers，只有本记录把它丢了。
+      顺带 SGLang 那条缺 engine_version 与 caveat，而部署指南第 101、104 行明写
+      「0.4.10 or later is needed for SGLang」/ `pip3 install "sglang[all]>=0.4.10"` ——
+      兄弟条目 vLLM 把自己的版本门槛（nightly + PR 21998）记了
+    resolution: corrected
+    changed_to: 补 Transformers 条目（engine_version 4.54.0，caveat 引原文）；SGLang 补 engine_version 与 caveat
+  - id: R20
+    field: notes
+    severity: missing
+    claim: 没有写同期那些「名字像阶跃、主干却不是」的仓为什么不录
+    finding: >-
+      Step3-VL-10B 与 Step-Audio-2-mini 的排除依据只活在会话笔记里，仓内 grep 不到 ——
+      而 facts/ 下还留着 step3-vl-10b 的取数产物，读者会问它为什么不在 data/models 下。
+      两条依据都核过：前者 text_config.architectures ["Qwen3ForCausalLM"]、model_type qwen3、
+      36 层 / 4096 / 32 Q / 8 KV / vocab 151936 = Qwen3-8B 规格，1066 个张量里无阶跃特征张量；
+      后者 model_type step_audio_2，文本侧 28 层 / 3584 / 28 Q / 4 KV / inter 18944 /
+      vocab 158720 = Qwen2.5-7B 规格
+    resolution: corrected
+    changed_to: notes 补这两条排除依据
+  - id: R21
+    field: params.counting_note
+    severity: missing
+    claim: 没有给 breakdown 九个桶的逐因子推导（step-1 给了）
+    finding: >-
+      CLAUDE.md「一个乘式逐因子验」。补的过程里**自己抓出一个错**：
+      第一版的 norm 写成 (61 × 3 + 1) × 7168 + 61 × 2048，得 1,443,840，
+      而 norm 桶实测 1,006,592，多了 437,248。
+      根因是每层三个 norm 张量里 **inter_norm 只有 2048 宽**（它作用在 MFA 的低秩 latent 上，
+      不是 hidden 宽），按 3 × 7168 算等于把它数了两遍宽度。
+      改成 (61 × 2 + 1) × 7168 + 61 × 2048 之后，九项逐项相加 = 320,969,912,832 = total。
+      这是 MFA 这一代特有的坑：别的族系每层的 norm 都是 hidden 宽，这一代不是
+    resolution: corrected
+    changed_to: >-
+      counting_note 补九桶逐因子式，每项给出结果值，
+      并点明 inter_norm 的 2048 宽与「按 3 × 7168 算会多 437,248」
+  - id: R22
+    field: precision.kv_cache
+    severity: unsupported
+    claim: precision.kv_cache 填 BF16，并引模型卡的「We currently only support bf16 inference」
+    finding: >-
+      与 step-1 的 R15 同一轮、同一个判据（来源优先级 + 查不到落盘格式就留 dtype_fallback）。
+      本代的证据链比 step-1 还更像能成立，所以要说清为什么仍然不够：
+      (a) 卡上那句 bf16 在 Transformers 用法一节里、下一句是「This behavior is aligned with
+      vllm and sglang」，讲的是推理与权重精度 —— 卡里另一处（第 119 行）
+      「Our model checkpoints are stored in bf16 and block-fp8 format」才是权重精度的正源，
+      两句都没碰缓存；这一点 R15 已经判过，本条是把结论落到 basis 上。
+      (b) 部署指南给的 vLLM / SGLang 命令**都不设 --kv-cache-dtype**，
+      而按来源优先级引擎实现本来也不作为精度来源。
+      (c) 这一族五个仓的 siblings 里没有技术报告 / PDF，无可对照。
+      (d) 参考实现里没有带格式的缓存分配（第 607 行唯一的 DynamicCache、无 dtype 形参）
+    resolution: corrected
+    changed_to: >-
+      删掉 precision.kv_cache 与 kv_cache_components（连带 evidence 两条），
+      bytes_basis 落回 dtype_fallback；元素数一个没动（31,232 元素/token）；
+      卡上那两句各自讲什么写进 open_questions
+
+notes: >-
+  这一族第一个 MoE、也是唯一一代用 MFA 的。model_type step3_vl，
+  architectures Step3VLForConditionalGeneration。
+  层数、层集合、投影宽度、专家堆叠形状、单一 dtype 对照完整权重清单穷举核过；
+  视觉塔边界由「总量 321B / 扣塔 316B」两个声明值同时闭合独立确认。
+  MFA 的投影次序、KV 头数写死成 1、缓存精度来自厂商随仓的 remote-code 实现，不是部署 kernel。
+  top_k 3、rope_theta 500000、norm_expert_weight false、understand_projector_stride 2
+  这类运行期标量只有 config 一个来源。
+  **AFD 不在开源部署路径里**（见 infra_signals 第二条），本记录没有任何依据 AFD 的数字。
+  arXiv 2507.19427 只当作 MFA / AFD 两个名词的出处引用，论文本体本轮没读。
+  另有 stepfun-ai/step3-fp8 量化变体，本记录只覆盖 BF16 这个仓。
+  **同期两个名字像阶跃、主干却不是阶跃结构的仓不另起记录**，依据记在这里免得只活在会话笔记里：
+  Step3-VL-10B / -Base / -FP8（2026-01）的 text_config.architectures 是
+  ["Qwen3ForCausalLM"]、model_type qwen3，36 层 / 4096 / 32 Q / 8 KV / vocab 151936
+  即 Qwen3-8B 规格，1066 个张量里没有任何阶跃特征张量（它的 667 个视觉塔张量名
+  与 Step-3.7-Flash 的同集合 —— PE 塔最早是在那一份上公开的）；
+  Step-Audio-2-mini / -Base / -Think（2025-08 起）model_type step_audio_2，
+  文本侧 28 层 / 3584 / 28 Q / 4 KV / inter 18944 / vocab 158720 即 Qwen2.5-7B 规格
+
+open_questions:
+  - >-
+    **KV 缓存精度没有任何厂商来源。** 模型卡那句「We currently only support bf16 inference」
+    讲的是推理与权重精度（下一句是「This behavior is aligned with vllm and sglang」），
+    不是缓存精度；部署指南给的 vLLM / SGLang 命令都不设 --kv-cache-dtype。
+    可读的参考实现里没有带格式的缓存分配（第 607 行唯一的 DynamicCache、无 dtype 形参），
+    追数据流只能确认 RoPE 之后的 K/V 是 BF16、路径上不量化 —— 那是激活 dtype 不是落盘格式。
+    所以 precision.kv_cache 不填、bytes_basis 留 `dtype_fallback`，字节列只当占位值
+  - >-
+    MFA 的 latent 维 2048 只作用在 query 上 —— K 与 V 各自从 hidden 直接投到 256，
+    没有 latent、没有上投影。这是「低秩 Q + MQA」的组合，与 MLA 的「低秩 KV + 上投影」
+    是两件不同的事，本记录按 MQA + q_lora_rank 记。厂商用 MFA 这个名字把两者都概括进去了，
+    论文里 MFA 的完整定义本轮没核（论文未读）
+  - >-
+    AFD 的具体切分方式（注意力与 FFN 各占多少设备、两段之间传什么、每 token 多少字节）
+    全在论文与闭源栈里，开源部署指南明确说不提供。本记录不写任何 AFD 的量化数字
+  - >-
+    厂商「38B 激活」与本仓带宽口径 37.92B（= 常驻 19.42B + 专家 18.50B）相符到 0.2%，
+    但厂商口径没写是否含 lm_head 与输入词表（含输入词表是 38.84B）
+  - >-
+    训练精度无一手声明，precision.training 不填
+  - >-
+    （**已解掉，见 R18**）视觉塔的 2705 个位置与 image_token_len 169 之间的下采样链已逐步核对：
+    52 →（kernel 2, stride 2）→ 26 →（kernel 3, stride 2, padding 1）→ 13，13² = 169。
+    两级里只有第一级的 stride 取自 config 的 understand_projector_stride，
+    第二级的 stride 2 与 padding 1 写死在 modeling_step3.py 第 692–698 行。
+    结论搬进 arch.vision.fusion
+  - >-
+    lib/subsystems.py 在这一份上有两处归类命中不到（视觉塔层号 ≥ 主干层数被判成 draft；
+    vision 正则漏掉 bare `vit_downsampler`），使 data/derived/step-3.json 的子系统分桶
+    与本记录的 params.breakdown 不一致，且 active_params 把 331,362,304 个视觉下采样参数
+    错当成常驻激活（带宽口径因此偏高 0.9%，报 38.25B 而非 37.92B）。
+    params.total 与 Gate B 不受影响。修法与行号在交接笔记里，属仓库级改动
