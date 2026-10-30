@@ -1,8 +1,5 @@
 # 机械字段来自 config（official）；形状、参数量、层覆盖、三类新机制的构成
 # 来自完整权重清单（131 分片 1658 条目，无读失败分片）。
-# **本记录的 params.breakdown 用的归类与 scripts/lib/subsystems.py 不同**
-# （PLE 查表落进 other、hyper-connections 落进 attention / dense_ffn），
-# 实害与需要的改动写在 counting_note、R1 与交接报告里。
 id: qwen3.8-flash-next
 family: qwen
 kind: vlm
@@ -145,6 +142,10 @@ lineage:
         新结构在小档位先落地，是跟踪下一代时要盯的信号
 
 params:
+  total: 1.25e+11
+  excludes:
+  - retrieval
+  - draft
   breakdown:
     expert: 120796000000.0
     retrieval: 51200200000.0
@@ -169,28 +170,28 @@ params:
     **草稿块** 实测 2,607,150,848 对 4B 是 **−34.8%**，加上它共享的两份词表
     （输入 + lm_head 各 635,699,200）才是 3,878,549,248、对 4B 是 −3.0%，仍出容差
     —— 草稿块那一块的口径没对上，留了 open question。
-    **params.total 仍不填**，原因不是没有声明值而是闸口会报假不一致：
-    填 125e9 要配 excludes [retrieval, draft]，而 derive.py 按 subsystems.py 归类，
-    那边的 retrieval 桶在本档是空的（查表落进 other，见 R1），
-    于是 Gate B 会算出 177,392,830,611、报 +41.9% 的 MISMATCH ——
-    那是归类缺口造成的，不是数据问题。**subsystems.py 修好之后应当补上
-    total 1.25e+11 与 excludes [retrieval, draft] 并重跑 derive**（已写进交接报告）。
+    **params.total 填的是模型卡那一块的「125B」，配 excludes [retrieval, draft]** ——
+    声明值只覆盖主体，不含 51B 的 n-gram 查表与 4B 的 MTP 草稿块。
+    Gate B 按 excludes 扣减后得 126,192,584,816，delta **+0.95%**，在容差内。
+    **原先这两个字段是空的**：那时 subsystems.py 的 retrieval 桶在本档是空的
+    （查表落进 other，见 R1），填 125e9 会让 Gate B 算出 177,392,830,611、
+    报 +41.9% 的假 MISMATCH。归类缺口已修（R1），所以这两个字段补上了。
     **「6B activated」对得上的是「带宽口径减 lm_head」**：
     6,671,295,360 − 635,699,200 = 6,035,596,160，对 6B 是 **+0.59%**；
     不减 lm_head 是 +11.2%、再含输入词表是 +21.8%。
     这与 Qwen 卡上「Non-Embedding」一贯扣两份词表的办法同向
     （见 qwen3-32b 与 qwen2.5-14b-1m 的 counting_note）。
-    **breakdown 用的是本仓按实际子系统归属手工归类的结果，与
-    data/derived/qwen3.8-flash-next.json 的 params_by_subsystem 不一致**，
-    因为 scripts/lib/subsystems.py 的正则认不出本代的三类新张量名（见 R1）：
-    PLE 查表与 PLE 的投影（合计 51,233,054,755）整块落进 other；
-    attn_hyper_connection.* 落进 attention（多算 316,538,880）、
-    mlp_hyper_connection.* 落进 dense_ffn（于是一个没有稠密 FFN 的模型
-    显示出 316,538,880 的 dense_ffn，和本仓在 DeepSeek V4-Flash 上修掉的是同一类）。
-    **第二处实害更重**：派生的激活参数把 51.2B 的查表算成常驻，
-    带宽口径从 **6,671,295,360 变成 57,871,541,155（8.7 倍）**，
-    每 token 的权重搬运量从 12.43 GiB 变成 107.79 GiB，arithmetic_intensity 一并失真。
-    本记录的归类（13 项）合计与清单求和、与 HF tally 逐位相同。
+    **breakdown 是本仓按实际子系统归属的归类，13 项，合计与清单求和、
+    与 HF tally 逐位相同，且与 data/derived/qwen3.8-flash-next.json 的
+    params_by_subsystem 逐项相同**。
+    **原先两边不一致**：scripts/lib/subsystems.py 的正则认不出本代的三类新张量名，
+    PLE 查表与 PLE 的投影（合计 51,233,054,755）整块落进 other、
+    attn_hyper_connection.* 落进 attention、mlp_hyper_connection.* 落进 dense_ffn
+    （于是一个没有稠密 FFN 的模型显示出 316,538,880 的 dense_ffn），
+    派生的激活参数又把 51.2B 的查表算成常驻，带宽口径 6,671,295,360 被算成
+    57,871,541,155（8.7 倍）。正则已修（见 R1），现在 dense_ffn 桶消失、
+    retrieval 桶 51,200,245,795、residual 桶 639,631,360、
+    other 只剩 PLE 的三张投影 32,808,960，激活参数两边一致。
     激活参数两个口径（按本记录的归类）：带宽口径 **6,671,295,360**
     = 激活专家 2,359,296,000 + 常驻 4,311,999,360
     （注意力 2,684,194,176 + 残差系数 639,631,360 + 共享专家 236,052,480
@@ -334,8 +335,8 @@ arch:
     type: moe
     layer_pattern: >-
       48 层全是 MoE 层，线性层与 full 层的 FFN 形态相同。
-      **这个模型没有任何稠密 FFN** —— 派生 JSON 里的 dense_ffn 316,538,880
-      全部是被错归的 mlp_hyper_connection 残差系数（见 R1）
+      **这个模型没有任何稠密 FFN**。派生 JSON 里原先显示的 dense_ffn 316,538,880
+      全部是被错归的 mlp_hyper_connection 残差系数，归类修好后该桶已消失（见 R1）
 
   moe:
     routed_experts: 512
@@ -407,8 +408,8 @@ arch:
       (2) decode 时「the GR **drops the branch-mixing operator** H_res」，
       且读写各融合成一个 kernel、group RMSNorm 折进读，使加宽后的流每块每方向只走一遍。
       **这是激活侧的字节，不是缓存**，不进 kv_cache 账。
-      这与 DeepSeek V4 一代的 mHC 是同类机制；本仓的子系统归类正则
-      认 hc_attn_* / hc_ffn_* 那套名字，认不出本代的 *_hyper_connection.*（见 R1）
+      这与 DeepSeek V4 一代的 mHC 是同类机制；本仓的子系统归类正则原先只认
+      hc_attn_* / hc_ffn_* 那套名字，已补上 *_hyper_connection.*（见 R1）
 
   decoding:
     mtp_layers: 1
@@ -535,7 +536,7 @@ precision:
       **A_log 与 linear_attn.norm 在本代是 BF16** —— Qwen3.5 一代那两类是 F32，
       3.6 起回到 BF16，本代延续。
       本记录的子系统键按实际归属写（retrieval / residual / indexer 各自成项），
-      与 subsystems.py 的归类不同，见 R1。
+      subsystems.py 的归类原先与它不同，现已一致，见 R1。
       没有 quantization_config，所以 per_subsystem_block 不填；
       同代没有看到本档的 FP8 或 INT4 发布仓（名单里只有 Qwen3.8-Flash-Next 与
       Qwen3.8-Flash-Next-FP8 两个 —— 后者存在，但本仓没有取它的清单，
@@ -576,7 +577,8 @@ bottlenecks:
       查表必须排除在带宽口径之外，否则结论会错 8.7 倍：带宽口径的激活参数是
       6,671,295,360（每 token 12.43 GiB），而把 51.2B 的查表算成常驻会得到
       57,871,541,155（107.79 GiB）。表每 token 只读 16 行 × 160 维 = 5,120 B。
-      **这正是 data/derived/ 现在的状态** —— 子系统归类认不出 PLE（见 R1）。
+      **data/derived/ 一度正是那个错的状态**（子系统归类认不出 PLE），
+      归类修好后派生值已是 6,671,295,360（见 R1）。
     quantified: >-
       带宽口径 6,671,295,360 × 2 B = 12.43 GiB/token；权重存储 335.28 GiB
       （查表一项 95.37 GiB）；查表的每 token 读取 5,120 B（16 行 × 160 维 × 2 B）
@@ -695,9 +697,9 @@ notes: >-
   而同代旗舰 qwen3.8-2.4t-a95b 一个都没有（清单里 indexer / hyper_connection /
   ple / ngram 四个关键词全部零命中，架构类仍是 Qwen3_5MoeForCausalLM）。
   混合线性注意力、堆叠专家、MTP、mRoPE、248320 词表这些都沿用 Qwen3.5/3.8 主线。
-  **本记录的 params.breakdown 与 data/derived/ 的 params_by_subsystem 不一致**，
-  原因与需要的改动见 counting_note、R1 与交接报告 —— 引用子系统拆分与激活参数时
-  以本记录为准。
+  **params.breakdown 与 data/derived/ 的 params_by_subsystem 原先不一致**
+  （归类正则认不出本代三类新张量名），正则修好后两边逐项相同，
+  激活参数也从被高估的 57,871,541,155 回到 6,671,295,360，详见 counting_note 与 R1。
 
 open_questions:
   - >-
@@ -741,14 +743,6 @@ open_questions:
     训练精度没有一手来源：config 的 dtype: bfloat16 说的是发布权重，
     而**模型卡正文本轮已读**（README.md @ de4b8e4d43b9），Model Overview 只列结构与规模，
     没有训练精度声明，故不填 precision.training
-  - >-
-    **params.breakdown 与 data/derived/qwen3.8-flash-next.json 的
-    params_by_subsystem 不一致，且派生的激活参数偏高 8.7 倍**（见 R1）：
-    scripts/lib/subsystems.py 的正则认不出 PLE 查表（落进 other，
-    于是被算成常驻）与 hyper-connections（分别落进 attention 与 dense_ffn）。
-    本轮按任务约定不改共享脚本（另有家族会话在并行跑），
-    需要的最小改动已写进交接报告：retrieval 正则加 ngram_embedding|ple_embedding，
-    residual 正则加 hyper_connection。改完要重跑本记录的 derive
 
   - >-
     **视觉塔自注意力的跨度没有来源。** vision_config 里没有 window_size、
@@ -812,14 +806,26 @@ review:
       (3) **实害最重的一处**：other 在 active_params 的常驻名单里，
       所以 51.2B 的查表被算成每 token 常驻 —— 带宽口径从 6,671,295,360
       变成 57,871,541,155（**8.7 倍**），每 token 权重搬运量 12.43 → 107.79 GiB，
-      arithmetic_intensity 一并失真。而查表每 token 只读 16 行 × 160 维 = 5,120 B。
-      本轮按任务约定不改共享脚本，改法写进交接报告
-    resolution: open
+      arithmetic_intensity 一并失真。而查表每 token 只读 16 行 × 160 维 = 5,120 B
+    resolution: corrected
     changed_to: >-
-      breakdown 改用本仓实际子系统归属手工归类（13 项，合计与 HF tally 逐位相同），
-      counting_note 与 open_questions 写明与派生值的差异及其两处实害；
-      subsystems.py 的最小改动（retrieval 加 ngram_embedding|ple_embedding、
-      residual 加 hyper_connection）在交接报告里
+      breakdown 改用本仓实际子系统归属归类（13 项，合计与 HF tally 逐位相同），
+      **scripts/lib/subsystems.py 随后也按同一归类修好了**：
+      retrieval 正则加 `ngram_embedding|ple_embedding`，
+      residual 正则加 `hyper_connection(?!.*norm)`
+      （否定前瞻是为了让 *_hyper_connection.hc_norm.weight 继续归 norm），
+      derive.py 的常驻名单补进 residual（mHC 与 hyper-connection 的系数每 token 都走）。
+      **重跑后派生值与本记录的 breakdown 逐项相同**：
+      retrieval 桶 0 → **51,200,245,795**（PLE 查表本体 51,200,245,760 加 3 条 I64 元数据）、
+      residual 桶 0 → **639,631,360**、attention 3,000,733,056 → **2,684,194,176**、
+      dense_ffn 316,538,880 → **桶消失**、other 51,233,054,755 → **32,808,960**
+      （只剩 ple.key_proj / value_proj / conv1d 三张，本就该留在常驻）。
+      激活参数 active_params.total **57,871,541,155 → 6,671,295,360**、
+      total_with_embed → 7,306,994,560，
+      decode_weight_bytes_per_token 115,743,082,377 → 13,342,590,728（107.79 → 12.43 GiB）。
+      归类缺口消失后补上 params.total 1.25e+11 与 excludes [retrieval, draft]，
+      Gate B 的参数总量 delta **+0.95%**（声明 125e9 对扣减后的实测 126,192,584,816），
+      不再是原先那个 +41.9% 的假不一致
   - id: R2
     field: arch.attention.sparse.index_kv_dim
     severity: unsupported
@@ -945,8 +951,9 @@ review:
     changed_to: >-
       新增 sources 的 modelcard 条目；sparse.mechanism / residual.type /
       linear_state.mechanism 写上厂商名；sparse 补 block_size 4 与 selected_blocks 512；
-      counting_note 改写成按卡的三块逐块对照（并说明为什么 total 仍不填：
-      填了会让 Gate B 报一个由 subsystems.py 归类缺口造成的 +41.9% 假不一致）；
+      counting_note 改写成按卡的三块逐块对照（当时 total 还不填，
+      因为填了会让 Gate B 报一个由 subsystems.py 归类缺口造成的 +41.9% 假不一致；
+      该缺口已在 R1 修掉，total 与 excludes 现已补上）；
       retrieval.mechanism / placement 与两条 open question 按卡改写；
       补 context.train_native 与 extension_method
   - id: R10

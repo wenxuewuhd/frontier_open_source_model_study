@@ -1,7 +1,7 @@
 {
  "id": "ds-v4-flash-vision-exp",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T08:59:20+00:00",
+ "generated_at": "2026-10-30T08:47:41+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-flash-vision-exp",
   "config_present": true,
@@ -153,13 +153,13 @@
  "kv_capacity_basis": "mixed",
  "active_params": {
   "status": "ok",
-  "total": 13238555968.0,
-  "total_with_embed": 13768086848.0,
+  "total": 13272440407.0,
+  "total_with_embed": 13801971287.0,
   "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的输入词表）；total_with_embed 含输入词表，用于和各家公布的「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
   "expert_active": 6492782592.0,
   "expert_total": 277025390592.0,
   "expert_ratio": "6/256",
-  "always_active": 6745773376.0,
+  "always_active": 6779657815.0,
   "lm_head": 529530880.0,
   "dense": false,
   "excluded": {
@@ -171,11 +171,11 @@
   "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
  },
  "flops": {
-  "linear_per_token": 26477111936.0,
+  "linear_per_token": 26544880814.0,
   "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
  },
  "arithmetic_intensity": {
-  "decode_weight_bytes_per_token": 7292313836.348981,
+  "decode_weight_bytes_per_token": 7310978709.160933,
   "decode_flops_per_byte": 3.6308245270552164,
   "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
  },

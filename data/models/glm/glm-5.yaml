@@ -171,7 +171,7 @@ arch:
     type: MLA
     num_heads: 64
     num_kv_heads: 64
-    head_dim: 192
+    head_dim: 256
     v_head_dim: 256
     qk_rope_head_dim: 64
     qk_nope_head_dim: 192
@@ -180,8 +180,8 @@ arch:
     head_dim_note: >-
       **config 的 num_kv_heads=64 是 query 侧可见的 KV 头数，不是缓存宽度**：
       落盘缓存是 kv_a_proj_with_mqa [576, 6144] 的 576 维 latent
-      （kv_lora_rank 512 + qk_rope_head_dim 64），按 2 × 64 × 192 折算得 24576，
-      对实际 576 是 42.7 倍高估。
+      （kv_lora_rank 512 + qk_rope_head_dim 64），按 2 × num_kv_heads 64 × head_dim 256
+      折算得 32768，对实际 576 是 **56.9 倍**高估。
       每头 QK 全宽 256（config 的 qk_head_dim，= qk_nope 192 + qk_rope 64），V 每头也是 256，
       两者相等；不对称只在 kv_b_proj [28672, 512] 内部：28672 = 64 × (K-nope 192 + V 256)，
       K 的 rope 64 维由 kv_a_proj_with_mqa 的尾段直接产出、不经 kv_b_proj。
@@ -591,9 +591,17 @@ review:
       相邻两代同一个数字两种来源，而本份的 infra_signal 正在强调
       「config 的 head_dim 在本代是 64、GLM-5.2 改成 192」，
       只读字段的人看到的是 192 / 192 没变。
-    resolution: open
+    resolution: corrected
     changed_to: >-
-      (2) 已通过给 glm-5.2 补上显式的 head_dim: official 消除歧义；(1) 不单方面改值，补 open question 留给跨族系统一处理
+      (2) 已通过给 glm-5.2 补上显式的 head_dim: official 消除歧义。
+      (1) **head_dim 192 → 256**（= qk_nope 192 + qk_rope 64），本代与 glm-4.7-flash /
+      glm-5.2 / glm-5.3 四份一起改，统一到 ds-v3 那套「QK 全宽」语义；
+      仲裁依据与改法见 glm-4.7-flash 的 R12。
+      本条当初提的第二点在这里反而被坐实了：本代 config 的 head_dim 是 64、
+      glm-5.2 是 192，而两代 qk_nope 192 / qk_rope 64 完全相同 ——
+      **厂商那个键在同族内就不是一个量**，所以本仓的 head_dim 只能按自己的定义算，
+      不能照抄 config。这句已写进 schema 的字段描述。
+      config head_dim=64 的实际用途仍未查清，那一条 open question 保留
   - id: R12
     field: params.counting_note
     severity: missing
@@ -650,17 +658,6 @@ notes: >-
   （753,864,139,008），所以本仓不单独立记录。
 
 open_questions:
-  - >-
-    **arch.attention.head_dim 的语义在本仓两个族系里不一致，这是跨族系的口径问题。**
-    schema 对 v_head_dim 的描述把「MLA 一代的 head_dim（nope+rope）只管 QK」写死了，
-    ds-v3 照此存 192 = qk_nope 128 + qk_rope 64，即 **QK 全宽**；
-    而 GLM 这几份存的 192 只是 **nope 段**（QK 全宽是 192 + 64 = 256，
-    config 的 qk_head_dim 就是 256）。两边读同一个字段会拿到不同的量。
-    数值上目前无害 —— derive.py 对有 kv_lora_rank 的 MLA 走 (latent + rope)，
-    head_dim 不参与；但同一函数在无 kv_lora_rank 时会拿 num_kv_heads × head_dim
-    当 latent 宽度。要么统一到 nope+rope 并逐份改值，要么在 schema 里把 GLM 这套
-    写成第二种合法语义；本记录不单方面改值（会与已复核的 glm-5.3 不一致），
-    留给跨族系统一处理
   - >-
     KV cache 的实际落盘精度未披露。推导按 config 声明的 dtype=bfloat16 兜底
     （2 B/元素），所以 109824 B/token 是 dtype_fallback 兜底口径，

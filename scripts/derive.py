@@ -142,7 +142,11 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
                     draft_suffixes.add(name[mb.end():])
                     draft_blocks.add(mb.group(1))
 
-        m = _LAYER_IDX.search(name)
+        # 视觉 / 音频塔自己也有 layers.N.，而塔的层数可以超过语言主干（Step-3：塔 63 层、
+        # 主干 61 层）。classify() 那边已经按 _TOWER 绕开了层号捷径，这里也必须绕 ——
+        # 否则塔的第 61、62 层仍会进 mtp_layers_seen，在一个没有 MTP 的模型上留个假阳性；
+        # 塔的 0–60 层也会混进 layer_ids，和主干层号搅在一起
+        m = None if subsystems.is_tower(name) else _LAYER_IDX.search(name)
         if m:
             idx = int(m.group(1))
             # MTP 层不算主干层。V3 一代的 MTP 借用层索引（第 61 层，而主干是 0–60），
@@ -522,9 +526,12 @@ def active_params(shp: dict, t: dict, attn: dict, moe: dict) -> dict:
 
     # 每 token 全量搬运的部分。lm_head 必须计入：它对整个词表做全量 GEMM，
     # 不是「只触及少量行」—— 大词表模型里这一项可观。
+    # residual 也是常驻：mHC 与 hyper-connection 的系数是每层的可学习权重，每个 token 都要
+    # 走一遍，不是「只触及少量行」。漏掉它在 DeepSeek V4 一代只差 0.1%（39M / 37B），
+    # 但在 Qwen3.8-Flash-Next 是 640,624,640 / 6.67B = 9.6%，会直接渲染到站点上
     always = sum(p.get(k, 0.0) for k in
                  ("attention", "compressor", "indexer", "dense_ffn", "shared_expert", "router", "norm",
-                  "lm_head", "other"))
+                  "residual", "lm_head", "other"))
     embed = p.get("embed", 0.0)
     return {
         "status": "ok",
@@ -923,7 +930,16 @@ def reconcile(cfg_t: dict, shp: dict, declared: dict, external: dict = None,
         # 缓存侧的外部对账。只有本仓能逐分量算出字节时才是真对账 —— 采用了公布值的
         # 情况下两边必然相等，那时报 ok 是假的，改成把两个数并排摆出来
         if kv and kv.get("declared_per_token_bytes"):
-            if kv.get("bytes_basis") == "theoretical_floor":
+            if kv.get("declared_covers") != "per_token":
+                # 没采用的情况：两个数各算各的，并排摆出来但不判对错 ——
+                # 覆盖面不同的两个量本来就不该比，比了就是范畴错误
+                out.append({"item": "外部 KV 字节对账", "status": "ok",
+                            "why": f"厂商公布 {kv['declared_per_token_bytes']:,.0f} B/token，"
+                                   f"covers={kv.get('declared_covers')!r} —— 覆盖面与本仓的"
+                                   f"每 token 口径不同或来源未交代，**未采用**；"
+                                   f"本仓逐分量算得 {kv.get('per_token_bytes', 0):,.0f} B 保持不变。"
+                                   "两个数覆盖面不同，不比对、也不算倍数"})
+            elif kv.get("bytes_basis") == "theoretical_floor":
                 add("外部 KV 字节对账", kv["declared_per_token_bytes"],
                     kv.get("per_token_bytes"), "厂商公布", "本仓逐分量算", tol=0.005)
             else:
@@ -1023,7 +1039,19 @@ def main():
             want = float(decl["value"])
             kv["declared_per_token_bytes"] = want
             kv["declared_source"] = decl.get("source")
-            if kv.get("bytes_basis") != "theoretical_floor":
+            kv["declared_tier"] = decl.get("tier")
+            kv["declared_covers"] = decl.get("covers")
+            # covers 决定它能不能进 per_token_bytes 这个槽。本仓 47 份里有 17 份带
+            # 「每序列固定」分量（线性注意力的递归状态、滑窗缓冲区），两个分量口径不同、
+            # 不能相加。公布值若把它们算在一起、或来源根本没交代，塞进 per_token_bytes
+            # 就是把一个更大的量当成每 token 量，再乘上下文长度会一路放大。
+            # 这类只登记不采用 —— 字段留着，口径不动。
+            if decl.get("covers") != "per_token":
+                kv.setdefault("notes", []).append(
+                    f"厂商公布 {want:,.0f} B/token，但 covers={decl.get('covers')!r} —— "
+                    "不是「只含随上下文线性增长的那一半」，不采用进 per_token_bytes，"
+                    "本仓逐分量算出的值与 bytes_basis 保持不变。只登记备查")
+            elif kv.get("bytes_basis") != "theoretical_floor":
                 kv["computed_per_token_bytes"] = kv.get("per_token_bytes")
                 kv["per_token_bytes"] = want
                 kv["bytes_basis"] = "vendor_declared"
