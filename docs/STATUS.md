@@ -6,13 +6,12 @@
 ## 一眼看清
 
 ```
-main            2f262ec   已推，未推 0
+main            3073e72   未推 3
 记录            47 份     六个语言模型家族，2024 起的历史代际已补齐
-闸口            五道      全绿（validate 0 错 2 警 / 回归 26 / kv_table / 站点 59 页 / check_rendered）
+闸口            五道      全绿（validate 0 错 0 警 / 回归 27 / kv_table / 站点 59 页 / check_rendered）
 ```
 
-`validate` 那 2 条告警是**设计内的**：`data.ts` 与 `[id].astro` 各有一份 basis 标签表，
-等站点侧统一入口收口。详见下面「待办 · B3」。
+**告警归零了**（原先那 2 条 basis 标签表的告警见下面「做完了的」最后一行）。
 
 ## 做完了的（别重做）
 
@@ -27,14 +26,18 @@ main            2f262ec   已推，未推 0
 | **散文渲染** | 行内 Markdown，字面 `**` 从 3,665 → **0**，加第一道产物侧闸口 |
 | **理解类多模态** | 12 份 `kind: vlm` 全部补 `tokens` / `prefill` / `separability` 三组，共 22 格 |
 | **视频生成 Gate A** | 12 份记录 / 8 个 family 定稿，schema 与 derive 的生成类分流已落地 |
+| **basis 标签表收口（原 B3）** | 两份表措辞本来就不一样（「按厂商公布值」vs「厂商公布」），收到 `data.ts` 一处，闸口从 warning 收紧成 **error**，并补了一条探针用例确认它真会红 |
+| **E2 脚手架** | `styles/attn-figure.css` + `AttentionFigure.astro` 分发器 + DeepSeek 参照图两张。**加一张图只要新建 `attention/<id>.astro`**，不改分发器也不改 `[id].astro` |
 
 ## 待办
 
 ### A. 立刻能做，无依赖
 
-- **A1 `p4-meaning` 作废分支清理** —— 领先 main 4 个提交、1,910 行，已判整条不并
-  （四个文件两留两丢，留的两个已以重写版落地）。连 `wt-p4-meaning` 一起拆。
-- **A2 九条已并分支与 worktree 清理** —— `p1-*` 五条、`p2-video-gate-a`、`p3-vlm-infra`、
+- ~~A1 `p4-meaning` 作废分支清理~~ —— **已拆**（分支与 worktree 都没了；
+  它唯一的未提交项是个 `node_modules` 软链，没有内容）。
+- **A2 已并分支与 worktree 清理** —— **先别动**：下面 E2 的四条活正派在
+  `p1-glm` / `p1-kimi` / `p1-qwen` / `p1-stepfun` 手里，它们的 worktree 还要用。
+  等那四份图落地再拆。原文： —— `p1-*` 五条、`p2-video-gate-a`、`p3-vlm-infra`、
   `p4-units`、`p4-fieldstate` 全部领先 main 0，可拆。
 - **A3 `--ep` 没有记录在任何地方** —— `derive.py` 默认 1，而已提交的 derived 里有 1 / 4 / 8 三种，
   重跑全靠人记得读 HEAD。**一天内踩了三次**（含我自己两次把别人的值改掉）。
@@ -46,10 +49,7 @@ main            2f262ec   已推，未推 0
   org 下只有 Flash 档、没有完整 M3.1。五处结构差异与三个主线问题见那条会话的 brief。
 - **B2 MiniMax M2.1 / M2.5 / M2.7 三个仓本仓一份没录** —— **M2.5 下载量 1,392,282，是旗舰 M3 的 7 倍**。
   需 `p1-minimax` 回看自己 Gate A 的排除依据还成不成立。
-- **B3 站点侧两份 basis 标签表** —— `data.ts:414` 的 `KV_BASIS_LABEL` 是正宗位置，
-  `[id].astro:28` 的 `KV_BASIS` 是重复。**注意闸口的提示文本已与设计脱节**：
-  它叫人「从 `columns.json` 读」，而 basis 那一节已被有意摘掉；又说「`columns.ts` 落地后收紧」，
-  而它已经落地。提示该改成「合并到 `data.ts`」。
+- ~~B3 站点侧两份 basis 标签表~~ —— **已收口**，见上面「做完了的」。
 - **B4 音频 / Omni** —— `docs/omni-audio-field-gap.md` 已给出需求与落地顺序，字段还没建。
 
 ### C. 视频生成线（Gate A 已完，step 1 做了一半）
@@ -71,17 +71,35 @@ main            2f262ec   已推，未推 0
 参照物是 `deepseek-v41-flash` 模型页现有的逐层实现图，以及那份「V4.1 注意力分层图」
 里的**图 1 生产侧 / 图 2 消费侧**。两件事分开做，第二件不依赖第一件。
 
-- **E1 另外五个旗舰补逐层实现产物** —— `glm-5.3`、`minimax-m3`、`kimi-k3`、
-  `step-5-preview`、`qwen3.8-2.4t-a95b`。现在**只有 `deepseek-v41-flash` 有
-  `data/derived/*.layers.json`**，站点的逐层图就是读它。
-  生成：`scripts/extract_layers.py --id <id> --model <yaml>`（只吃完整清单，
-  零差异孪生版的空 `shapes.json` 会直接退出，这是有意的）。
-  **先确认五份的 `shapes.json` 都是完整清单**；`facts/` 不随分支走，缺了要先拷。
+- **E1 另外五个旗舰补逐层实现产物** —— 已派给 `e1-layers` 会话。
+  **它不是机械活，病因已经查清**：直接跑五份全产出 0 层，而且**退出码是 0**
+  （只打一行 `!!` 警告就算成功 —— 坑 #4 的又一个实例，第一件事就是把它改成失败）。
+  两处原因都在 `scripts/extract_layers.py` 里：
+  1. `_BLOCK = r"^(layers|mtp)\.(\d+)\."` **锚死在行首**。DeepSeek 叫 `layers.0.…`，
+     GLM / Qwen / StepFun 是 `model.layers.N.`，MiniMax / Kimi 是 `language_model.model.layers.N.`。
+     这是坑 #2 的**反面** —— 前三次是锚太松咬到同名词，这次是锚太紧。
+  2. `OP_GROUPS`（50–67 行）整张表是 DeepSeek 词汇（`attn.wkv` / `attn.indexer` /
+     `ffn.experts`），GLM 的 `self_attn.q_a_proj`、Kimi 的 `k_conv1d`、
+     Qwen 的 `mlp.experts.gate_up_proj`、StepFun 的 `moe.gate_proj` 一个都不沾。
 
-- **E2 每个旗舰画一张注意力架构图**，照图 1 / 图 2 的两段式：
-  **生产侧**（谁产 KV、产什么形状、什么 dtype）+ **消费侧**（谁读、怎么选、怎么拼）。
+  五份的 `shapes.json` **已确认都是完整清单**（glm 118,629 / minimax 23,416 /
+  kimi 497,220 / step 2,704 / qwen 1,609 条）。`facts/` 是主 checkout 里的真目录，
+  不随分支走，worktree 里要用绝对路径或 `--facts-dir`。
 
-  那两张图的可复制约定，抄下来免得每张重新发明：
+- **E2 每个旗舰画一张注意力架构图** —— **脚手架已落地（3073e72），四条已派出**
+  （`p1-glm` / `p1-kimi` / `p1-qwen` / `p1-stepfun` 各画自己那个；`minimax-m3`
+  等 `p1-minimax` 做完 B1/B2 再派）。
+
+  **约定不在这份文档里，在两份能跑的代码里** —— 写成散文会被重新发明，写成代码不会：
+  - `site/src/styles/attn-figure.css` —— 四套语义配色与全部类名。
+    颜色另起 `--fig-*`，**不复用 `--official` / `--derived` / `--judgement`**：
+    那三个在站内已表示证据档位，图里再拿来表示「KV」「压缩」就是同色两义，
+    正是 B3 修掉的那个毛病。
+  - `site/src/components/attention/deepseek-v41-flash.astro` —— 参照实现。
+  - `AttentionFigure.astro` 按记录 id 查文件名分发，**新建一个文件就自动出现在模型页**，
+    不改分发器也不改 `[id].astro`。这是有意的：共享文件上并写必撞。
+
+  下面这份约定保留做速查，但以上面两份代码为准：
   - **内联 SVG**，无 JS；`viewBox` 约 940×330–380，`width:100%` + `min-width:760px`，
     外层 `.figbox` 允许横向滚动
   - **横向分带**，每带一个 `①②③` 编号标题（`.lbl-s`），带与带之间用虚线
@@ -123,14 +141,34 @@ main            2f262ec   已推，未推 0
    锚在内侧只守得住内侧；闸全锚在数据和代码上时，产物可以三千多处出错而全绿。
 5. **生成物冲突不要手合** —— 从合并后的源重算。
 6. **未跟踪文件会卡住 merge** —— git 直接拒绝（「会被覆盖」），平时看不见，只在合并那刻发作。
+7. **核查编号各分支自己递增，分支一多必撞** —— 两次：R8、R9 都是两条分支各加一条、
+   git 自动合并不报冲突（两段文本不相邻），靠 `validate` 的「编号重复」才抓到。
+   **合完一条带 `review:` 改动的分支，一定跑一遍 validate**，别只看 merge 的退出码。
+8. **删一处重复，要同时退掉盯着它的所有闸** —— basis 那份重复表被**三处**盯着：
+   `validate.py` 的 stray-label 检查、回归用例、以及 `kv_table.py` 里一道
+   「两份表不许漂」的守卫。只退了前两处，`kv_table --check` 就红了。
+   更要紧的是那道守卫**写明「只对键，不对值」**，注释里还列着两处不同的措辞 ——
+   **它一直知道两份措辞不一样，并且按设计放过了**。防「少一个键」的闸，
+   防不了「同一个取值两种读法」。
+9. **改完要五道闸一起跑** —— B3 那个提交只跑了四道（漏了 `kv_table --check`），
+   带着一道红闸进了 main，下一次全跑才发现。五道的名字写在本文件开头，照着跑。
+10. **脚本「什么都没产出」却返回 0** —— `extract_layers.py` 对五个旗舰各产出 0 层，
+   只打一行 `!!` 就算成功（见 E1）。坑 #4 的同一张脸：**闸口和脚本都要能红**。
+   新写一道检查时，先故意喂它一个坏输入，确认它真会非零退出 —— 这回给
+   `check_stray_labels` 补的探针用例就是干这个的。
 
 ## 会话地图
 
 | 会话 | 分支 | 状态 |
 |---|---|---|
 | `p1-minimax` | `p1-minimax` | 在做 B1 / B2 |
-| `p1-kimi` `p1-glm` `p1-qwen` `p1-stepfun` | 同名 | 已收工并入 |
-| `mm-infra` | `p3-vlm-infra` | 已收工并入 |
+| `p1-glm` `p1-kimi` `p1-qwen` `p1-stepfun` | 同名 | **在做 E2**：各画自己旗舰的注意力架构图 |
+| `e1-layers` | `main`（**共用主 checkout，没单开 worktree**） | 在做 E1 |
+| `mm-infra` | `p3-vlm-infra` | 已收工并入，B4 归它 |
 | `presentation` | `p4-units` | 已收工并入 |
-| `p4-render-gate` | `p4-fieldstate` | 已收工并入，B3 在它那边 |
+| `p4-render-gate` | `p4-fieldstate` | 已收工并入（B3 已由主会话做掉） |
 | `gatea-video` | `p2-video-gate-a` | 已收工并入，C 组归它 |
+
+> `e1-layers` 和主会话在同一个 checkout 的 `main` 上写。分工是按路径切的：
+> 它只碰 `scripts/extract_layers.py` 与 `data/derived/*.layers.json`，
+> 主会话只碰 `docs/STATUS.md`。**谁都不许切分支 / stash / checkout -- .**
