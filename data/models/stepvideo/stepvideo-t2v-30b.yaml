@@ -251,6 +251,7 @@ generation:
       height: 544
       frames: 204
       latent_frames: 36
+      text_tokens: 512   # 参考实现的 text_len
       fps: 25
       duration_s: 8.16
       default: true
@@ -337,6 +338,30 @@ precision:
         这一行说的是同一个仓里另外两个文件，是实测不是声明。
         与 h3、hunyuanvideo-1.5 的 VAE 同样是 F32
   inference_default: BF16
+
+performance:
+  # 模型卡 §4.1。**卡上没写 GPU 型号** —— 只说「four GPUs」「recommend 80GB」，
+  # 所以 hardware 那栏只能如实写「未声明」，不替它猜一个 H800 或 A100。
+  # 没有基线不填 speedup：flash-attn 开与不开是同一张表的两行，
+  # 作为一对记在 baseline 里，倍数由读者自己看（1232 / 743 = 1.66×）
+  - source:
+      type: official
+      ref:
+        kind: modelcard
+        url: https://huggingface.co/stepfun-ai/stepvideo-t2v
+        locator: §4.1 推理性能表（544×992×204 帧那一行）
+    hardware: 未声明（卡只说 four GPUs、建议单卡 80GB）
+    device_count: 4
+    engine: 官方实现 + flash-attn
+    resolution: 544×992
+    frames: 204
+    steps: 50
+    seconds_end_to_end: 743
+    peak_memory_bytes: 83361205125
+    baseline:
+      what: 同配置不开 flash-attn
+      seconds_end_to_end: 1232
+    visibility: public
 
 bottlenecks:
   - dimension: compute
@@ -437,6 +462,7 @@ evidence:
   generation.constraints: derived
   generation.checkpoint_variants: derived
   precision: derived
+  performance: official
   bottlenecks: judgement
   infra_signals: judgement
   notes: derived

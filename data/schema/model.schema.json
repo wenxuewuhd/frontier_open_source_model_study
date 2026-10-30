@@ -748,6 +748,10 @@
               "width": { "type": "integer" },
               "height": { "type": "integer" },
               "frames": { "type": "integer" },
+              "text_tokens": {
+                "type": "integer",
+                "description": "这一档的文本 token 数。**没有它，`param_scaling.per_text_token` 进不了推导** —— derive 会把线性项标成下界。双流 MMDiT 上这一项不可忽略：HunyuanVideo-1.5 的 per_text_token 是 2.87B，量级到 1e15；StepVideo 是 3.71B × 512 = 3.79e12，占单步 0.04% 可忽略。放在档位里而不是 backbone 下，因为长 prompt 档可能不同"
+              },
               "latent_frames": {
                 "type": "number",
                 "description": "这一档经 VAE 编码后的 latent 帧数，实测或由厂商实现推出来的值。给了就直接用，不套 (F-1)/t+1 那个公式。各家的帧数约束（Wan 与 HunyuanVideo-1.5 的 4n+1、LTX 的 8n+1、MiniMax-H3 的 17n+5）都是**分块规则的外在表现**，而单一除数表达不了任何一个精确值：H3 按 17 帧一块、先补 3 帧到 20 再除以 4，每块出 5 个 token，整段末尾再丢 3 个，于是 T = ceil(F/17)×5 − 3；默认档 243 帧的真值是 72，而公式给 61.5。端到端有效时间压缩率因此不是常数（H3 三档是 3.375 / 3.368 / 3.351）。**不要为了迁就端到端比值去改 vae.temporal_compression** —— 那一项记的是块内卷积比（config 的 vae_ratio_t），是一手事实，两个数是两个口径"
@@ -987,7 +991,11 @@
           "throughput_per_device": { "type": "number" },
           "ttft_ms": { "type": "number" },
           "tpot_ms": { "type": "number" },
-          "seconds_per_step": {
+          "peak_memory_bytes": {
+              "type": "number",
+              "description": "测量时的显存峰值。**生成类最常被问的就是这个数** —— 它决定一张卡放不放得下，而参数量不决定（VAE decode 与长序列的激活常常比权重更吃）。此前只能当散文写进 bottlenecks。StepVideo 卡 §4.1 给 77.64 GB、544×992×204f、4 卡"
+            },
+            "seconds_per_step": {
               "type": "number",
               "description": "每去噪步秒数。生成类的基本量不是 token/s —— 没有 token 在流出来。**不要硬塞进 tpot_ms**（time per output token），那是范畴错误"
             },
