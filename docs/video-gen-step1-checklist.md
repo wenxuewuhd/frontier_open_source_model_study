@@ -3,32 +3,47 @@
 > 这是 [video-gen-gate-a.md](video-gen-gate-a.md) §5.5 的展开，供第 1 步执行。
 > Gate A 已定：12 份记录、8 个 family，录入先只做视频。本清单只覆盖 **schema + derive.py +
 > subsystems.py** 三件，不涉及录记录本身。
-> 编制日期 2026-10-30，基线 `main` = 352c114。
+> 编制日期 2026-10-30，**2026-10-30 复核更新一次**（见 §0）。基线 `main` = 37e9404。
 
-## 0. 先决条件：等 P1 的共享脚本改动落地
+## 0. 先决条件：P1 的共享脚本改动
 
-Gate A 交接时记的是「三处待整合」。本轮复核了全部六个 worktree 与所有分支，实际状态是：
+Gate A 交接时记的是「三处待整合」。这一节两次复核过，结论改过一轮，**现状如下表**。
 
-| 待整合项 | 实际位置 | 状态（2026-10-30 复核） |
-|---|---|---|
-| `derive.py` 的 `bytes_basis` / 厂商公布 KV 字节 | `p1-glm` 分支，commit `bad7cf6` | **已提交**，尚未并回 main。同一 commit 还改了 `model.schema.json`（新增 `kv_sharing.declared_per_token_bytes`、改写 `precision.kv_cache_components.source` 的描述） |
-| `scripts/lib/subsystems.py` | — | **未见任何分支或工作区有改动**。`git diff main..<branch> -- scripts/lib/` 在五个 p1 分支上全为空 |
-| `scripts/lib/dtypes.py` 的 INT4-in-INT32 打包 | — | **同上，未见改动** |
+| 待整合项 | 来自哪条线 | 现在在哪 | 状态（2026-10-30 复核二） |
+|---|---|---|---|
+| `derive.py` 的 `bytes_basis` / 厂商公布 KV 字节（含 schema 的 `kv_sharing.declared_per_token_bytes` 与 `precision.kv_cache_components.source` 描述改写） | MiniMax 线提出，在 DeepSeek 记录上落地 | **`main`，commit `7e65c70`** | **已在 main**。原先在 `p1-glm` 上叫 `bad7cf6`，已 cherry-pick 到 main；`p1-glm` 退回它自己的 9 个提交（`0793fd1`），搬进独立 worktree `wt-p1-glm` |
+| `scripts/lib/subsystems.py` 要补语言模型侧缺的子系统划分 | GLM 线（报「必改」） | **还只是待办，不是代码** | 未整合 |
+| `scripts/lib/dtypes.py` 不认 INT4-in-INT32 打包 | Kimi 线 | **还只是待办，不是代码** | 未整合。`kimi-k2-thinking` / `kimi-k2.5` 各有 2 处 Gate B MISMATCH 卡在这上面没收口 |
 
-复核命令（可重跑）：
+本轮核实（可重跑）：
 
 ```bash
-for b in p1-glm p1-kimi p1-minimax p1-qwen p1-stepfun; do
-  echo "=== $b"; git diff --stat main..$b -- scripts/ data/schema/
-done
+git merge-base --is-ancestor 7e65c70 main && echo "7e65c70 已在 main"
+git show main:scripts/derive.py | grep -c vendor_declared              # 3
+git diff --stat 352c114..main -- scripts/lib/                          # 空
 ```
 
-**所以依赖关系比预想的轻**：真正会和本清单撞车的只有 `p1-glm` 那一个 commit，
-而且它改的是 `derive.py` 的 KV 分支与 schema 的 `kv_sharing` 子树 —— 和本清单的改动点
-（按 `kind` 分流、新建 `generation` 块）**不重叠**。另外两处若后续出现，撞车点见各条目的「P1 依赖」标注。
+### ⚠️ 「没有改动」不等于「依赖已清」
 
-**执行顺序建议**：先把 `p1-glm` 并回 main，再在 main 上开本清单的分支。
-如果 `subsystems.py` / `dtypes.py` 的改动在此期间出现，**A2 必须等它们落地**（见 A2 的说明）。
+上一版本清单在这里下过一个错误结论。当时我查到
+「`subsystems.py` / `dtypes.py` 未见任何分支或工作区有改动」，于是写成「依赖比预想的轻」。
+
+**查到的事实是对的，推出的结论是错的。** 主会话明令禁止五条 P1 会话改共享文件，
+要求它们把需求**写进交接笔记报回主会话**统一整合。所以那两处改动是以**待办**的形式存在的 ——
+git 里查不到，正是因为流程要求它们不该出现在 git 里。拿 `git diff` 为空去证明「没有待整合项」，
+是 model-audit 规则 7 的同一个坑：**空结果和「真的没有」在代码里长得一样。**
+
+### 撞车点
+
+| 本清单的节 | 和谁撞 | 怎么处理 |
+|---|---|---|
+| **A（`subsystems.py` 分两层 + 扩正则）** | **GLM 线待整合的 `subsystems.py` 改动。同一个文件，而且顺序即优先级** | **真撞车。必须等 P1 五条线全部跑完、共享改动整合进 main 之后再做。** 用户已定 P1 整合一次性做完 |
+| C1（`derive.py` 按 `kind` 分流） | `7e65c70` 改过的 `kv_memory()` | **已解除** —— 那个改动已在 main。从 main 开分支就带着它，改法是在函数入口加 kind 判断提前返回，不动函数体 |
+| B3（`precision` 加 `inference_default`） | 无 | **已解除** —— `precision.kv_cache_components.source` 的描述改写已在 main，是开分支时的现状，不是待合并的冲突 |
+| 其余（B1 family 枚举、B2 `generation` 块、C2、C3、D） | 无 | 可以先做。`generation` 块是新建的子树，和任何 P1 改动都不重叠 |
+
+**执行顺序**：从 `main` 直接开分支即可，不需要先合 `p1-glm`。
+B1 / B2 / C 可以立刻动；**A 节排在 P1 整合之后**。
 
 ---
 
@@ -143,9 +158,14 @@ text_encoder, vae_encoder, vae_decoder, audio_vae, vocoder, upsampler, other（�
 **验收**：A2 那张表的 26 行全部归到「应该归到」列，且 LLM 侧现有记录的
 `derive.py` 输出一字不变（跑 `data/models/` 下全部记录对比）。
 
-> **P1 依赖**：如果后续出现 `subsystems.py` 的 P1 改动，**本条必须等它合入再做** ——
-> 两边都在改同一张正则表且顺序敏感，分别改完再合并几乎必然出错。
-> 合入后要重跑一次 LLM 侧全量回归，确认 P1 的新正则没有被本条的分层包住。
+> **P1 依赖：这是全清单唯一真撞车的一节，必须排在 P1 整合之后。**
+> GLM 线已经报了「`subsystems.py` 必改」—— 要补语言模型侧缺的子系统划分。那条改动目前
+> 还只在交接笔记里、不在 git 里（主会话禁止 P1 会话直接改共享文件），所以 `git diff` 查不到它，
+> **但它确实存在**。两边改的是同一张正则表，而这张表**顺序即优先级**，分别改完再合并几乎必然出错。
+>
+> 用户已定：P1 五条线全部跑完后一次性整合。本节等那次整合进 main 再动。
+> 整合完要重跑一次 LLM 侧全量回归，确认 P1 的新正则没有被本节的分层包住；
+> A2 那 26 个张量名可以直接当本节的验收用例（主会话已表示整合时会这么用）。
 
 ---
 
@@ -158,7 +178,7 @@ text_encoder, vae_encoder, vae_decoder, audio_vae, vocoder, upsampler, other（�
 
 不加就一份记录都写不进去。**这是整条线的第一个阻塞点。**
 
-> **P1 依赖**：无（p1-glm 的 schema 改动在 `kv_sharing` 子树，不碰 `family`）。
+> **P1 依赖**：无。已在 main 的 `7e65c70` 只碰 `kv_sharing` 子树，不碰 `family`。可以立刻做。
 
 ### B2. 重建 `generation` 块
 
@@ -222,9 +242,9 @@ generation:
 | `precision` 加 `inference_default` | Wan 全系与 HunyuanVideo-1.5 落盘 FP32、脚本跑 BF16 |
 | `license` 考虑加 `restriction` | H3 要求美/欧/英/韩另行申请；HV1.5 的卡有 `extra_gated_eu_disallowed` |
 
-> **P1 依赖**：B3 的 `precision` 改动与 p1-glm 的 `precision.kv_cache_components.source`
-> 描述改写在同一个对象里，**同一文件相邻行，会产生 merge 冲突但不是语义冲突**。
-> 先合 p1-glm 再做即可，冲突手工取并集。
+> **P1 依赖：已解除。** `precision.kv_cache_components.source` 的描述改写已经在 main
+> （`7e65c70`），所以从 main 开分支时它就在那儿了 —— 是现状，不是待合并的冲突。
+> B3 往同一个 `precision` 对象里加 `inference_default`，在那份现状之上直接加即可。
 
 ### B4. `platforms[].engine` 取值
 
@@ -253,9 +273,9 @@ KTransformers）在生成类上基本用不上。要加：
 建议在输出里写 `{"status": "not_applicable", "why": "非自回归，推理过程中无跨步复用的 KV"}`，
 并让 `site/src/lib/data.ts` 认这个状态、在页面上显示「不适用」而不是空格。
 
-> **P1 依赖**：`kv_memory()` 正是 p1-glm 改过的函数（加了 `vendor_declared` 分支）。
-> **本条必须在 p1-glm 合入之后做**，否则会把那个分支覆盖掉。
-> 改法上没有冲突：本条是在函数入口加一道 kind 判断提前返回，不动函数体。
+> **P1 依赖：已解除。** `kv_memory()` 的 `vendor_declared` 分支已经在 main（`7e65c70`，
+> `grep -c vendor_declared` 得 3），从 main 开分支就带着它。
+> 改法上本来也不冲突：本条是在函数入口加一道 kind 判断提前返回，不动函数体。
 
 ### C2. 新增生成类推导
 
@@ -301,15 +321,29 @@ MiniMax-H3 的卡自己把「VAE 压缩」和「patch 后的有效压缩」分�
 
 ## E. 建议执行顺序
 
-1. 把 `p1-glm` 并回 `main`（它带着 `derive.py` 的 KV 分支与 schema 的 `kv_sharing` 改动）
-2. **B1** family 枚举 —— 一行，解除阻塞
-3. **A3** subsystems 分层 + 正则扩展，跑 LLM 侧全量回归确认输出不变
-4. **B2 + B3 + B4** schema 重建
-5. **C1** derive 按 kind 分流（必须在第 1 步之后）
-6. **C2 + C3** 生成类推导与组件分层
-7. **D** 其余
-8. 用 `magi-2-preview` 做第一份记录验收 —— 它一次性压到 MoE 账、mHC、sink、
+从 `main`（现 37e9404）直接开分支，不需要先合 `p1-glm`。分两段，中间卡在 P1 整合上。
+
+**第一段 —— 现在就能做（不碰 `subsystems.py`）**
+
+1. **B1** `family` 枚举 —— 一行，解除整条线的阻塞
+2. **B2 + B3 + B4** schema 重建（`generation` 块是新建子树，和任何 P1 改动不重叠）
+3. **C1** `derive.py` 按 `kind` 分流（`vendor_declared` 分支已在 main，直接在它之上加入口判断）
+4. **C2** 生成类推导（latent token 数、单步/端到端 FLOPs、常驻权重字节）
+5. **D** 里不依赖归类的那几项：`validate.py`、`fetch_hf.py` / `scaffold.py`、`tracking.yaml`、双周采集源
+
+**⏸ 卡点：等 P1 五条线跑完、共享改动整合进 main**
+
+待整合的两项见 §0：GLM 线的 `subsystems.py`、Kimi 线的 `dtypes.py`（INT4-in-INT32）。
+前者和本清单 A 节改同一张顺序敏感的正则表。
+
+**第二段 —— P1 整合之后**
+
+6. **A3** `subsystems.py` 分两层 + 扩正则，跑 LLM 侧全量回归确认输出不变
+7. **C3** 参数量按组件先分一层（依赖 A3 的 `component()`）
+8. **D** 里的 `fetch_dtypes.py`（和 `derive.py` 共用同一份归类，不能两套）、`site/`
+9. 用 `magi-2-preview` 做第一份记录验收 —— 它一次性压到 MoE 账、mHC、sink、
    跨厂商 VAE 复用、两阶段流水线；`minimax-h3` 压的是另一头（组件与部署口径），紧随其后
 
 验收标准：两份记录都能过 `validate.py` 与 `derive.py`（返回 0，用 `.venv/bin/python`），
-`--list-judgements` 里的新增项逐条看过，且 LLM 侧现有记录（`main` 上 15 份，P1 还在加）的 `derive.py` 输出一字不变。
+`--list-judgements` 里的新增项逐条看过，且 LLM 侧现有记录（`main` 上 15 份，P1 还在加）的
+`derive.py` 输出一字不变。A 节另有自己的验收：§A2 那 26 行全部归到「应该归到」列。
