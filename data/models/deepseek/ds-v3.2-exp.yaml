@@ -95,6 +95,20 @@ arch:
         model.layers.N.self_attn.indexer.wk.weight [128, 7168]，输出维 128（62 层都有）。index K 在 64 个 index 头之间共享，
         按 index_n_heads × index_head_dim = 8192（那是 wq_b 的输出维）算会高估 64 倍
     kv_sharing:
+      declared_per_token_bytes:
+        value: 48068
+        source: >-
+          DeepSeek-V4.1-Flash 技术报告 Figure 1(b)「Global KV Cache Per Token (Bytes)」的数据标签
+          （图文件 assets/dsv41_kv_cache.png @ 314113f8，2026-10-30 读）：DeepSeek-V1 389,120 /
+          DeepSeek-V3.2 48,068 / DeepSeek-V4-Flash 3,514 / DeepSeek-V4.1-Flash 890。
+          图注给的四个比值 8.1× / 13.7× / 3.9× / 437× 与这四个数逐个自洽，报告摘要与结论
+          也两处复述 890 与「roughly 1/4 of DeepSeek-V4-Flash」
+        note: >-
+          这一行能精确分解，可当交叉印证：主干 MLA latent 35,136 元素（576 × 61 层）
+          × 1.25 B + indexer 7,808 元素（128 × 61 层）× 0.53125 B = 48,068 B，与公布值逐位相同。
+          indexer 那一项的 0.53125 正是 FP4 + 每 32 元素一个 E8M0 scale，即厂商在 V4.1 报告
+          §2.4.4 里点名本代就在用的 OCP MXFP4 —— 两边独立对上。
+          主干那一侧的 1.25 B/元素是从总数倒推的，厂商没有公布分量格式，不要当成已知格式
       index_kv_source_layers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
         30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60]
       layer_coverage: >-
@@ -322,3 +336,19 @@ review:
   finding: config 没有 head_dim 键；released 2025-09-29 是 repoinfo 的 createdAt
   resolution: corrected
   changed_to: 两者与新增的 kv_sharing 标 derived
+- id: R14
+  field: arch.attention.kv_sharing.declared_per_token_bytes
+  severity: wrong
+  claim: 每 token KV 字节 85,888，由 42,944 元素按 BF16 兜底折算
+  finding: >-
+    厂商公布值是 48,068 B/token，本仓高 79%。出处：V4.1 技术报告 Figure 1(b)「Global KV Cache Per Token (Bytes)」的数据标签
+    （assets/dsv41_kv_cache.png @ 314113f8）：V1 389,120 / V3.2 48,068 /
+    V4-Flash 3,514 / V4.1-Flash 890，图注的四个比值 8.1× / 13.7× / 3.9× / 437× 与之自洽。
+    图上写的是 DeepSeek-V3.2；本仓把零结构差异的 ds-v3.2 刷新并入了本记录，架构同一套。
+    这一行还能精确分解，可当交叉印证：主干 MLA latent 35,136 元素（576 × 61 层）× 1.25 B
+    + indexer 7,808 元素（128 × 61 层）× 0.53125 B = 48,068，与公布值逐位相同。
+    0.53125 正是 FP4 + 每 32 元素一个 E8M0 scale，即厂商在 V4.1 报告 §2.4.4 里点名
+    本代就在用的 OCP MXFP4 —— 两边独立对上。主干那一侧的 1.25 B/元素是从总数倒推的，
+    厂商没有公布分量格式，不作为已知格式写进字段
+  resolution: corrected
+  changed_to: 补 declared_per_token_bytes 48068 并由 derive.py 采用，bytes_basis 变 vendor_declared

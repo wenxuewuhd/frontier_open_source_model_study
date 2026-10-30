@@ -1,7 +1,7 @@
 {
  "id": "ds-v4-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T06:09:27+00:00",
+ "generated_at": "2026-10-30T06:29:10+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-flash",
   "config_present": true,
@@ -91,7 +91,7 @@
   "layers": 43,
   "full_attention_layers": 43,
   "linear_attention_layers": 0,
-  "per_token_bytes": 5893.0,
+  "per_token_bytes": 3514.0,
   "per_sequence_bytes": 5636096,
   "per_token_elems": 3440,
   "per_token_elems_bound": "exact",
@@ -137,18 +137,22 @@
   "notes": [
    "元素口径，主干 43 层。每 token 元素 = 条目宽 / 压缩比，条目宽取 compressor.norm 的宽度，不取 wkv 输出宽度： 比值 4 的 21 层 compressor.wkv / wgate / ape 宽 1024，但 compressor.norm [512] —— 参考实现在 ratio == 4 时用重叠窗口 （coff = 2），压缩后合成一个 head_dim 512 的条目，Attention.kv_cache 是 [B, window + max_seq_len // ratio, 512]。 全局 KV = 21 × 512/4 + 20 × 512/128 = 2688 + 80 = 2768；indexer = 21 × 128/4 = 672。 attn.wkv 那一份是 sliding_window 的局部 KV，每序列固定、不随上下文增长：43 × 128 × 512 = 2818048 元素/序列， 开草稿侧加 mtp.0 为 44 层 2883584。按未压缩宽度乘总层数会高估五倍以上；按 wkv 输出宽度算条目会再高估一倍（R1）",
    "字节是理论下限：元素数 × 落盘精度（含 scale）的精确计数，不含分页、环页与对齐粒度。实际部署在它之上，不能直接当显存预算",
-   "各分量字节口径不一：有的按落盘精度（理论下限），有的按模型 dtype 兜底，合计不是同一种数"
+   "各分量字节口径不一：有的按落盘精度（理论下限），有的按模型 dtype 兜底，合计不是同一种数",
+   "每 token 字节采用厂商公布值 3,514 B。本仓按分量算得 5,893 B（+68%），差额落在落盘格式未公布、只能按模型 dtype 兜底的那个分量上；元素数不受影响，它实测自权重清单"
   ],
-  "bytes_basis": "mixed",
+  "bytes_basis": "vendor_declared",
   "dtype_assumed": true,
-  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
+  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML",
+  "declared_per_token_bytes": 3514.0,
+  "declared_source": "DeepSeek-V4.1-Flash 技术报告 Figure 1(b)「Global KV Cache Per Token (Bytes)」的数据标签 （图文件 assets/dsv41_kv_cache.png @ 314113f8，2026-10-30 读）：DeepSeek-V1 389,120 / DeepSeek-V3.2 48,068 / DeepSeek-V4-Flash 3,514 / DeepSeek-V4.1-Flash 890。 图注给的四个比值 8.1× / 13.7× / 3.9× / 437× 与这四个数逐个自洽，报告摘要与结论 也两处复述 890 与「roughly 1/4 of DeepSeek-V4-Flash」",
+  "computed_per_token_bytes": 5893.0
  },
  "kv_capacity_bytes_at_context": {
-  "4096": 29773824.0,
-  "32768": 198737920.0,
-  "1048576": 6184894464.0
+  "4096": 20029440.0,
+  "32768": 120782848.0,
+  "1048576": 3690332160.0
  },
- "kv_capacity_basis": "mixed",
+ "kv_capacity_basis": "vendor_declared",
  "active_params": {
   "status": "ok",
   "total": 13238544192.0,
@@ -227,6 +231,11 @@
    "item": "KV 层覆盖口径",
    "status": "ok",
    "why": "公式按主干 43 层算（config num_hidden_layers）；清单里另有 1 个草稿块，带着与主干注意力同名的 11 个投影，即它们也产出 KV。开草稿侧时容量要按 44 层算 —— 记录里要写明用哪个口径"
+  },
+  {
+   "item": "外部 KV 字节对账",
+   "status": "ok",
+   "why": "采用厂商公布值 3,514 B/token；本仓逐分量算得 5,893 B（+68%），差额在落盘格式未公布的那个分量上 —— 根因见记录的 open_questions"
   }
  ]
 }

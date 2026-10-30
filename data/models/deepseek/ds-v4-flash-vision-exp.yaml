@@ -336,6 +336,11 @@ open_questions:
   所以 global_kv 那一半仍按模型 dtype 兜底，合计字节是 mixed 口径，不能和别代的
   theoretical_floor 相比。要钉死得等厂商公布或读生产 kernel
 - 参考实现在写缓存前对非 rope 维做 act_quant、压缩器另有 fp4_act_quant 分支，但那些是 inplace 伪量化，只给 QAT 网格、不给落盘宽度（判定依据见 deepseek-v41-flash 的 R36）
+- >-
+  本记录的每 token 字节仍是 mixed 兜底值。同代主线 ds-v4-flash 有厂商公布值 3,514 B/token
+  （V4.1 技术报告 Figure 1(b)），而本记录的缓存元素数与它逐项相同（global 2768 + indexer 672）——
+  但图上只点名了 DeepSeek-V4-Flash，没点名本档，所以不替厂商外推。
+  要用的话按 ds-v4-flash 那一行读，并记住那是外推不是公布
 - 训练精度没有一手来源，故不填 precision.training
 reviewed:
   date: '2026-10-30'

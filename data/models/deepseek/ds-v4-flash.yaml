@@ -144,6 +144,20 @@ arch:
         indexer.compressor.norm.weight [128] 为准，参考实现的 Indexer.kv_cache 是 [B, max_seq_len // 4, 128]。
         4 个 token 一个 128 维条目，每 token 32 元素。index_kv_dim 记的是每 token 值，不是条目宽度
     kv_sharing:
+      declared_per_token_bytes:
+        value: 3514
+        source: >-
+          DeepSeek-V4.1-Flash 技术报告 Figure 1(b)「Global KV Cache Per Token (Bytes)」的数据标签
+          （图文件 assets/dsv41_kv_cache.png @ 314113f8，2026-10-30 读）：DeepSeek-V1 389,120 /
+          DeepSeek-V3.2 48,068 / DeepSeek-V4-Flash 3,514 / DeepSeek-V4.1-Flash 890。
+          图注给的四个比值 8.1× / 13.7× / 3.9× / 437× 与这四个数逐个自洽，报告摘要与结论
+          也两处复述 890 与「roughly 1/4 of DeepSeek-V4-Flash」
+        note: >-
+          与本仓按分量算的数对不上：元素 3440 个（global 2768 + indexer 672），公布值折合
+          每元素 1.0215 B，而本仓 main KV 那一半按 BF16 兜底算 2 B。公布值采信，差额的根因
+          写在 open_questions —— 本代 main KV 的落盘格式厂商没公布。
+          注意本代缓存是异构的（比值 4 的层与比值 128 的层并存），本来就不该有单一每元素速率，
+          所以不要拿 1.0215 去反推格式
       compress_ratios:
       - 0
       - 0
@@ -537,3 +551,19 @@ review:
     与「roughly 1/4」相符。但 FP8 这个格式厂商没说过，所以只记作约束、不写进字段
   resolution: corrected
   changed_to: 补 precision.kv_cache_components.indexer（FP4 / 块 32 / E8M0 scale）；main KV 留空并进 open_questions，合计 bytes_basis 由 dtype_fallback 变 mixed
+- id: R16
+  field: arch.attention.kv_sharing.declared_per_token_bytes
+  severity: wrong
+  claim: 每 token 全局 KV 字节由本仓自己折算（先是 BF16 兜底的 6880，补 indexer 格式后是 mixed 的 5893）
+  finding: >-
+    厂商把这个数直接公布过，只是出处在后继者的图里：V4.1 技术报告 Figure 1(b)「Global KV Cache Per Token (Bytes)」的数据标签
+    （assets/dsv41_kv_cache.png @ 314113f8）：V1 389,120 / V3.2 48,068 /
+    V4-Flash 3,514 / V4.1-Flash 890，图注的四个比值 8.1× / 13.7× / 3.9× / 437× 与之自洽。
+    公布值 3,514 B/token 对本仓实测的 3,440 元素折合每元素 1.0215 B，而本仓 main KV 那一半
+    按 BF16 兜底算 2 B，于是高 68%。元素数不受影响（实测自权重清单，R1 已核）。
+    注意本代缓存是异构的（比值 4 与比值 128 的层并存），本来就不存在单一每元素速率，
+    所以不要拿 1.0215 去反推格式 —— main KV 的落盘格式仍未公布
+  resolution: corrected
+  changed_to: >-
+    补 declared_per_token_bytes 3514 并由 derive.py 采用，bytes_basis 变 vendor_declared；
+    本仓逐分量算的 5893 保留在 computed_per_token_bytes 里，两个数由新的「外部 KV 字节对账」行并排摆出

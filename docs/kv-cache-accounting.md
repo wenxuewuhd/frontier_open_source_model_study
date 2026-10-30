@@ -26,6 +26,7 @@
 |---|---|
 | `theoretical_floor` | 精确计数的**理论下限**：元素 × 落盘格式（含 scale），**不含分页、环页、对齐粒度**。实际部署在它之上 |
 | `dtype_fallback` | 记录没给缓存精度，按模型权重 dtype 兜底。是个占位值，不是测量值 |
+| `vendor_declared` | 字节取厂商公布的每 token 数（模型卡 / 技术报告）。本仓算不出全部分量时用它，比兜底值可信 |
 | `mixed` | 各分量 basis 不同，合计没有单一口径 |
 
 ### 落盘精度按什么来源填
@@ -42,7 +43,7 @@
 <!-- kv-basis | 由 scripts/kv_table.py 生成，勿手改 -->
 | 版本 | 元素/token | 字节/token | basis |
 |---|---|---|---|
-| DeepSeek-V4-Flash | **3,440** | 5,893 B | `mixed` |
+| DeepSeek-V4-Flash | **3,440** | 3,514 B | `vendor_declared` |
 | DeepSeek-V4-Pro | **4,924** | 8,438 B | `mixed` |
 | DeepSeek-V4.1-Flash | **1,600** | 890 B | `theoretical_floor` |
 <!-- kv-basis 生成区结束 -->

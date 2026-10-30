@@ -117,6 +117,18 @@ arch:
     sliding_window: 128
     attn_sink: 每头一个可学习 sink（[64] FP32，全部 40 层及 MTP 层）。它进 softmax 分母， 改变算子签名；config 里没有这个开关，只能从权重清单发现
     kv_sharing:
+      declared_per_token_bytes:
+        value: 890
+        source: >-
+          DeepSeek-V4.1-Flash 技术报告 Figure 1(b)「Global KV Cache Per Token (Bytes)」的数据标签
+          （图文件 assets/dsv41_kv_cache.png @ 314113f8，2026-10-30 读）：DeepSeek-V1 389,120 /
+          DeepSeek-V3.2 48,068 / DeepSeek-V4-Flash 3,514 / DeepSeek-V4.1-Flash 890。
+          图注给的四个比值 8.1× / 13.7× / 3.9× / 437× 与这四个数逐个自洽，报告摘要与结论
+          也两处复述 890 与「roughly 1/4 of DeepSeek-V4-Flash」
+        note: >-
+          本仓按分量算出的 890.0 B 与公布值逐位相同（global 1280 × 0.5625 + indexer 320 × 0.53125），
+          元素数实测自权重清单、格式取自报告 §2.4.4，两路独立。这一行因此同时是
+          derive.py「外部 KV 字节对账」那道闸的正例 —— 它在这里必须是 ok
       layer_coverage: >-
         compressor.wkv 与 compressor.norm 在 4 个源层 [2,8,14,20] 都有，但 compressor.wgate
         只在 [2,8,14] 三层 —— 对照 compress_ratios，L2–19 比值 2、L20–39 比值 1，
@@ -884,6 +896,23 @@ review:
     低于每 token 890 B 那一侧，两者不该被当成同一档
   resolution: open
   changed_to: note 改写为「落盘格式未公布，这一格是 QAT 网格」，数值保留作唯一可得估计，并进 open_questions
+
+- id: R39
+  field: arch.attention.kv_sharing.declared_per_token_bytes
+  severity: missing
+  claim: 缓存侧没有任何外部对账 —— 元素数与落盘格式两侧都由本仓决定
+  finding: >-
+    参数量侧有 HF 的 safetensors tally 当外部锚（它接住过一次整仓级的 scale 判据错），
+    缓存侧此前什么都没有：两侧都错了只会得到一个自洽的错数，这正是 V4 一代按 BF16 兜底的
+    6,880 能稳稳站过好几轮核查的原因。厂商其实公布了这个数 —— 本记录 890 B/token 在模型卡、
+    报告摘要与结论三处，跨代值在报告 Figure 1(b) 的数据标签里。
+    本记录按分量算出的 890.0 与公布值逐位相同，两路独立（元素实测自权重清单、
+    格式取自报告 §2.4.4），所以它是这道闸的正例：在这里必须报 delta_pct=0.0
+  resolution: corrected
+  changed_to: >-
+    新增字段 arch.attention.kv_sharing.declared_per_token_bytes 与 derive.py 的
+    「外部 KV 字节对账」行。本仓每个分量都有公布格式时做对账，否则直接采用公布值
+    （bytes_basis: vendor_declared），不让兜底值盖过厂商
 
 notes: 本记录是 P0-A 的 schema 压力测试用例：选它是因为它同时带有 MLA、细粒度 MoE、 跨层 KV 共享、稀疏选块、残差流改造、外置查表、自带草稿模型和混合精度， 字段覆盖最宽。schema
   撑不住的地方会先在这里暴露。
