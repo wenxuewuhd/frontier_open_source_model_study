@@ -16,6 +16,9 @@
 - **手写记录用定点编辑**（Edit / sed），改完跑 `validate.py`。`data/models/` 下的 YAML 带注释与折叠块，
   `yaml.safe_dump` 回写会把它们全部重排
 - **config 与权重冲突时，权重赢。** config 描述模块配置，不描述落盘形状
+- **来源优先级：模型卡 / 技术报告 > 厂商参考实现 > 引擎实现。** 精度与模型结构一律按厂商发布的说法填。
+  厂商随仓的 `inference/` 常常自称 demo，会用**伪量化**代替打包存储，照它读会把 FP4 读成 BF16；
+  vllm / sglang 只在算子表里查 —— 引擎可能滞后，也可能自己另选一套。坑的全貌见 `model-audit` skill 规则 10
 - **实测自权重的字段，evidence 写 `judgement` 或 `derived`**。落在 `arch: official` 的前缀继承里就不会
   出现在 `validate.py --list-judgements`，绕过 Gate C 的人工复核
 - **抽样与定向取数的产物**（`subsystem_dtypes.json`、`kv_widths.json`）**只回答它被瞄准的那个问题**：

@@ -26,7 +26,15 @@
 |---|---|
 | `theoretical_floor` | 精确计数的**理论下限**：元素 × 落盘格式（含 scale），**不含分页、环页、对齐粒度**。实际部署在它之上 |
 | `dtype_fallback` | 记录没给缓存精度，按模型权重 dtype 兜底。是个占位值，不是测量值 |
+| `vendor_declared` | 字节取厂商公布的每 token 数（模型卡 / 技术报告）。本仓算不出全部分量时用它，比兜底值可信 |
 | `mixed` | 各分量 basis 不同，合计没有单一口径 |
+
+### 落盘精度按什么来源填
+
+**模型卡 / 技术报告 > 厂商参考实现 > 引擎实现。** 卡或报告给了格式就按它填，参考实现只用来回答
+它们没说的事。厂商随仓的 `inference/` 常自称 demo，会用伪量化（改值不改 dtype）代替打包存储，
+缓存缓冲区因此真是 BF16 —— 照它读会把 FP4 读成 BF16。引擎（vllm / sglang）只进算子表：
+它可能滞后，也可能自己另选格式，不能用来确认厂商口径。细节见 `model-audit` skill 规则 10。
 
 ### 不同 basis 之间不算倍数
 
@@ -35,8 +43,8 @@
 <!-- kv-basis | 由 scripts/kv_table.py 生成，勿手改 -->
 | 版本 | 元素/token | 字节/token | basis |
 |---|---|---|---|
-| DeepSeek-V4-Flash | **3,440** | 6,880 B | `dtype_fallback` |
-| DeepSeek-V4-Pro | **4,924** | 9,848 B | `dtype_fallback` |
+| DeepSeek-V4-Flash | **3,440** | 3,514 B | `vendor_declared` |
+| DeepSeek-V4-Pro | **4,924** | 8,438 B | `mixed` |
 | DeepSeek-V4.1-Flash | **1,600** | 890 B | `theoretical_floor` |
 <!-- kv-basis 生成区结束 -->
 
@@ -100,6 +108,7 @@ V4 一代的字节是按模型权重 dtype（BF16）兜底来的，V4.1 的是 F
 - **混合结构必须两个分量。** 线性注意力的递归状态每序列固定、与上下文无关；
   full attention 的 KV 随上下文线性增长。合成一个数表达不了 —— `per_token_bytes` 曾经只有一个数，
   Qwen3.8-27B 逼出了重构
-- **有账的行里只有 V4.1 是 `theoretical_floor`。** 其余是兜底值，所以**字节那一列互相之间也不能比**，
+- **有账的行里只有 V4.1 与 Step-5 是 `theoretical_floor`。** 其余是兜底值或 `mixed`
+  （V4 一代只有 indexer 的格式公布过，main KV 那一半仍在兜底），所以**字节那一列互相之间也不能比**，
   只有元素那一列可比。新录一行时，查不到落盘精度就老实标 `dtype_fallback`，
-  不要为了让表好看而把兜底值当测量值
+  不要为了让表好看而把兜底值当测量值；只查到一部分就让它变成 `mixed`，别把有据的那半推广到整行

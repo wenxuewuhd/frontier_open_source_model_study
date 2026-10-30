@@ -229,6 +229,17 @@
               "type": "string",
               "description": "压缩器 / indexer / 全量 KV 各自覆盖哪些层。三者覆盖面常常不同，写成「逐层」会让 KV 账按总层数乘"
             },
+            "declared_per_token_bytes": {
+              "type": "object",
+              "description": "厂商公布的每 token 全局 KV 字节数（模型卡 / 技术报告 / 其中的图）。这是缓存侧唯一不依赖本仓代码的外部锚：元素数与落盘格式两侧都由本仓决定，错了只会得到一个自洽的错数。参数量那边有 HF 的 safetensors tally 接住过一次整仓级的错，缓存侧此前什么都没有。本仓每个分量都有公布格式时用它对账，否则直接采用它（bytes_basis 记 vendor_declared）",
+              "additionalProperties": false,
+              "required": ["value", "source"],
+              "properties": {
+                "value": { "type": "number", "description": "字节 / token" },
+                "source": { "type": "string", "description": "出处与定位：模型卡、技术报告的节号或图号，连同图里的数据标签" },
+                "note": { "type": "string" }
+              }
+            },
             "measured_per_token": {
               "type": "object",
               "description": "从完整权重清单量出来的每 token 缓存元素数，逐层求和。公式建模不了逐层压缩时用它 —— V4 一代的 compressor.ape 第一维就是该层压缩比，每 token 元素 = wkv 输出宽度 / 比值，比值 4 的层 256、比值 128 的层只有 4。按未压缩宽度乘层数会高估五倍以上",
@@ -490,7 +501,7 @@
             "global_kv": { "$ref": "#/$defs/kv_component" },
             "indexer": { "$ref": "#/$defs/kv_component" },
             "local_window": { "$ref": "#/$defs/kv_component" },
-            "source": { "type": "string", "description": "精度从哪来。读实现得来的和量出来的不是一个等级，写清楚" },
+            "source": { "type": "string", "description": "精度从哪来。读实现得来的和量出来的不是一个等级，写清楚。**优先引模型卡 / 技术报告的原话与定位**；只能引参考实现时说明那是参考实现（常是 demo，会用伪量化代替打包存储，照它读会把 FP4 读成 BF16），并写清凭什么判定。引擎（vllm / sglang）不是这里的来源" },
             "note": { "type": "string" }
           }
         },

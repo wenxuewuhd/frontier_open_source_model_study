@@ -683,6 +683,19 @@ def reconcile(cfg_t: dict, shp: dict, declared: dict, external: dict = None,
                                f"带着与主干注意力同名的 {len(mtp_attn)} 个投影，"
                                f"即它们也产出 KV。开草稿侧时容量要按 "
                                f"{kv['layers'] + blocks} 层算 —— 记录里要写明用哪个口径"})
+        # 缓存侧的外部对账。只有本仓能逐分量算出字节时才是真对账 —— 采用了公布值的
+        # 情况下两边必然相等，那时报 ok 是假的，改成把两个数并排摆出来
+        if kv and kv.get("declared_per_token_bytes"):
+            if kv.get("bytes_basis") == "theoretical_floor":
+                add("外部 KV 字节对账", kv["declared_per_token_bytes"],
+                    kv.get("per_token_bytes"), "厂商公布", "本仓逐分量算", tol=0.005)
+            else:
+                want = kv["declared_per_token_bytes"]
+                got = kv.get("computed_per_token_bytes") or 0
+                out.append({"item": "外部 KV 字节对账", "status": "ok",
+                            "why": f"采用厂商公布值 {want:,.0f} B/token；本仓逐分量算得 "
+                                   f"{got:,.0f} B（{got / want - 1:+.0%}），差额在落盘格式"
+                                   "未公布的那个分量上 —— 根因见记录的 open_questions"})
         if shp.get("unknown_dtypes"):
             out.append({"item": "未知数据类型", "status": "MISMATCH",
                         "detail": shp["unknown_dtypes"],
@@ -746,6 +759,27 @@ def main():
     if kv.get("status") in KV_USABLE and not kv.get("bytes_basis"):
         # 公式路径：字节按单一 KV dtype 算，口径取决于这个 dtype 是填的还是兜底的
         kv["bytes_basis"] = "dtype_fallback" if kv_dtype_assumed else "declared_dtype"
+
+    # 厂商公布的每 token 全局 KV 字节：缓存侧唯一的外部锚。参数量有 HF 的 safetensors
+    # tally 可对，缓存侧此前什么都没有 —— 元素数与落盘格式两侧都由本仓决定，错了只会
+    # 得到一个自洽的错数（V4 一代按 BF16 兜底高了 1.7 倍，直到读厂商的跨代图才发现）。
+    # 公布值不依赖本仓任何代码，所以它一旦存在就当权威：本仓每个分量都有公布格式时
+    # （basis 已是 theoretical_floor）拿它对账，否则直接采用它，别让兜底值盖过厂商。
+    decl = (attn.get("kv_sharing") or {}).get("declared_per_token_bytes") or {}
+    if decl.get("value") and kv.get("status") in KV_USABLE:
+        want = float(decl["value"])
+        kv["declared_per_token_bytes"] = want
+        kv["declared_source"] = decl.get("source")
+        if kv.get("bytes_basis") != "theoretical_floor":
+            kv["computed_per_token_bytes"] = kv.get("per_token_bytes")
+            kv["per_token_bytes"] = want
+            kv["bytes_basis"] = "vendor_declared"
+            got = kv["computed_per_token_bytes"] or 0
+            kv.setdefault("notes", []).append(
+                f"每 token 字节采用厂商公布值 {want:,.0f} B。本仓按分量算得 {got:,.0f} B"
+                + (f"（{got / want - 1:+.0%}）" if want else "")
+                + "，差额落在落盘格式未公布、只能按模型 dtype 兜底的那个分量上；"
+                "元素数不受影响，它实测自权重清单")
     act = active_params(shp, t, attn, moe)
     comm = comm_per_token(t, moe, hidden, act_dtype, args.ep)
 
@@ -835,7 +869,10 @@ def main():
             print(f"激活(可比官方)   {dtypes.fmt_count(act['total_with_embed'])}"
                   f"  (含输入词表 {dtypes.fmt_count(act['excluded']['embed_tokens'])})")
     if kv.get("status") in KV_USABLE:
-        warn = " [精度兜底]" if kv.get("dtype_assumed") else ""
+        # 采用了厂商公布值之后，本仓的兜底已经不参与报出去的数，别再挂兜底标
+        warn = (" [精度兜底]" if kv.get("dtype_assumed")
+                and kv.get("bytes_basis") != "vendor_declared" else "")
+        warn += " [厂商公布]" if kv.get("bytes_basis") == "vendor_declared" else ""
         warn += " [含估算项]" if kv.get("status") == "partial" else ""
         warn += " [理论下限]" if kv.get("bytes_basis") == "theoretical_floor" else ""
         fa = kv.get("full_attention_layers"); la = kv.get("linear_attention_layers")

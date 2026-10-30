@@ -144,6 +144,20 @@ arch:
         indexer.compressor.norm.weight [128] 为准，参考实现的 Indexer.kv_cache 是 [B, max_seq_len // 4, 128]。
         4 个 token 一个 128 维条目，每 token 32 元素。index_kv_dim 记的是每 token 值，不是条目宽度
     kv_sharing:
+      declared_per_token_bytes:
+        value: 3514
+        source: >-
+          DeepSeek-V4.1-Flash 技术报告 Figure 1(b)「Global KV Cache Per Token (Bytes)」的数据标签
+          （图文件 assets/dsv41_kv_cache.png @ 314113f8，2026-10-30 读）：DeepSeek-V1 389,120 /
+          DeepSeek-V3.2 48,068 / DeepSeek-V4-Flash 3,514 / DeepSeek-V4.1-Flash 890。
+          图注给的四个比值 8.1× / 13.7× / 3.9× / 437× 与这四个数逐个自洽，报告摘要与结论
+          也两处复述 890 与「roughly 1/4 of DeepSeek-V4-Flash」
+        note: >-
+          与本仓按分量算的数对不上：元素 3440 个（global 2768 + indexer 672），公布值折合
+          每元素 1.0215 B，而本仓 main KV 那一半按 BF16 兜底算 2 B。公布值采信，差额的根因
+          写在 open_questions —— 本代 main KV 的落盘格式厂商没公布。
+          注意本代缓存是异构的（比值 4 的层与比值 128 的层并存），本来就不该有单一每元素速率，
+          所以不要拿 1.0215 去反推格式
       compress_ratios:
       - 0
       - 0
@@ -236,6 +250,28 @@ arch:
   decoding:
     mtp_layers: 1
 precision:
+  # indexer 缓存的格式由厂商公布（见下 source）；main KV 这一代还不是 FP4，格式未公布。
+  # 两半可信度不同，合计因此是 mixed 口径 —— 见核查 R15
+  kv_cache_components:
+    indexer:
+      dtype: FP4
+      block: 32
+      scale_dtype: FP8_E8M0
+      note: OCP MXFP4，E2M1 + 每 32 通道一个 E8M0 scale，每元素 0.5 + 1/32 = 0.53125 B
+    source: >-
+      indexer 的格式由厂商公布，出处是后继者的技术报告：DeepSeek-V4.1-Flash 技术报告 §2.4.4
+      「FP4 Main KV Cache」开篇说 "DeepSeek-V4 already uses quantization-aware training (QAT)
+      for FP4 indexer queries and keys, accelerating index computation and reducing the indexer
+      cache size. We adopt the OCP-standard MXFP4 format"，讲的就是本代。
+      同一段接着说 "We now extend QAT to the main KV cache" —— 所以 main KV 在本代还不是 FP4，
+      而本代自己的模型卡只给权重精度（FP4 + FP8 Mixed，脚注限定为「专家 FP4、其余多为 FP8」），
+      不给 KV 的格式或字节数，引用块没有报告 URL，仓里也没有报告 PDF。
+      不要照厂商随仓 inference/ 的 act_quant / fp4_act_quant 调用读落盘格式：那些是 inplace 伪量化
+      （原 dtype 回写、scale 不返回），只给 QAT 网格（判定依据见 deepseek-v41-flash 的 R36）
+    note: >-
+      global_kv 不在这里：main KV 的落盘格式本代未公布，derive.py 对这一半按模型 dtype 兜底，
+      所以合计字节是 mixed 口径 —— indexer 那一半有一手依据，global 那一半是占位值。
+      两半不能当成同一档，合计也不能和别代的 theoretical_floor 相比
   quantization:
     method: fp8
     activation_scheme: dynamic
@@ -350,7 +386,12 @@ notes: 谱系里最大的一次不连续，几乎每个维度都动了。对 inf
   gate/up/down_proj → w1/w3/w2，e_score_correction_bias → ffn.gate.bias，embed_tokens / lm_head → embed / head，
   input_layernorm → attn_norm，kv_a_layernorm → kv_norm，weight_scale_inv → scale。按旧名字匹配的工具（scale 判据、子系统归类）也要跟着改。
 open_questions:
-- KV 的实际落盘精度未进记录，derive.py 按 BF16 兜底（dtype_fallback）。参考实现在写缓存前对非 rope 的 448 维做块 64 的 act_quant、压缩器另有 fp4_act_quant 分支，生产 kernel 是否真落 FP8 / FP4 没有核
+- >-
+  **main KV 的落盘格式本代未公布**（核查 R15）。厂商模型卡只给权重精度，没有技术报告；
+  后继者 V4.1 的报告只说本代已对 indexer 做 FP4 MXFP4、main KV 是「now extend」的下一步。
+  所以 global_kv 那一半仍按模型 dtype 兜底，合计字节是 mixed 口径，不能和别代的
+  theoretical_floor 相比。要钉死得等厂商公布或读生产 kernel
+- 参考实现在写缓存前对非 rope 维做 act_quant、压缩器另有 fp4_act_quant 分支，但那些是 inplace 伪量化，只给 QAT 网格、不给落盘宽度（判定依据见 deepseek-v41-flash 的 R36）
 - >-
   参考实现的 Compressor 还带每序列固定的 FP32 状态 kv_state / score_state [B, coff·ratio, coff·head_dim]（攒够 ratio 个 token 才出一个条目）。
   按这个形状：比值 4 层 2 × 8 × 1024 + indexer 侧 2 × 8 × 256、比值 128 层 2 × 128 × 512，主干合计 3,051,520 元素 / 12.2 MB 每序列。
@@ -493,3 +534,36 @@ review:
   finding: 吸收式 MLA 的 decode 本来就是在 latent 上做 MQA（K 576 / V 512），对它而言变化是 K 宽 576 → 512 加 sink 与滑窗，不是推倒重来
   resolution: corrected
   changed_to: 区分吸收式与逐步上投影两种实现
+- id: R15
+  field: precision.kv_cache_components
+  severity: missing
+  claim: 记录不填任何 KV 落盘精度，derive.py 整体按模型 dtype 兜底（dtype_fallback）
+  finding: >-
+    indexer 那一半其实是公布过的，只是出处在后继者身上：V4.1 技术报告 §2.4.4 开篇点名
+    "DeepSeek-V4 already uses QAT for FP4 indexer queries and keys ... We adopt the
+    OCP-standard MXFP4 format"。按 MXFP4（E2M1 + 每 32 通道一个 E8M0 scale）折算，
+    indexer 每元素 0.53125 B。同段的 "We now extend QAT to the main KV cache" 同时说明
+    main KV 在本代还不是 FP4，而本代的格式厂商没有公布，所以那一半只能继续兜底。
+    报告摘要与结论两处都说 V4.1 的 890 B/token 是 "roughly 1/4 of the corresponding
+    footprint of DeepSeek-V4-Flash"，即本代应在 3560 B/token 上下；而按 BF16 兜底算出的
+    5893 B/token 是 890 的 6.62 倍，明显不符。差额落在 main KV 那一半：2768 个元素
+    若按 FP8 + 每 32 元素一个 scale（1.03125 B/元素）折算，合计 3212 B，对 890 是 3.61 倍，
+    与「roughly 1/4」相符。但 FP8 这个格式厂商没说过，所以只记作约束、不写进字段
+  resolution: corrected
+  changed_to: 补 precision.kv_cache_components.indexer（FP4 / 块 32 / E8M0 scale）；main KV 留空并进 open_questions，合计 bytes_basis 由 dtype_fallback 变 mixed
+- id: R16
+  field: arch.attention.kv_sharing.declared_per_token_bytes
+  severity: wrong
+  claim: 每 token 全局 KV 字节由本仓自己折算（先是 BF16 兜底的 6880，补 indexer 格式后是 mixed 的 5893）
+  finding: >-
+    厂商把这个数直接公布过，只是出处在后继者的图里：V4.1 技术报告 Figure 1(b)「Global KV Cache Per Token (Bytes)」的数据标签
+    （assets/dsv41_kv_cache.png @ 314113f8）：V1 389,120 / V3.2 48,068 /
+    V4-Flash 3,514 / V4.1-Flash 890，图注的四个比值 8.1× / 13.7× / 3.9× / 437× 与之自洽。
+    公布值 3,514 B/token 对本仓实测的 3,440 元素折合每元素 1.0215 B，而本仓 main KV 那一半
+    按 BF16 兜底算 2 B，于是高 68%。元素数不受影响（实测自权重清单，R1 已核）。
+    注意本代缓存是异构的（比值 4 与比值 128 的层并存），本来就不存在单一每元素速率，
+    所以不要拿 1.0215 去反推格式 —— main KV 的落盘格式仍未公布
+  resolution: corrected
+  changed_to: >-
+    补 declared_per_token_bytes 3514 并由 derive.py 采用，bytes_basis 变 vendor_declared；
+    本仓逐分量算的 5893 保留在 computed_per_token_bytes 里，两个数由新的「外部 KV 字节对账」行并排摆出
