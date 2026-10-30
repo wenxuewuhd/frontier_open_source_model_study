@@ -1,0 +1,496 @@
+# 机械字段来自 config（official），结构与参数量来自完整权重清单
+# facts/minimax-text-01/shapes.json（8243 条，逐分片读头取全，413 个分片无失败）。
+# 缓存账的层覆盖与条目宽度是对这份清单穷举出来的，不是抽样。
+id: minimax-text-01
+family: minimax
+kind: llm
+display_name: MiniMax-Text-01
+released: '2025-01-12'
+license: other
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/MiniMaxAI/MiniMax-Text-01
+    locator: config.json / README.md @ a7351bf2bee0
+    accessed: '2026-10-30'
+    note: >-
+      BF16 发布（输入词表是 FP32），413 分片。权重清单逐分片读头取全，8243 个张量，
+      无读失败分片。模型卡原文：456B 总参数 / 45.9B 激活、训练上下文 1M、推理可达 4M、
+      「a softmax attention is positioned after every 7 lightning attention」
+  - kind: repo
+    url: https://huggingface.co/MiniMaxAI/MiniMax-Text-01/blob/main/modeling_minimax_text_01.py
+    locator: MiniMaxText01LightningAttention.inference / MiniMaxText01Model._build_slope_tensor
+    accessed: '2026-10-30'
+    note: >-
+      厂商随仓发布的参考实现（非部署 kernel），只读未执行。递归状态的形状与精度从这里核：
+      prefill 路径 kv = torch.zeros(b, h, d, e).to(torch.float32)，decode 路径
+      kv = ratio * kv + einsum(k, v) 逐 token 更新
+
+hf:
+  repo: MiniMaxAI/MiniMax-Text-01
+  sha: a7351bf2bee0e1253919d349f1ad304e6dac13e9
+  last_modified: '2025-07-03T05:13:03.000Z'
+  pipeline_tag: text-generation
+  gated: false
+
+lineage:
+  track: historical
+  successor: minimax-m1-80k
+
+params:
+  total: 456089655296.0
+  breakdown:
+    expert: 434865438720.0
+    attention: 18748538880.0
+    embed: 1229193216.0
+    lm_head: 1229193216.0
+    router: 15728640.0
+    norm: 1562624.0
+  counting_note: >-
+    按完整权重清单（413 分片 8243 条目）逐项统计。无量化、无打包、无 scale 容器，
+    numel 即参数数，条目数即张量数。total 是本仓按清单求和的**实测值**而不是厂商声明值，
+    所以 Gate B 的「参数总量」一项（YAML 声明 vs shapes 实测，delta 0）是实测比实测、
+    不构成核对；真正不依赖本仓代码的那一路是 HF 平台自己从分片头统计的 safetensors tally，
+    与实测 456,089,655,296 逐位相同。厂商声明「456 billion」，与实测差 0.02%。清单层号 0–79 连续，没有 MTP 块，所以没有 excludes。
+    激活参数有带宽口径与可比官方口径两套，见 data/derived/；厂商的「45.9B」
+    两套都不等于，口径差见 open_questions
+
+context:
+  max: 10240000
+  train_native: 1000000
+
+arch:
+  layers: 80
+  hidden: 6144
+  vocab: 200064
+  norm: RMSNorm
+  norm_eps: 1.0e-05
+  activation: >-
+    SwiGLU（hidden_act silu，专家是 w1 门 / w3 上投 / w2 下投三件套）。
+    lightning 层的 qkv 在投影后也过一次同一个 silu（参考实现 self.act(self.qkv_proj(x))），
+    这一步不在 FFN 里
+  position: >-
+    RoPE theta 1e7，rotary_dim 64 —— head_dim 128 的一半，即 partial rotary 0.5。
+    **只作用在 10 个 softmax 层**；70 个 lightning 层不带任何位置编码，
+    位置信息来自逐头的指数衰减斜率（参考实现 _build_slope_tensor 按 ALiBi 式几何级数
+    生成，再按层号缩放 slope_rate × (1 − idx/(L−1))，是运行期常量不是权重）
+
+  attention:
+    type: hybrid
+    num_heads: 64
+    num_kv_heads: 8
+    head_dim: 128
+    partial_rotary_factor: 0.5
+    head_dim_note: >-
+      两类层的每头维度都是 128，但投影形态完全不同。softmax 层：q_proj [8192, 6144]
+      = 64×128、k_proj / v_proj [1024, 6144] = 8×128、o_proj [6144, 8192]，
+      写进缓存的 K/V 条目各 8×128 = 1024 维。lightning 层：qkv_proj [24576, 6144]
+      = 3 × 64 × 128 融合成一张，**q/k/v 都是 64 头**（没有 GQA 收缩），
+      out_proj [6144, 8192]，另有 output_gate [8192, 6144] 与 norm [8192]。
+      num_kv_heads=8 只对 softmax 层成立，按它去推 lightning 层的状态宽度会小 8 倍
+    layer_pattern: >-
+      config 的 attn_type_list 共 80 项，0 = lightning、1 = softmax：L7, L15, …, L79
+      共 10 层是 softmax，其余 70 层是 lightning，即每 7 个 lightning 后接 1 个 softmax
+      （模型卡原话）。权重清单零例外地证实了这个层集合：70 个 lightning 层**每层都有**
+      qkv_proj / out_proj / output_gate / norm 且**都没有** q_proj，10 个 softmax 层
+      反之（全量穷举 8243 条，不是抽样）。两类层的 FFN 都是 MoE，无跨层 KV 共享
+    output_gate:
+      enabled: true
+      type: >-
+        只在 70 个 lightning 层上：output_gate [8192, 6144]，参考实现是
+        sigmoid(output_gate(x)) 逐通道乘在 RMSNorm 之后、out_proj 之前。
+        10 个 softmax 层没有这张权重
+    hybrid:
+      layer_types_count:
+        linear: 70
+        full: 10
+      interval: 8
+      note: >-
+        只有 10 个 softmax 层累积随上下文增长的 KV，70 个 lightning 层携带每序列固定的
+        递归状态。无 MTP 块，主干口径就是全部口径
+    linear_state:
+      mechanism: >-
+        lightning attention：TransNormer 式的衰减线性注意力，状态按
+        S ← exp(−slope) · S + kᵀv 逐 token 递推，读出是 q·S。
+        没有短卷积（清单里零 conv1d 命中），也没有 delta rule
+      num_heads: 64
+      num_value_heads: 64
+      key_head_dim: 128
+      value_head_dim: 128
+      state_dtype: FP32
+      state_layout_note: >-
+        状态每层一个 [h, d, e] 张量，三个维度都由权重清单钉死：qkv_proj 输出维 24576
+        = 3 × 64 × 128，三段同宽，所以 h = 64、d = e = 128，没有 Qwen3.8 那种
+        「按 key 头数还是 value 头数展开」的歧义。每层 64 × 128 × 128 = 1,048,576 元素。
+        FP32 来自参考实现：prefill 里状态显式 `torch.zeros(b, h, d, e).to(torch.float32)`，
+        衰减因子也在 FP32 下算，decode 路径继续在这个张量上累加。这是厂商参考实现的选择，
+        不是部署 kernel 或实测显存，evidence 记 judgement，见 open_questions
+
+  ffn:
+    type: moe
+    layer_pattern: >-
+      80/80 层都是 MoE（block_sparse_moe），没有稠密层、也没有共享专家
+      （config shared_intermediate_size 0，清单里零 shared_expert 命中）
+
+  moe:
+    routed_experts: 32
+    shared_experts: 0
+    top_k: 2
+    intermediate: 9216
+    routing: >-
+      softmax 打分（参考实现 SparseMoeBlock 对 router_logits 取 softmax 后 topk）。
+      gate.weight [32, 6144] 落盘是 FP32（80 份），不是 BF16
+    balance: 辅助损失（router_aux_loss_coef 0.001），无 e_score 式偏置
+    storage_note: >-
+      逐专家独立张量（block_sparse_moe.experts.N.w1/w2/w3），不是堆叠的 3 维权重；
+      grouped GEMM 因此吃 2 维权重列表。32 这个数在清单里独立成立：
+      `.experts.` 张量 7680 条 = 80 层 × 32 × 3，每层的专家下标集合都恰为 {0..31}，
+      零例外（全量穷举）。derive.py 的对账把专家数这一项报成「skip / config 缺失」，
+      是因为它找 n_routed_experts / num_experts 而 MiniMax 写的是 num_local_experts ——
+      Gate B 的「0 处不一致」不含专家数这一项，上面的穷举才是依据。单专家 3 × 9216 × 6144 = 169,869,312 参数，
+      是 M2 单专家（3 × 1536 × 3072 = 14,155,776）的 12.0 倍 —— 这一代走的是
+      「少而粗」：32 个专家取 2，M2 是 256 个取 8
+
+  residual:
+    type: postnorm + 固定系数残差
+    note: >-
+      config postnorm true，每层有**两处**带固定系数的残差（参考实现
+      modeling_minimax_text_01.py:1038 注意力侧、:1057 MLP 侧）：
+      hidden = residual × alpha + branch × beta。config 里有三组系数键
+      （layernorm_{linear_attention,full_attention,mlp}_{alpha,beta}），
+      注意力那一处按层型在前两组里二选一（:964-967），所以一层只会用到两组。
+      三个 alpha 同为 3.5565588200778455、三个 beta 同为 1.0。
+      系数是 config 标量，不是权重，清单里没有对应张量 ——
+      按「残差直加」写的融合 add+norm 核会漏掉这个缩放
+
+precision:
+  weights_release: [BF16, FP32]
+  quantization:
+    per_subsystem:
+      expert: BF16
+      attention: BF16
+      embed: FP32
+      lm_head: BF16
+      router: FP32
+      norm: BF16
+    subsystem_method: >-
+      不是抽样：完整清单 8243 条逐项统计，FP32 只有两类 —— 80 个
+      block_sparse_moe.gate.weight [32, 6144]（15,728,640 元素）与输入词表
+      model.embed_tokens.weight [200064, 6144]（1,229,193,216 元素），
+      合计 1,244,921,856，与 HF tally 的 F32 一项逐位相同；其余 454,844,733,440
+      全是 BF16。**输入词表 FP32 而 lm_head BF16** 是这一版独有的（M1 把它改成 BF16），
+      权重存储因此比全 BF16 多 2.29 GiB
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/MiniMaxAI/MiniMax-Text-01
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      7:1 的混合比把随上下文增长的那一半**正好压掉 8 倍**：只有 10 个 softmax 层
+      累积 KV，另外 70 层换成每序列固定的递归状态。代价不是消失而是换了增长轴 ——
+      状态与上下文无关，却与**并发序列数**成正比，而且每层都不小
+    quantified: >-
+      逐因子：softmax 侧每层 2（K、V）× 8 KV 头 × 128 = 2048 元素
+      （k_proj / v_proj 输出维都是 1024，10/10 层只有这一种 shape，全量穷举非抽样），
+      × 10 层 = 20480 元素/token；若 80 层全是同样的 GQA 则是 163840，正好 8 倍。
+      lightning 侧每层 64 × 128 × 128 = 1,048,576 元素（三个因子都取自
+      qkv_proj 输出维 24576 = 3 × 64 × 128），× 70 层 = 73,400,320 元素/序列。
+      字节：两个分量的来源不同，**不是同一套 basis**。softmax KV 无一手精度声明，
+      按 config 的 BF16 兜底 2 B/元素得 40960 B/token（dtype_fallback，是上界）；
+      状态按厂商参考实现的 FP32 4 B/元素得 293,601,280 B = 280.0 MiB/序列
+      （judgement，不是兜底）。所以合计的口径是 **mixed** ——
+      derive.py 的 bytes_basis 只按 KV 那一侧的 kv_dtype_assumed 打标，
+      这里按 docs/kv-cache-accounting.md 的定义改写（工具侧的缺口见 review R4）。
+      「两分量相等的上下文长度」= 状态字节 ÷ 每 token KV 字节，因此也随两侧精度变：
+      FP32 状态 + BF16 KV 是 293,601,280 / 40960 = **7168 token**；
+      BF16 状态 + BF16 KV 是 3584；FP32 状态 + FP8 KV 是 14336。
+      本组合下超过约 7K 之后容量由 softmax 那一侧主导，低于它则由状态主导，
+      但这个阈值落在 3584–14336 区间内，两侧精度都没钉死。
+      1Mi（1,048,576）token 单序列：40.0 GiB + 280.0 MiB。
+      与别族系比结构请用元素口径（20480 元素/token），不要比字节
+    visibility: public
+  - dimension: kv-bandwidth
+    finding: >-
+      递归状态在 decode 时**每步都要整读整写**，而 softmax KV 每步只追加一条、
+      其余全是读。状态流量与上下文无关、与 batch 成正比，KV 流量与两者都成正比 ——
+      所以短上下文大 batch 的场景里，省下来的不是带宽而是容量
+    quantified: >-
+      一个 decode step、单序列、FP32 状态：70 层 × 1,048,576 × 4 B 读 + 同样大小的写
+      = 560.0 MiB 的状态流量（下界，不含中间量）。同一 step 的 softmax KV 读
+      10 × 2048 × 2 B × S = 40960·S B（S 为已有 token 数），写只有一条新条目
+      10 × 2048 × 2 B = 40960 B，对下面的比较可忽略。
+      两者在 S = 587,202,560 / 40960 = 14336 持平 —— 这同样是跨 basis 的比值
+      （状态 FP32 取自参考实现、KV BF16 是兜底），两侧精度变了这个点就变。
+      batch B 时状态流量线性放大为 B × 560 MiB，而权重侧的激活参数搬运量
+      （45.9B 级，见 data/derived/）在 batch 之间共享不放大。
+      按参考实现的算法推导、非实测
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      一个模型里交替跑两套互不相同的注意力算子，7:1 分布，且 lightning 侧的
+      prefill 与 decode 是两个不同的核：prefill 走分块（块内衰减矩阵 diag_decay
+      + 块间状态递推），decode 走逐 token 的 rank-1 状态更新。
+      softmax 侧另需 RoPE 与 GQA 展开，而 lightning 侧**不带位置编码、不做 GQA 收缩**，
+      还多一条 sigmoid 输出门与一次 head-concat 后的 RMSNorm [8192]
+    quantified: >-
+      核契约：衰减斜率逐头不同（64 个值，ALiBi 式几何级数），且再按层号缩放
+      slope_rate × (1 − idx/79 + 1e-5)，所以**每层的衰减表都不一样**，
+      不能跨层复用一张常量表；斜率是运行期算出来的，清单里没有对应权重。
+      状态张量 [64, 128, 128] 在参考实现里是 FP32，与 BF16 的 q/k/v 混算 ——
+      按「状态与激活同 dtype」写的核会读错
+    visibility: public
+
+infra_signals:
+  - text: >-
+      混合线性注意力把显存账的增长轴拆成两根：10 个 softmax 层的 KV 随上下文长，
+      70 个 lightning 层的状态随并发序列数长。容量规划要同时给两根轴留预算，
+      本代的交点在 3.6K–14K token 区间（取决于两侧落盘精度，本仓取到的组合是 7168）。
+      交点以上由 softmax KV 主导 —— 线性那一侧真正省掉的，是「80 层全存」里的 7/8
+    evidence: judgement
+    horizon: settled
+    axis: attention
+  - text: >-
+      两套注意力算子交替 7:1 出现在同一张图里，且 lightning 侧 prefill / decode
+      是两个核、衰减表逐层不同。图模式与算子库要按「一个模型两种 attention」准备，
+      不能按单一 attention 模板套
+    evidence: judgement
+    horizon: settled
+    axis: attention
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: judgement
+  hf: official
+  lineage: judgement
+  params: derived
+  params.counting_note: derived
+  context: official
+  context.train_native: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.attention.output_gate: derived
+  arch.attention.hybrid: derived
+  arch.attention.linear_state.mechanism: judgement
+  arch.attention.linear_state.num_heads: derived
+  arch.attention.linear_state.num_value_heads: derived
+  arch.attention.linear_state.key_head_dim: derived
+  arch.attention.linear_state.value_head_dim: derived
+  arch.attention.linear_state.state_dtype: judgement
+  arch.attention.linear_state.state_layout_note: judgement
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.routed_experts: derived
+  arch.moe.shared_experts: derived
+  arch.moe.routing: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.residual: derived
+  precision: official
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  MiniMax 家族的谱系起点，也是本仓最早的一份「线性/softmax 混合」记录（2025-01）。
+  这条线的主线就是注意力形态：Text-01 的 7:1 lightning 混合 → M1 结构原样沿用
+  → M2 把线性注意力整条去掉、回到全量 GQA → M3 再用块稀疏（MSA）在全量 KV 之上省读。
+  层数、两类层的层集合、投影形状、专家分布与 FP32 分布都对照完整清单穿过一遍。
+  top_k、aux_loss 系数、alpha/beta、rope_theta 这类运行期标量只有 config 一个来源
+  （Text-01 的 config 里没有 routed_scaling_factor，那个键到 M3 才出现）。
+  released 取 HF 仓的 createdAt 2025-01-12（技术报告 arXiv 2501.08313 同期），
+  不是厂商公告日。license 记 other 是判断：HF 的 tags 与 cardData 都**没有** license 项，
+  依据是仓里同时有 LICENSE-MODEL 与 LICENSE-CODE 两份自有许可文件（M1 起换成 apache-2.0，
+  那边有 license:apache-2.0 标签）。同日另发 MiniMax-VL-01：语言主干与本记录**逐张量同名**
+  （把 language_model. 前缀去掉后 8243 条名字逐条相同，双向无差集），
+  只多一个 24 层 CLIP 式 ViT、一个两层 projector 与 image_newline，共 394 条。
+  **只比了名字**：VL-01 那边只取了 names.json，形状与 dtype 没取，所以不说「同形」。
+  注意力这条线上不增加信息，故不单独立记录
+
+open_questions:
+  - >-
+    递归状态的落盘精度记 FP32，依据是厂商随仓参考实现
+    （modeling_minimax_text_01.py 的 prefill 路径把状态显式建成 float32、
+    衰减因子也在 FP32 下算）。这是参考实现的选择，不是部署 kernel 或实测显存：
+    若部署侧按 BF16 存，每序列 280.0 MiB 减半为 140.0 MiB，与 KV 的容量交点
+    从 7168 token 移到 3584。本条继续开着
+  - >-
+    softmax 层的 KV 落盘精度无一手声明，按 config 的 BF16 兜底（dtype_fallback），
+    40960 B/token 是**上界**；按 FP8 存则交点移到 14336。
+    所以这份账的两个分量 basis 不同（per_token 兜底、per_sequence 取自参考实现），
+    合计的口径是 mixed。跨代或跨族系比结构请用元素口径（20480 元素/token），
+    不要拿这个兜底字节去和别人的精确值比倍数
+  - >-
+    上下文有三个互不相等的数：config 的 max_position_embeddings 10,240,000、
+    模型卡的「训练上下文 1M」、模型卡的「推理可达 4M」。本记录 context.max 取 config 值
+    （与仓内其它记录同口径），train_native 取 1M。4M 这个数没有对应的 config 字段，
+    未进记录
+  - >-
+    厂商「45.9B activated」与本仓两套口径都不相等（见 data/derived/）。
+    带宽口径 47,174,113,280（47.17B，含 lm_head、不含输入词表）、可比官方口径
+    48,403,306,496（48.40B，再含输入词表）。按清单复算，45.9B 最接近的是
+    「带宽口径再扣掉 lm_head」那一档：47,174,113,280 − 1,229,193,216 =
+    **45,944,920,064**（45.94B），即输入词表与输出头都不计。这是从数字反推出来的对齐，
+    厂商没有说明口径，所以记成推测而不是读到的
+  - >-
+    输入词表存 FP32 而 lm_head 存 BF16，厂商没有说明原因；M1 把输入词表改成 BF16
+    而其余 8242 条张量的形状与 dtype 全部不变。这是两版之间**唯一**的权重级差异
+  - 训练精度无一手声明（config 只有张量 dtype，没有 torch_dtype 键），precision.training 不填
+
+reviewed:
+  date: '2026-10-30'
+  scope: [official, derived, judgement]
+  reviewer: 一个独立核查代理 + 本会话复算
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序，对判断类字段与全部 open_questions 逐条过。
+    代理穷举了 facts/minimax-text-01/shapes.json 全部 8243 条（非抽样）核层覆盖、
+    条目宽度、专家分布与 dtype 分布，并逐条与 facts/minimax-m1-80k、
+    facts/minimax-vl-01 的名单比对。
+    本会话独立复核（不只是读代理的结论）的是：lightning attention 的递归状态形状与精度
+    —— 直接读 modeling_minimax_text_01.py，prefill 在 :297 把状态建成
+    torch.zeros(b, h, d, e).to(torch.float32)（b,h,n,d = q.shape、e = v.shape[-1]），
+    decode 在 :316-324 用 float32 的 ratio 继续累加，所以状态在参考实现里全程 FP32；
+    衰减斜率在 :1235-1256 按 ALiBi 式几何级数生成、:1348 再按层号缩放，是运行期常量；
+    lightning 路径全程不碰 rotary。层集合与宽度也在本会话独立穷举过一遍
+    （70 个 lightning 层的 self_attn 叶名集合与 10 个 softmax 层的交集为空，
+    各自宽度在层内唯一），以及 KV 20480、状态 73,400,320、两个交点 7168 / 14336
+    的逐因子复算。
+    Gate B：derive.py --id minimax-text-01 --model ... 0 处不一致，
+    外部 safetensors tally 逐位相同；但专家数那一项是 skip（derive 找
+    n_routed_experts / num_experts，MiniMax 写的是 num_local_experts），
+    不在「0 处不一致」覆盖内，依据是清单穷举
+
+review:
+  - id: R1
+    field: bottlenecks
+    severity: wrong
+    claim: 「两者相等的上下文长度是 293,601,280 / 40960 = 7168 token」，并把整份账标成 dtype_fallback
+    finding: >-
+      两个因子都复算无误，但这个比值**跨了两套 basis**：分子的 FP32 取自厂商参考实现
+      （evidence judgement，不是按模型 dtype 兜底），分母的 BF16 才是 dtype_fallback。
+      按 docs/kv-cache-accounting.md，两种 basis 之间不算倍数，合计口径应是 mixed。
+      而且原来的免责声明只变了状态那一侧（FP32→BF16 得 3584），没变 KV 那一侧
+      —— 若 KV 按 FP8 存则是 14336。「免责声明只免掉它点名的那件事」
+    resolution: corrected
+    changed_to: >-
+      bottlenecks 里把合计口径写成 mixed 并说明 derive.py 为何仍标 dtype_fallback；
+      交点改写成「状态字节 ÷ 每 token KV 字节」的函数，给出三种精度组合
+      （7168 / 3584 / 14336）并说明两侧都没钉死；open_questions 同步
+  - id: R2
+    field: bottlenecks
+    severity: imprecise
+    claim: 「同一 step 的 softmax KV 只读不写」
+    finding: >-
+      每个 decode step 每个 softmax 层都要追加一条 K 与一条 V：
+      10 × 2048 × 2 B = 40960 B/step。相对 3 GiB 级的读量可忽略，
+      但整段论证正是「读 vs 读+写」，把写说成零是一个没有来源的因子
+    resolution: corrected
+    changed_to: 写量按 40960 B/step 写明，并注明对交点的影响可忽略
+  - id: R3
+    field: arch.residual.note
+    severity: wrong
+    claim: 「三处残差都带固定系数……六个键取值相同」
+    finding: >-
+      两处错。(1) 参考实现每层只有**两处**残差（:1038 注意力侧、:1057 MLP 侧）；
+      config 里是三组系数键，注意力那一处按层型在 linear / full 两组里二选一
+      （:964-967），一层最多用到两组。(2) 六个键不是一个值：
+      三个 alpha 同为 3.5565588200778455、三个 beta 同为 1.0
+    resolution: corrected
+    changed_to: 改成「两处残差、三组系数键按层型选用」，alpha 与 beta 分开说
+  - id: R4
+    field: bottlenecks
+    severity: imprecise
+    claim: 依赖 derive.py 的 bytes_basis 作为这份账的口径标签
+    finding: >-
+      derive.py 的公式路只按 kv_dtype_assumed 打一个全局 basis（scripts/derive.py:746-748），
+      看不见 linear_state 的 state_dtype —— 本记录显式给了 FP32（judgement），
+      产物里 linear_state.dtype 确实是 FP32，而整份账仍标 dtype_fallback。
+      这不是 MiniMax 独有：Qwen3.8 两档同样显式给了 state_dtype FP32、同样被标成
+      dtype_fallback。混合结构应该走 mixed（measured 分支已有这个逻辑，公式路没有）
+    resolution: deferred
+    changed_to: >-
+      记录正文按 mixed 写并点明工具侧的差异。让 derive.py 的公式路在各分量
+      dtype 来源不同时标 mixed，是仓库级改进项（波及 qwen3.8 两档），本期不改脚本
+  - id: R5
+    field: notes
+    severity: unsupported
+    claim: 「MiniMax-VL-01 语言主干与本记录逐张量同名同形」
+    finding: >-
+      facts/minimax-vl-01 是 --names-only 取的：fetched.json 的 tensor_count 为 0、
+      shapes.json 为空。名集合的结论成立（8637 = 8243 个 language_model. 前缀条目
+      去前缀后与本记录逐条相同、双向无差集 + 394 条视觉侧），
+      但**形状与 dtype 一个都没读过**，「同形」没有来源
+    resolution: corrected
+    changed_to: 改成「逐张量同名」，并写明 VL-01 只取了名单
+  - id: R6
+    field: infra_signals
+    severity: unsupported
+    claim: 「本代的交点在约 7K token —— 比绝大多数实际请求都短」
+    finding: >-
+      记录里没有任何请求长度分布的来源，而且 7K 这个数本身带着 R1 的两侧精度不确定性
+      （3584–14336）
+    resolution: corrected
+    changed_to: 删掉「比绝大多数实际请求都短」，改写成区间
+  - id: R7
+    field: notes
+    severity: wrong
+    claim: 「top_k、routed_scaling、aux_loss 系数……只有 config 一个来源」
+    finding: >-
+      Text-01 的 config 里根本没有 routed_scaling / routed_scaling_factor 这个键
+      （逐键核过），它到 M3 的 text_config 才出现。把一个不存在的键列进「来源单一」清单，
+      会让读者以为它有值
+    resolution: corrected
+    changed_to: 删掉 routed_scaling，换成实际存在的 rope_theta，并注明这个键到 M3 才有
+  - id: R8
+    field: params.counting_note
+    severity: imprecise
+    claim: 「Gate B 的外部参数量对账是实测比实测之外的那一路」
+    finding: 一句话里混了两件事，读不通。total 是实测值，所以 Gate B 的「参数总量」项（delta 0）是实测比实测、不构成核对；外部那一路是 HF 的 tally
+    resolution: corrected
+    changed_to: 按 ds-v2 的写法拆成两句
+  - id: R9
+    field: bottlenecks
+    severity: wrong
+    claim: 起草时写「1M 上下文单序列 39.06 GiB」与「单专家是 M2 的 36 倍」
+    finding: >-
+      两处起草期算错，提交前自查出来：40960 B/token × 1,048,576 = 42,949,672,960 B
+      恰是 **40.0 GiB**；单专家 169,869,312 ÷ 14,155,776 = **12.0** 倍不是 36
+    resolution: corrected
+    changed_to: 改为 40.0 GiB 与 12.0 倍，并把 1Mi 的口径写进括号
+  - id: R10
+    field: bottlenecks
+    severity: imprecise
+    claim: 「68736 一类的乘式只验了一个因子」—— 对层集合、条目宽度、参数量与 dtype 分布的全量复核
+    finding: >-
+      四个因子逐个独立穷举（8243 条全量，非抽样）：(1) 70 个 lightning 层的
+      self_attn 叶名集合 {qkv_proj, out_proj, output_gate, norm} 与 10 个 softmax 层的
+      {q,k,v,o_proj} 交集为空，层集合与 attn_type_list 逐位一致；
+      (2) 每类叶名在各自层内只有一种 shape（70/70、10/10）；
+      (3) 条目 1:1 逐 token，依据是参考实现走标准 Cache；
+      (4) BF16 兜底 2 B/元素。KV 20480、全 80 层反事实 163840（正好 8 倍）、
+      状态 73,400,320 / 280.0 MiB 逐位复算一致。
+      params.total 与全部 6 个 breakdown 桶按清单求和逐位吻合，且等于 HF tally。
+      四个因子都成立，数值不改
+    resolution: confirmed
