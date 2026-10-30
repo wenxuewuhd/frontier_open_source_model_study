@@ -7,6 +7,20 @@ license: other
 visibility: public
 
 sources:
+  - kind: paper
+    url: https://github.com/MoonshotAI/Kimi-K3/blob/main/k3_tech_report.pdf
+    locator: >-
+      §4.1.4 Deployment-Aware Post-Training 下的第一个小标题 MXFP4 Quantization-Aware
+      Post-Training（p.14）；另引 §4.1.1（p.12，QAT 起始阶段）与 §5.4.2 Stable LatentMoE
+      （p.25，路由专家 decode 的 memory-bound 性质）
+    accessed: '2026-10-30'
+    note: >-
+      47 页技术报告，模型卡标为 Full Report。**全文唯一讨论量化作用域的地方是 §4.1.4**
+      （全文 quantiz 命中 12 处，分布在 p12/14/20/25/33/36），本轮逐字核对过 PDF 原件。
+      两件**明确没有**的事：报告正文从未出现 lm_head / vision tower / mm_projector 的精度说明
+      （而 config 的 ignore 列表恰好有这三条）；Table 1「K2 与 K3 的结构对照」（p.4）里没有
+      Quantization 行 —— 那一行只在模型卡的 Model Summary 表里。报告也没有任何
+      「量化近乎无损」的声明，全文 lossless 只出现 1 次，说的是 speculative sampling
   - kind: modelcard
     url: https://huggingface.co/moonshotai/Kimi-K3
     locator: config.json / README.md @ f831ab668142
@@ -397,8 +411,24 @@ precision:
       facts/kimi-k3/subsystem_dtypes.json 是早一轮的抽样产物（10/96 分片），结论与全量一致，
       但它不是这张表的依据。fetch_dtypes.py 的 scale 正则不认 weight_scale 这个叶名，抽样结果里
       专家的 scale 一栏是空的（lib/dtypes.py 的 is_scale_tensor 认，所以参数量不受影响）。
-      量化只覆盖路由专家：config 的 ignore 列表排除了 self_attn / shared_experts / mlp / lm_head /
-      vision_tower / mm_projector，清单上也只有专家带 weight_packed。
+      量化只覆盖路由专家，这一条有技术报告的一手原话（§4.1.4，p.14）：「we quantize the MoE
+      expert weights — which dominate the model's parameter memory — to MXFP4, with activations
+      computed in MXFP8, while all non-expert components (attention projections, latent MoE
+      projections, shared experts, and MoE routers) remain in higher precision」。
+      报告给的理由只有一环 —— **专家权重占参数内存主体**；对非专家为什么不能一起量化没有论证。
+      它的措辞是 higher precision 而不是 BF16，具体精度只能靠清单定（实测 BF16，除下列 FP32 七类）。
+      **报告点名的四类比 config 的 ignore 列表更准确地描述了作用域**：ignore 列表里没有
+      latent MoE 投影、也没有 router，而报告两样都点了名。
+      反过来，**ignore 列表是欠描述的** —— 按完整清单逐条匹配它的六条正则，未量化却不在覆盖
+      范围内的共 12.10 GiB：latent MoE 投影 9.0 GiB、embed_tokens 2.19 GiB、router 的 gate 与
+      e_score_correction_bias 1.1 GiB、全部 norm，以及 187 个 _res_proj（mlp_res_proj 93、
+      self_attention_res_proj 93、output_attn_res_proj 1，全 [1, 7168] BF16）。
+      那三类一条正则都匹配不上：self_attention_res_proj 里是 attention 不是 attn，
+      mlp_res_proj 是下划线不是 mlp 点号。（而 AMD 的 Quark 另行排除的 self_attn.*conv1d
+      是多余的 —— 207 个全被 re:.*self_attn.* 覆盖，核过。）
+      所以真正决定作用域的是 targets ["Linear"] 与模型代码实际把什么包成了 Linear，不是
+      ignore 列表；**权威答案是权重清单**，这是 CLAUDE.md「config 与权重冲突时权重赢」的又一例。
+      清单上也只有专家带 weight_packed。
       FP32 只有 7 类，共 11,122,432 元素：e_score_correction_bias（92 × 896）、KDA 的 A_log、
       dt_bias、o_norm 与 q/k/v_conv1d（69 层），合计与 HF tally 的 F32 一项逐位相同。
       模型卡称 MXFP4 权重是从 SFT 起做量化感知训练得到的（「quantization-aware training」）。
@@ -471,7 +501,15 @@ bottlenecks:
       **derive.py 的 decode_weight_bytes_per_token 对本模型低估 2.34 倍**：它按
       `weight_bytes_total × (激活参数 / 总参数)` 等比例折算，隐含「每参数字节数处处相同」，
       对混合精度模型不成立；站点渲染的「算术强度 3.56 FLOP/B」是它的产物，正确值约 1.52。
-      这是仓库级公式问题，不是本记录的数据问题
+      这是仓库级公式问题，不是本记录的数据问题。
+      **口径：以上全部是 batch 1。** 非专家那一项是常数，专家那一项随 batch 增长到 896 个专家
+      全被触达才饱和（期望触达数 = 896 × (1 − (1 − 16/896)^B)），所以「非专家主导」只在小 batch
+      成立。非专家占 decode 权重字节的比例：batch 1 为 81.1%、batch 4 为 52.5%、batch 8 为
+      36.4%、batch 32 为 14.9%、batch 128 为 7.9%，交叉点在 batch ≈ 5；每 token 权重字节
+      同时从 136.99 GB 降到 11.04 GB。
+      **两个档都要说：低时延档的瓶颈是非专家 BF16，吞吐档的瓶颈是专家。** 只报一个档会把
+      结论说反 —— 这也正是厂商在 K2-Thinking 上把加速声明限定在「low-latency mode」的原因
+      （那一档的复算见 kimi-k2-thinking 的 R6）
     visibility: public
 
 infra_signals:
@@ -579,7 +617,13 @@ reviewed:
     六条 changed_from_predecessor 里的每个数、以及「混合结构来自 kimi-linear-48b」这个判断，
     留痕见 R17；KDA 的 A_log 在两代的含义差异也在那一轮用两边的参考实现与清单双向验过。
     那一轮另派了一个独立核查代理对抗式复核 lineage 的每个数与 kimi-linear-48b /
-    kimi-k2-thinking / kimi-k2.5 三份新记录，它在这份记录上报了两条：R18（口径）与 R19（单位）
+    kimi-k2-thinking / kimi-k2.5 三份新记录，它在这份记录上报了两条：R18（口径）与 R19（单位）。
+    **同日第三轮**（追查「为什么只量化路由专家」时）派了两个代理分别找一手源与第三方分析，
+    本会话自己复核的是：技术报告 §4.1.4 的原文逐字对 PDF 原件、ignore 列表六条正则对全清单的
+    逐条匹配（得出 12.10 GiB 欠描述与 187 个 _res_proj）、gpt-oss README 的作用域原话自行
+    fetch 核对、以及 MoE-Quant 的 DeepSeek-R1 评测原表自行核对。代理报的其余材料
+    （engine PR、llm-compressor 文档、13 份同类发布的作用域普查）未逐条重验，
+    只作线索用，没有进本记录的任何量化字段。留痕见 R21 与 R22
 
 review:
   - id: R1
@@ -859,6 +903,41 @@ review:
       以及本档分离部署收益极小）、arch.vision.separability（dedicated，
       最后两片纯视觉，与上一代同一做法、规律钉在本代）；
       evidence 加九条，四格判断类进 Gate C
+
+  - id: R21
+    field: precision.per_subsystem.subsystem_method
+    severity: missing
+    claim: >-
+      作用域只引了 config 的 ignore 列表与模型卡那一句，没引技术报告；
+      而 ignore 列表被当成了作用域的完整描述
+    finding: >-
+      两件事都要补。一是**源优先级没走到顶**：本仓规矩是「技术报告 > 模型卡 > 参考实现 > 引擎」，
+      而 K3 有 47 页技术报告，§4.1.4 正是全文唯一讨论量化作用域的地方，还给了理由
+      （专家权重占参数内存主体）。原先只引模型卡那句「MXFP4 weights / MXFP8 activations」，
+      等于把能定位到节号的一手源漏在最高一档之外。
+      二是**ignore 列表欠描述**：按完整清单逐条匹配它的六条正则，未量化却不在覆盖范围内的共
+      12.10 GiB，其中 187 个 _res_proj（[1, 7168] BF16）一条正则都匹配不上 ——
+      self_attention_res_proj 里是 attention 不是 attn，mlp_res_proj 是下划线不是点号。
+      llm-compressor 的 src/llmcompressor/modeling/patch/kimi_k3_patch.py 的 docstring 原话
+      就是「has an incorrect ignore list」，它补的正是这三类；AMD 的 Quark exclude 列表
+      独立地也列了它们。两个第三方一致，而这件事清单本来就能自己验
+    resolution: corrected
+    changed_to: >-
+      sources 首位新增 kind paper 的技术报告（带节号与页码），subsystem_method 补上 §4.1.4
+      的逐字原话、报告给的那一环理由、「higher precision 不等于 BF16」这层区分，
+      以及 ignore 列表欠描述的 12.10 GiB 逐项拆账与那三类 _res_proj 为什么匹配不上
+  - id: R22
+    field: bottlenecks 的 weight-bandwidth 一项
+    severity: imprecise
+    claim: 「decode 的权重带宽由 BF16 的非专家部分主导」与 136,990,303,232 B/token
+    finding: >-
+      数对，但**没写这是 batch 1**。非专家是常数、专家随 batch 涨到全触达才饱和，
+      交叉点在 batch ≈ 5：非专家占比 batch 1 是 81.1%，batch 128 只剩 7.9%。
+      不写档位，这条 finding 在吞吐场景下是反的 —— 那一档的瓶颈恰恰是专家。
+      本仓「不同口径之间不算倍数」那条规矩在这里的形式是：**batch 也是一根口径轴**，
+      一个 per-token 字节数不说 batch 就不完整
+    resolution: corrected
+    changed_to: quantified 末尾补 batch 口径声明与 1/4/8/32/128 五档的占比与每 token 字节数
 
 notes: >-
   Kimi 家族的旗舰，model_type kimi_k3（语言主干 kimi_linear），原生多模态。本仓第一份 Kimi 记录，
