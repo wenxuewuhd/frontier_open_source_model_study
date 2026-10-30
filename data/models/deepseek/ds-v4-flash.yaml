@@ -12,6 +12,11 @@ sources:
   url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash
   locator: config.json @ 60d8d70770c6
   accessed: '2026-10-29'
+- kind: modelcard
+  url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/blob/b5968e9190ef611bbf34a7229255be88a0e937c1/README.md
+  locator: README.md @ b5968e9（V4-Pro 仓，同时介绍 Flash 与 Pro 两档）
+  accessed: '2026-10-30'
+  note: 「DeepSeek-V4-Pro with 1.6T parameters (49B activated) and DeepSeek-V4-Flash with 284B parameters (13B activated)」
 - kind: repo
   url: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash/blob/60d8d70770c6776ff598c94bb586a859a38244f1/inference/model.py
   locator: inference/model.py @ 60d8d70 —— class Compressor（overlap = compress_ratio == 4、coff）、class Indexer、Attention.kv_cache_size
@@ -99,7 +104,8 @@ params:
     total 不含草稿侧 6.6B；含在内的实测总量 290,944,616,402，与 HF 的 safetensors tally 逐位相同 —— 那边不含 scale
     （没有 F8_E8M0 一栏），I8 一栏 283,467,841,536 恰是容器数 141,733,920,768 的 2 倍，即同样按 FP4 还原了打包。
     breakdown.attention 合并了 attention 4.60B、compressor 0.26B、indexer 0.23B 三项（data/derived/ 里分列）。
-    权重存储 148.6 GiB，其中 scale 8.25 GiB
+    权重存储 148.6 GiB，其中 scale 8.25 GiB。厂商 README（同 rev）写「284B parameters (13B activated)」：284B 对上扣草稿侧的 284.33B（含草稿是 290.9B），
+    这是 excludes: [draft] 的一手依据；13B 对上本仓带宽口径的激活 13.24B（含输入词表 13.77B）
 context:
   max: 1048576
   train_native: 65536
