@@ -46,6 +46,27 @@ sources:
       **卡里没有训练精度声明，也没有每 token 的缓存字节数**
       （所以 kv_sharing.declared_per_token_bytes 这个新字段本档填不了）
 
+  - kind: paper
+    url: https://github.com/QwenLM/Qwen3.8-Flash-Next/blob/main/tech_report.pdf
+    locator: >-
+      tech_report.pdf（28 页，2026-08-26，《On the Design of Qwen3.8-Next Architecture:
+      Evaluation, Efficiency, and Training Stability》）· Abstract / Fig. 1 /
+      §2.1 QSA（Eq. 14–16 与 Implementation Details）/ §2.2 GR 的 Inference Efficiency /
+      §2.3 N-gram Embedding
+    accessed: '2026-10-30'
+    note: >-
+      按本仓来源优先级，技术报告与模型卡同为第一档。这份报告定下了三件本记录原来
+      只能当上界或判断的事（见 R10）：**index K 的条目覆盖**（Eq. 14–16：indexer 打分的是
+      压缩块 k̄_b，每块 r = 4 个 token，所以缓存里是每 4 个 token 一个 128 维条目）、
+      **n-gram 表确实放在加速器之外**（Abstract 的「held off the accelerator」与 Fig. 1 的
+      「scales capacity off the accelerator via host-memory prefetching」）、
+      **残差状态支持 FP8 存储**（§2.2：「Storing the branches in FP8 halves the bytes moved
+      for the residual state relative to BF16」）。
+      报告另给一条厂商性能声明：「At a context length of 1M, QSA is 7.6× faster than dense
+      attention in prefill and 4.9× faster in decode **at the kernel level**」——
+      kernel 级、未给硬件与引擎，本仓不填进 performance。
+      **报告里没有任何每 token 缓存字节数**，所以缓存侧仍无外部锚
+
 hf:
   repo: Qwen/Qwen3.8-Flash-Next
   sha: de4b8e4d43b9ed57f2d28f1e9a7d8e20fe6a14b2
@@ -187,7 +208,10 @@ context:
     模型卡写「262,144 natively and extensible up to 1,000,000 tokens」
     （注意是 1,000,000，Qwen3.5 两档与 Qwen3-Next 写的是 1,010,000），
     没有说用什么方法扩。按 1,000,000 部署时本记录的 per_token 数要乘 3.81
-    （6.75 GiB → 25.75 GiB），每序列状态不变
+    （6.19 GiB → 23.60 GiB），每序列状态不变。
+    技术报告在 1M 这一档给的是速度而不是容量：
+    「QSA is 7.6× faster than dense attention in prefill and 4.9× faster in decode
+    at the kernel level」—— kernel 级、未给硬件与引擎，本仓不填进 performance
 
 arch:
   layers: 48
@@ -234,13 +258,18 @@ arch:
         预算也有一手来源：「**Budget: 512 blocks or 2048 tokens**」，
         即 config 的 indexer_budget 2048 是 **token 数**、对应 512 个块
         （块大小 2048 / 512 = 4 个 token，与 indexer_compress_ratio 4 一致）。
-        **打分与选块的具体规则仍没有读实现**，本记录只记卡与权重能定的部分
+        **选块规则取自技术报告 §2.1（Eq. 14–16）**：对查询 token i 与压缩块 b，
+        把各 indexer 头的 ReLU(⟨q, k̄⟩) 相加得块级重要度 I_ib，只对「已完整观测」的块打分
+        （block-causal）；给定 token 预算 K 取 top-K_B 个块（K_B = ⌈K/r⌉ = 512），
+        再把选中的块展开回原 token 下标、截到 K 个，并**总是加上最后一个未满块的 tail token**。
+        prefill 侧「compressing the key sequence by a factor r」把 indexer 的代价
+        从 O(n²) 降到 O(n²/r)
       index_n_heads: 4
       index_head_dim: 128
-      index_kv_dim: 128
+      index_kv_dim: 32
       index_kv_source: >-
-        index_qk_proj [640, 2560] 的 k 段输出维 —— 640 = q 4 × 128 + k 1 × 128，
-        所以落进缓存的 index K 每层只有 128 个元素，不是 4 × 128 = 512
+        条目宽 128（index_qk_proj 的 k 段输出维）÷ 每条目 4 个 token = 每 token 摊 32；
+        **填的是摊到的元素数、不是张量宽度**，两个因子的来源见 kv_sharing.note
       block_size: 4
       selected_blocks: 512
       index_topk: 2048
@@ -252,15 +281,23 @@ arch:
         主干口径 48 层 + 1 草稿块；草稿块带全套 full attention 与 indexer，
         开草稿侧时两类都要按 13 层算
       note: >-
-        **index K 的条目数按 1:1 计费，是上界。** 模型卡把预算写成
-        「Budget: 512 blocks or 2048 tokens」—— 所以 2048 是 token 数、块大小 4 个 token，
-        **这说的是「选中多少」而不是「存多少」**：被选中的块仍要从全量 index K 里挑，
-        所以缓存侧该存的条目数并不因预算而减少。
-        真正可能减少条目的是 indexer_compress_ratio 4（像 DeepSeek V4 一代的时序池化，
-        每 4 个 token 摊一个条目），但本代权重里**没有任何压缩器张量**
-        （没有 compressor.ape 之类能定比值的东西），所以本仓不替公式折算。
-        derived JSON 里的 per_token_elems_bound 标的是 exact，
-        那只说明「宽度 × 层数」这两个因子是实测的，不代表条目覆盖已经核过
+        index K 的两个因子分开说。
+        **(1) 条目宽度 128** —— index_qk_proj [640, 2560] 的 k 段输出维
+        （640 = q 4 × 128 + k 1 × 128；技术报告 §2.1 的 Implementation Details 写成
+        「an MQA structure with four query heads and one shared key head」）。
+        按 index_n_heads × index_head_dim = 512 折算会高估 4 倍。
+        **(2) 条目覆盖：每 4 个 token 一个条目**，由技术报告定下（Eq. 14–16，
+        indexer 打分的对象是压缩块 k̄_b、块大小 r = 4）。
+        两者合起来：每 token 摊 128 / 4 = 32 个元素、12 层合计 384 元素/token。
+        **本记录原先按 1:1 计费得 1,536，是 4 倍上界**（见 R10）。
+        另有一个有界余项：最后一个未满块的 token 级 index K（报告说这些 tail token
+        「always included」），≤ 3 × 128 元素/层、12 层合计 ≤ 4,608 元素/序列，
+        本记录未计入 per_sequence。
+        模型卡的「Budget: 512 blocks or 2048 tokens」说的是「选中多少」而不是「存多少」，
+        它不改变缓存条目数 —— 真正折算条目的是压缩比，而权重侧确实看不出它
+        （本代没有 compressor.ape 之类的张量，这也是当初只能记上界的原因）。
+        全局 KV 不受影响：QSA 选的是「注意哪些 token」，被选中的块要
+        「expanded to their original token indices」，所以 k/v 仍按 token 逐个存
     hybrid:
       layer_types_count:
         linear: 36
@@ -333,12 +370,19 @@ arch:
       （norm_conv / norm_key / norm_query）。10240 = 4 × hidden，
       即投影作用在 hyper-connections 加宽后的残差流上
     placement: >-
-      **清单里这些张量在 layers.1 下，而 config 的 ple_layer_ids 与模型卡
-      都说 layer 2**（卡的原话是「N-gram Embedding: 20,000,000
-      (bigrams/trigrams at layer 2)」）。两边差一位，最可能是计数起点不同
-      —— 卡与 config 按第 2 层（1 起），清单按索引 1（0 起）。
-      本记录的 layers 取清单的 [1]（0 基，与本仓其他层集合口径一致），
-      没有读实现确认这个解释
+      **放在加速器之外，靠主存预取** —— 这是厂商自己的设计，不是本仓的建议：
+      技术报告 Abstract 写「additional 51B parameters of n-gram embedding tables
+      **held off the accelerator**」，Fig. 1 的图注写「An n-gram embedding layer at Layer 2
+      scales capacity **off the accelerator via host-memory prefetching**」，
+      §2.3 给了理由「Because embedding tables are sparsely accessed and
+      **deterministically addressed**, they can be scaled with negligible additional
+      per-token computation and stored in off-accelerator storage」。
+      所以这 95.37 GiB 不占 HBM，**也不该计进权重存储的显存预算** ——
+      本记录的「权重存储 335.28 GiB」是清单全量，用于显存规划时要先减掉查表那 95.37 GiB。
+      层号：**清单里这些张量在 layers.1 下，而 config 的 ple_layer_ids 与模型卡、
+      报告 Fig. 1 都说 layer 2**。两边差一位，最可能是计数起点不同（那三处按第 2 层、
+      1 起；清单按索引 1、0 起）。本记录的 layers 取清单的 [1]（0 基，
+      与本仓其他层集合口径一致），没有读实现确认这个解释
 
   residual:
     type: >-
@@ -356,6 +400,13 @@ arch:
       残差流宽度 = hc_count 4 × hidden 2560 = **10240**。
       参数代价可以忽略（0.36%），真正的影响在**激活显存**：
       每 token 的残差流元素数是 hidden 的 4 倍，prefill 峰值与逐层缓冲区都要跟着放大。
+      **厂商对此有两处 decode 侧的处理**（技术报告 §2.2 的 Inference Efficiency）：
+      (1) 「the residual state supports **FP8 storage**」——「Storing the branches in FP8
+      **halves the bytes moved** for the residual state relative to BF16, with almost no
+      loss in quality」，理由是 GR / gated attention / GDN 的门都把写进残差流的量级限住了；
+      (2) decode 时「the GR **drops the branch-mixing operator** H_res」，
+      且读写各融合成一个 kernel、group RMSNorm 折进读，使加宽后的流每块每方向只走一遍。
+      **这是激活侧的字节，不是缓存**，不进 kv_cache 账。
       这与 DeepSeek V4 一代的 mHC 是同类机制；本仓的子系统归类正则
       认 hc_attn_* / hc_ffn_* 那套名字，认不出本代的 *_hyper_connection.*（见 R1）
 
@@ -368,7 +419,13 @@ arch:
       + indexer + 堆叠的 512 专家 MoE + 共享专家 + router + hyper_connection，
       块外有 mtp.fc_embedding / fc_hidden（**本代拆成两张**，旗舰那一代是一张 mtp.fc）、
       pre_fc_norm_embedding / pre_fc_norm_hidden、mtp.hyper_connection_mixer。
-      共 31 条目、2,607,150,848 参数（主干的 1.4%）
+      共 31 条目、2,607,150,848 参数（主干的 1.4%）。
+      技术报告 §2.1 的 Implementation Details 另给两件事：
+      「all full-attention layers **in the backbone and MTP module** are replaced with QSA」
+      （与清单一致 —— mtp 块下确实有 indexer 的三个张量），
+      以及「multi-step MTP **reuses top-k indices across prediction steps**」
+      （跟随 GLM-5 的做法），即草稿侧的多步不重跑 indexer 打分。
+      报告 Tab. 4 给四步投机解码下的平均接受长度：带 QSA 4.07、全注意力 4.06
 
   vision:
     encoder: Qwen3.8 vision tower
@@ -433,16 +490,17 @@ bottlenecks:
   - dimension: kv-capacity
     finding: >-
       三类缓存要分开算：12 层 full attention 的 KV（12,288 元素/token）、
-      同 12 层的 index K（**1,536 元素/token，上界**）、
-      36 层线性注意力的递归状态（每序列固定 113.62 MiB）。
-      索引只占随上下文增长那部分的 11.1% —— 和 DeepSeek V4.1 的结论同向
+      同 12 层的 index K（**384 元素/token** —— 条目宽 128、每 4 个 token 一个条目，
+      见 R10）、36 层线性注意力的递归状态（每序列固定 113.62 MiB）。
+      索引只占随上下文增长那部分的 **3.0%** —— 和 DeepSeek V4.1 的结论同向
       （主要压力在主 KV 不在索引），而本仓在那一份上曾把结论写反过。
     quantified: >-
-      27,648 B/token（全局 KV 24,576 + index K 3,072，均按模型 dtype 兜底 2 B/元素）
+      25,344 B/token（全局 KV 24,576 + index K 768，均按模型 dtype 兜底 2 B/元素）
       + 113.62 MiB/序列（36 层 × (48×128×128 矩阵 + 4×10240 短卷积) × 4 B，
-      FP32 有 config 声明）。元素口径 13,824 元素/token（可跨代比）。
-      262144 满上下文 6.75 GiB + 113.62 MiB。
-      **per_sequence 略低**：PLE 块自己那张 conv1d 的状态（163,840 B）没有计入
+      FP32 有 config 声明）。元素口径 **12,672 元素/token**（可跨代比）。
+      262144 满上下文 6.19 GiB + 113.62 MiB（合计 6.30 GiB）。
+      **per_sequence 略低**：PLE 块自己那张 conv1d 的状态（163,840 B）与 indexer
+      未满块的 tail token 条目（≤ 4,608 元素）都没有计入
     visibility: public
   - dimension: weight-bandwidth
     finding: >-
@@ -464,10 +522,13 @@ bottlenecks:
     visibility: public
   - dimension: host-io
     finding: >-
-      95.37 GiB 的 n-gram 查表每 token 只读 5,120 B，是典型的「大容量、极低带宽」
-      对象 —— 可以放主存、放外置存储、或按分片懒加载，不必占 HBM。
-      128 个分片的切分本身就便于这种放置。但每次查表是 16 次随机行读取，
-      延迟敏感，放在哪一级存储要按 decode 的时延预算算。
+      95.37 GiB 的 n-gram 查表每 token 只读 5,120 B，是典型的「大容量、极低带宽」对象。
+      **厂商就是这么部署的**：技术报告 Abstract 说这 51B 参数「held off the accelerator」，
+      Fig. 1 说靠「host-memory prefetching」，§2.3 给的理由是表「sparsely accessed and
+      deterministically addressed」—— 确定性寻址才能异步预取。
+      128 个分片的切分便于这种放置。但每次查表是 16 次随机行读取，延迟敏感，
+      放在哪一级存储要按 decode 的时延预算算。
+      **直接后果**：显存预算不该把这 95.37 GiB 算进去（见 arch.retrieval.placement）。
     fix: 把查表与权重分开规划；128 片的分片粒度可直接用于放置与预取
     visibility: public
 
@@ -563,11 +624,11 @@ notes: >-
 
 open_questions:
   - >-
-    **index K 的条目覆盖没有核过**：本记录按 1:1 计费得 1,536 元素/token，是上界。
-    模型卡把 budget 的语义定下来了（「512 blocks or 2048 tokens」，即块大小 4 个 token），
-    而那说的是「选中多少」不是「存多少」；indexer_compress_ratio 4 仍可能让实际条目数更低，
-    但权重侧没有任何压缩器张量能定这件事（DeepSeek V4 一代有 compressor.ape
-    的首维可以定比值，本代没有对应物）。要钉死得读实现
+    （已关闭）**index K 的条目覆盖由技术报告定下**：Eq. 14–16 的打分对象是压缩块 k̄_b、
+    每块 r = 4 个 token，所以每 token 摊 32 个元素、12 层 384 元素/token。
+    本记录原先按 1:1 计费得 1,536，是 4 倍上界（见 R10）。
+    留在这里是为了说明它怎么关掉的：权重侧确实无从判断（本代没有 compressor.ape
+    之类能定比值的张量），**只有厂商的公式能定**
   - >-
     稀疏选块的打分规则、块大小与 budget 2048 的语义（是选中的块数还是 token 数）
     都没有读实现，arch.attention.sparse 只记权重侧能定的三件事
@@ -792,3 +853,59 @@ review:
       填了会让 Gate B 报一个由 subsystems.py 归类缺口造成的 +41.9% 假不一致）；
       retrieval.mechanism / placement 与两条 open question 按卡改写；
       补 context.train_native 与 extension_method
+  - id: R10
+    field: arch.attention.sparse.index_kv_dim
+    severity: wrong
+    claim: >-
+      index K 按 1:1 计费：条目宽 128 × 12 层 = 1,536 元素/token，
+      记录里标为「上界」并留 open question（原 R3）
+    finding: >-
+      **技术报告把条目覆盖定下来了，1:1 高估 4 倍。** §2.1 的 Eq. 14–16：
+      indexer 的打分对象是**压缩块** k̄_b 而不是 token ——
+      「Block-level importance scores I are then obtained through block-causal scoring」，
+      「Given a token budget K, each query selects the highest-scoring compressed blocks.
+      Since each block contains r tokens, the block budget is K_B = ⌈K/r⌉」，
+      prefill 侧「compressing the key sequence by a factor r, reducing indexer cost
+      from O(n²) to O(n²/r)」。r = 4（Implementation Details: 「a token budget of
+      K = 2048 and a compression ratio of r = 4 ... selects up to 512 complete blocks」）。
+      所以缓存里是**每 4 个 token 一个 128 维条目**，每 token 摊 32 个元素：
+      index K 1,536 → **384 元素/token**，合计 13,824 → **12,672 元素/token**、
+      27,648 → **25,344 B/token**，262144 满上下文 6.75 → **6.19 GiB**，
+      索引占随上下文增长部分的比例 11.1% → **3.0%**。
+      全局 KV 不变（选中的块要 expanded to original token indices，k/v 仍逐 token 存）。
+      这正是 skill 提问顺序的第 4 问「一个条目覆盖几个 token」——
+      本仓在 DeepSeek V4 一代靠 compressor.ape 的首维定过同一件事（R30），
+      本代权重里没有对应张量，**所以只有厂商的公式能定**；
+      当初记成上界没错，错的是后来没去读报告。
+      按 main 新定的来源优先级（模型卡 / 技术报告 > 参考实现 > 引擎），这一改是该做的。
+    resolution: corrected
+    changed_to: >-
+      index_kv_dim 由 128 改为 **32**（= 128 / 4，「每 token 摊到的元素数」，
+      这样 derive 的「宽度 × 层数」公式得到正确的 384）；
+      index_kv_source 把「条目宽度 128」与「每条目 4 个 token」两个因子分开写明，
+      并点出填进字段的 32 不是张量宽度；
+      kv_sharing.note、bottlenecks 的三处数字、context.extension_method 的 1M 折算、
+      以及原 R3 对应的 open question 一并更新。
+      **元素数这一改不属于「精度兜底改字节」那一类**：变的是条目覆盖这个结构因子，
+      字节侧仍是 dtype_fallback、没有动
+  - id: R11
+    field: arch.retrieval.placement
+    severity: imprecise
+    claim: >-
+      「可以放主存、放外置存储、或按分片懒加载，不必占 HBM」（本仓的判断语气）
+    finding: >-
+      技术报告把它写成了厂商的既成设计，不是一种可能性：Abstract「additional 51B
+      parameters of n-gram embedding tables **held off the accelerator**」、
+      Fig. 1 图注「scales capacity **off the accelerator via host-memory prefetching**」、
+      §2.3「Because embedding tables are sparsely accessed and **deterministically
+      addressed**, they can be scaled with negligible additional per-token computation
+      and **stored in off-accelerator storage**」。
+      这件事有一个本记录原来没说清的直接后果：**这 95.37 GiB 不该计进显存预算** ——
+      而记录里「权重存储 335.28 GiB」是清单全量，照它做容量规划会把一张本不在 HBM 的表算进去
+    resolution: corrected
+    changed_to: >-
+      placement 改为陈述厂商的做法并引三处原话，写明显存预算要先减掉 95.37 GiB；
+      host-io 那条 bottleneck 同步改为「厂商就是这么部署的」并补 deterministic addressing
+      这个前提；arch.residual.note 另补报告 §2.2 的两件 decode 侧处理
+      （残差状态 FP8 存储使搬运字节减半、decode 时丢掉 H_res）；
+      decoding 的 mtp_layers_note 补「草稿块的注意力也换成 QSA」与「多步 MTP 复用 top-k 下标」

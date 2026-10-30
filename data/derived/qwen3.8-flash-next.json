@@ -1,7 +1,7 @@
 {
  "id": "qwen3.8-flash-next",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T07:08:42+00:00",
+ "generated_at": "2026-10-30T07:21:24+00:00",
  "inputs": {
   "facts_dir": "facts/qwen3.8-flash-next",
   "config_present": true,
@@ -78,9 +78,9 @@
   "layers": 48,
   "full_attention_layers": 12,
   "linear_attention_layers": 36,
-  "per_token_bytes": 27648,
+  "per_token_bytes": 25344,
   "per_sequence_bytes": 119144448,
-  "per_token_elems": 13824,
+  "per_token_elems": 12672,
   "per_token_elems_bound": "exact",
   "components": {
    "full_attention": {
@@ -108,11 +108,11 @@
    },
    "indexer": {
     "layers": 12,
-    "width": 128,
-    "bytes_per_token": 3072,
-    "elements_per_token": 1536,
+    "width": 32,
+    "bytes_per_token": 768,
+    "elements_per_token": 384,
     "terms": {
-     "formula": "index_kv_dim(128)，实测自 index_qk_proj [640, 2560] 的 k 段输出维 —— 640 = q 4 × 128 + k 1 × 128， 所以落进缓存的 index K 每层只有 128 个元素，不是 4 × 128 = 512 * bytes * index_kv_source_layers(12)"
+     "formula": "index_kv_dim(32)，实测自 条目宽 128（index_qk_proj 的 k 段输出维）÷ 每条目 4 个 token = 每 token 摊 32； **填的是摊到的元素数、不是张量宽度**，两个因子的来源见 kv_sharing.note * bytes * index_kv_source_layers(12)"
     }
    }
   },
@@ -124,9 +124,9 @@
   "bytes_basis": "dtype_fallback"
  },
  "kv_capacity_bytes_at_context": {
-  "4096": 232390656,
-  "32768": 1025114112,
-  "262144": 7366901760
+  "4096": 222953472,
+  "32768": 949616640,
+  "262144": 6762921984
  },
  "kv_capacity_basis": "dtype_fallback",
  "active_params": {
