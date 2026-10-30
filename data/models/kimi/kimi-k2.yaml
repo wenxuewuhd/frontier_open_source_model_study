@@ -1,0 +1,497 @@
+# 手写记录。机械字段来自 config（official），结构、参数分项、量化块与 dtype 分布
+# 来自完整权重清单（facts/kimi-k2/shapes.json，139644 个张量，61/61 分片无读失败）。
+id: kimi-k2
+family: kimi
+kind: llm
+display_name: Kimi-K2-Instruct
+released: '2025-07-11'
+license: other
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/moonshotai/Kimi-K2-Instruct
+    locator: config.json / README.md @ fd1984e2b7a3
+    accessed: '2026-10-30'
+    note: >-
+      block-fp8 发布，61 分片、139644 个张量，逐分片读头取全，无读失败分片。
+      规格表给「Total Parameters 1T / Activated Parameters 32B / Context 128K」，
+      license_name modified-mit
+  - kind: repo
+    url: https://huggingface.co/moonshotai/Kimi-K2-Instruct/blob/fd1984e2b7a3350dbf7305fe73a4ede25c14de50/modeling_deepseek.py
+    locator: >-
+      DeepseekV3YarnRotaryEmbedding._set_cos_sin_cache / yarn_find_correction_range /
+      yarn_get_mscale / yarn_linear_ramp_mask / DeepseekV3Attention
+    accessed: '2026-10-30'
+    note: >-
+      厂商随仓发布的参考实现（文件名沿用 DeepSeek 的），下载到本地只读、未执行。
+      context.extension_method 里那两条（温度补偿的比值、插值斜坡的 low/high）都是按它的公式算的
+
+hf:
+  repo: moonshotai/Kimi-K2-Instruct
+  sha: fd1984e2b7a3350dbf7305fe73a4ede25c14de50
+  last_modified: '2026-04-23T02:08:36.000Z'
+  pipeline_tag: text-generation
+  gated: false
+
+lineage:
+  track: historical
+  predecessor: kimi-moonlight-16b
+  successor: kimi-k2-0905
+  changed_from_predecessor:
+    - axis: scale
+      text: >-
+        27 层 / hidden 2048 / 15.96B 放大到 61 层 / hidden 7168 / 1.026T（实测），
+        激活参数 2.58B → 31.69B（均为带宽口径）
+      benefit: >-
+        一次 64 倍的总量放大，但激活只涨 12.3 倍 —— 稀疏度从 16.2% 降到 3.1%
+        （激活/总量，带宽口径）。代价是单机装不下：FP8 落盘实测 958.49 GiB（含 scale），
+        按本代的 EP 部署，权重带宽与 all-to-all 同时上一个量级
+    - axis: attention
+      text: >-
+        MLA 的 Q 侧加了两段式降维：q_lora_rank 1536（q_a_proj [1536, 7168] +
+        q_a_layernorm [1536] + q_b_proj [12288, 1536]），前代是单段 q_proj [3072, 2048]。
+        头数 16 → 64，每头维度不变（QK 192 = nope 128 + rope 64、V 128），
+        kv_lora_rank 仍是 512
+      benefit: >-
+        Q 侧降维把 hidden 7168 → 64 头 × 192 = 12288 的大投影拆成两段
+        （7168×1536 + 1536×12288 = 29,884,416，单段写法 7168×12288 = 88,080,384），省 66% 的 Q 投影参数与带宽；
+        代价是多一次 GEMM 与一个 RMSNorm，且 TP 切分点从一处变成两处。
+        缓存宽度不受影响：仍是 kv_a_proj_with_mqa 的 576 维/层，层数 27 → 61
+        让每 token 的 KV 元素从 15,552 涨到 35,136（2.26 倍；这是元素口径，与精度无关）
+    - axis: moe
+      text: >-
+        路由专家 64 → 384、共享专家 2 → 1、top-6 → top-8，专家中间维 1408 → 2048
+      benefit: >-
+        专家数涨 6 倍而 top_k 只涨 1/3，单 token 激活的专家占比从 9.4%（6/64）降到 2.1%（8/384），
+        这是「细粒度」的实处。但**单个专家反而变大了** —— 3 × 2048 × 7168 = 44.0M 参数，
+        前代是 3 × 1408 × 2048 = 8.65M，5.09 倍；只有相对 hidden 的比值变细
+        （1408/2048 = 0.69 → 2048/7168 = 0.29）。
+        all-to-all 载荷按 2 × top_k × hidden × bytes × MoE 层数 算：
+        2×6×2048×2×26 = 1.28 MB/token → 2×8×7168×2×60 = 13.76 MB/token，10.8 倍
+        （前代那一项是同公式下的反事实量：Moonlight 的 derive 记录 ep_size = 1，
+        EP=1 时实际没有 all-to-all）。
+        **这 10.8 倍比参数量的 64 倍和激活的 12.3 倍都小**，所以不能说它「涨得更凶」；
+        要紧的是绝对量级 —— 每 token 13.76 MB 过互联，而且它随 batch 线性涨、
+        权重那一侧随 batch 摊薄，所以大 batch 下互联先封顶
+    - axis: precision
+      text: >-
+        BF16 发布改成 block-fp8：权重 FP8_E4M3、每 [128,128] 一个 FP32 scale
+        （quantization_config.quant_method fp8、fmt e4m3、activation_scheme dynamic）
+      benefit: >-
+        权重存储从「若按 BF16 则 1.87 TiB」降到实测 958.49 GiB（含 scale 与未量化的 BF16 部分），1.99 倍；
+        代价是部署必须带反量化路径，且 scale 落盘是 **FP32 而非 8 位**
+        （本代 config 没有 scale_fmt 这个键），所以 block 的开销是 4 B / 16384 元素。
+        注意量化覆盖面：专家、共享专家、稠密 FFN 与注意力主投影都是 FP8，
+        而 router / embed / lm_head / norm 仍是 BF16
+    - axis: context
+      text: 8192 → 131072，靠 YaRN 从 4096 的原生长度外推 32 倍（rope_scaling factor 32.0，mscale 1.0）
+      benefit: >-
+        不重训就把原生 4K 拉到 128K。代价是满上下文的 MLA 缓存从 243 MiB（前代 8K）
+        涨到 8.58 GiB（BF16 兜底口径），KV 第一次成为容量规划里要算的一项
+
+params:
+  total: 1026408235864.0
+  breakdown:
+    expert: 1014686023680.0
+    attention: 6168448344.0
+    shared_expert: 2642411520.0
+    embed: 1174405120.0
+    lm_head: 1174405120.0
+    dense_ffn: 396361728.0
+    router: 165173760.0
+    norm: 1006592.0
+  counting_note: >-
+    total 与 breakdown 都是本仓按完整清单（139644 条）逐项求和的实测值，不是厂商声明值
+    （Gate B 的参数总量一项因此是实测比实测）；外部核对是 HF 的 safetensors tally，
+    与实测 1,026,408,235,864 逐位相同 —— 两边都排了 scale：清单里有 62,495,192 个
+    weight_scale_inv 元素（F32），不计入参数、只计入权重存储，而 HF 的 tally 同样没算它们
+    （它报的 F32 只有 23,040 个，恰是 60 个 MoE 层的 e_score_correction_bias）。
+    FP8 不打包（一个元素一字节），所以 numel 即参数数，没有还原因子。
+    厂商声明「1T / 32B」是取整标签：实测总量 1.026T 比 1T 高 2.6%，
+    激活（带宽口径，含 lm_head、不含输入词表）31.69B 对 32B 差 −1.0%，
+    含输入词表是 32.86B。**与前代的口径不同**：Moonlight 的 15.29B / 2.24B 明写不含两张词表矩阵，
+    而 K2 的 32B 只有带宽口径对得上，跨代比激活参数前要先对齐这一条。
+    复算 attention 分项时有两件事要注意：kv_a_layernorm [512] 与 q_a_layernorm [1536]
+    按本仓的归类（带 norm 的一律归 norm）**不在 attention 里**，自己按名字把它们算进注意力
+    会多出 61 × 2048 = 124,928 个元素；另外注意力一项里有 3,416 个 BF16 元素是每层一个
+    rotary_emb.inv_freq [56] 的遗留 buffer
+    （61 × 56），参考实现里它是 persistent=False、长度按 qk_rope_head_dim/2 = 32 算，
+    与落盘的 56 既不相等也不会被加载 —— 两侧 tally 都算了它，不影响对账
+
+context:
+  max: 131072
+  train_native: 4096
+  extension_method: >-
+    YaRN（rope_scaling type yarn、factor 32.0、original_max_position_embeddings 4096、
+    mscale 与 mscale_all_dim 都是 1.0、beta_fast 与 beta_slow 都是 1.0）。
+    两点按参考实现的公式算过：(1) 注意力温度补偿**生效了，而且由 mscale_all_dim 驱动** ——
+    DeepseekV3Attention.__init__ 里 mscale_all_dim 为真时
+    softmax_scale = q_head_dim^(-0.5) × yarn_get_mscale(factor, mscale_all_dim)²，
+    factor 32 下这个因子是 1.8133（0905 的 factor 64 是 2.0047），
+    即改 factor 同时改了注意力温度。
+    mscale 与 mscale_all_dim **相等**的作用在另一处：_set_cos_sin_cache 里 cos/sin 乘的是
+    yarn_get_mscale(factor, mscale) / yarn_get_mscale(factor, mscale_all_dim)，
+    两者相等时这个比值恒为 1，cos/sin 不被额外缩放。
+    两个 mscale 键作用在两个不同的地方，只读一处会把结论读反；
+    (2) **插值斜坡是退化的** —— 以 dim = qk_rope_head_dim 64、base = rope_theta 50000、
+    原生长度 4096 代入 yarn_find_correction_range(beta_fast, beta_slow)，
+    beta_fast = beta_slow = 1 给出 low = 19、high = 20，即 32 个频率维上只有 1 维宽的斜坡，
+    实际是在第 20 维处硬切：低 20 维保持未缩放频率、其余 12 维整体按 1/factor 缩放。
+    DeepSeek 一代用的是 beta_fast 32 / beta_slow 1（斜坡 8 → 20，宽 12 维），
+    K2.5 又改回了 32
+
+arch:
+  layers: 61
+  hidden: 7168
+  vocab: 163840
+  norm: RMSNorm
+  norm_eps: 1.0e-06
+  activation: SwiGLU（config hidden_act silu，模型卡规格表也写 SwiGLU）
+  position: RoPE theta 50000 + YaRN 外推
+
+  attention:
+    type: MLA
+    num_heads: 64
+    num_kv_heads: 64
+    head_dim: 192
+    v_head_dim: 128
+    qk_rope_head_dim: 64
+    qk_nope_head_dim: 128
+    kv_lora_rank: 512
+    q_lora_rank: 1536
+    head_dim_note: >-
+      num_kv_heads 64 是 query 侧可见的头数，不是缓存宽度：落盘缓存是
+      kv_a_proj_with_mqa [576, 7168] 的输出维 576（latent 512 经 kv_a_layernorm [512]
+      + 解耦 rope 64），按 2 × 64 × 192 = 24576 折算会高估 42.7 倍。
+      head_dim 192 不是 config 字段，是 qk_nope 128 + qk_rope 64，只管 QK；
+      V 的每头维度是 v_head_dim 128，所以 o_proj 入口是 64 × 128 = 8192
+      （实测 [7168, 8192]），按 192 推会得到 12288 —— 高 50%。
+      Q 侧两段：q_a_proj [1536, 7168] → q_a_layernorm [1536] → q_b_proj [12288, 1536]，
+      12288 = 64 × 192；上投影 kv_b_proj [16384, 512] = 64 × (K-nope 128 + V 128)，
+      61/61 层零例外
+    layer_pattern: 61/61 层都是 MLA，没有线性注意力、滑窗或稀疏选块
+
+  ffn:
+    type: moe
+    layer_pattern: L0 稠密（mlp.gate_proj [18432, 7168]），L1–L60 共 60 层 MoE
+
+  moe:
+    routed_experts: 384
+    shared_experts: 1
+    top_k: 8
+    intermediate: 2048
+    dense_intermediate: 18432
+    first_k_dense: 1
+    expert_groups: 1
+    routing: >-
+      sigmoid 打分、noaux_tc 选路，routed_scaling_factor 2.827，norm_topk_prob true。
+      n_group 与 topk_group 都是 1，分组路由实际未启用 —— 与同期 DeepSeek-V3 的 8 组取 4 不同
+      （n_group 8 / topk_group 4 取自同仓 facts/ds-v3/cfg.json；ds-v3 的记录里只存了
+      expert_groups 8 这一半，topk_group 这个量本仓没有字段）
+    balance: >-
+      e_score_correction_bias（每 MoE 层一个 [384]）。本代起这个张量落盘是 **FP32**，
+      前代 Moonlight 是 BF16 —— 清单里 60 × 384 = 23,040 个 F32 元素就是它
+    storage_note: >-
+      逐专家独立张量（experts.N.{gate,up,down}_proj，各带 weight_scale_inv），
+      不是堆叠的 3 维权重，grouped GEMM 因此吃 2 维权重列表。
+      单个共享专家是一个 MLP（shared_experts.gate_proj [2048, 7168]）
+
+  decoding:
+    mtp_layers: 0
+    mtp_layers_note: >-
+      config num_nextn_predict_layers 0，清单里也没有任何草稿块（层号止于 60，
+      与 num_hidden_layers 61 一致）。整条 K2 线都没有 MTP
+
+precision:
+  weights_release: [FP8_E4M3, BF16, FP32]
+  quantization:
+    method: fp8（config quant_method fp8，block-wise）
+    activation_scheme: dynamic
+    weight_block_size: [128, 128]
+    weight_format: e4m3
+    expert_dtype: FP8_E4M3
+    per_subsystem:
+      expert: FP8_E4M3
+      shared_expert: FP8_E4M3
+      dense_ffn: FP8_E4M3
+      attention: FP8_E4M3
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+    per_subsystem_scale:
+      expert: FP32
+      shared_expert: FP32
+      dense_ffn: FP32
+      attention: FP32
+    per_subsystem_block:
+      expert: '[128,128]'
+      shared_expert: '[128,128]'
+      dense_ffn: '[128,128]'
+      attention: '[128,128]'
+    block_size_note: >-
+      实测（权重形状 ÷ 同名 weight_scale_inv 形状）与 config 声明的 [128,128] 一致，
+      四个被量化的子系统逐个核过：experts gate_proj [2048, 7168] ÷ [16, 56]、
+      down_proj [7168, 2048] ÷ [56, 16]、o_proj [7168, 8192] ÷ [56, 64]、
+      q_b_proj [12288, 1536] ÷ [96, 12] 都整除。
+      **一个边界**：kv_a_proj_with_mqa [576, 7168] ÷ [5, 56] —— 576 / 128 = 4.5 不整除，
+      scale 实际 5 行、末块不满（本仓记作 128ceil）。按「block 一律整除」写的反量化
+      实现会在这个张量上错位，而它恰是产出 KV 的那一个
+    subsystem_method: >-
+      对完整清单 139,644 条穷举（不是抽样），每条带 dtype：被量化的四个子系统
+      （expert / shared_expert / dense_ffn / attention 主投影）全是 F8_E4M3 无例外，
+      scale 容器全是 F32；router 的 weight 与 embed / lm_head / norm 全是 BF16。
+      **scale 是 FP32 而不是 8 位**：本代 config 没有 scale_fmt 这个键，
+      与 DeepSeek 自 V3.1 起声明 ue8m0 的那条线不同，按 8 位算 scale 大小会算小 4 倍
+  qat: false
+
+infra_signals:
+  - text: >-
+      本代是 Kimi 的第一个万亿模型，也是族系第一次把量化放到发布环节（block-fp8）。
+      量化覆盖专家、共享专家、稠密 FFN 与注意力主投影，但 scale 是 FP32、块是 [128,128]，
+      与后续 K2-Thinking 的 INT4 组 32 不是同一套反量化路径 —— 引擎要同时支持两套
+    evidence: judgement
+    horizon: settled
+    axis: precision
+  - text: >-
+      EP 载荷按 2 × top_k × hidden × bytes × MoE 层数 算得 13.76 MB/token（BF16 激活），
+      是前代同公式值的 10.8 倍 —— 但**它不是三个增长率里最快的**（参数量 64 倍、
+      激活 12.3 倍），也**不与权重带宽同阶**：derive 给的每 token 权重字节是 31.77 GB，
+      是 all-to-all 的 2,309 倍。
+      要紧的地方在两者随 batch 的走向相反：权重字节随 batch 摊薄、all-to-all 随 token 数线性涨，
+      所以足够大的 batch 下互联先封顶。具体在哪个 batch 翻转取决于互联带宽与并行配置，
+      本仓没有这两个输入，不给数
+    evidence: judgement
+    horizon: settled
+    axis: moe
+  - text: >-
+      与同仓 ds-v3 逐字段比：**主干骨架是 DeepSeek-V3 的** —— 61 层、hidden 7168、
+      intermediate 18432、moe_intermediate 2048、1 个共享专家、q_lora_rank 1536、
+      kv_lora_rank 512、qk_nope 128 / qk_rope 64 / v_head_dim 128 全部相同。
+      改的是四处：注意力头数 128 → **64**（每头维度不变，所以 q_b_proj
+      [24576, 1536] → [12288, 1536]、kv_b_proj 与 o_proj 同比例缩小，而缓存宽度仍是 576/层）、
+      路由专家 256 → 384 且 n_group 8 / topk_group 4 → 1 / 1（不再分组）、
+      first_k_dense_replace 3 → 1、num_nextn_predict_layers 1 → 0（没有 MTP）。
+      所以支持 V3 的平台支持本代几乎不需要新算子，但三件事要改参数化：头数、
+      专家数与「没有分组、没有草稿块」
+    evidence: derived
+    horizon: settled
+    axis: attention
+  - text: >-
+      kv_a_proj_with_mqa 的 576 维不被 128 整除，scale 实际 5 行、末块不满。
+      产出 KV 的那个投影是本模型唯一的非整除张量，反量化实现要按 ceil 处理。
+      **这不是本代特有的**：同仓 ds-v3 的同名张量同样是 [576, 7168] 配 scale [5, 56]，
+      本仓在那一代已记过这个边界（记作 128ceil）—— 两家共用 DeepSeek 的 block-fp8 写法，
+      就共用这个坑
+    evidence: derived
+    horizon: settled
+    axis: precision
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  context: official
+  context.extension_method: derived
+  arch: official
+  arch.norm: derived
+  arch.activation: official
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.head_dim: derived
+  arch.attention.v_head_dim: official
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.routing: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.moe.expert_groups: official
+  arch.decoding.mtp_layers: official
+  arch.decoding.mtp_layers_note: derived
+  precision: official
+  precision.quantization.expert_dtype: derived
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.per_subsystem_scale: derived
+  precision.quantization.per_subsystem_block: derived
+  precision.quantization.block_size_note: derived
+  precision.quantization.subsystem_method: derived
+  precision.qat: derived
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-30'
+  scope: [official, derived, judgement]
+  reviewer: 本会话逐字段复算 + 一个独立核查代理
+  method: >-
+    按 .claude/skills/model-audit 的顺序对 facts/kimi-k2 逐字段核：config 全部键、
+    完整清单 139,644 个张量（dtype 计数、层号 0–60、每层投影形状、每个被量化张量与同名
+    weight_scale_inv 的形状比）、repoinfo 的 tally，以及 derived 的分项与 KV 公式路。
+    本会话独立复算的乘式：缓存 576/层 × 61 = 35,136 元素/token、o_proj 入口 64 × 128 = 8192、
+    Q 侧两段 7168×1536 + 1536×12288 = 29,884,416 对单段 88,080,384、
+    all-to-all 2 × 8 × 7168 × 2 B × 60 = 13,762,560、激活 = 1,014,686,023,680 × 8/384 + 常驻、
+    量化块逐张量（含 kv_a_proj_with_mqa [576, 7168] ÷ [5, 56] 的非整除边界）。
+    YaRN 的两条结论（温度补偿比值、插值斜坡 low/high）是按参考实现
+    modeling_deepseek.py 的公式代入算的（已列入 sources）；
+    与 DeepSeek-V3 的骨架比对用的是同仓 facts/ds-v3 的 config 与清单。
+    另派一个独立核查代理做对抗式复核（它重算了全部分项与 KV 七问，并对全部 69,608 个
+    FP8 权重逐个查了 128 整除性，确认非整除的只有 kv_a_proj_with_mqa 一类、零其他命中），
+    三条发现见 R7–R9；它指出的两处实现误读本会话回源码核过。
+review:
+  - id: R1
+    field: hf.sha
+    severity: wrong
+    claim: sha 写作 fd1984e2b7a3b4c1b0b4b1b0f9d7b9c6d2e8a5f1
+    finding: >-
+      与 kimi-moonlight-16b 的 R1 同一个错误：按 12 位前缀编补成 40 位。
+      真值是 fd1984e2b7a3350dbf7305fe73a4ede25c14de50（repoinfo.json 与 fetched.json 一致）。
+      本轮七份记录的 sha 与 fetched.rev 事后逐个核对过
+    resolution: corrected
+    changed_to: 取 repoinfo.json 的 sha 原值
+  - id: R2
+    field: context.extension_method
+    severity: overreach
+    claim: 「注意 mscale = 1.0 意味着不做注意力温度补偿，与 DeepSeek-V2/V3 的 YaRN 用法不同」
+    finding: >-
+      前半句对、后半句错，而且错在把一个**普遍情况**说成了本代特点。参考实现算的是
+      yarn_get_mscale(factor, mscale) / yarn_get_mscale(factor, mscale_all_dim)，
+      两个参数相等时比值恒为 1 —— DeepSeek-V2 的 0.707/0.707、V3 的 1.0/1.0 与本代的 1.0/1.0
+      都是这种情况，所以三家都不做温度补偿。
+      本代真正特殊的是另一个参数：**beta_fast = beta_slow = 1.0**。
+      代入 yarn_find_correction_range（dim = qk_rope_head_dim 64、base = rope_theta 50000、
+      原生长度 4096）得 low 19 / high 20，即 32 个频率维上只有 1 维宽的斜坡，
+      实际是在第 20 维处硬切；DeepSeek 一代是 32 / 1（low 8 / high 20，12 维宽）。
+      K2.5 又把 beta_fast 改回了 32 —— 这条线索原本被那句错话盖住了
+    resolution: corrected
+    changed_to: >-
+      extension_method 改写成两条可复算的结论（温度补偿为何不生效、斜坡为何退化并给出
+      low/high），并点明 DeepSeek 与 K2.5 的取值；kimi-k2-0905 / kimi-k2-thinking 的同一字段
+      指向这里，kimi-k2.5 的 lineage 里补上 beta_fast 1 → 32 的效果
+  - id: R3
+    field: infra_signals
+    severity: imprecise
+    claim: 「kv_a_proj_with_mqa 的 576 维不被 128 整除……产出 KV 的那个投影恰好是全模型唯一的非整除张量」
+    finding: >-
+      事实成立（实测 scale [5, 56]，576 / 128 = 4.5，末块不满；全模型其余被量化张量都整除），
+      但写法暗示这是本代的新发现。**同仓 ds-v3 的同名张量是同一个边界**（[576, 7168] 配
+      [5, 56]），README 的案例史里已经记过（本仓记作 128ceil）。两家共用 DeepSeek 的
+      block-fp8 写法，就共用这个坑 —— 不写清楚会让读者以为要为 Kimi 单独处理
+    resolution: corrected
+    changed_to: 同一条里补上「与 ds-v3 的同名张量同一个边界，本仓在那一代已记过」
+  - id: R4
+    field: lineage.changed_from_predecessor
+    severity: imprecise
+    claim: 「7168×1536 + 1536×12288 = 29.7M，单段写法是 88.1M，省 67%」
+    finding: >-
+      两个数都算过头了一点点：11,010,048 + 18,874,368 = 29,884,416（29.9M 不是 29.7M），
+      相对 7168 × 12288 = 88,080,384 省 66.1% 不是 67%。乘式本身与结论方向都对，
+      但记录里的每个数都会被当成可引用的事实，取整方向错了就会在下游累积
+    resolution: corrected
+    changed_to: 改成写出两个精确值与「省 66%」
+  - id: R5
+    field: params.counting_note
+    severity: imprecise
+    claim: 「与 HF tally 逐位相同，两边都排了 scale」
+    finding: >-
+      成立并复算过：清单里 62,495,192 个 weight_scale_inv 元素（F32）本仓不计入参数、
+      只计入字节；HF 的 tally 报的 F32 只有 23,040 个（恰是 60 个 MoE 层的
+      e_score_correction_bias），即它也没把 scale 算进参数 —— 所以这一项是逐位相同而不是
+      「差一个 scale 总量」。这与 README 记的 ds-v3.2-exp（tally **含** scale）是两种口径，
+      derive.py 的双口径判断在这里命中的是第一种
+    resolution: confirmed
+    changed_to: 原值成立，不改
+  - id: R6
+    field: infra_signals
+    severity: missing
+    claim: 没有与 DeepSeek-V3 的骨架对照，而本代的 model_type 是 kimi_k2、架构类名却是 DeepseekV3ForCausalLM
+    finding: >-
+      漏了一条能直接减少算子评估工作量的对照。用同仓 facts/ds-v3 逐字段比：61 层、
+      hidden 7168、intermediate 18432、moe_intermediate 2048、1 个共享专家、q_lora_rank 1536、
+      kv_lora_rank 512、qk_nope 128 / qk_rope 64 / v_head_dim 128 **全部相同**；
+      不同的是四处：注意力头数 128 → 64（V3 的 q_b_proj 实测 [24576, 1536]、
+      kv_b_proj [32768, 512]、o_proj [7168, 16384]，本代各缩一半）、路由专家 256 → 384 且
+      n_group 8 / topk_group 4 → 1 / 1、first_k_dense_replace 3 → 1、
+      num_nextn_predict_layers 1 → 0。缓存宽度两边都是 576/层
+    resolution: corrected
+    changed_to: 新增一条 axis = attention 的 infra_signal，写明相同项、四处不同与它们的算子含义
+
+  - id: R7
+    field: context.extension_method
+    severity: wrong
+    claim: 「注意力温度补偿**没有生效** —— 比值 yarn_get_mscale(factor, mscale) / yarn_get_mscale(factor, mscale_all_dim) 恒为 1」
+    finding: >-
+      读了参考实现的一处、漏了另一处，结论因此反了。两个 mscale 键作用在两个不同地方：
+      (a) DeepseekV3Attention.__init__ 里 `if mscale_all_dim:` 为真时
+      softmax_scale = q_head_dim^(-0.5) × yarn_get_mscale(factor, mscale_all_dim)²，
+      本代 mscale_all_dim = 1.0 是 truthy，**补偿确实做了**，factor 32 下因子是
+      0.1×ln(32)+1 = 1.3466，平方 1.8133；
+      (b) _set_cos_sin_cache 里 cos/sin 乘的才是那个比值，mscale == mscale_all_dim 时它恒为 1，
+      所以**不被额外缩放的是 cos/sin**，不是注意力温度。
+      连带两件事：原句「与 DeepSeek-V2/V3 的用法不同」也不成立（V2 的 0.707/0.707、
+      V3 的 1.0/1.0 同样会进那个分支，只是因子不同）；而 kimi-k2-0905 把 factor 32 → 64
+      说成「只动了一个标量、只改上下文」，实际那个标量同时把 softmax 因子从 1.8133 推到 2.0047
+    resolution: corrected
+    changed_to: >-
+      extension_method 改写成两处分开讲（softmax_scale 的 mscale_all_dim² 与 cos/sin 的比值），
+      删掉与 DeepSeek 比较那半句；kimi-k2-0905 的 lineage 与 extension_method 同步补上
+      softmax 温度随 factor 变这件事
+  - id: R8
+    field: infra_signals
+    severity: wrong
+    claim: 「all-to-all 是前代的 10.8 倍，而参数量只涨 64 倍、激活涨 12.3 倍 —— 本代起 all-to-all 与权重带宽同阶」
+    finding: >-
+      两处都反了。(1) 10.8 **小于** 64.3（参数量）也小于 12.29（激活），
+      所以 all-to-all 是三个增长率里最慢的，「涨得更凶」「只涨 64 倍」的「只」字把大小关系说倒了。
+      (2) 「与权重带宽同阶」差三个量级：derive 给的每 token 权重字节是 31,772,460,474 B，
+      all-to-all 是 13,762,560 B，比 **2,309 倍**。
+      真正的论据是两者随 batch 的走向相反（权重摊薄、通信线性涨），
+      而翻转点取决于互联带宽与并行配置 —— 这两个输入本仓没有，所以这是判断不是推导
+    resolution: corrected
+    changed_to: >-
+      lineage 的 moe 一条与 infra_signals 都改写：写出 10.8 < 12.3 < 64、给出 2,309 倍、
+      把结论改成「随 batch 走向相反，大 batch 下互联先封顶」，并把该条 evidence 从 derived 降成 judgement
+  - id: R9
+    field: precision.quantization.expert_dtype
+    severity: miscategorized
+    claim: expert_dtype 的值 FP8_E4M3 继承了顶层 precision 的 official 口径
+    finding: >-
+      config 里没有任何逐子系统的精度声明（只有全局 quant_method fp8 / fmt e4m3），
+      而那个全局声明对别的子系统是假的（router / embed / lm_head / norm 实测全 BF16）。
+      所以「专家是 FP8_E4M3」的依据是清单穷举，不是官方声明。
+      同族的 weights_release / per_subsystem / per_subsystem_scale / block_size_note
+      都显式标了 derived，只有这一个漏了，继承成 official
+    resolution: corrected
+    changed_to: >-
+      evidence 里补一行 precision.quantization.expert_dtype 标 derived
+      （kimi-k2-0905 / kimi-k2-thinking / kimi-k2.5 同样补上）
+
+notes: >-
+  Kimi 家族第一个万亿旗舰，也是「kimi_k2」这个 model_type 的起点（架构类名仍是
+  DeepseekV3ForCausalLM，结构上是 Moonlight 的放大版加 Q 侧降维）。
+  这一代把三件事同时定下来，后面三代都在沿用：61 层 / hidden 7168 的主干尺寸、
+  384 专家 top-8 的 MoE 配置、以及「发布即量化」的做法。
+  K3 继承了 hidden 7168 与 q_lora_rank 1536，但层数、专家数、注意力类型与量化格式全换了。
+  released 取 HF 仓的 createdAt 2025-07-11；lastModified 2026-04-23 是后来的仓库维护。
+
+open_questions:
+  - >-
+    KV cache 的实际存储精度未披露，derive.py 按模型 dtype（BF16）兜底，
+    bytes_basis 是 dtype_fallback —— 不要拿它和别家的精确计数比倍数
+  - >-
+    预训练数值格式没有一手声明。模型卡说 checkpoint 存成 block-fp8，
+    这是落盘格式，不等于训练精度，precision.training 不填
+  - >-
+    每层一个 rotary_emb.inv_freq [56] BF16 遗留 buffer，长度对不上参考实现按
+    qk_rope_head_dim/2 = 32 的算法，且参考实现声明 persistent=False（不该进 checkpoint）。
+    它是哪一版保存代码留下的、为什么是 56，没查
