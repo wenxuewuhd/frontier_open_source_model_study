@@ -74,10 +74,18 @@ function cellFor(m: Model, key: string): Cell {
     const sig = [dtype, blk ? `块 ${blk}` : '', scl ? `scale ${scl}` : ''].filter(Boolean).join(' · ');
     if (f) return { kind: 'dtype', dtype, shown: f.replace(' 式', ''), derived: true, sig };
     // 推不出名字时要说清是为什么，否则读者只看到一个裸 `FP4` 不知道是漏了还是有意的。
-    // 最常见的一种：一个子系统里两种块形状（DeepSeek 的草稿块 [1,32]+[32,32]）——
-    // [1,32] 是 MX 式的一维块，[32,32] 是二维瓦片，两者并存就没有单一的块格式名。
-    const why = IS_E2M1.has(dtype.toUpperCase()) && typeof blk === 'string' && blk.includes('+')
-      ? '块不是单一形状，两种并存 —— 没有对应的块格式名，不硬安一个'
+    //
+    // `+` 的含义是「这个子系统里不止一种块方案」，而它底下其实有两种情况，
+    // 实测分得开（deepseek-v41-flash 的清单）：
+    //   同一 dtype、两种瓦片 —— retrieval 的 engram.embed [1,32] 与 engram.wkv [32,32]
+    //     都是 FP8；ds-v3 一代的 [128,128]+[128ceil,128] 是维度不整除时的边缘块
+    //   跨两种元素格式 —— 草稿块里 1152 个 FP4 专家（[1,32]）与 25 个 FP8 投影
+    //     （wkv / wo_a / wo_b，[32,32]）并存
+    // 两种都不对应单一的块格式名，所以一律不推。措辞不区分这两种，是因为
+    // **光看 per_subsystem_block 区分不了**，要回清单才知道 —— 页面不做那个推断。
+    const why = typeof blk === 'string' && blk.includes('+')
+      ? '这个子系统里不止一种块方案（可能还跨不止一种元素格式）'
+        + ' —— 没有单一的块格式名，不硬安一个。明细见「量化块 / scale」列'
       : undefined;
     return { kind: 'dtype', dtype, shown: dtype, derived: false, sig, why };
   }
