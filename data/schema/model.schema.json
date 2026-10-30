@@ -578,6 +578,17 @@
               "minItems": 1,
               "maxItems": 3
             },
+            "param_scaling": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "主干参数按**乘什么**分桶。这是进线性 FLOPs 公式的那根轴，与「子系统」（attention / ffn / norm）和「流」（img / txt）两根都正交，而且它跨流。\n\n**为什么必须分**：`2 × 参数量 × token 数` 隐含「每个参数都过每个 token」，而 **AdaLN 调制是逐样本的** —— 它吃的是条件向量不是 token 流，MiniMax-H3 光看形状就能断定（`adaln_proj.linear` 是 [96768, 2688] 而 hidden 5376，入口宽度对不上；2688 正是 `time_embedder.linear_2` 的出口）。而 AdaLN 在新一代生成类里占三分之一上下（HunyuanVideo-1.5 32.71%、H3 39.41%、Wan2.2-TI2V-5B 只有 1.35%）—— **这个误差专挑新模型放大**：hy15 的线性项按老公式高 3.05 倍，单步高 20.4%，注意力真实占比 90.0% 而不是 74.8%。\n\n不填就退回老公式，并在 notes 里标明是上界。",
+              "properties": {
+                "per_sample": { "type": "number", "description": "每次前向只过一遍的参数（AdaLN 调制、时间步嵌入这类吃条件向量的）" },
+                "per_video_token": { "type": "number", "description": "过每个视频 latent token 的参数" },
+                "per_text_token": { "type": "number", "description": "只过文本 token 的参数（双流 MMDiT 的 txt 侧）。单流模型文本在同一条序列里，并进 per_video_token 并在 note 写明" },
+                "note": { "type": "string" }
+              }
+            },
             "refiner_layers": { "type": "integer", "description": "输入侧 refiner / token refiner 的层数，若与主干分开计" },
             "position": { "type": "string", "description": "位置编码形态，如 3D RoPE、MM-RoPE (t,h,w)" },
             "note": { "type": "string" }

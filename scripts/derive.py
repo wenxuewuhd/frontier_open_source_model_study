@@ -764,12 +764,39 @@ def gen_workload(gen: dict, kind: str, dit_params: float, dit_params_src: str,
     # 单步 FLOPs。线性与注意力分开 —— 两者随 n 的增长阶不同（n vs n²），
     # 合成一个数就看不出瓶颈在哪一侧
     flops = {}
-    if dit_params:
+    # 参数按「乘什么」分桶了就逐桶算。**AdaLN 调制是逐样本的** —— 它吃条件向量不是
+    # token 流（H3 的 adaln_proj 入口宽 2688 而 hidden 5376，形状上就对不上），
+    # 而它在新一代生成类里占三分之一上下。按 `2 × 参数量 × token 数` 一刀切，
+    # hy15 的线性项高 3.05 倍、单步高 20.4%，注意力占比从真值 90.0% 被压成 74.8% ——
+    # **误差专挑新模型放大**，恰好是最该看准的那几份。
+    psc = (gen.get("backbone") or {}).get("param_scaling") or {}
+    if psc.get("per_video_token") or psc.get("per_sample"):
+        p_vid = psc.get("per_video_token") or 0
+        p_txt = psc.get("per_text_token") or 0
+        p_smp = psc.get("per_sample") or 0
+        # 文本 token 数本仓目前没有字段装；有 per_text_token 却没有 token 数时，
+        # 那一项只能漏掉并标明是下界 —— 不替它猜一个长度
+        flops["linear"] = 2 * (p_vid * seq + p_smp)
+        flops["linear_terms"] = {
+            "formula": "2 × (每视频 token 参数 × token 数 + 每样本参数 × 1)",
+            "factors": {"per_video_token": p_vid, "per_sample": p_smp,
+                        "per_text_token": p_txt, "tokens": seq},
+            "note": "AdaLN 这类吃条件向量的参数每次前向只过一遍，不随 token 数增长",
+        }
+        if p_txt:
+            notes.append(f"per_text_token 声明了 {p_txt:,.0f} 但记录没给文本 token 数，"
+                         "线性项漏掉了这一项 —— 是下界")
+    elif dit_params:
         flops["linear"] = 2 * dit_params * seq
         flops["linear_terms"] = {
             "formula": "2 × 激活参数 × 序列 token 数",
             "factors": {"active_params": dit_params, "source": dit_params_src, "tokens": seq},
+            "note": "**这是上界。** 公式隐含「每个参数都过每个 token」，而 AdaLN 调制"
+                    "吃的是条件向量、每次前向只过一遍。填 backbone.param_scaling 可以算准",
         }
+        if (gen.get("backbone") or {}).get("layers"):
+            notes.append("线性 FLOPs 是上界：没填 backbone.param_scaling，"
+                         "逐样本参数（AdaLN 这类）被当成逐 token 算了")
     else:
         notes.append("没拿到主干激活参数，单步线性 FLOPs 算不出")
     if layers and hidden:
@@ -807,7 +834,15 @@ def gen_workload(gen: dict, kind: str, dit_params: float, dit_params_src: str,
                 if ow and oh:
                     s_nt = ((of - 1) / t_c + 1 if causal else of / t_c) / p_t
                     s_seq = s_nt * (oh / (s_c * p_h)) * (ow / (s_c * p_w)) + audio_tokens
-                    s_step = 2 * dit_params * s_seq + 4 * layers * hidden * s_seq * s_seq
+                    # 线性项要和单步用同一套口径。这里原来写死了 2 × dit_params × seq，
+                    # 于是 param_scaling 填上之后单步用新口径、端到端用旧口径 ——
+                    # 同一个页面上两个数按两种公式算，而且谁也看不出来
+                    if psc.get("per_video_token") or psc.get("per_sample"):
+                        s_lin = 2 * ((psc.get("per_video_token") or 0) * s_seq
+                                     + (psc.get("per_sample") or 0))
+                    else:
+                        s_lin = 2 * dit_params * s_seq
+                    s_step = s_lin + 4 * layers * hidden * s_seq * s_seq
                 else:
                     s_seq, s_step = seq, flops["total"]
                     est_only.append(st.get("name"))

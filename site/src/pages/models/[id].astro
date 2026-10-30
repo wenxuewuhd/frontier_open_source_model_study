@@ -508,6 +508,33 @@ const rv = reviewStatus(m);
             </div>
           </div>
           <div class="card stat">
+            <div class="label">线性项按什么标度</div>
+            {gw.flops_per_step?.linear_terms?.factors?.per_sample !== undefined ? (
+              <>
+                <div class="value">
+                  {fmtCount(gw.flops_per_step.linear_terms.factors.per_video_token)} / token
+                </div>
+                <div class="sub">
+                  逐样本 {fmtCount(gw.flops_per_step.linear_terms.factors.per_sample)}
+                  （AdaLN 这类吃条件向量的，每次前向只过一遍）
+                  {gw.flops_per_step.linear_terms.factors.per_text_token
+                    ? ` · 仅文本 ${fmtCount(gw.flops_per_step.linear_terms.factors.per_text_token)}`
+                    : ''}
+                </div>
+              </>
+            ) : (
+              <>
+                <div class="value">未分桶</div>
+                {/* 没填 param_scaling 时线性项是上界，这句必须说 ——
+                    AdaLN 在新一代生成类里占三分之一上下，一刀切会高 1.6–3 倍 */}
+                <div class="sub">
+                  线性项按「每个参数过每个 token」算，是<strong>上界</strong>。
+                  填 <code>backbone.param_scaling</code> 可以算准
+                </div>
+              </>
+            )}
+          </div>
+          <div class="card stat">
             <div class="label">端到端 FLOPs</div>
             <div class="value">{gw.flops_end_to_end ? fl(gw.flops_end_to_end) : '—'}</div>
             <div class="sub">

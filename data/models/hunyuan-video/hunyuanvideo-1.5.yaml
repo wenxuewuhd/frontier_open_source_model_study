@@ -157,6 +157,18 @@ generation:
     head_dim: 128
     ffn: 8192
     text_conditioning: dual_stream
+    param_scaling:
+      per_sample: 2723964928
+      per_video_token: 2727511584
+      per_text_token: 2871435648
+      note: >-
+        AdaLN 调制（img_mod / txt_mod）吃的是条件向量 `vec` 不是 token 流
+        （`hunyuanvideo_1_5_transformer.py:135` 的 `self.img_mod(vec).chunk(6, dim=-1)`，
+        `modulate()` 里 `scale.unsqueeze(1)` 再广播到 token 维），
+        每次前向只过一遍。它占主干 **32.71%** —— 按「每个参数过每个 token」算，
+        线性项高 3.05 倍。
+        per_text_token 是双流 txt 侧（attn_txt + ffn_txt + token_refiner + byt5_proj），
+        只过文本 token；本记录没给文本 token 数，所以线性项里暂缺这一项，是下界
     patch_size: [1, 1, 1]
     refiner_layers: 2
     position: 3D RoPE，rope_dim_list [16, 56, 56]（t/h/w），rope_theta 256
