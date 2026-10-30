@@ -797,7 +797,7 @@ review:
     finding: >-
       站点的模型页无条件拼 `${method} ×${num_tokens}`，于是构建产物上印出
       「DSpark 草稿头 ×undefined」，而五道闸全绿 —— check_rendered 当时只查
-      没解开的 ** 与反引号，不查字面量 undefined。
+      没解开的 `**` 与反引号，不查字面量 undefined。
       同一个模板毛病在「残差流」那一行上早就存在：minimax-text-01、minimax-m1-80k
       与**我没碰过的 kimi-k3** 三页都印着 ×undefined
     resolution: corrected
