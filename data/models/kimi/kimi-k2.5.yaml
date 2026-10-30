@@ -296,6 +296,13 @@ arch:
 
 precision:
   weights_release: [INT4, BF16, FP32]
+  weights_release_scope:
+    INT4:
+      measured: true
+      container: INT32
+      note: 逻辑精度 INT4 落盘时装在 INT32 容器里，清单里看到的是容器 dtype，不是声明错
+    BF16: { measured: true }
+    FP32: { measured: true }
   quantization:
     method: compressed-tensors（pack-quantized，weight-only）
     expert_dtype: INT4
@@ -427,6 +434,7 @@ evidence:
   arch.vision.separability.cross_prefix_sharing: judgement
   precision: official
   precision.weights_release: derived
+  precision.weights_release_scope: derived
   precision.quantization.expert_dtype: derived
   precision.quantization.packing_note: derived
   precision.quantization.per_subsystem: derived

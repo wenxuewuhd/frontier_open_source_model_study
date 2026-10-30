@@ -66,7 +66,7 @@
 
 ## 回归用例
 
-`tests/absence_regression.py`，18 条，三次误读各有负例与正例：
+`tests/absence_regression.py`，19 条，三次误读各有负例与正例：
 
 ```
 .venv/bin/python tests/absence_regression.py -v
@@ -80,7 +80,7 @@
 
 把 `check_absence_contract` 掏空重跑，6 条负例全部失败 —— 用例不是摆设，验过。
 
-## `weights_release` 的口径（schema 已就位，47 份迁移待做）
+## `weights_release` 的口径（已迁完）
 
 同一种情况两种相反的记法同时存在：
 
@@ -93,21 +93,26 @@
 两种都讲得通，同时存在不行：读者无从知道一行「BF16」是「厂商只发过 BF16」还是
 「本仓只取了 BF16 那个仓」，而精度表只显示取数那个仓。
 
-**约定是「列厂商发布过的全部变体 + 每一项标记取没取过数」。** schema 已经留好位置：
+**约定是「列厂商发布过的全部变体 + 每一项标记取没取过数」。**
 `precision.weights_release_scope`，每种精度一条 `{measured, repo?, container?, note?}`。
 `measured: false` 就是「厂商发过、本仓没取数」那一半，它让不可见的东西可见。
+
+**40 份带 `weights_release` 的记录已经全部迁完**（另有 7 份 DeepSeek 没有这个字段，
+不涉及）。`measured` 从 `derived` 的 `from_shapes.weight_bytes_by_dtype` 算 —— 那是全量
+清单的 dtype 直方图，粒度和 `weights_release` 对得上。仓名只从各记录自己已有证据的散文里
+取（HF 名单），不构造。带仓名的三份标 `judgement` 进 Gate C：断言「那个仓存在且装的是
+这种精度」是判断；其余标 `derived`，只是把清单里有没有这种 dtype 照实记下来。
 
 这和上面的三态是**同一个语义家族**，不另起一套词汇：`measured: false` 对应
 「查了但没有（在这个仓里）」，不是「没查」。
 
 ### 和 `e4983d4` 那道闸的接缝
 
-`check_release_vs_measured` 已经认这个字段了：某个变体标了 `measured: false`（在独立仓）
-或带了 `container`（逻辑精度装在别的容器里），就算交代过，放行；没交代的照旧报。
+`check_release_vs_measured` 认这个字段：某个变体标了 `measured: false`（在独立仓）
+或带了 `container`（逻辑精度装在别的容器里），就算交代过，放行；没交代的报。
 
-**所以 47 份可以一份一份迁移** —— 每迁一份，它的告警当场消失，不必等全部迁完，
-也就不必和别的会话抢一次性的大改。全部迁完之后把那里的 `warnings` 改成 `errors`，
-这一条就从提示变成闸：届时「没交代又对不上」没有任何正当理由。
+**迁完之后这一条已经从 warning 收紧成 error** —— 没交代又对不上，现在没有任何正当理由。
+新录一份记录时，`weights_release` 里写了本仓清单查不到的精度，就必须同时说清它在哪个仓。
 
 放行只认 `measured: false` 和 `container` 两种。**`measured: true` 不算交代** ——
 声明了、实测清单里查无实据、却标「取过数」，那是自相矛盾，继续报。回归用例钉住了这条。
@@ -141,8 +146,11 @@ glm 一代声明 `[BF16, FP32]`，FP32 只有 57,600 B（路由 gate 那一类�
   迟早会错。应改成 `subsystem_method.exhaustive` 布尔字段，届时规则换成 `op: truthy`。
 - **`--list-gaps` 现在只攒逐子系统那一类。** 其余列的「未录」没有攒，因为大部分列
   本来就填着值；要扩就把攒的范围放开。
-- **`qwen3.8-2.4t-a95b` 与 `qwen3.8-27b` 的 `per_subsystem` 不归这条线**
-  （分别归 `presentation` 与 `mm-infra`）。它们补上之后，`--list-gaps` 会从 5 份降到 3 份，
-  剩下的三份是真的按抽样取的数。
-- **`weights_release` 的 47 份迁移还没做。** 它要改 `data/models/**`，而其中 12 份
-  `kind: vlm` 归 `mm-infra`、`qwen3.8-2.4t-a95b` 归 `presentation` —— 动手前要先对齐。
+- **`--list-gaps` 现在是 3 份**（`ds-v3.1` / `minimax-m3` / `step-5-preview`），
+  都是真的按抽样取的数，不是漏录。两份通义的 `per_subsystem` 已由别的线补上。
+- **`weights_release` 里缺的变体没有补。** 口径说「列全部变体」，而 MiniMax-M3 的
+  `MXFP8` 变体（记录散文里提到、本仓未录）**没有加进 `weights_release`** ——
+  加一个变体要有来源，而散文里只说存在、没有仓名与日期。这是口径统一剩下的最后一块：
+  要补的是 M3 这一份，补法是先给 MXFP8 找到可定位的来源，再进 `weights_release`
+  并配 `measured: false`。闸口管不到这一类（它只能查「声明了而清单里没有」，
+  查不出「厂商发了而记录没声明」）。

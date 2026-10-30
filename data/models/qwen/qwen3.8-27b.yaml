@@ -258,6 +258,8 @@ arch:
 
 precision:
   weights_release: [BF16]
+  weights_release_scope:
+    BF16: { measured: true }
   quantization:
     per_subsystem:
       attention: BF16
@@ -374,6 +376,7 @@ evidence:
   arch.vision.separability.cross_prefix_sharing: judgement
   arch.position: derived
   precision: official
+  precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived
   platforms: official

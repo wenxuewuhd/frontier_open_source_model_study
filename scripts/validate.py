@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """校验：schema 合规、证据覆盖、防泄漏、声明与实测对账。
 
-四道检查，前三道任一失败就非零退出，供 CI 直接用：
+五道检查，任一失败就非零退出，供 CI 直接用：
 
   1. schema   每份 YAML 按 data/schema/*.json 校验
   2. 证据     每个手写叶子字段都要能在 evidence 里找到归属（支持前缀继承）；
               derived 的字段不允许手写；judgement 的字段列出来给人看
   3. 防泄漏   公开仓里不允许出现 visibility: internal 或 source.type: self
   4. 声明对账 precision.weights_release 里声明的每种精度，都要在实测清单里出现，
-              或者在 weights_release_scope 里交代清楚它在哪个仓 / 装在哪种容器里（告警）
+              或者在 weights_release_scope 里交代清楚它在哪个仓 / 装在哪种容器里
   5. 缺值三态 每一个会渲染成空格子的列，都要能说出自己是「没查」「不适用」
               还是「查了但没有」（data/schema/columns.json 的声明；第三态是信息，
               前两态是缺口，渲染成同一个 `—` 就等于把信息和缺口混为一谈）
@@ -45,7 +45,7 @@ def load_yaml(path):
     return yamlio.load(path)
 
 
-def check_release_vs_measured(doc, path, derived_dir, warnings):
+def check_release_vs_measured(doc, path, derived_dir, errors):
     """precision.weights_release 声明的精度，实测清单里有没有。
 
     参数量那边有 HF 的 safetensors tally 当外部锚，缓存那边有厂商公布的每 token 字节。
@@ -65,8 +65,10 @@ def check_release_vs_measured(doc, path, derived_dir, warnings):
     厂商常把量化变体发在独立仓。但两种情况在字段上长得一模一样，所以必须提示。
 
     口径已经定了：**列厂商发布过的全部变体，每一项带「本仓取没取过数」的标记**
-    （precision.weights_release_scope）。交代过的在这里放行，所以 47 份可以一份一份
-    迁移。**全部迁完之后把 warnings 改成 errors**，这一条就从提示变成闸。
+    （precision.weights_release_scope）。40 份带 weights_release 的记录已经全部迁完，
+    所以这一条**从告警收紧成错误**：没交代又对不上，现在没有任何正当理由 ——
+    要么补 scope 说明在哪个仓（measured: false）或装在哪种容器里（container），
+    要么声明本身不对，两种都得有人动手。
     """
     wr = ((doc.get("precision") or {}).get("weights_release")) or []
     mid = doc.get("id")
@@ -104,7 +106,7 @@ def check_release_vs_measured(doc, path, derived_dir, warnings):
     if not unexplained:
         return
 
-    warnings.append(
+    errors.append(
         f"{path}: precision.weights_release 声明了 {unexplained}，但实测清单里没有"
         f"（实测 {sorted(measured)}）。要么这些变体在本仓没取过数的独立仓里 —— "
         f"那就在 precision.weights_release_scope 里写明是哪个仓、measured: false；"
@@ -439,7 +441,7 @@ def main():
         check_evidence(doc, p, errors, warnings, judgements)
         check_review(doc, p, errors, warnings)
         check_leak(doc, p, errors, args.allow_internal)
-        check_release_vs_measured(doc, p, os.path.join(args.data_dir, "derived"), warnings)
+        check_release_vs_measured(doc, p, os.path.join(args.data_dir, "derived"), errors)
         check_absence_resolves(doc, p, os.path.join(args.data_dir, "derived"),
                                errors, warnings, gaps)
     check_review_pointers(loaded, errors, warnings)

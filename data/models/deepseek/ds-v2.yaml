@@ -127,6 +127,7 @@ evidence:
   notes: judgement
   open_questions: judgement
   precision.weights_release: derived
+  precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived
   arch.moe.storage_note: derived
@@ -141,6 +142,8 @@ open_questions:
 - 训练精度没有一手来源，故不填 precision.training
 precision:
   weights_release: [BF16]
+  weights_release_scope:
+    BF16: { measured: true }
   quantization:
     per_subsystem:
       expert: BF16

@@ -148,6 +148,8 @@ arch:
 
 precision:
   weights_release: [BF16]
+  weights_release_scope:
+    BF16: { measured: true }
   quantization:
     per_subsystem:
       expert: BF16
@@ -214,6 +216,7 @@ evidence:
   arch.decoding.mtp_layers: official
   arch.decoding.mtp_layers_note: derived
   precision.weights_release: derived
+  precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived
   infra_signals: judgement

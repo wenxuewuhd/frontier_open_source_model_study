@@ -197,6 +197,10 @@ arch:
 
 precision:
   weights_release: [FP8_E4M3, BF16, FP32]
+  weights_release_scope:
+    FP8_E4M3: { measured: true }
+    BF16: { measured: true }
+    FP32: { measured: true }
   quantization:
     method: FP8 blockwise（quant_method fp8）
     activation_scheme: dynamic
@@ -359,6 +363,7 @@ evidence:
   precision: official
   precision.quantization.weight_block_size: derived
   precision.weights_release: derived
+  precision.weights_release_scope: derived
   precision.quantization.block_size_note: derived
   precision.quantization.per_subsystem: derived
   precision.quantization.per_subsystem_scale: derived

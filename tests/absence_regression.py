@@ -88,6 +88,14 @@ def derived(mid: str):
 RECS = records()
 
 
+def release_errors(doc) -> list:
+    """40 份迁完之后这一条已经从告警收紧成错误，所以收的是 errors。"""
+    e = []
+    validate.check_release_vs_measured(
+        doc, doc.get("id", "?"), os.path.join(ROOT, "data", "derived"), e)
+    return e
+
+
 # ============================================================ 误读一：单位
 #
 # 族系旗舰表以「元素/token」为主键、DeepSeek 精度表以「字节/token」为主键，
@@ -234,47 +242,40 @@ def _():
         assert cur, f"{mid} 有实测精度，却说不出测自哪个仓（{path} 是空的）"
 
 
-@case("三·正例：声明了而实测清单里没有的，正好是那三份通义")
+@case("三·正例：全仓真正「声明了而清单里没有」的就那三份通义")
 def _():
-    warnings = []
-    for p in sorted(glob.glob(os.path.join(ROOT, "data", "models", "*", "*.yaml"))):
-        d = yamlio.load(p) or {}
-        validate.check_release_vs_measured(
-            d, p, os.path.join(ROOT, "data", "derived"), warnings)
-    got = sorted(w.split("/")[-1].split(".yaml")[0] for w in warnings)
+    got = []
+    for mid, d in RECS.items():
+        bare = copy.deepcopy(d)
+        bare.get("precision", {}).pop("weights_release_scope", None)
+        if release_errors(bare):
+            got.append(mid)
     want = ["qwen3.5-27b", "qwen3.5-397b-a17b", "qwen3.8-2.4t-a95b"]
-    assert got == want, f"实际报的是 {got}，应当是 {want}"
+    assert sorted(got) == want, f"实际是 {sorted(got)}，应当是 {want}"
 
 
-def release_warnings(doc) -> list:
-    w = []
-    validate.check_release_vs_measured(
-        doc, doc.get("id", "?"), os.path.join(ROOT, "data", "derived"), w)
-    return w
-
-
-@case("三·正例：交代过在哪个仓之后，那一份就不再报")
+@case("三·负例：把 scope 摘掉，那一份立刻报错")
 def _():
-    # 迁移要能一份一份来：每迁一份，它的告警当场消失，不必等 47 份全迁完
-    d = copy.deepcopy(RECS["qwen3.8-2.4t-a95b"])
-    assert release_warnings(d), "迁移前应当报"
-    d.setdefault("precision", {})["weights_release_scope"] = {
-        "BF16": {"measured": True},
-        "FP8_E4M3": {"measured": False, "repo": "Qwen/Qwen3.8-2.4T-A95B-FP8"},
-    }
-    assert not release_warnings(d), "交代过之后不该再报"
+    # 这三份是全仓真正「声明了而清单里没有」的，交代摘掉就该拦住
+    for mid in ("qwen3.5-27b", "qwen3.5-397b-a17b", "qwen3.8-2.4t-a95b"):
+        d = copy.deepcopy(RECS[mid])
+        d["precision"].pop("weights_release_scope", None)
+        assert release_errors(d), f"{mid} 摘掉 scope 之后应当报错"
+
+
+@case("三·正例：40 份迁完之后，真实记录一条都不报")
+def _():
+    for mid, d in RECS.items():
+        assert not release_errors(d), f"{mid} 还在报：{release_errors(d)}"
 
 
 @case("三·负例：只交代一半，剩下那半照旧报")
 def _():
     d = copy.deepcopy(RECS["qwen3.5-27b"])
-    before = release_warnings(d)
-    assert before and "FP8_E4M3" in before[0] and "INT4" in before[0], \
-        f"迁移前应当两种都报：{before}"
-    d.setdefault("precision", {})["weights_release_scope"] = {
+    d["precision"]["weights_release_scope"] = {
         "FP8_E4M3": {"measured": False, "repo": "Qwen/Qwen3.5-27B-FP8"},
     }
-    after = release_warnings(d)
+    after = release_errors(d)
     assert after, "还有一种没交代，应当继续报"
     assert "INT4" in after[0] and "FP8_E4M3" not in after[0], \
         f"应当只报剩下的 INT4：{after}"
@@ -284,10 +285,8 @@ def _():
 def _():
     # 声明了、实测清单里没有、却标 measured: true：这是自相矛盾，不该被放行
     d = copy.deepcopy(RECS["qwen3.8-2.4t-a95b"])
-    d.setdefault("precision", {})["weights_release_scope"] = {
-        "FP8_E4M3": {"measured": True},
-    }
-    assert release_warnings(d), "标 measured: true 却查无实据，必须继续报"
+    d["precision"]["weights_release_scope"] = {"FP8_E4M3": {"measured": True}}
+    assert release_errors(d), "标 measured: true 却查无实据，必须继续报"
 
 
 @case("三·正例：四份「逻辑精度 vs 容器」不被误报")
@@ -297,10 +296,9 @@ def _():
     for mid in ("deepseek-v41-flash", "kimi-k2-thinking", "kimi-k2.5", "kimi-k3"):
         d = RECS.get(mid)
         assert d, f"{mid} 不在记录里"
-        warnings = []
-        validate.check_release_vs_measured(
-            d, mid, os.path.join(ROOT, "data", "derived"), warnings)
-        assert not warnings, f"{mid} 被误报了：{warnings}"
+        bare = copy.deepcopy(d)
+        bare.get("precision", {}).pop("weights_release_scope", None)
+        assert not release_errors(bare), f"{mid} 被误报了（且不是靠 scope 兜的）"
 
 
 # ============================================================ 跑
