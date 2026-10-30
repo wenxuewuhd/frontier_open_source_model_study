@@ -356,6 +356,17 @@ precision:
       lm_head: BF16
       norm: BF16
       residual: FP32
+      # **draft 这一格跨两种量化元素格式，而 FP4 这个值是承重的，不能改成 MIXED。**
+      # 清单实测草稿侧：I8 2304 条（打包 FP4 专家，块 [1,32]）+ F8_E4M3 25 条
+      # （attn 投影与共享专家，块 [32,32]），另有 BF16 20 条与 F32 30 条未量化；
+      # 还原后元素数 97.4% FP4 / 2.3% FP8_E4M3 / 0.3% BF16。per_subsystem_block 的 '[1,32]+[128,128]' 披露的就是这两套。
+      # **不记 MIXED 的原因**：derive.py 拿这一格当打包因子的声明
+      # （dtypes.packing_factor），而 dtypes.BITS 里没有 MIXED 这个键 —— 实测改成 MIXED 后
+      # 草稿侧参数量从 19,845,851,751 掉到 10,182,175,335（少 9,663,676,416），
+      # 全模型从 304,646,824,126 掉到 294,983,147,710；而且 packing_suspect 只在
+      # `sub not in logical` 时触发，填了 MIXED 等于有值但无用，少算是静默的。
+      # 对照 minimax-m3.1-flash 的 draft 能记 MIXED：那边草稿侧没有打包容器。
+      # **判据是「这个子系统里有没有打包的亚字节权重」，不是记法风格**（见核查 R13）
       draft: FP4
       vision: BF16
     per_subsystem_block:
@@ -366,7 +377,10 @@ precision:
       draft: '[1,32]+[128,128]'
     subsystem_method: >-
       早先按抽样填（每个子系统 6 个代表张量，读 16 个分片头）。与 DSpark 同名的 72317 个张量形状与 dtype 逐个相同，按元素数的全量复核
-      同 ds-v4-flash / dspark；新增的视觉侧 100% BF16，代表值都不变
+      同 ds-v4-flash / dspark；新增的视觉侧 100% BF16，代表值都不变。
+      **有一格是混的：draft 跨两种量化元素格式** —— 还原后元素数 97.4% FP4
+      （2304 条 I8 打包专家，块 [1,32]）/ 2.3% FP8_E4M3（25 条 attn 投影与共享专家，
+      块 [128,128]）/ 0.3% BF16。这一格**不记 MIXED 是有原因的**，见该字段上方的注释与核查 R13
     # **这一格的口径是落盘容器 dtype**，逐分片读头读出来的：清单里 .scale 张量的 dtype
     # 字面就是 F8_E8M0，所以容器与逻辑精度在这份权重上重合。不是从上面的 scale_format
     # ue8m0 推的 —— 那只约束取值不约束容器，V3.1 声明了 ue8m0 而 scale 张量实测仍是 FP32。
@@ -604,4 +618,27 @@ review:
     与 Kimi 的 UINT8 同口径（两边都写落盘容器），只是两家存法不同
   resolution: confirmed
   changed_to: 原值全部保留；expert_dtype 与 per_subsystem_scale 上方各补一条注释，写明名字出处与 scale 的口径
-
+- id: R13
+  field: precision.quantization.per_subsystem.draft
+  severity: imprecise
+  claim: >-
+    draft 记作 FP4，但那个子系统跨两种量化元素格式；同类情况 minimax-m3.1-flash 的 draft
+    记的是 MIXED，所以这一格要么该统一成 MIXED、要么该写明它还含 FP8 投影
+  finding: >-
+    混是真的，**但不能改成 MIXED —— 这一格是承重的。** 清单实测草稿侧 I8 2304 条
+    （打包 FP4 专家，块 [1,32]）+ F8_E4M3 25 条（attn 投影与共享专家，块 [32,32]）
+    + BF16 20 条 + F32 30 条，还原后元素数 97.4% FP4 / 2.3% FP8_E4M3 / 0.3% BF16。
+    derive.py 把这一格当打包因子的声明（dtypes.packing_factor），而 dtypes.BITS 里没有
+    MIXED 这个键：实测改成 MIXED 后草稿侧参数量从 19,845,851,751 掉到 10,182,175,335，
+    少 9,663,676,416；全模型从 304,646,824,126 掉到 294,983,147,710。
+    **而且不会报警** —— packing_suspect 只在 `sub not in logical` 时触发，填了 MIXED
+    等于这一格有值但无用，少算是静默的。
+    minimax-m3.1-flash 的 draft 能记 MIXED，是因为那边草稿侧没有打包容器
+    （35 条 U8 全是 weight_scale_inv，counts_as_param 为 False）。
+    **所以判据是「这个子系统里有没有打包的亚字节权重」，不是记法风格。**
+    全仓带 '+' 的格子普查过（14 格）：真正跨两种**量化**元素格式的是 V4 一代五份的
+    draft（deepseek-v41-flash + ds-v4-flash / -dspark / -vision-exp / ds-v4-pro），
+    不是一处；其余那些桶内虽有多种 dtype，但量化过的只有一种元素格式、
+    剩下的是未量化的 norm 与投影，那几格不动
+  resolution: confirmed
+  changed_to: 原值保留；per_subsystem 的 draft 上方补注释，写明逐 dtype 条数、占比、为什么不记 MIXED 与 minimax 能记 MIXED 的差别

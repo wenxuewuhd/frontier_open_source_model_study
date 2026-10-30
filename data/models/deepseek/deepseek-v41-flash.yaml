@@ -476,6 +476,21 @@ precision:
     # 名字是厂商的说法，两者不混进同一个字段（见核查 R41）
     per_subsystem:
       expert: FP4
+      # **draft 这一格跨两种量化元素格式，而 FP4 这个值是承重的，不能改成 MIXED。**
+      # 清单实测草稿侧（mtp.* 三块）：I8 1152 条（打包 FP4 专家，块 [1,32]）
+      # + F8_E4M3 25 条（attn 的 wkv/wq_a/wq_b/wo_a/wo_b 与 shared_experts，块 [32,32]），
+      # 另有 BF16 20 条（norm / ffn.gate）与 F32 27 条（attn_sink / gate.bias / hc_*）。
+      # 按还原后的元素数是 95.5% FP4 / 4.0% FP8 / 0.5% BF16 / 0.02% FP32。
+      # **为什么不记 MIXED**：derive.py 拿这一格当打包因子的声明
+      # （dtypes.packing_factor(logical, container)），而 BITS 里没有 MIXED 这个键 ——
+      # 改成 MIXED 会让 1152 条 I8 容器不再按 ×2 还原，草稿侧参数量从 14,225,362,530
+      # 掉到 7,430,590,050、全模型从 763,205,315,794 掉到 756,410,543,314（少 6,794,772,480）。
+      # 而且**不会报警**：packing_suspect 只在 `sub not in logical` 时才触发，
+      # 填了 MIXED 等于这一格「有值但无用」，少算是静默的。763,205,315,794 恰是 HF 的
+      # safetensors tally，所以现值是被 Gate B 的外部锚钉住的，不是随手挑的代表值。
+      # 对照 minimax-m3.1-flash 的 draft 能记 MIXED：那边草稿侧没有打包容器
+      # （35 条 U8 全是 weight_scale_inv，counts_as_param 为 False），所以记 MIXED 不丢数。
+      # **判据是「这个子系统里有没有打包的亚字节权重」，不是风格选择**（见核查 R43）
       draft: FP4
       attention: FP8_E4M3
       # 压缩器与 indexer 从注意力里拆出来单列：并在一起时表上只剩 FP8，
@@ -520,7 +535,11 @@ precision:
       并与上游的日期版刷新 deepseek-ai/DeepSeek-V4.1-Flash-1017
       （sha 1bae0e1088993b9b82de08f59de5be5a34e42170，config 与本版逐字段相同、
       张量名集合 96085 个逐个相同）独立测得的 13 项完全一致。
-      那一版本仓不单独立记录（零结构差异的权重刷新一律不收），但这次交叉验证是实际跑过的
+      那一版本仓不单独立记录（零结构差异的权重刷新一律不收），但这次交叉验证是实际跑过的。
+      **有一格是混的：draft 跨两种量化元素格式** —— 按还原后的元素数 95.5% FP4
+      （1152 条 I8 打包专家，块 [1,32]）/ 4.0% FP8_E4M3（25 条 attn 投影与共享专家，块 [32,32]）
+      / 0.5% BF16 / 0.02% FP32，代表值取 FP4。per_subsystem_block 的 '[1,32]+[32,32]'
+      披露的就是这两套；这一格**不记 MIXED 是有原因的**，见该字段上方的注释与核查 R43
     packing_note: FP4 权重打包进 INT8 容器，每字节两个。工具据 per_subsystem 的逻辑精度 与实际容器类型自动还原参数量；字节数不还原，容器就是真实存储。
 platforms:
 - engine: vLLM
@@ -1145,6 +1164,36 @@ review:
     「未公布」把三件没公布的事扩写成了四件，也让一条能引的一手来源看不见
   resolution: corrected
   changed_to: local_window 的 note 与 kv_cache_components.source 改写，精度一侧引报告原文，块与 scale 一侧保留原来的降档说明
+- id: R43
+  field: precision.quantization.per_subsystem.draft
+  severity: imprecise
+  claim: >-
+    draft 记作 FP4，但那个子系统跨两种量化元素格式；同类情况 minimax-m3.1-flash 的 draft
+    记的是 MIXED，所以这一格要么该统一成 MIXED、要么该写明它还含 FP8 投影
+  finding: >-
+    混是真的，**但不能改成 MIXED —— 这一格是承重的。** 清单实测草稿侧 I8 1152 条
+    （打包 FP4 专家，块 [1,32]）+ F8_E4M3 25 条（attn 的 wkv/wq_a/wq_b/wo_a/wo_b
+    与 shared_experts，块 [32,32]）+ BF16 20 条 + F32 27 条，还原后元素数
+    95.5% / 4.0% / 0.5% / 0.02%。
+    derive.py 把这一格当打包因子的声明（dtypes.packing_factor(logical, container)），
+    而 dtypes.BITS 里没有 MIXED 这个键：实测改成 MIXED 后草稿侧参数量从 14,225,362,530
+    掉到 7,430,590,050、全模型从 763,205,315,794 掉到 756,410,543,314，少 6,794,772,480。
+    **而且不会报警** —— packing_suspect 只在 `sub not in logical` 时触发，填了 MIXED
+    等于这一格有值但无用，少算是静默的。763,205,315,794 恰是 HF 的 safetensors tally，
+    所以现值是被 Gate B 的外部锚钉住的。
+    minimax-m3.1-flash 的 draft 能记 MIXED，是因为那边草稿侧没有打包容器
+    （35 条 U8 全是 weight_scale_inv，counts_as_param 为 False）。
+    **所以判据是「这个子系统里有没有打包的亚字节权重」，不是记法风格。**
+    顺带做了全仓带 '+' 的格子普查（14 格）：真正跨两种**量化**元素格式的是
+    V4 一代五份的 draft（本记录 + ds-v4-flash / -dspark / -vision-exp / ds-v4-pro），
+    不是一处。本记录的 retrieval 以及 ds-v3 / ds-v3.2-exp / glm-5.3 的 draft 虽然桶内
+    也有多种 dtype，但量化过的只有一种元素格式、其余是未量化的 norm 与投影，
+    '+' 指的是同一元素格式的两种瓦片，那几格不动
+  resolution: confirmed
+  changed_to: >-
+    原值保留；per_subsystem 的 draft 上方补注释写明逐 dtype 条数、占比、为什么不记 MIXED
+    与 minimax 能记 MIXED 的差别，subsystem_method 里补一句页面可见的披露
+    （原先只有 per_subsystem_block 的 '[1,32]+[32,32]' 暗示两套块方案）
 
 notes: 本记录是 P0-A 的 schema 压力测试用例：选它是因为它同时带有 MLA、细粒度 MoE、 跨层 KV 共享、稀疏选块、残差流改造、外置查表、自带草稿模型和混合精度， 字段覆盖最宽。schema
   撑不住的地方会先在这里暴露。
