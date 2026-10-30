@@ -1,0 +1,710 @@
+id: ltx-2
+family: ltx
+kind: video-gen
+display_name: LTX-2 (19B dev)
+released: '2026-01-03'
+license: ltx-2-community-license
+visibility: public
+
+# **录的是 `ltx-2-19b-dev`**（bf16 全量档），不是蒸馏档。理由：模型卡里唯一一条
+# 端到端配方建在 dev 上（stage 1 用 dev 跑 40 步 CFG 4.0，stage 2 挂蒸馏 LoRA 跑 3 步），
+# 所以 dev 是本代采样口径有一手来源的那一档；蒸馏档卡上只有「8 步 CFG=1」一行，
+# 进 sampling.step_distilled 与 checkpoint_variants。
+# 同族 ltx-2.3 录的是蒸馏档（那边卡上没有任何 dev 配方），**两份的步数不可直接比** ——
+# 见 params.counting_note 与 lineage。
+#
+# 口径沿用 wan2.2-ti2v-5b 定下的三条（params 只算 DiT、不建 arch 块、没有 KV cache 这笔账），
+# 另有两条这一族新增的：
+#
+# 4. **params.total 取 `transformer/` 这个组件**，不取顶层单文件包。这个仓两种布局都有：
+#    diffusers 组件目录（transformer/ vae/ connectors/ …）与 ComfyUI 式单文件
+#    `ltx-2-19b-dev.safetensors`。两者是同一批权重（逐组件字节对账见 reviewed.method），
+#    但 HF 自己的 safetensors tally 只统计 transformer/ 这一个索引，取它才能拿到
+#    **逐位相同**的外部锚（18,876,174,592）。VAE / 连接器 / 声码器 / 音频 VAE /
+#    文本投影的规模来自单文件包的第二次读清单，落在 generation.* 里。
+# 5. **「19b」说的是 DiT，「22b」（ltx-2.3）说的不是同一件事。** 本代 DiT 18.88B 就是 19b；
+#    下一代的 22b 是 DiT + 连接器 + 文本投影 22.16B，而它的 DiT 只有 18.99B。
+#    跨代可比的量是 params.active_decode，不是 params.total。
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/Lightricks/LTX-2
+    locator: README.md §Model Checkpoints 与 §Use with diffusers 的两阶段示例 @ 64f65d09e0b7
+    accessed: '2026-10-30'
+    note: >-
+      checkpoint 表（7 档：dev / dev-fp8 / dev-fp4 / distilled / distilled-lora-384 /
+      spatial-upscaler-x2 / temporal-upscaler-x2）与蒸馏档的「8 steps, CFG=1」来自这里。
+      两阶段配方也来自这里：stage 1 `num_inference_steps=40`、`guidance_scale=4.0`、
+      121 帧、24 fps、768×512；latent 上采样 ×2；stage 2 挂
+      `ltx-2-19b-distilled-lora-384`，`num_inference_steps=3`、`guidance_scale=1.0`、
+      走 `STAGE_2_DISTILLED_SIGMA_VALUES`。约束「宽高被 32 整除、帧数 8n+1」也在卡上。
+      **卡上没有任何结构数字** —— 层数、宽度、压缩率全部来自组件 config 与权重清单
+  - kind: modelcard
+    url: https://huggingface.co/Lightricks/LTX-2
+    locator: transformer/ vae/ connectors/ audio_vae/ vocoder/ latent_upsampler/ text_encoder/ 七份组件 config @ 64f65d09e0b7
+    accessed: '2026-10-30'
+    note: >-
+      这个仓**没有顶层 config.json**，有 9 份组件 config。结构字段全部取自这里：
+      transformer 48 层 / 32 heads × 128 / in_out 128 / patch_size 1 与 patch_size_t 1 /
+      cross_attention_dim 4096 / caption_channels 3840 / vae_scale_factors [8,32,32] /
+      qk_norm "rms_norm_across_heads" / rope_type "split" / rope_double_precision true；
+      vae spatial_compression_ratio 32 / temporal_compression_ratio 8 / latent_channels 128 /
+      patch_size 4 / encoder_causal true / decoder_causal false；
+      connectors 视频与音频各 2 层 30 heads × 128、各 128 个可学习 register、
+      text_proj_in_factor 49；vocoder output_sampling_rate 24000；
+      audio_vae latent_channels 8 / mel_bins 64 / sample_rate 16000；
+      latent_upsampler rational_spatial_scale 2.0
+  - kind: modelcard
+    url: https://huggingface.co/Lightricks/LTX-2
+    locator: transformer/diffusion_pytorch_model-0000{1..8}-of-00008.safetensors 的头 @ 64f65d09e0b7
+    accessed: '2026-10-30'
+    note: >-
+      params 的来源：8 分片逐片读头取全，**3,510 个张量**，无读失败分片。
+      BF16 18,872,918,272 + F32 3,256,320（F32 的 194 个全是 scale_shift_table 调制表）
+      = 18,876,174,592，与 HF 自己的 safetensors tally **逐位相同**。
+      48 个 transformer_blocks **每块参数量完全相同**（386,074,624），所以
+      「每块 × 48」这个乘式成立
+  - kind: modelcard
+    url: https://huggingface.co/Lightricks/LTX-2
+    locator: ltx-2-19b-dev.safetensors 的头（4,052 张量）与 -fp8 / -fp4 两档的头 @ 64f65d09e0b7
+    accessed: '2026-10-30'
+    note: >-
+      第二次定向读清单，只回答两个问题：(1) 非 DiT 组件各多大
+      —— 单文件包按前缀分成 model.diffusion_model. 18,876,174,592 /
+      vae. 1,222,480,241 / {video,audio}_embeddings_connector 708,940,800 /
+      text_embedding_projection. 722,534,400 / vocoder. 55,592,802 /
+      audio_vae. 53,248,402，合计 21,638,971,237；
+      (2) 官方量化档量化了什么 —— 见 precision.weights_release_scope。
+      这份清单**不并入 facts/ltx-2 的 shapes.json**，不用于 params
+  - kind: repo
+    url: https://github.com/Lightricks/LTX-2
+    locator: >-
+      packages/ltx-pipelines/src/ltx_pipelines/utils/constants.py 的 LTX_2_PARAMS 与
+      DISTILLED_SIGMA_VALUES；同包 utils/denoisers.py 的 _guided_denoise；
+      packages/ltx-core/src/ltx_core/components/guiders.py 的 MultiModalGuider
+    accessed: '2026-10-30'
+    note: >-
+      厂商参考实现（来源优先级第三档）。只用来回答模型卡不说的两件事：
+      LTX_2_PARAMS 的默认档（num_inference_steps 40、stage_1 512×768、
+      num_frames 121、frame_rate 24.0）与卡上的 40 步 / 121 帧 / 768×512 一致，
+      所以它在采样口径上不是凭空写的；
+      以及**每步前向次数的真实上界** —— `_guided_denoise` 按 cond / uncond / ptb / mod
+      四路收集 passes，而 LTX_2_PARAMS 的 cfg_scale 3.0、stg_scale 1.0、
+      modality_scale 3.0 三个判据全部成立，即厂商 CLI 的默认档是**每步 4 次前向**，
+      不是卡上 diffusers 路径的 2 次。见 generation.sampling.note 与 bottlenecks
+
+hf:
+  repo: Lightricks/LTX-2
+  sha: 64f65d09e0b76c96202b5bc09997673184cf9b5d
+  last_modified: '2026-10-22T08:57:03.000Z'
+  pipeline_tag: image-to-video
+  gated: false
+
+lineage:
+  track: main
+  successor: ltx-2.3
+  # ltx family 的名义旗舰是 LTX-2.5，但那个仓 gated、卡与 config 都取不到，
+  # 所以 family 里实际最新的记录是 ltx-2.3。本记录是差分基线。
+  # 前代（LTX-Video 0.9.x）没录，predecessor 暂缺
+
+params:
+  total: 18876174592
+  # 扩散主干稠密，每一步都过全部 DiT 权重 —— 没有 MoE 路由、没有跨步复用。
+  # 但 active_decode 不等于 total 的那种「全部权重」：这里 total 取的就是 DiT
+  # 组件本身（transformer/），连接器与文本投影在另外的组件里、不在这个数内。
+  # active_* 显式写出来，是为了让它成为**跨代可比的那个量**（见 counting_note）
+  active_decode: 18876174592
+  active_prefill: 18876174592
+  breakdown:
+    video_ffn: 6443433984
+    video_self_attention: 3222405120
+    video_cross_attention: 3222405120
+    audio_ffn: 1611104256
+    a2v_cross_attention: 1208647680
+    v2a_cross_attention: 1208549376
+    audio_self_attention: 805896192
+    audio_cross_attention: 805896192
+    adaln_modulation: 301680640
+    caption_projection: 44576768
+    patchify_and_proj_out: 1579264
+  counting_note: >-
+    **只含 DiT（diffusers 布局的 `transformer/` 组件）**，按完整权重清单
+    （8 分片 3,510 张量）逐项统计：18,876,174,592，与 HF 自己的 safetensors tally
+    **逐位相同**。BF16 18,872,918,272 + F32 3,256,320，无 scale 容器、无打包容器，
+    所以 numel 即参数数；18,872,918,272 × 2 B + 3,256,320 × 4 B = 37,758,861,824 B，
+    与 transformer/ 八个分片的 HTTP 实际大小合计 37,759,286,096 B 差 424,272 B
+    （八个 safetensors 头）。
+
+    分桶口径：八个注意力/FFN 桶都是「单块 × 48」—— 48 个 transformer_blocks
+    **每块参数量完全相同**（386,074,624），逐块验过，所以这个乘式本身成立。
+    video_self/cross_attention 各 67,133,440/块（q/k/v/o 四个 [4096,4096] 加 bias
+    与两个 [4096] 的 QK-norm），audio 侧同构但宽 2048；a2v 与 v2a 是音视频互相的
+    交叉注意力，q 或 k/v 一侧 4096、另一侧 2048，所以两者差 98,304（= 48 × 2,048）。
+    adaln_modulation 含 6 个全局 adaLN 模块（adaln_single 118,521,856、
+    av_ca_video_scale_shift 84,959,232、av_ca_a2v_gate 34,615,296、
+    audio_adaln_single 29,900,800、av_ca_audio_scale_shift 21,508,096、
+    av_ca_v2a_gate 8,919,040 = 298,424,320）、顶层两张表 12,288、
+    以及逐块 scale_shift_table 3,244,032。
+
+    **不含的三类**，它们在同一次发布里但不在 transformer/ 组件内，规模见 generation.*：
+    视觉 VAE 1,222,480,241、文本嵌入投影 722,534,400、文本与音频连接器 708,940,800、
+    声码器 55,592,802、音频 VAE 53,248,402。五项与 DiT 相加 21,638,971,237，
+    正是单文件包 `ltx-2-19b-dev.safetensors` 的清单总量。
+    **也不含文本编码器** —— Gemma-3-12B 12,187,325,040 参数、落盘 F32 48.7 GB，
+    随仓发布但在 text_encoder/ 下，见 generation.text_encoders。
+
+    **跨代比较只能用 active_decode。** 本代的「19b」是 DiT 18.88B，
+    而下一代 ltx-2.3 的「22b」是 DiT + 连接器 + 文本投影 22.16B（它的 DiT 只有 18.99B）
+    —— 两个名字不是同一个口径。而两份记录的 params.total 也不对等：
+    本记录的清单就是 DiT 组件，所以 total 填 18,876,174,592；
+    ltx-2.3 只发单文件整包、清单含六个组件，那份的 total 留空（理由在它的 params 注释里）。
+    **可比的是 active_decode**（18,876,174,592 → 18,988,838,144，+0.60%）
+    与 48 块主干（18,531,581,952 → 18,561,377,280，+0.161%）。
+
+generation:
+  backbone:
+    stream_design: single
+    layers: 48
+    double_blocks: 0
+    single_blocks: 48
+    hidden: 4096
+    heads: 32
+    head_dim: 128
+    ffn: 16384
+    text_conditioning: cross_attn
+    patch_size: [1, 1, 1]
+    position: 3D RoPE（rope_type "split"，双精度频率，max_pos [20, 2048, 2048]）
+    note: >-
+      **patch 是 (1,1,1)，一个 latent 体素就是一个 token** —— 全线压缩都压在 VAE 上
+      （8×32×32），DiT 侧不再降采样。这和 wan 一族的 (1,2,2) 是两种分工：
+      同样的有效压缩率下，LTX 的 VAE 要重得多（1.22B，是 DiT 的 6.5%），
+      而 DiT 侧少一层形状变换。
+
+      **音频与视频共用这 48 块，但不是一条序列。** 每块里有六套注意力：
+      视频自注意力与交叉注意力（宽 4096）、音频自注意力与交叉注意力（宽 2048）、
+      以及音→视 / 视→音两个方向的跨模态交叉注意力。所以 text_conditioning 记
+      cross_attn 而不是 in_sequence，序列长度不含文本 token；
+      但音频 token 和视频 token 是两条各自的序列，各自的注意力矩阵各算一遍。
+
+      视频侧没有 GQA：k 与 v 都是 4096 宽，32 个 KV 头 = 32 个 Q 头，是 MHA。
+      每块 FFN 134,238,208 参数，比视频两块注意力之和（134,266,880）少 0.02% ——
+      两者几乎等量，这与 ffn 16384 = 4 × hidden 一致
+
+  vae:
+    spatial_compression: 32
+    temporal_compression: 8
+    latent_channels: 128
+    causal: true
+    params: 1222480241
+    decoder_arch: conv3d
+    name: LTX-2 CausalVideoAutoencoder（AutoencoderKLLTX2Video）
+    note: >-
+      压缩率 32×32×8 在三处一致：vae/config.json 的
+      spatial_compression_ratio 32 / temporal_compression_ratio 8、
+      transformer/config.json 的 vae_scale_factors [8,32,32]、
+      以及 config 自己的块表（4 个下采样块 downsample_type
+      [spatial, temporal, spatiotemporal, spatiotemporal]，空间维被 ×2 三次 = 8，
+      再乘 patch_size 4 = 32；时间维被 ×2 三次 = 8）。
+
+      latent_channels 128 是**权重实测**：`vae.encoder.conv_out.conv.weight` 形状
+      [129, 2048, 3, 3, 3]，129 = 128 + 1（`latent_log_var: "uniform"` 多一个通道）；
+      `vae.decoder.conv_in.conv.weight` 是 [1024, 128, …]，进出都是 128。
+      输入输出端的 48 = 3 × 4 × 4 也实测到（`encoder.conv_in` [128, 48, …]、
+      `decoder.conv_out` [48, 128, …]），即 patch_size 4 的 pixel-unshuffle。
+
+      **causal 填 true 说的是编码器**：encoder_causal true 而 decoder_causal false，
+      两端不同。derive 的 latent 帧数公式 (F−1)/t+1 取决于编码器，所以填 true；
+      121 帧 → (121−1)/8+1 = 16 帧，整除，这也是帧数写成 8n+1 的原因。
+
+      params 1,222,480,241 是实测（单文件包里 `vae.` 前缀 187 个张量），
+      编码器 694,098,881 / 解码器 528,380,720 / per-channel 统计 640。
+      ×2 B = 2,444,960,482 B，与 vae/ 目录的 2,444,982,370 B 差 21,888 B（头）。
+      **这不是边角料**：1.22B 相当于 DiT 的 6.5%，而它每次生成只跑一遍
+
+  audio:
+    in_channels: 128
+    vae: LTX-2 audio VAE（AutoencoderKLLTX2Audio，mel 域）
+    vae_params: 53248402
+    sample_rate_in: 16000
+    sample_rate_out: 24000
+    latent_hz: 100
+    channels: 2
+    vocoder: LTX2Vocoder（55,592,802 参数，upsample_factors [6,5,2,2,2]）
+    note: >-
+      **输入 16 kHz、输出 24 kHz 不是同一个数**：音频 VAE 收 16 kHz
+      （audio_vae/config.json `sample_rate` 16000），声码器出 24 kHz
+      （vocoder/config.json `output_sampling_rate` 24000）。
+
+      latent_hz 100 是推算：mel hop_length 160（transformer config 的
+      `audio_hop_length` 与 audio_vae 的 `mel_hop_length` 两处一致），
+      16000 / 160 = 100 帧/秒，而音频 VAE 只在 mel 轴下采样
+      （`ch_mult` [1,2,4] 作用在 `causality_axis: "height"` 即 mel 轴，
+      64 mel bins / 4 = 16，16 × 8 个 latent 通道 = 128 = DiT 的
+      `audio_in_channels`），时间轴不压。所以 latent 时间分辨率就是 100 Hz。
+      ltx-2.3 单文件包里的 audio_vae config 写着 `downsample_time: false`，
+      与这个推算一致；该档的音频片长 5.12 s × 100 Hz = 512 帧，是整数的 2 次幂。
+
+      立体声：in_channels 2 / out_ch 2，左右声道进同一个编解码器
+      （不是各跑一遍），所以 DiT 侧的音频 token 数不乘声道数
+
+  text_encoders:
+    - role: primary
+      name: Gemma-3-12B（Gemma3ForConditionalGeneration，含 SigLIP 视觉塔）
+      hidden: 3840
+      shipped_with_weights: true
+      release_dtype: FP32
+      params: 12187325040
+      note: >-
+        **随仓发布，而且是 F32**：text_encoder/model.safetensors.index.json 的
+        metadata 写着 total_parameters 12,187,325,040、total_size 48,749,300,160 B，
+        两者正好差 4 倍，即整个 12.19B 文本编码器落盘 **48.7 GB**。
+        这是部署时最容易漏算的一块 —— 它比 DiT 的 37.76 GB 还大。
+        config 是 48 层 / hidden 3840 / head_dim 256 / inter 15360 /
+        16 Q 头 8 KV 头 / 滑窗:全注意力 = 5:1（layer_types 48 项里 8 项是
+        full_attention），另带 27 层 SigLIP 视觉塔（hidden 1152、patch 14）。
+
+        **取的不是最后一层，是全部 49 层的加权聚合。** connectors/config.json 的
+        `text_proj_in_factor` 49，而单文件包里 `text_embedding_projection.
+        aggregate_embed.weight` 形状 [3840, 188160] 且 188,160 = 49 × 3,840 ——
+        49 = 48 层 + 嵌入层。schema 的 hidden_layer_taken 装不下「全部层」，
+        所以留空，口径写在这里。
+
+        **这个仓把文本编码器放了两份**：`text_encoder/model-*-of-00011`
+        （1,065 个张量、48,749,300,160 B，transformers 的
+        `language_model.model.layers.*` 命名）与
+        `text_encoder/diffusion_pytorch_model-*-of-00012`
+        （1,124 个张量、51,612,250,560 B，LTX 自己的 `base_text_encoder.*` 命名）。
+        多出的 59 个张量与 2,862,950,400 B 恰好等于 connectors/ 目录
+        （58 个连接器张量 + 1 个 aggregate_embed），即后者是「Gemma + 连接器 +
+        聚合投影」的整包。两份是同一批权重，所以 44 个文件 314 GB 的仓里
+        有 100 GB 是文本编码器的两种打包
+
+  sampling:
+    steps: 40
+    cfg:
+      scale: 4.0
+      distilled: false
+      embedded: false
+      forwards_per_step: 2
+    step_distilled:
+      available: true
+      steps: 8
+      checkpoint: ltx-2-19b-distilled
+      note: >-
+        官方步数蒸馏档，卡上写「8 steps, CFG=1」，即 8 步 × 1 次前向。
+        另有 `ltx-2-19b-distilled-lora-384`，把蒸馏做成可挂在 dev 上的 LoRA ——
+        卡上的两阶段配方 stage 2 用的就是它
+    scheduler: flow matching（FlowMatchEulerDiscreteScheduler，use_dynamic_shifting true）
+    shift: 1.0
+    note: >-
+      **这里的 40 步 × 2 次前向是模型卡 diffusers 路径的口径**，不是厂商 CLI 的。
+      卡上的示例用 `guidance_scale=4.0` 跑真 CFG，条件与无条件各一遍 → 2 次。
+
+      **厂商自己的 ltx-pipelines 默认档是每步 4 次前向。**
+      `utils/denoisers.py` 的 `_guided_denoise` 按四个判据收集 passes：
+      cond 恒有；cfg_scale ≠ 1 加 uncond；stg_scale ≠ 0 加 ptb（跳过第 29 块的
+      自注意力）；modality_scale ≠ 1 加 mod（跳过音↔视两个方向的交叉注意力）。
+      而 `utils/constants.py` 的 LTX_2_PARAMS 给的是 cfg_scale 3.0 /
+      stg_scale 1.0 / modality_scale 3.0 —— 三个判据全部成立。
+      四路被拼成一个 batch 送进一次 transformer 调用，但那是一次 batch 4 的前向，
+      算力是 4 倍不是 1 倍。
+
+      **forwards_per_step 只填得下 1 或 2**（schema 枚举），所以这一项记的是卡的
+      口径；4 这个数进不了结构化字段，端到端推导因此是**下界**。
+      步数两处一致（卡 40、LTX_2_PARAMS 40），这一项没有分歧
+
+  pipeline_stages:
+    - name: stage-1 低分辨率去噪
+      model: same-backbone
+      steps: 40
+      cfg_scale: 4.0
+      forwards_per_step: 2
+      resolution: 768×512，121 帧 @24 fps
+      open_source: true
+      note: 卡的 diffusers 示例第一段。每步前向次数按卡的真 CFG 口径记 2，厂商 CLI 默认档是 4
+    - name: latent 空间上采样 ×2
+      model: latent_upsampler（995,743,482 B，rational_spatial_scale 2.0）
+      resolution: latent 域 ×2 空间
+      open_source: true
+      note: >-
+        不是去噪步，没有步数与 CFG，所以不计入端到端前向数。
+        它是一个独立的 0.5B 级模型（in_channels 128、mid_channels 1024、
+        num_blocks_per_stage 4），只跑一遍
+    - name: stage-2 高分辨率精修
+      model: same-backbone + ltx-2-19b-distilled-lora-384
+      steps: 3
+      cfg_scale: 1.0
+      forwards_per_step: 1
+      resolution: 1536×1024，121 帧 @24 fps
+      open_source: true
+      note: >-
+        挂蒸馏 LoRA、CFG=1，所以每步 1 次前向。
+        **但这一段的 token 数是 stage 1 的 4 倍**（分辨率翻倍 → latent 面积 ×4），
+        而 derive 的端到端是按同一个单步 FLOPs 估的，所以它低估了这一段。
+        逐段精确值要按各段自己的 token 数重算
+
+  buckets:
+    - width: 768
+      height: 512
+      frames: 121
+      fps: 24
+      duration_s: 5.0416667
+      default: true
+      note: >-
+        卡的 diffusers 示例与参考实现 LTX_2_PARAMS 两处一致
+        （stage_1_width 768 / stage_1_height 512 / num_frames 121 /
+        frame_rate 24.0）。768/32 = 24、512/32 = 16、(121−1)/8+1 = 16，三轴都整除；
+        duration_s = 121/24 = 5.0417 s
+    - width: 1536
+      height: 1024
+      frames: 121
+      fps: 24
+      duration_s: 5.0416667
+      note: >-
+        两阶段流水线的最终输出档（stage_2 = stage_1 × 2）。
+        1536/32 = 48、1024/32 = 32，token 数是默认档的 4 倍
+
+  constraints:
+    width_divisor: 32
+    height_divisor: 32
+    frame_formula: 8n+1
+    note: >-
+      除数 32 全部来自 VAE（空间压缩 32），DiT patch 是 1 不贡献 ——
+      这与 wan 一族不同，那边是 VAE 16 × patch 2。
+      帧数 8n+1 来自时间因果 VAE 的首帧单独编码（121 = 8×15+1）。
+      卡上还写了另一条路：尺寸不合规时按 −1 padding、生成后裁回
+
+  checkpoint_variants:
+    - name: ltx-2-19b-dev
+      role: base
+      bytes: 43285058242
+      resident: true
+      note: >-
+        本记录录的就是这一档。单文件包，里面是 DiT + 连接器 + 文本投影 + 视觉 VAE +
+        声码器 + 音频 VAE 六样（4,052 张量，清单总量 21,638,971,237）；
+        **不含文本编码器与 latent 上采样器**，那两样要另外加载
+    - name: ltx-2-19b-dev-fp8
+      role: base-quantized
+      bytes: 27078716018
+      resident: false
+    - name: ltx-2-19b-dev-fp4
+      role: base-quantized
+      bytes: 19988416674
+      resident: false
+    - name: ltx-2-19b-distilled
+      role: step-distilled
+      bytes: 43285058186
+      resident: false
+      note: 8 步 CFG=1。与 dev 同样大小的独立全量档，不是 LoRA
+    - name: ltx-2-19b-distilled-fp8
+      role: step-distilled-quantized
+      bytes: 27078716346
+      resident: false
+    - name: ltx-2-19b-distilled-lora-384
+      role: step-distilled-lora
+      bytes: 7674558424
+      resident: false
+      note: 两阶段配方 stage 2 要挂它，所以在那一段里与主干同时驻留
+    - name: ltx-2-spatial-upscaler-x2-1.0
+      role: sr
+      bytes: 995765578
+      resident: false
+    - name: ltx-2-temporal-upscaler-x2-1.0
+      role: sr
+      bytes: 261965800
+      resident: false
+    - name: text_encoder/（Gemma-3-12B，两种打包各一份）
+      role: text-encoder
+      bytes: 100361856768
+      resident: true
+      note: >-
+        48,749,441,672（model-*-of-00011，index 的 total_size 48,749,300,160
+        加 11 个分片头）+ 51,612,415,096（diffusion_pytorch_model-*-of-00012，
+        含连接器与聚合投影）。
+        两份是同一批权重的两种命名，部署只用一份，但仓里都在
+
+precision:
+  weights_release: [BF16, FP32, FP8_E4M3, NVFP4]
+  weights_release_scope:
+    BF16:
+      measured: true
+      repo: Lightricks/LTX-2
+      note: >-
+        dev 与 distilled 的全量档。transformer/ 清单里 3,316 个张量是 BF16
+        （18,872,918,272 参数），占 DiT 参数的 99.98%
+    FP32:
+      measured: true
+      repo: Lightricks/LTX-2
+      note: >-
+        两处：一是 BF16 包内的 194 个 `scale_shift_table` 调制表
+        （3,256,320 参数，占 0.017%）—— 调制表是 F32 这件事在 wan 那份里也成立，
+        看来是这一类模型的通例；二是**整个 Gemma-3-12B 文本编码器**
+        （config 的 `dtype: "float32"`，index 的 total_size = total_parameters × 4）。
+        后者不在 params 里，但它是部署时最大的一块
+    FP8_E4M3:
+      measured: false
+      repo: Lightricks/LTX-2
+      container: F8_E4M3
+      note: >-
+        **measured 标 false 是按这个字段的定义来的**：本记录没跑逐子系统精度实测
+        （precision.quantization.per_subsystem 那一套），facts 里的清单是
+        `transformer/` 的 BF16 档。下面这些数来自对 fp8 文件头的一次**定向取数**，
+        它只回答「量化了什么」这一个问题，不并入清单、不用于参数量。
+
+        `ltx-2-19b-dev-fp8.safetensors` 定向读头 6,404 张量：F8_E4M3 1,176 个
+        （16,206,790,656 参数）、BF16 2,682 个、F32 2,546 个。
+        **只量化 DiT**：1,176 个 F8 张量全部落在 model.diffusion_model. 前缀下，
+        VAE / 连接器 / 文本投影 / 声码器 / 音频 VAE 的参数量与 BF16 档逐字相同。
+        覆盖率是 DiT 参数的 85.9%（16.21B / 18.88B），其余仍是 BF16/F32。
+        比 BF16 档多出的 2,352 个 F32 张量是 scale。
+        文件 27,078,716,018 B，按清单算 27,077,673,866 B，差 1,042,152 B（头）
+    NVFP4:
+      measured: false
+      repo: Lightricks/LTX-2
+      container: UINT8
+      note: >-
+        measured 标 false 的理由同 FP8_E4M3 —— 下面是对 fp4 文件头的定向取数。
+        `ltx-2-19b-dev-fp4.safetensors` 读头 7,580 张量。**打包因子与块大小逐项验过**：
+        1,176 个 U8 张量共 8,103,395,328 个容器元素，而 fp8 档同样的 1,176 个张量
+        是 16,206,790,656 个参数 —— 正好 2 倍，即一字节两个 4 位值；
+        另有 1,176 个 F8_E4M3 张量共 1,012,924,416 个元素，
+        16,206,790,656 / 1,012,924,416 = **16**，即每 16 个值一个 E4M3 scale，
+        这就是 nvfp4 的标准块。两个因子（2 和 16）各自独立算出，不是从一个数推的。
+        **所以不要按这份清单读参数量**：按容器数会得到 11,785,706,032，
+        少算 4.1B。文件 19,988,416,674 B，按清单算 19,987,202,954 B，差 1,213,720 B（头）
+  inference_default: BF16
+
+bottlenecks:
+  - dimension: compute
+    finding: >-
+      端到端前向次数是这一族最容易算错的一项，而且**两条官方路径差 2 倍**：
+      模型卡的 diffusers 配方是每步 2 次（真 CFG），厂商自己的 ltx-pipelines
+      默认档是每步 4 次（CFG + STG + 跨模态隔离三路负样本）
+    quantified: >-
+      卡的口径：stage 1 40 步 × 2 + stage 2 3 步 × 1 = 83 次主干前向。
+      厂商 CLI 口径：`_guided_denoise` 的四路判据（cfg_scale 3.0 ≠ 1、
+      stg_scale 1.0 ≠ 0、modality_scale 3.0 ≠ 1）全部成立 → 每步 4 次，
+      stage 1 即 160 次。两个数都是逐因子验的，差的是 pass 数不是步数
+    fix: >-
+      stg_scale 与 modality_scale 是可关的（HQ 预设就把 stg_scale 置 0，
+      降到每步 3 次）；真要砍到 1 次得换蒸馏档。
+      做容量规划时必须先问「跑的是哪条路径」—— 按卡的 2 次排产能会少一半
+    visibility: public
+  - dimension: host-io
+    finding: >-
+      「19B」只说 DiT。一次完整的两阶段生成要摸到的权重是 DiT 37.76 GB +
+      文本编码器 48.75 GB + VAE 2.44 GB + 连接器与文本投影 2.86 GB +
+      latent 上采样器 1.00 GB + stage 2 的蒸馏 LoRA 7.67 GB，
+      **文本编码器比 DiT 还大**，而它每次生成只跑一遍
+    quantified: >-
+      按字节：Gemma-3-12B 48,749,300,160 B（F32）> DiT 37,758,861,824 B（BF16）。
+      按参数：12.19B vs 18.88B —— 参数更少而字节更多，差别全在精度上
+    fix: >-
+      文本编码一次、DiT 跑几十到上百次，错峰收益最大的就是把文本编码器搬走或降精度：
+      F32 → BF16 直接省 24.4 GB，而卡没有说它必须是 F32。
+      卡的示例自己用的是 `enable_sequential_cpu_offload`
+    visibility: public
+  - dimension: compute
+    finding: >-
+      DiT patch 是 (1,1,1)，压缩全压在 VAE 上 —— 所以 VAE 不是边角料：
+      1.22B 参数、编码器比解码器还大，而它跑在全分辨率像素上
+    quantified: >-
+      VAE 1,222,480,241 参数（编码器 694,098,881 / 解码器 528,380,720），
+      是 DiT 的 6.5%；有效压缩 8×32×32 全部由它提供，DiT patch 1 不贡献
+    fix: >-
+      VAE 的编解码在两阶段流水线里要跑三次以上（stage 1 编码条件图、
+      stage 2 后解码、中间 latent 上采样不过 VAE），而卡的示例要靠
+      `vae.enable_tiling()` 才不 OOM —— 它值得独立的 kernel 工作
+    visibility: public
+
+infra_signals:
+  - text: >-
+      「参数量」这个名字在生成类发布里不是一个口径。同一家的两代，19b 指 DiT、
+      22b 指 DiT + 连接器 + 文本投影；而一次部署真正要驻留的还要加上文本编码器与 VAE。
+      记录里必须把「名字里的数」「清单实测」「每步激活」分三处存，
+      任何跨代倍数都得先说清用的是哪一处
+    evidence: derived
+    horizon: now
+  - text: >-
+      每步前向次数不是 1 或 2 两种。LTX-2 的参考实现把 CFG、STG（扰动自注意力）
+      与跨模态隔离三种负样本并列，每种都是一条独立的 pass，默认档四路全开。
+      「步数 × 每步前向」这个乘式的第二个因子要按 guider 的判据逐条数，
+      而不是看有没有开 CFG
+    evidence: derived
+    horizon: now
+
+evidence:
+  id: official
+  family: official
+  kind: judgement
+  display_name: judgement
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  params.counting_note: derived
+  generation: official
+  generation.backbone.note: derived
+  generation.vae.params: derived
+  generation.vae.causal: official
+  generation.vae.note: derived
+  generation.audio.latent_hz: derived
+  generation.audio.vae_params: derived
+  generation.audio.note: derived
+  # text_encoders 里 params 与 hidden 取自 index metadata 与 config，
+  # 聚合 49 层那条是权重实测；证据路径不支持数组下标，整块标 derived
+  generation.text_encoders: derived
+  generation.sampling: official
+  generation.sampling.note: derived
+  generation.sampling.step_distilled: official
+  generation.pipeline_stages: official
+  generation.buckets: official
+  generation.constraints: official
+  generation.checkpoint_variants: official
+  precision: official
+  precision.weights_release_scope: derived
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-30'
+  scope: [official, derived, judgement]
+  method: >-
+    Gate B 三路：组件 config（9 份）× 权重清单（transformer/ 8 分片 3,510 张量）
+    × 厂商参考实现（ltx-pipelines / ltx-core）。
+
+    结构字段三路交叉：48 层与 32×128 在 transformer/config.json、
+    `LTXModelConfigurator` 的默认值、以及清单里 transformer_blocks.0–47
+    三处一致；patch_size 1 / patch_size_t 1 与清单里 `patchify_proj.weight`
+    [4096, 128]（128 = latent 通道，没有 patch 展开）一致；
+    VAE 的 32/8 在 vae/config.json 的两个 ratio、transformer config 的
+    vae_scale_factors [8,32,32]、以及块表的 2^3 × patch 4 三处一致；
+    latent_channels 128 由 `encoder.conv_out` [129,…] 与 `decoder.conv_in`
+    […,128,…] 实测。
+
+    **跨布局对账**（这个仓两种布局装着同一批权重，是本记录最硬的一道）：
+    单文件包按前缀分出的六个组件字节 vs 对应 diffusers 目录的 HTTP 大小 ——
+    DiT 37,758,861,824 vs 37,759,286,096（+424,272）、
+    VAE 2,444,960,482 vs 2,444,982,370（+21,888）、
+    声码器 111,185,604 vs 111,204,124（+18,520）、
+    音频 VAE 106,496,804 vs 106,507,972（+11,168）、
+    连接器+文本投影 2,862,950,400 vs connectors/ 的 2,862,957,976（+7,576），
+    每一项的差都只是该目录的 safetensors 头与 index；
+    单文件包清单总量 43,284,455,114 B vs 文件 43,285,058,242 B 差 603,128 B（一个头）。
+
+    外部锚：HF 自己的 safetensors tally 18,876,174,592 与本仓 transformer/
+    清单**逐位相同**（这是 skill 规则 11 里最强的那一档，本仓的归类、
+    打包还原与排 scale 全都被约束住）。注意它只覆盖 transformer/ 这一个索引，
+    不覆盖 VAE / 连接器 / 声码器 —— 那几项的锚是上面的跨布局字节对账。
+
+    量化档：fp8 与 fp4 两个头各读一次。nvfp4 的两个因子独立验过
+    （容器 2 倍：1,176 个张量的 U8 容器数 × 2 = fp8 档同名张量的参数数；
+    块 16：参数数 / E4M3 scale 元素数 = 16）。
+
+    Gate C：判断类字段 13 处，逐条在 evidence 里标了 derived 或 judgement。
+
+review:
+  - id: R1
+    field: params.total
+    severity: imprecise
+    claim: 「LTX-2 是 19B 模型，LTX-2.3 是 22B，所以涨了 3B」
+    finding: >-
+      两个名字不是同一个口径。本代的 19b 对得上 DiT 18,876,174,592
+      （= `transformer/` 组件 = HF tally）；下一代的 22b 对得上
+      DiT + 连接器 + 文本投影 22,161,065,728，而它的 DiT 只有 18,988,838,144。
+      把本代按下一代的口径算是 20,307,649,792 —— 那会叫「20b」。
+      所以 19→22 这个 +16% 里，真实的主干增长只有 +0.60%，剩下的是口径变化
+      加上连接器与文本投影的增长
+    resolution: corrected
+    changed_to: >-
+      本记录的 params.total 等于本记录清单的实测值（= DiT = HF tally）并在
+      counting_note 写明覆盖什么；ltx-2.3 那份的清单是整包、total 留空，
+      所以**跨代要比的是 params.active_decode**（两代都是 DiT）与 counting_note
+      里点明的 48 块主干数；lineage 与 ltx-2.3 的记录两侧都写了这条
+  - id: R2
+    field: generation.sampling.cfg.forwards_per_step
+    severity: imprecise
+    claim: 每步 2 次前向
+    finding: >-
+      2 是模型卡 diffusers 路径的数。厂商自己的 ltx-pipelines
+      默认档每步 4 次：`_guided_denoise` 收集 cond / uncond / ptb / mod 四条
+      pass，判据分别是恒真、cfg_scale ≠ 1、stg_scale ≠ 0、modality_scale ≠ 1，
+      而 LTX_2_PARAMS 给的 3.0 / 1.0 / 3.0 让后三条全部成立。
+      四路拼成一个 batch 送进一次 transformer 调用，算力仍是 4 倍
+    resolution: open
+    changed_to: >-
+      字段保留卡的口径 2（schema 的枚举只有 1 和 2，4 填不进去），
+      4 这个数写在 sampling.note、bottlenecks 与 infra_signals 里，
+      并标明由此得出的端到端是下界。这条同时是一个 schema 缺口，已上报
+  - id: R3
+    field: generation.text_encoders
+    severity: missing
+    claim: 文本编码器取最后一层 hidden state
+    finding: >-
+      取的是**全部 49 层的加权聚合**。connectors/config.json 的
+      `text_proj_in_factor` 49，而 `text_embedding_projection.aggregate_embed.weight`
+      形状 [3840, 188160]、188,160 = 49 × 3,840 —— 49 = Gemma 的 48 层加嵌入层。
+      按「取某一层」读会漏掉这个 0.72B 的聚合投影，也会低估文本侧要保留的激活
+    resolution: confirmed
+    changed_to: >-
+      hidden_layer_taken 留空（schema 的整数装不下「全部层」），口径写进 note。
+      聚合投影的 722,534,400 参数单列在 counting_note 的「不含的三类」里
+
+notes: >-
+  **这个仓为什么取数会被拒绝，以及为什么拒绝是对的。**
+
+  顶层有 8 个 .safetensors，它们是 8 个不同的模型（dev / dev-fp8 / dev-fp4 /
+  distilled / distilled-fp8 / distilled-lora / 两个上采样器），不是一个模型的 8 片。
+  而 `ltx-2-19b-distilled.safetensors`（BF16）与 `-distilled-fp8.safetensors`
+  （F8_E4M3）**张量名完全相同、dtype 不同** —— 实测 7,132 个名字会这样撞。
+  `fetch_hf.py` 现在会报错退出并印出两边的分片名；旧代码会按线程完成顺序静默覆盖，
+  产出一个不对应任何真实模型的清单，而每个数看着都合理。
+  所以本记录两次取数都带 `--include`：一次收到 `transformer/*`（params 的来源），
+  一次收到 `ltx-2-19b-dev.safetensors`（非 DiT 组件与跨布局对账的来源）。
+
+  仓的总字节 314,346,418,525 B（292.8 GiB）对一个 19B 模型来说大得异常，
+  拆开看是三件事叠加：三个 dev 档（bf16 43.29 + fp8 27.08 + fp4 19.99 GB）、
+  两个 distilled 档（43.29 + 27.08 GB）、以及**文本编码器放了两份打包**
+  （48.75 + 51.61 = 100.36 GB，占整仓 32%）。
+  diffusers 组件目录（44.28 GB）与单文件包装的是同一批权重，所以也是一份重复。
+  HF 的 usedStorage 报 455,276,550,000 B，比逐文件之和还多 141 GB ——
+  旧修订版的 LFS 对象仍计在内，这个字段在这条线上不能当「当前修订版的权重总字节」用。
+
+open_questions:
+  - >-
+    **派生产物里的「文本编码器 62.02 MiB」是个归类假象，不是一个 62 MiB 的文本编码器。**
+    那是 DiT 自己的 `caption_projection`（32,514,048 参数，把 Gemma 的 3840 维
+    聚合特征转成 4096）。本记录的清单取的是 diffusers 的 `transformer/` 组件，
+    里面的张量名是裸名（`caption_projection.linear_1.weight`），
+    而 components.json 给 text_encoder 组件的前缀里有 `caption_`，于是它被分了过去；
+    它的兄弟 `audio_caption_projection`（12,062,720）因为名字以 `audio_` 开头
+    没被匹配，留在主干里 —— **同一对模块被分进了两个组件**。
+    取单文件包时不会这样（名字带 `model.diffusion_model.` 前缀，更长、优先匹配到 dit）。
+    真正的文本编码器是 Gemma-3-12B 48.75 GB，见 generation.text_encoders。
+    这是 components.json 的一个前缀缺口，已上报；本记录不改共享文件
+  - >-
+    `generation.sampling.cfg.forwards_per_step` 只填得下 1 或 2（schema 枚举），
+    而厂商 CLI 的默认档是 4（见 R2）。所以 generation_workload 的端到端 FLOPs
+    是**下界**，低估 2 倍。要修得扩 schema 的枚举，不是改记录
+  - >-
+    连接器（708,940,800）与文本投影（722,534,400）是每步跑还是每 prompt 跑一次，
+    从清单看不出来。连接器块里只有自注意力（`transformer_1d_blocks.N.attn1`）、
+    没有时间步输入，看着像每 prompt 一次；但 2.3 代的参考实现注释提到
+    `use_prompt_adaln_single=false` 的 checkpoint 才能把交叉注意力的 K/V
+    算一次复用，反过来说默认档的 K/V 是随时间步变的。
+    这 1.43B 算不算进每步激活没定，所以 params.active_decode 只填了 DiT
+  - >-
+    训练精度无一手来源。dev 档落盘 BF16（调制表 F32）是实测，
+    但那说的是发布格式不是训练格式。文本编码器落盘 F32 同理
+  - >-
+    fp8 档只量化了 DiT 参数的 85.9%，剩下 14.1% 仍是 BF16/F32 ——
+    哪些张量被留下没有逐一分桶（1,176 个 F8 张量不是 48 的整数倍，
+    说明覆盖面不是「每块固定几个」）。要答得逐块列张量名，本轮没做
+  - >-
+    模型卡与参考实现在 CFG 强度上不一致：卡的 diffusers 示例 `guidance_scale=4.0`，
+    LTX_2_PARAMS 的 `cfg_scale` 3.0（另有 audio 侧 7.0）。
+    两条是不同的 pipeline，不是同一个数的两种写法，所以没有取舍；
+    但记录里 sampling.cfg.scale 只能填一个，填的是卡的 4.0

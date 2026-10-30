@@ -1,0 +1,227 @@
+{
+ "id": "ltx-2.3",
+ "generated_by": "scripts/derive.py",
+ "generated_at": "2026-10-30T16:04:52+00:00",
+ "inputs": {
+  "facts_dir": "/Users/yuan/Work/frontier-llm-tracking/frontier_open_source_model_study/facts/ltx-2.3",
+  "config_present": false,
+  "shapes_present": true,
+  "model_yaml": "data/models/ltx/ltx-2.3.yaml",
+  "ep_size": 1
+ },
+ "from_shapes": {
+  "available": true,
+  "complete": true,
+  "tensor_count": 5947,
+  "params_total": 23069505387.0,
+  "params_by_subsystem": {
+   "audio": 5735045248.0,
+   "other": 6796396672.0,
+   "audio_vae": 53248402.0,
+   "connector": 2016166400.0,
+   "norm": 786432.0,
+   "attention": 6456609792.0,
+   "text_encoder": 1156061184.0,
+   "vae": 726106225.0,
+   "vocoder": 129085032.0
+  },
+  "params_total_container": 23069505387.0,
+  "params_container_by_subsystem": {
+   "audio": 5735045248.0,
+   "other": 6796396672.0,
+   "audio_vae": 53248402.0,
+   "connector": 2016166400.0,
+   "norm": 786432.0,
+   "attention": 6456609792.0,
+   "text_encoder": 1156061184.0,
+   "vae": 726106225.0,
+   "vocoder": 129085032.0
+  },
+  "scale_elements": 0.0,
+  "weight_bytes_total": 46148472534.0,
+  "weight_bytes_by_subsystem": {
+   "audio": 11473244416.0,
+   "other": 13599101184.0,
+   "audio_vae": 106496804.0,
+   "connector": 4032332800.0,
+   "norm": 1572864.0,
+   "attention": 12913219584.0,
+   "text_encoder": 2312122368.0,
+   "vae": 1452212450.0,
+   "vocoder": 258170064.0
+  },
+  "params_by_component": {
+   "dit": 18988838144.0,
+   "audio_vae": 53248402.0,
+   "connector": 2016166400.0,
+   "text_encoder": 1156061184.0,
+   "vae": 726106225.0,
+   "vocoder": 129085032.0
+  },
+  "weight_bytes_by_component": {
+   "dit": 37987138048.0,
+   "audio_vae": 106496804.0,
+   "connector": 4032332800.0,
+   "text_encoder": 2312122368.0,
+   "vae": 1452212450.0,
+   "vocoder": 258170064.0
+  },
+  "weight_bytes_by_dtype": {
+   "FP32": 18923520.0,
+   "BF16": 46129549014.0
+  },
+  "weight_dtype_containers": {},
+  "experts_seen": 0,
+  "expert_storage": null,
+  "layers_present": 48,
+  "mtp_layers_seen": [],
+  "mtp_attention_suffixes": [],
+  "draft_blocks_seen": 0,
+  "layer_index_max": 48,
+  "layers_missing": [],
+  "moe_layers_seen": 0,
+  "unknown_dtypes": [],
+  "packing_applied": {},
+  "packing_suspect": [],
+  "incomplete_note": null
+ },
+ "kv_cache": {
+  "status": "not_applicable",
+  "why": "非自回归生成模型：推理过程中无跨步复用的 KV，不适用本口径"
+ },
+ "kv_capacity_bytes_at_context": {},
+ "kv_capacity_basis": null,
+ "active_params": {
+  "status": "not_applicable",
+  "why": "生成类每步对全部 latent token 做一次前向，没有「每 token 激活」这个量；单步负载见 generation_workload"
+ },
+ "flops": {},
+ "arithmetic_intensity": {},
+ "ep_communication": {
+  "status": "not_applicable",
+  "why": "生成类不做 EP all-to-all；对应的通信是序列并行(Ulysses)的 all-to-all，口径不同，本脚本未建模"
+ },
+ "reconciliation": [
+  {
+   "item": "路由专家数",
+   "status": "ok",
+   "why": "dense 模型，无 MoE"
+  },
+  {
+   "item": "层数",
+   "status": "skip",
+   "why": "config 缺失"
+  },
+  {
+   "item": "参数总量",
+   "status": "skip",
+   "why": "YAML 声明 缺失"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "skip",
+   "why": "repoinfo.json 里没有 safetensors tally"
+  }
+ ],
+ "generation_workload": {
+  "status": "partial",
+  "bucket": {
+   "width": 768,
+   "height": 512,
+   "frames": 121,
+   "fps": 24,
+   "duration_s": 5.0416667,
+   "default": true,
+   "note": "参考实现 LTX_2_3_PARAMS 继承 LTX_2_PARAMS 的 stage_1 512×768 / num_frames 121 / frame_rate 24.0（本代只改了步数与 STG 块号）。 与前代同档，所以两代的 token 数完全可比。 768/32 = 24、512/32 = 16、(121−1)/8+1 = 16，三轴都整除"
+  },
+  "effective_compression": {
+   "temporal": 8,
+   "spatial_h": 32,
+   "spatial_w": 32,
+   "note": "VAE 压缩率 × DiT patch。两者在记录里分开存，只在这里相乘 —— 合成一个数存进记录是范畴错误"
+  },
+  "latent_tokens": 6144.0,
+  "latent_tokens_terms": {
+   "formula": "[(F - 1) / t_vae + 1  （时间因果 VAE：首帧单独编码）] / p_t × (H / s_vae / p_h) × (W / s_vae / p_w)",
+   "factors": {
+    "frames": 121,
+    "height": 512,
+    "width": 768,
+    "vae_temporal_compression": 8,
+    "vae_spatial_compression": 32,
+    "vae_causal": true,
+    "patch_t": 1,
+    "patch_h": 1,
+    "patch_w": 1
+   },
+   "per_axis": {
+    "t": 16.0,
+    "h": 16.0,
+    "w": 24.0
+   },
+   "latent_frames": 16.0
+  },
+  "audio_tokens": 504.16667000000007,
+  "audio_tokens_terms": {
+   "formula": "latent_hz × duration_s",
+   "factors": {
+    "latent_hz": 100,
+    "duration_s": 5.0416667
+   },
+   "note": "单声道一条序列。左右声道各跑一遍编解码器的结构里，DiT 侧是否也翻倍取决于实现，未确认前不乘声道数"
+  },
+  "sequence_tokens": 6648.1666700000005,
+  "sequence_tokens_is_lower_bound": false,
+  "flops_per_step": {
+   "linear": 252481921701930.94,
+   "linear_terms": {
+    "formula": "2 × 激活参数 × 序列 token 数",
+    "factors": {
+     "active_params": 18988838144,
+     "source": "params.active_decode（记录声明）",
+     "tokens": 6648.1666700000005
+    }
+   },
+   "attention": 34758815964540.883,
+   "attention_terms": {
+    "formula": "每层 QK^T 2·n²·d + (softmax·V) 2·n²·d = 4·n²·d，再乘层数",
+    "factors": {
+     "layers": 48,
+     "hidden": 4096,
+     "tokens": 6648.1666700000005
+    },
+    "note": "稠密全注意力口径。块稀疏（SSTA）或线性注意力要另按其形态折算，本函数不替你折 —— 折算比例是记录里的事实，不是公式里的常数"
+   },
+   "total": 287240737666471.8,
+   "attention_share": 0.12100935350229086
+  },
+  "end_to_end_terms": {
+   "formula": "Σ各阶段(步数 × 每步前向次数) × 单步 FLOPs",
+   "stages": [
+    {
+     "name": "stage-1 低分辨率去噪（蒸馏档）",
+     "steps": 8,
+     "forwards_per_step": 1
+    },
+    {
+     "name": "stage-2 高分辨率精修（蒸馏调度）",
+     "steps": 3,
+     "forwards_per_step": 1
+    }
+   ],
+   "stages_skipped": [
+    "latent 空间上采样 ×2"
+   ],
+   "note": "各阶段按同一个单步 FLOPs 估算；分辨率不同的阶段（SR、上采样）实际 token 数不同，这里是粗估，不要当精确值"
+  },
+  "flops_end_to_end": 3159648114331190.0,
+  "excluded": [
+   "文本编码一次（编码器参数量在 generation.text_encoders，本函数不计）",
+   "VAE decode 一次（VAE 结构不在 config 里，解码器是 Transformer 时这一项不是小量）",
+   "音频 VAE 与声码器"
+  ],
+  "notes": [
+   "1 个阶段缺步数或前向次数，未计入端到端：latent 空间上采样 ×2"
+  ]
+ }
+}
