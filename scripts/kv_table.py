@@ -73,6 +73,18 @@ BASIS_DOC = [
 
 _COUNT_CN = {1: "一", 2: "两", 3: "三", 4: "四", 5: "五", 6: "六", 7: "七", 8: "八"}
 
+# 站点侧另有两份 basis -> 中文的映射。中文措辞各处不同（表格里「精度兜底」，
+# 详情页里「按模型 dtype 兜底」），所以**只对键，不对值**：少一个键的后果才是真的 ——
+# 两处都走 `MAP[b] ?? ''`，没登记的值那一格字节就成了全表唯一不带口径标注的数。
+#
+# 为什么是在这里扫文本而不是三处共读一份 JSON：`data/schema/` 下正在做更大的
+# 「列的含义」那一份（columns.json），basis 迟早并进去。在那之前多立一份 schema
+# 只会变成第四份拷贝。先把漂移拦住，合并等那一线落地。
+TS_LABEL_MAPS = [
+    (os.path.join("site", "src", "lib", "data.ts"), "KV_BASIS_LABEL"),
+    (os.path.join("site", "src", "pages", "models", "[id].astro"), "KV_BASIS"),
+]
+
 
 def load_records() -> dict:
     out = {}
@@ -171,9 +183,65 @@ def check_basis_coverage(problems: list) -> None:
                             " site/src/lib/data.ts 的 KV_BASIS_LABEL 要不要一起补）")
 
 
+def ts_map_keys(rel: str, name: str):
+    """从 .ts / .astro 里抠出 `const <name>... = { ... }` 的键。
+
+    venv 里没有 TS 解析器，为一个五行的对象字面量装一个不值当。
+    但抠不出来要报问题、不能当成「键集合为空」静默放过 —— 文件改名或改写法时，
+    静默通过正是这个闸口要防的那件事。
+    """
+    path = os.path.join(ROOT, rel)
+    if not os.path.exists(path):
+        return None, f"{rel} 不存在"
+    text = open(path).read()
+    # 锚在声明上，不是第一次出现：这两个名字在同一个文件里也出现在注释和取值处，
+    # 按 find() 抠会抠到注释后面那一对花括号，然后报一串假缺失（本脚本自己踩过）
+    m = re.search(rf"const\s+{re.escape(name)}\b[^=]*=\s*\{{", text)
+    if not m:
+        return None, f"{rel} 里找不到 {name} 的声明（`const {name} ... = {{`）"
+    # 花括号配对，不是找第一个 `}` —— 值里出现嵌套或模板串时第一个 `}` 不是收尾
+    depth, keys, j = 0, set(), m.end() - 1
+    for k in range(j, len(text)):
+        if text[k] == "{":
+            depth += 1
+        elif text[k] == "}":
+            depth -= 1
+            if depth == 0:
+                body = text[j + 1:k]
+                # 只取顶层键：嵌套对象里的键不是 basis
+                flat = re.sub(r"\{[^{}]*\}", "", body)
+                keys = set(re.findall(r"^\s*(\w+)\s*:", flat, re.M))
+                break
+    if depth != 0:
+        return None, f"{rel} 的 {name} 花括号没配上，抠不出键"
+    return keys, None
+
+
+def check_label_maps(problems: list) -> None:
+    """站点侧的 basis -> 中文映射要和 BASIS_DOC 覆盖同一组键。
+
+    `scripts/lib/subsystems.py` 的注释早就写过这件事：「在两种语言里各写一份顺序，
+    迟早会在加子系统时只改一边」。basis 比子系统更要紧 —— 子系统漏一个只是少个中文名，
+    basis 漏一个会让那一列字节静默退回没有口径标注。`vendor_declared` 就是这么漏了三处的。
+    """
+    want = {k for k, _ in BASIS_DOC}
+    for rel, name in TS_LABEL_MAPS:
+        got, err = ts_map_keys(rel, name)
+        if err:
+            problems.append(f"{err} —— 对不上就没人会发现两份取值表漂了")
+            continue
+        for miss in sorted(want - got):
+            problems.append(f"{rel} 的 {name} 少了 `{miss}`：这个值的字节在页面上"
+                            "会是全表唯一不带口径标注的数，读起来像「这个才是实打实的」")
+        for extra in sorted(got - want):
+            problems.append(f"{rel} 的 {name} 多了 `{extra}`，而 BASIS_DOC 里没有 —— "
+                            "要么补进 BASIS_DOC（docs 的取值表跟着生成），要么它已经作废")
+
+
 def table_basis_values(records: dict, problems: list) -> list:
     """定义段的取值表。手写它漂过一次：正文写三个、表里四行、代码能出五个。"""
     check_basis_coverage(problems)
+    check_label_maps(problems)
     n = _COUNT_CN.get(len(BASIS_DOC), str(len(BASIS_DOC)))
     rows = [f"`bytes_basis` 标明这一列字节是哪种来源，{n}个值：", "",
             "| basis | 含义 |", "|---|---|"]
