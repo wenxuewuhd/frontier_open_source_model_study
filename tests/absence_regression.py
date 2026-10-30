@@ -473,12 +473,14 @@ def _():
 @case("读 config·正例：嵌在 text_config 下的 quantization_config 要找得到")
 def _():
     import json as _json
+    # **判据不能依赖 facts/** —— 它在 gitignore 里、不随分支走，worktree 与新克隆
+    # 都没有。我第一版写成「一份都读不到就失败」，于是在任何干净 checkout 上都红。
+    # 逻辑本身由下面那条合成用例守；这里只在 facts 真的在的时候做实物校验。
     want = {"kimi-k3", "kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code"}
-    got = set()
     for mid in want:
         fp = os.path.join(ROOT, "facts", mid, "cfg.json")
         if not os.path.exists(fp):
-            continue                      # facts 不随分支走，缺了就跳过这一份
+            continue
         cfg = _json.load(open(fp, encoding="utf-8"))
         assert cfgio.quant_site(cfg) == "text_config", \
             f"{mid} 的声明位置变了：{cfgio.quant_site(cfg)}"
@@ -487,8 +489,20 @@ def _():
         grp = next(iter((q.get("config_groups") or {}).values()), {}).get("weights", {})
         assert grp.get("group_size") == 32, f"{mid}: group_size={grp.get('group_size')}"
         assert grp.get("num_bits") == 4, f"{mid}: num_bits={grp.get('num_bits')}"
-        got.add(mid)
-    assert got, "四份 Kimi VLM 的 facts 一份都不在，这条用例没验到东西"
+
+
+@case("读 config·正例：合成的嵌套 config 也要读到（不依赖 facts/）")
+def _():
+    # 上一条要 facts/ 才验得了实物，而 facts/ 在 gitignore 里。这条守逻辑，
+    # 任何 checkout 上都跑得了 —— 把 quant_cfg 改回只读顶层，它会红。
+    cfg = {"dtype": "bfloat16",
+           "text_config": {"quantization_config": {
+               "format": "mxfp4-pack-quantized",
+               "config_groups": {"group_0": {"weights": {"num_bits": 4, "group_size": 32}}}}}}
+    assert cfgio.quant_site(cfg) == "text_config"
+    q = cfgio.quant_cfg(cfg)
+    assert q.get("format") == "mxfp4-pack-quantized"
+    assert q["config_groups"]["group_0"]["weights"]["group_size"] == 32
 
 
 @case("读 config·反例：顶层声明的照常读得到，位置记成 root")
