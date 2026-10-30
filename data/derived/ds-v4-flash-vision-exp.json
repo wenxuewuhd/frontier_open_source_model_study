@@ -1,7 +1,7 @@
 {
  "id": "ds-v4-flash-vision-exp",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T06:29:13+00:00",
+ "generated_at": "2026-10-30T08:59:20+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-flash-vision-exp",
   "config_present": true,

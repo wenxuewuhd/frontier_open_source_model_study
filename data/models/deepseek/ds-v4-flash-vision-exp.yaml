@@ -215,6 +215,97 @@ arch:
       两层 MLP aligner（aligner.w1 [4096, 9216] / w2 [4096, 4096]，带 bias；9216 = 1024 × 3²，即 3 × 3 合并）把视觉特征投到主干
       hidden，再以 4 个可学习的 [4096] 向量 image_start / image_end / image_newline / image_pad（顶层张量，不在 embed 表里）拼进序列。
       它们是否同时是 tokenizer 的特殊 token，facts/ 里没有
+    tokens:
+      reference_resolution: 672x672
+      patch_grid: 48x48
+      encoder_tokens: 2304
+      llm_tokens: 256
+      compression_ratio: 9
+      compression_stage: >-
+        aligner 入口一步到位：3×3 相邻 patch 在通道维拼接
+        （w1 的输入维 9216 = 1024 × 9 就是这个拼接），**压缩在两层 MLP 之前**，
+        所以 aligner 的两个 GEMM 只跑 256 次而不是 2304 次
+      dynamic_resolution: true
+      max_llm_tokens_declared: 384
+      derivation: >-
+        两个因子：
+        (1) patch 14 —— config 的 vision_patch_size（本代是顶层扁平键，
+        不是 vision_config 子对象），并由
+        vision.patch_embed.proj.weight [1024, 588] 的 588 = 3 × 14 × 14 印证；
+        (2) 3×3 空间合并 —— config 的 vision_downsample_ratio 3，
+        并由 aligner.w1.weight 的输入维 9216 = 1024 × 9 印证。
+        672 / 14 = 48，48² = 2304 个 encoder token；
+        48 / 3 = 16，16² = 256 个主干 token。
+        **vision_max_n_token 384 是主干侧 token 的上限**，换算过去是
+        384 × 3² = 3456 个 patch × 14² = 677,376 像素。
+        注意它**不对应一个整数边长的正方形**（√677,376 ≈ 823.0），
+        而 config 另有 vision_max_wh_ratio 8 ——
+        所以这是一个**面积上限 + 长宽比上限**的组合，不是边长上限。
+        下界 vision_min_pixels 147,456 = 384²。
+        **下一代把这个上限从 384 提到 1024**（deepseek-v41-flash 的
+        max_image_tokens），即单图可用面积放大 2.67 倍；
+        那一代的 1024 × 3² × 14² = 1,806,336 恰好是 1344²，
+        两代的上限口径一致（都是主干侧 token），只是数变了。
+        672×672 是本仓为跨模型比较选的参考分辨率，不是厂商默认值
+      scope_note: >-
+        只覆盖单张静态图。config 里没有任何时间维的键
+        （没有 temporal patch、没有帧数上限），patch_embed 是 2D 的 Linear，
+        所以本记录不涉及视频 token 账
+    prefill:
+      encoder_linear_gflops: 1896.9
+      projector_linear_gflops: 27.92
+      backbone_token_budget: 256
+      backbone_linear_gflops_per_token: 25.42
+      image_as_text_tokens: 332
+      attention_excluded: >-
+        被排除的是 encoder 自注意力的 QK^T 与 AV，形式
+        4 × n² × hidden × layers。跨度没有一手来源：config 里没有
+        窗口一类的键，厂商参考实现的视觉部分本轮没读
+        （而按 model-audit 规则 10，这一族的 inference/ 自称 demo，
+        即便读了也只能回答布局、不能推翻卡上的数）。
+        按整图一段取 n = 2304 约 2304² × 4 × 1024 × 32 = 696 GFLOPs。
+        没有加进上面几格，因为主干那侧的分母也是线性项、不含注意力
+      derivation: >-
+        encoder 线性项 = 2 × 2304 × (patch_embed 602,112 + 32 层 ×
+        每层 12,845,056 = 411,041,792) = 2 × 2304 × 411,643,904
+        = 1,896,855,109,632 —— **与下一代 deepseek-v41-flash 逐位相同**，
+        因为两代的视觉塔 259 个张量形状完全一致（塔没动，只有 aligner
+        的出口从 4096 变到 5120）。
+        每层 12,845,056 = wqkv [3072, 1024] + wo [1024, 1024] +
+        w1 [5632, 1024] + w2 [1024, 2816]（w1 是门控 MLP 两支合并，
+        5632 = 2 × 2816），四项相加与清单里 128 个 blocks 线性张量的
+        求和逐位相同。
+        aligner 线性项 = 2 × 256 × (4096 × 9216 + 4096²) = 27,917,287,424。
+        主干分母 = 2 × (active_params.total 13,238,555,968 −
+        active_params.lm_head 529,530,880) = 25,418,050,176 ——
+        **不能用 derived 里的 flops.linear_per_token 26,477,111,936**，
+        那一项含 lm_head（decode 口径）。
+        换算 = 256 + 1,924,772,397,056 / 25,418,050,176 = 256 + 75.7 = 332。
+        **这是 12 份里塔占比第三高的一档**（332 / 256 = 1.30，塔占 23%）：
+        同样的塔、同样的 9:1 压缩，而主干是全批第二小的
+        （25.4 GFLOPs/token，只有 kimi-vl-a3b 的 4.49 更小）。
+        下一代 deepseek-v41-flash 的主干涨到 30.2，占比随之降到 1.25 ——
+        塔一个字没改，占比却变了，差的是主干
+    separability:
+      weight_prefix: >-
+        vision.（259 个张量）与 aligner.（4 个），另有 4 个顶层标记向量
+        image_start / image_end / image_newline / image_pad；
+        主干在 layers. / mtp. / embed. / head. / norm.。前缀不相交
+      shard_isolation: mixed
+      shard_note: >-
+        实测 index 的 weight_map：48 个分片里只有**第 1 个**含视觉张量，
+        267 个视觉张量（259 vision. + 4 aligner. + 4 个标记向量）全在里面 ——
+        但同片还有 **embed.weight [129280, 4096]**，一个 5.3 亿参数的词表。
+        所以虽然只混进来 1 个张量，它却是整张输入词表，
+        「只读第 1 个文件」会多搬 529,530,880 个参数（比整座塔还大）。
+        **这一条和下一代正好相反**：deepseek-v41-flash 把 4 个标记向量里的
+        3 个挪到第 2 片去和 embed.weight 同住，于是第 1 片成了纯视觉分片
+        （partial）。两代的差别只在这 3 个 [5120] 向量的归置上 ——
+        本代是 embed 进了视觉片，下一代是标记向量进了 embed 片
+      cross_prefix_sharing: >-
+        weight_map 的 72,633 个名字里没有任何一个同时匹配 vision. / aligner. /
+        标记向量与主干前缀，即没有重名共享。落盘层面的 tied weights 要看
+        safetensors 头的数据偏移是否重合，weight_map 答不了，本轮没读偏移
 precision:
   # indexer 缓存的格式由厂商公布（见下 source）；main KV 这一代还不是 FP4，格式未公布。
   # 两半可信度不同，合计因此是 mixed 口径 —— 见核查 R10
@@ -300,6 +391,15 @@ evidence:
   arch.vision.encoder: derived
   arch.vision.fusion: derived
   arch.vision.params: derived
+  arch.vision.tokens: derived
+  arch.vision.tokens.max_llm_tokens_declared: official
+  arch.vision.tokens.scope_note: judgement
+  arch.vision.prefill: derived
+  arch.vision.prefill.attention_excluded: judgement
+  arch.vision.prefill.derivation: judgement
+  arch.vision.separability: derived
+  arch.vision.separability.shard_note: judgement
+  arch.vision.separability.cross_prefix_sharing: judgement
   arch.attention.type: derived
   arch.norm: derived
   arch.activation: derived
@@ -354,6 +454,44 @@ reviewed:
     与 DSpark 的名字集合差（新增 316、删除 0、同名张量形状与 dtype 0 处变化）及新增项的归类、视觉侧元素合计、aligner 与 image_* 的形状、
     hash 层新增 gate.bias 的层号、config 逐键 diff、扣视觉与扣新增偏置后与 DSpark 主干的对账。条目宽度一条沿用 ds-v4-flash 的 R1。
 review:
+- id: R11
+  field: arch.vision.tokens.max_llm_tokens_declared
+  severity: missing
+  claim: >-
+    视觉侧结构写得很细（融合 wqkv 带 bias、门控 MLP、4 个标记向量都点了名），
+    但 infra 那一维一格都没有，而且 vision_max_n_token 384 这个 config 键
+    从未落进记录
+  finding: >-
+    补 arch.vision 下 tokens / prefill / separability 三组，逐因子核过。
+    三件事值得记：
+    (1) **vision_max_n_token 384 是主干侧 token 的上限、而且是面积上限**：
+    384 × 3² = 3456 个 patch × 14² = 677,376 像素，
+    √677,376 ≈ 823.0 **不是整数边长**，而 config 另有
+    vision_max_wh_ratio 8 —— 所以它是「面积上限 + 长宽比上限」的组合，
+    不是边长上限。按正方形边长去读会得到一个不存在的分辨率。
+    下一代 deepseek-v41-flash 把它提到 1024，那边 1024 × 3² × 14² =
+    1,806,336 恰好是 1344²，所以**两代口径一致、只是数变了**，可以放一起比。
+    (2) **encoder 线性项与下一代逐位相同**（1,896,855,109,632）：
+    两代视觉塔的 259 个张量形状完全一致，只有 aligner 出口从 4096 变 5120。
+    但一张图的文本 token 当量是 332 对 320 —— 塔一个字没改、占比却变了，
+    差的是主干（25.4 对 30.2 GFLOPs/token）。本档塔占 23%，
+    是 12 份里第三高。
+    (3) 分片上**和下一代正好相反**：本代 267 个视觉张量全在第 1 片，
+    但同片还有 embed.weight [129280, 4096] —— 只混进来 1 个张量，
+    它却是 5.3 亿参数的整张输入词表，比整座塔还大，
+    所以「只读第 1 个文件」会多搬一倍多的参数，记 mixed。
+    下一代把 4 个标记向量里的 3 个挪去第 2 片和 embed 同住，
+    第 1 片于是成了纯视觉分片（partial）。两代差别只在那 3 个 [5120] 向量的归置
+  resolution: corrected
+  changed_to: >-
+    新增 arch.vision.tokens（2304 → 256，压缩比 9；并写明
+    vision_max_n_token 384 是主干侧面积上限、不是边长上限，
+    以及与下一代 1024 的口径一致性）、
+    arch.vision.prefill（encoder 线性 1896.9 GFLOPs、一张图 ≈ 332 个文本
+    token，并写明与下一代塔相同而占比不同的根因）、
+    arch.vision.separability（mixed，第 1 片混了整张 embed 表，
+    并与下一代的 partial 对照）；
+    evidence 加九条，四格判断类进 Gate C
 - id: R1
   field: arch.attention.kv_sharing.measured_per_token
   severity: wrong
