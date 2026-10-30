@@ -47,7 +47,7 @@ const byShapes = (m: Model): Record<string, number> =>
 
 type Cell =
   /** `shown` 是格子上实际显示的格式名；`derived` 为真表示它是从签名推的，不是记录原值 */
-  | { kind: 'dtype'; dtype: string; shown: string; derived: boolean; sig?: string }
+  | { kind: 'dtype'; dtype: string; shown: string; derived: boolean; sig?: string; why?: string }
   | { kind: 'unsurveyed' }
   | { kind: 'not_applicable' };
 
@@ -72,9 +72,14 @@ function cellFor(m: Model, key: string): Cell {
     const scl = (q.per_subsystem_scale ?? {})[key];
     const f = blockFormat(dtype, blk, scl);
     const sig = [dtype, blk ? `块 ${blk}` : '', scl ? `scale ${scl}` : ''].filter(Boolean).join(' · ');
-    return f
-      ? { kind: 'dtype', dtype, shown: f.replace(' 式', ''), derived: true, sig }
-      : { kind: 'dtype', dtype, shown: dtype, derived: false, sig };
+    if (f) return { kind: 'dtype', dtype, shown: f.replace(' 式', ''), derived: true, sig };
+    // 推不出名字时要说清是为什么，否则读者只看到一个裸 `FP4` 不知道是漏了还是有意的。
+    // 最常见的一种：一个子系统里两种块形状（DeepSeek 的草稿块 [1,32]+[32,32]）——
+    // [1,32] 是 MX 式的一维块，[32,32] 是二维瓦片，两者并存就没有单一的块格式名。
+    const why = IS_E2M1.has(dtype.toUpperCase()) && typeof blk === 'string' && blk.includes('+')
+      ? '块不是单一形状，两种并存 —— 没有对应的块格式名，不硬安一个'
+      : undefined;
+    return { kind: 'dtype', dtype, shown: dtype, derived: false, sig, why };
   }
   const params = byShapes(m)[key];
   if (params && params > 0) return { kind: 'unsurveyed' };
@@ -278,7 +283,11 @@ function kvRows(m: Model): { comp: string; sig: string; fmt?: string; declared: 
   }
   if (out.length) return out;
   const basis = (m.derived as any)?.kv_cache?.bytes_basis;
-  if (basis) return [{ comp: '', sig: KV_BASIS_LABEL[basis] ?? basis, declared: false }];
+  // **只有 dtype_fallback 才是「非声明」。** 原先这里把所有没逐分量声明的都标成非声明，
+  // 于是 `vendor_declared` 那一行显示成「厂商公布 · 非声明」—— 自相矛盾：
+  // 厂商公布了每 token 字节数，那就是声明，只是不是逐分量的。
+  // 这一格说的是「这个数可不可信」，标反了比不标更坏。
+  if (basis) return [{ comp: '', sig: KV_BASIS_LABEL[basis] ?? basis, declared: basis !== 'dtype_fallback' }];
   return [];
 }
 
@@ -395,6 +404,7 @@ const shortName = (m: Model, label: string) =>
       <span><i class={`sw ${dtypeCell(d).cls}`}>{dtypeCell(d).short}</i>{d}</span>
     ))}
     <span><i class="sw dt-fp4 drv">MX</i>底部虚线＝名字由签名推出，非记录原值</span>
+    <span><i class="sw dt-fp4">4</i>裸 FP4＝元素是 E2M1，但块布局不是单一有名格式</span>
     <span><i class="sw abs">·</i>不适用（这一代没有这块权重）</span>
     <span><i class="sw uns">?</i>未录（有权重，精度还没查）</span>
   </div>
@@ -421,9 +431,9 @@ const shortName = (m: Model, label: string) =>
                   其余 {f.folded.length}
                 </th>
               )}
+              <th>KV 缓存</th>
               <th>发布形态</th>
               <th>量化块 / scale</th>
-              <th>KV 缓存</th>
               <th>依据</th>
             </tr>
           </thead>
@@ -456,7 +466,8 @@ const shortName = (m: Model, label: string) =>
                             <i
                               class={`sw ${cell.cls}${c.derived ? ' drv' : ''}`}
                               title={`${SUB_LABEL[k] ?? k}：${c.sig}`
-                                + (c.derived ? `\n→ ${c.shown}（由「元素 + 块 + scale」签名推出，记录只给了 ${c.dtype}）` : '')}
+                                + (c.derived ? `\n→ ${c.shown}（由「元素 + 块 + scale」签名推出，记录只给了 ${c.dtype}）` : '')
+                                + (c.why ? `\n→ ${c.why}` : '')}
                             >
                               {cell.short}
                             </i>
@@ -483,6 +494,20 @@ const shortName = (m: Model, label: string) =>
                         )}
                       </td>
                     )}
+                    {/* KV 这一列紧跟子系统格子：它和它们是同一类事实（哪一块是什么精度），
+                        放在「发布形态」「量化块」后面会被挤出可视区 —— 1024px 窗口下原先它在
+                        1250px 开外，等于不存在。格子只印分量与格式名，完整签名进 title */}
+                    <td class="small kvcol">
+                      {kv.length ? kv.map((r) => (
+                        <div class={r.declared ? 'kvd' : 'kvf'} title={r.sig}>
+                          {r.comp && <span class="muted">{KV_COMP_LABEL[r.comp] ?? r.comp} </span>}
+                          {r.fmt
+                            ? <b class="fmt" title={`${r.sig}\n→ ${r.fmt}（由签名推出）`}>{r.fmt}</b>
+                            : <code>{r.sig.split(' · ')[0]}</code>}
+                          {!r.declared && <span class="muted"> 非声明</span>}
+                        </div>
+                      )) : <span class="absent unsurveyed">未录</span>}
+                    </td>
                     <td>
                       {rel.length ? rel.map((r) => (
                         <div class="rel">
@@ -497,34 +522,27 @@ const shortName = (m: Model, label: string) =>
                         </div>
                       )) : <span class="absent unsurveyed">未录</span>}
                     </td>
-                    <td>
-                      {blk.length ? blk.map((b) => (
-                        <div class="small">
-                          {SUB_LABEL[b.sub] ?? b.sub}
-                          {b.block && <> <code>{b.block}</code></>}
-                          {b.scale && <> · scale <code>{b.scale}</code></>}
-                          {b.fmt && (
-                            <b class="fmt" title="由「块 + scale」签名推出，不是记录的 dtype 字段">
-                              {b.fmt}
-                            </b>
-                          )}
-                        </div>
-                      )) : <span class="absent unsurveyed">未录</span>}
+                    {/* 签名已经在每个子系统格子的 title 里了，这一列是「一次看全」的版本。
+                        344px 宽，折起来省出的正是 KV 列要的空间 */}
+                    <td class="small basis">
+                      {blk.length
+                        ? <details><summary>{blk.length} 块</summary>
+                            {blk.map((b) => (
+                              <div class="small">
+                                {SUB_LABEL[b.sub] ?? b.sub}
+                                {b.block && <> <code>{b.block}</code></>}
+                                {b.scale && <> · scale <code>{b.scale}</code></>}
+                                {b.fmt && (
+                                  <b class="fmt" title="由「块 + scale」签名推出，不是记录的 dtype 字段">
+                                    {b.fmt}
+                                  </b>
+                                )}
+                              </div>
+                            ))}
+                          </details>
+                        : <span class="absent unsurveyed">未录</span>}
                     </td>
-                    <td class="small">
-                      {kv.length ? kv.map((r) => (
-                        <div class={r.declared ? 'kvd' : 'kvf'}>
-                          {r.comp && <span class="muted">{KV_COMP_LABEL[r.comp] ?? r.comp} </span>}
-                          <code>{r.sig}</code>
-                          {r.fmt && (
-                            <b class="fmt" title="由「块 + scale」签名推出，不是记录的 dtype 字段">
-                              {r.fmt}
-                            </b>
-                          )}
-                          {!r.declared && <span class="muted"> · 非声明</span>}
-                        </div>
-                      )) : <span class="absent unsurveyed">未录</span>}
-                    </td>
+
                     {/* 整段取数方法折起来：它是全表最宽的一格（DeepSeek 那条是一整段），
                         但**不能删** —— 「全 BF16」这句话的分量取决于它是数了 49.7 万条还是
                         抽了几个分片。默认一行，点开看全文，两头都保住 */}
@@ -668,6 +686,7 @@ const shortName = (m: Model, label: string) =>
   }
   .sigline { max-width: 72ch; margin: -6px 0 18px; }
 
+  td.kvcol { max-width: 20ch; }
   .kvd { white-space: nowrap; }
   .kvf { white-space: nowrap; color: var(--ink-3); font-style: italic; }
 
