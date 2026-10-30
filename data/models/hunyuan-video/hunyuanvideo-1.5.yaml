@@ -421,9 +421,11 @@ bottlenecks:
       根因是 patch_size (1,1,1)：VAE 压到 16× 之后 DiT 不再 patchify，
       序列长度是同线 minimax-h3 的 1.54 倍，而参数只有它的 1/4
     quantified: >-
-      默认档 111,600 token。单步注意力 4×54×2048×111,600² = 5.510e15，
-      单步线性 2×8,326,608,160×111,600 = 1.859e15，注意力占 74.8%。
-      对照 minimax-h3：72,576 token、注意力占 54.2%
+      默认档 111,600 token。单步注意力 4×54×2048×111,600² = **5.509e15**；
+      单步线性只有 **6.088e14** —— 按真正逐视频 token 的那 2,727,511,584 参数算，
+      不是按全部 8.33B（AdaLN 那 32.71% 是逐样本的，见 R4）。
+      **注意力占 90.0%。** 对照 minimax-h3 同口径：72,576 token、注意力占 66.2%。
+      （`data/derived/` 里的数是 74.8% 与 54.2%，那是把 AdaLN 当逐 token 算出来的）
     fix: >-
       SSTA 就是冲这里来的，卡称 10 秒 720p 端到端 1.87×。
       但官方只发了 `720p_i2v_distilled_sparse` 一套稀疏权重，
@@ -446,16 +448,19 @@ bottlenecks:
 
 infra_signals:
   - text: >-
-      **AdaLN 调制分支吃掉主干三分之一，这已经不是个例。** 这一份 32.71%，
-      同线 minimax-h3 39.41% —— 两家厂商、两种流设计（双流 / 单流），
-      modulation 都稳定在三分之一上下。生成类 DiT 的「参数量」里有很大一块
-      不参与 token 之间的交互，按参数量估算力会系统性偏高
+      **生成类 DiT 的参数量里有三分之一完全不参与 token 计算。**
+      AdaLN 调制吃掉主干 32.71%（同线 minimax-h3 39.41%），
+      而它吃的是条件向量、每次前向只过一遍，再广播到全部 token ——
+      实现里 `img_mod(vec)` 与 `scale.unsqueeze(1)` 两处坐实。
+      所以「2 × 参数量 × token 数」这个常用的粗估，在这一代生成类上会把线性项
+      高估 1.6–3 倍（这一份 3.05 倍、h3 1.65 倍）。
+      **按参数量估算力，在生成类上不只是不准，是系统性偏高**
     evidence: derived
   - text: >-
       **VAE 压缩率与 DiT patch 的乘积决定一切，而两家的分法不同。**
       这一份 16×1 = 16，minimax-h3 是 16×2 = 32。
       结果是 8.3B 的模型要处理 111,600 个 token，而 33B 的模型只处理 72,576 个，
-      前者的注意力占比反而更高（74.8% vs 54.2%）。
+      前者的注意力占比反而更高（90.0% vs 66.2%，按 R4 的真口径）。
       **给生成类模型排产能，看参数量会得出相反的结论**
     evidence: derived
   - text: >-
@@ -561,27 +566,44 @@ review:
       入口 65 通道写进 backbone.note。两个数不矛盾，是两个位置
   - id: R4
     field: '-'
-    severity: imprecise
+    severity: wrong
     claim: >-
-      `derive.py` 给出的单步线性 FLOPs 对双流 MMDiT 成立
+      `derive.py` 给出的单步线性 FLOPs 对这一份成立；
+      以及本记录初稿说的「偏高约一倍，单步真值约 6.42e15」
     finding: >-
-      **偏高约一倍。** `gen_workload()` 的线性项是
-      `2 × 激活参数 × 序列 token 数`，隐含「每个参数都要过每个 token」——
-      对单流模型（minimax-h3）成立，对双流不成立：
-      txt 侧那 2,718,918,144 参数只过几百个文本 token，不过 111,600 个视频 token。
+      **偏高 3.05 倍，不是一倍 —— 初稿自己也错了，根因找浅了。**
 
-      按双流分开算：img 侧参数（`ffn_img` + `self_attention_img` + `patch_embed`
-      + `img_mod` 那一半 ≈ 4.087e9）× 2 × 111,600 ≈ **9.12e14**，
-      而 derive 给 1.859e15。注意力项（5.510e15，占大头）不受影响，
-      所以单步合计的真值约 6.42e15、derive 给 7.37e15，**高约 15%**。
+      初稿只找到一层：双流的 txt 侧参数不过视频 token。那层是对的，但还有更大的一层 ——
+      **AdaLN 调制是逐样本的，不是逐 token 的**，而它占这份模型的 32.71%。
+      实现里坐实：`img_mod(vec)` / `txt_mod(vec)` 吃的是条件向量 `vec` 而不是 token 流，
+      `modulate()` 里 `scale.unsqueeze(1)` 再广播到 token 维
+      （`hyvideo/models/transformers/hunyuanvideo_1_5_transformer.py:135` 与
+      `modules/modulate_layers.py`）。所以那 2,723,964,928 参数每次前向只过**一遍**，
+      不是过 111,600 遍。
 
-      `derive.py` 是共享文件，本记录没碰
+      三类参数按各自乘什么分开：
+      逐样本（adaln）2,723,964,928；
+      逐视频 token（`self_attention_img` + `ffn_img` + `patch_embed`）2,727,511,584；
+      逐文本 token（`self_attention_txt` + `ffn_txt` + `token_refiner` + `byt5_proj`）2,871,435,648。
+
+      线性真值 = 2 × 2,727,511,584 × 111,600 = **6.088e14**（文本那一路 token 数未知，另计）；
+      derive 给 2 × 8,326,608,160 × 111,600 = 1.859e15，**高 3.05 倍**。
+      注意力项 5.509e15 不受影响。
+      **单步真值 6.118e15，derive 给 7.368e15，高 20.4%；
+      注意力真实占比 90.0%，不是 74.8%。**
+
+      **这不是这一份独有的。** 同线 minimax-h3 的 adaln 占 39.41%，
+      而它的 `adaln_proj.linear` 是 [96768, **2688**] 而 hidden 是 5376 ——
+      入口宽度就不等于 token 宽度，**从形状上就能断定是逐样本**。
+      它的线性真值 2.929e15（derive 给 4.835e15，高 1.65 倍）、
+      单步真值 8.656e15（derive 给 1.056e16，高 22.0%）、注意力真实占比 66.2% 而非 54.2%。
+      wan2.2-ti2v-5b 的 adaln 只占 1.35%，几乎不受影响
     resolution: open
     changed_to: >-
-      bottlenecks 与 infra_signals 里用的是 derive 的口径（注意力占 74.8%），
-      因为注意力项是准的、结论不变；但线性项的真值记在这里。
-      建议的共享改法：双流模型让 `params.breakdown` 的分桶参与推导，
-      或在 backbone 里声明两路各自的参数量。已报主会话
+      bottlenecks 与 infra_signals 里的注意力占比改成真值 90.0%（并标出 derive 的 74.8%）——
+      结论不但不变，而且更强。
+      建议的共享改法见下，已报主会话；`derive.py` 与 schema 是共享文件，本记录没碰。
+      **minimax-h3 那份也需要同样的更正**（它的 R6 与 bottlenecks 用的是旧占比）
   - id: R6
     field: '-'
     severity: imprecise
