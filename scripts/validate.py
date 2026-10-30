@@ -56,6 +56,11 @@ def check_release_vs_measured(doc, path, derived_dir, errors):
     比的是 data/derived/<id>.json 的 weight_bytes_by_dtype，不是 facts/ 下的清单 ——
     facts/ 在 gitignore 里，CI 上没有；而 derived 是提交过的。
 
+    **这道闸锚在内侧，所以只守得住一半**（model-audit skill 规则 11）：它查的是
+    「记录声明了而本仓清单里没有」，查不出「厂商发了而记录压根没声明」——
+    MiniMax-M3 漏掉的 MXFP8 变体就在这个盲区里，声明与实测完全自洽，这里全绿。
+    要补那一半，锚得换到外侧（厂商发布清单 / HF 仓列表），是另一种取数。
+
     **容器情况自己豁免自己，这里不写白名单。** derive.py 在打包成立时已经把容器换成了
     逻辑精度（packing_factor > 1 时 label 取 logical），所以 FP4 装 INT8、INT4 装 INT32、
     MXFP4 装 UINT8 这些在 by_dtype 里本来就显示成 FP4 / INT4 / MXFP4，对得上。
@@ -113,6 +118,10 @@ def check_release_vs_measured(doc, path, derived_dir, errors):
         f"那就在 precision.weights_release_scope 里写明是哪个仓、measured: false；"
         f"要么声明本身不对。两种在字段上长得一样，页面会并排显示"
         f"「声明发了 X」和「实测全是 Y」，读者会当成数据错")
+
+
+def _root(data_dir):
+    return os.path.dirname(os.path.abspath(data_dir)) or "."
 
 
 def check_absence_contract(errors, warnings):
@@ -262,6 +271,55 @@ def check_stray_labels(root, warnings):
                         f"{rel}: 第 {where}{more} 行把 basis 取值自己映射成中文 —— "
                         "又一份标签表。标签该从 data/schema/columns.json 读；"
                         "站点侧的读取入口（site/src/lib/columns.ts）落地后这一条收紧成 error")
+
+
+# 渲染跟踪字段的页面。新加一张这种表就要加进来 —— 不进来就没人检查它会不会
+# 又把三态渲染成同一个 `—`。
+TRACKED_TABLES = [os.path.join("site", "src", "pages", "families", "[family].astro")]
+DATA_TS = os.path.join("site", "src", "lib", "data.ts")
+COLUMNS_TS = os.path.join("site", "src", "lib", "columns.ts")
+
+
+def check_renderers(root, errors):
+    """渲染器不许绕过契约。
+
+    两种绕法都真的出过：
+      1. 直接调 f.get(m)，缺值就又变回一个什么都不说的 `—`，三态同形
+      2. 按「有没有值」决定整行出不出，于是「查了但没有」那一态连行一起消失 ——
+         45 份记录的 KV 精度正是这么在五个家族页上整行不见的，比渲染成 `—` 还糟
+
+    两种语言的 op 词表也在这里比：不一致的话，同一个空格子在闸口里是「不适用」、
+    在页面上是「未录」。
+    """
+    ts = os.path.join(root, COLUMNS_TS)
+    if not os.path.exists(ts):
+        errors.append(f"缺 {COLUMNS_TS} —— 站点侧没有读契约的入口，渲染器只能继续猜")
+    else:
+        ts_ops = set(re.findall(r"case '([a-z_]+)':", open(ts, encoding="utf-8").read()))
+        from lib import columns
+        if ts_ops != columns.OPS:
+            errors.append(f"op 词表两侧不一致：python={sorted(columns.OPS)} "
+                          f"typescript={sorted(ts_ops)}")
+
+    dt = os.path.join(root, DATA_TS)
+    if os.path.exists(dt) and "from './columns'" not in open(dt, encoding="utf-8").read():
+        errors.append(f"{DATA_TS} 没有 import ./columns —— 契约没接进渲染路径，"
+                      "columns.json 成了摆设，缺值仍然由页面自己猜")
+
+    for rel in TRACKED_TABLES:
+        full = os.path.join(root, rel)
+        if not os.path.exists(full):
+            errors.append(f"找不到 {rel}（改名了就把 TRACKED_TABLES 一起改）")
+            continue
+        src = open(full, encoding="utf-8").read()
+        if re.search(r"\bf\.get\(", src):
+            errors.append(f"{rel} 里直接调了 f.get() —— 跟踪字段的格子一律走 "
+                          "cell() / <Cell>：直接调的话缺值就又变回一个什么都不说的 `—`，"
+                          "而那个符号同时背着「没查」「不适用」「查了但没有」三种意思")
+        if "rowIsInformative" not in src:
+            errors.append(f"{rel} 没有用 rowIsInformative 判断整行出不出 —— "
+                          "按「有没有值」判会把「查了但没有」那一态连行一起藏掉，"
+                          "那一态是结论，不是缺口")
 
 
 def check_absence_resolves(doc, path, derived_dir, errors, warnings, gaps):
@@ -514,7 +572,8 @@ def main():
 
     errors, warnings, judgements, gaps = [], [], [], []
     check_absence_contract(errors, warnings)
-    check_stray_labels(os.path.dirname(os.path.abspath(args.data_dir)) or ".", warnings)
+    check_renderers(_root(args.data_dir), errors)
+    check_stray_labels(_root(args.data_dir), warnings)
     models = sorted(glob.glob(os.path.join(args.data_dir, "models", "**", "*.yaml"),
                               recursive=True))
     loaded = {}

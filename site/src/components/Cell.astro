@@ -1,0 +1,29 @@
+---
+/**
+ * 跟踪字段的一个格子。
+ *
+ * 存在的理由只有一个：**空格子要说出自己是哪一种空**。
+ * 此前三种情况都渲染成 `—` —— 没查 / 不适用 / 查了但没有。其中第三态是信息
+ * （「厂商没公布缓存精度，所以字节那一列是按权重 dtype 兜底的」是一条结论），
+ * 前两态是缺口，同形就等于把信息和缺口混为一谈。
+ *
+ * 判定不在这里做，在 data/schema/columns.json 里 —— 渲染器无从含糊，
+ * 闸口（validate.py 第 5 道）也能机械校验。所以页面一律用这个组件，
+ * 不要自己调 field.get()。
+ */
+import { cell, isAbsent, type Model, type TrackedField } from '../lib/data';
+
+interface Props {
+  field: TrackedField;
+  model: Model;
+}
+const { field, model } = Astro.props as Props;
+const v = cell(field, model);
+---
+{
+  isAbsent(v) ? (
+    <span class={`absent ${v.state}`} title={v.why}>{v.label}</span>
+  ) : (
+    v
+  )
+}
