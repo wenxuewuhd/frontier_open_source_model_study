@@ -1,0 +1,690 @@
+# 机械字段来自 config（official）；形状、参数量、层覆盖、三类新机制的构成
+# 来自完整权重清单（131 分片 1658 条目，无读失败分片）。
+# **本记录的 params.breakdown 用的归类与 scripts/lib/subsystems.py 不同**
+# （PLE 查表落进 other、hyper-connections 落进 attention / dense_ffn），
+# 实害与需要的改动写在 counting_note、R1 与交接报告里。
+id: qwen3.8-flash-next
+family: qwen
+kind: vlm
+display_name: Qwen3.8-Flash-Next
+released: '2026-08-24'
+license: other
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3.8-Flash-Next
+    locator: config.json @ de4b8e4d43b9
+    accessed: '2026-10-30'
+    note: >-
+      许可取自 HF tags license:other 与 cardData license_name: qwen-community-1.0
+      —— 与同代旗舰的 qwen3.8-max 不同，也不是 Qwen3.5 全线的 apache-2.0。
+      131 分片 1658 个张量，逐分片读头取全，failed_shards 为空。
+      1655 条 BF16 + 3 条 I64（PLE 的 layer_multipliers [3] 与
+      ngram_heads_offsets / ngram_heads_vocab_sizes 各 [16]，共 35 个元素）。
+      **model_type 是 qwen4_exp、架构名 Qwen4ExpForConditionalGeneration**，
+      不是 Qwen3.5 那一套 —— 下一代的架构类在这一份上先落地
+
+hf:
+  repo: Qwen/Qwen3.8-Flash-Next
+  sha: de4b8e4d43b9ed57f2d28f1e9a7d8e20fe6a14b2
+  last_modified: '2026-08-27T06:08:11.000Z'
+  pipeline_tag: image-text-to-text
+  gated: false
+
+lineage:
+  track: side
+  predecessor: qwen3.8-2.4t-a95b
+  changed_from_predecessor:
+    - axis: attention
+      text: >-
+        **稀疏 indexer 第一次进入 Qwen 家族**：12 层 full attention 各有一个
+        self_attn.indexer.index_qk_proj [640, 2560] 与 q/k_layernorm [128]。
+        640 是 **q 与 k 融合**：index q 4 头 × 128 = 512，index k **1 头** × 128 = 128
+        （config 的 indexer_n_heads 4 / indexer_kv_heads 1 / indexer_head_dim 128）。
+        config 另有 indexer_budget 2048 与 indexer_compress_ratio 4。
+        混合比例仍 3:1（36 线性 + 12 full），线性注意力与旗舰同构
+        （in_proj_qkv [10240, 2560] + in_proj_z [6144, 2560]，value 头 48）
+      benefit: >-
+        **index K 的缓存宽度是 128，不是 indexer_n_heads × indexer_head_dim = 512**
+        —— 它在 4 个 index 头之间 MQA 共享，产出它的张量输出维只有 128。
+        按头数乘积折算会高估 4 倍（本仓在 DeepSeek V4.1 上按 32×128 折算过，
+        那次高估 32 倍）。每 token 的 index K 上界 = 128 × 12 层 = 1536 元素，
+        占总缓存 13,824 元素的 11.1% —— 主要缓存压力仍在全局 KV，不在索引。
+        compress_ratio 4 与 budget 2048 都可能让实际条目数更低，
+        但权重侧没有任何张量能定这件事（见 open_questions）
+    - axis: residual
+      text: >-
+        **hyper-connections**：config 的 hc_count 4 / hc_lowrank 320。
+        残差流宽度变成 4 × hidden = **10240**，每层有两套混合权重
+        （attn_hyper_connection 与 mlp_hyper_connection，各含
+        block_inject_weight [4, 10240]、input_mix_weight_down [320, 10240]、
+        input_mix_weight_up [10240, 320]、hc_norm [10240]），
+        另有模型级的 model.hyper_connection_mixer。合计 639,631,360 参数（0.36%）
+      benefit: >-
+        **激活显存按 4 倍残差流算，不是按 hidden 算**：每 token 的残差流从
+        2560 变成 10240 个元素，prefill 的峰值激活与所有逐层缓冲区都要跟着放大。
+        参数量代价可以忽略（0.36%），算子代价是每层两次低秩混合（320 维瓶颈）
+        加一次 block_inject。这与 DeepSeek V4 一代的 mHC 是同类机制
+    - axis: retrieval
+      text: >-
+        **PLE n-gram 查表**：主干**第 1 层**（清单的层索引）挂一张分成 128 片的
+        n-gram 嵌入表，每片 [2500012, 160]，共 320,001,536 行、
+        **51,200,245,760 参数 —— 占总参数 28.4%**。
+        另有 ple.key_proj [10240, 2560]、value_proj [2560, 2560]、
+        conv1d [10240, 1, 4]、三张 [10240] 的 norm，以及 3 条 I64 的索引元数据。
+        config: ngram_size 3、ngram_vocab_size_base 2e7、split_ngram_parts 128、
+        heads_per_ngram 8、ple_embed_dim 2560、ple_conv_kernel_size 4。
+        **config 的 ple_layer_ids 是 [2]，而清单里这些张量在 layers.1 下** ——
+        config 与权重冲突，按本仓约定取权重
+      benefit: >-
+        每 token 只读 16 行 × 160 维（16 个 n-gram 头 × 160 = 2560 = ple_embed_dim），
+        即 **5,120 B/token**（BF16），而表本身是 95.4 GiB。
+        所以它在容量上是第三大项、在带宽上几乎为零 ——
+        **必须排除在 decode 带宽口径之外**，否则激活参数会从 6.67B 变成 57.87B
+        （8.7 倍高估，见 counting_note 与 R1）。
+        部署上这是一张可以放在主存甚至外置 KV 存储里的表，与权重分开规划
+    - axis: moe
+      text: >-
+        512 专家 top-10、共享专家 1 个、专家中间维 640（旗舰是 2048），
+        **主干与草稿块都是堆叠存储**（mlp.experts.gate_up_proj [512, 1280, 2560]
+        与 down_proj [512, 2560, 640]，1280 = 2 × 640）——
+        与旗舰一致，而比 Qwen3.5-397B-A17B 的「主干堆叠、草稿逐专家」已经统一
+      benefit: >-
+        专家总量 120,795,955,200（占 67.1%）而每 token 只激活 10/512，
+        激活的专家部分 2,359,296,000。grouped GEMM 吃 3 维权重，主干与草稿同一条路径
+    - axis: scale
+      text: >-
+        2.45T 总 / A95B → 180.0B 总 / 本记录按带宽口径 6.67B。
+        层数 92 → 48，hidden 8192 → 2560，词表 248320 不变
+      benefit: >-
+        这是「Flash」档：总量降到旗舰的 7.4%，而三类新机制（稀疏索引、
+        hyper-connections、n-gram 查表）都在这一档上首发 ——
+        新结构在小档位先落地，是跟踪下一代时要盯的信号
+
+params:
+  breakdown:
+    expert: 120796000000.0
+    retrieval: 51200200000.0
+    attention: 2684190000.0
+    draft: 2607150000.0
+    residual: 639631000.0
+    embed: 635699000.0
+    lm_head: 635699000.0
+    vision: 448931000.0
+    shared_expert: 236052000.0
+    router: 62914560.0
+    other: 32808960.0
+    indexer: 19660800.0
+    norm: 1037824.0
+  counting_note: >-
+    **模型名里没有参数量**（没有 180B 也没有 A… 字样），所以 params.total 与
+    active_decode 都不填，Gate B 的参数总量一项相应 skip —— 这是声明值缺失，
+    不是本仓没算。实测全量 **179,999,981,459**，与 HF 平台自己从分片头统计的
+    safetensors tally 逐位相同；它离 180e9 只差 18,541（−0.00001%），
+    像是按 180B 这个目标配出来的，但本仓没有一手来源，所以不把 180B 当声明值填进去。
+    **breakdown 用的是本仓按实际子系统归属手工归类的结果，与
+    data/derived/qwen3.8-flash-next.json 的 params_by_subsystem 不一致**，
+    因为 scripts/lib/subsystems.py 的正则认不出本代的三类新张量名（见 R1）：
+    PLE 查表与 PLE 的投影（合计 51,233,054,755）整块落进 other；
+    attn_hyper_connection.* 落进 attention（多算 316,538,880）、
+    mlp_hyper_connection.* 落进 dense_ffn（于是一个没有稠密 FFN 的模型
+    显示出 316,538,880 的 dense_ffn，和本仓在 DeepSeek V4-Flash 上修掉的是同一类）。
+    **第二处实害更重**：派生的激活参数把 51.2B 的查表算成常驻，
+    带宽口径从 **6,671,295,360 变成 57,871,541,155（8.7 倍）**，
+    每 token 的权重搬运量从 12.43 GiB 变成 107.79 GiB，arithmetic_intensity 一并失真。
+    本记录的归类（13 项）合计与清单求和、与 HF tally 逐位相同。
+    激活参数两个口径（按本记录的归类）：带宽口径 **6,671,295,360**
+    = 激活专家 2,359,296,000 + 常驻 4,311,999,360
+    （注意力 2,684,194,176 + 残差系数 639,631,360 + 共享专家 236,052,480
+    + lm_head 635,699,200 + router 62,914,560 + indexer 19,660,800
+    + PLE 投影 32,808,960 + norm 1,037,824）；
+    可比官方口径 7,306,994,560（含输入词表）。
+    **n-gram 查表、视觉塔与草稿块都不在带宽口径里**：查表每 token 只读 16 行
+    （5,120 B），视觉塔与草稿块不在主路径上。
+    权重存储 335.28 GiB（其中查表一项 95.37 GiB）。
+
+context:
+  max: 262144
+
+arch:
+  layers: 48
+  hidden: 2560
+  vocab: 248320
+  norm: RMSNorm
+  norm_eps: 1.0e-06
+  activation: SwiGLU
+  position: >-
+    interleaved mRoPE，theta 1e7，partial_rotary_factor 0.25（只对 1/4 维度加 rope）：
+    256 × 0.25 = 64 维即 32 个频率对，mrope_section [11, 11, 10] 正好分完 32 对
+
+  attention:
+    type: hybrid
+    num_heads: 24
+    num_kv_heads: 2
+    head_dim: 256
+    head_dim_note: >-
+      full attention 层的 q_proj 是 [12288, 2560]，12288 = 2 × 24 头 × 256 ——
+      输出维翻倍，一半是 query、一半是输出门（config 的 output_gate_type: sigmoid，
+      **本代是 sigmoid 而 Qwen3.6/3.8 的其余档位是 swish**）。
+      o_proj 入口 6144 = 24 × 256 只对应 query 那一半。
+      k_proj 与 v_proj 都是 [512, 2560]（512 = 2 × 256），
+      全局 KV 宽度按它们的输出维算：每层 2 × 512 = 1024 元素。
+      另有每层 q_norm [256] 与 k_norm [256]，以及 indexer 自己的
+      q_layernorm / k_layernorm [128]，都归 norm 子系统
+    partial_rotary_factor: 0.25
+    layer_pattern: >-
+      3:1 linear:full，full attention 落在层号 ≡ 3 (mod 4) 上（config 的 layer_types
+      列表 48 项与清单一致：self_attn.q_proj 在 3/7/…/47 共 12 层，
+      linear_attn.* 在其余 36 层）。**indexer 恰好只在这 12 层上**
+      （index_qk_proj 的层集合与 full attention 的层集合逐个相同，
+      线性层没有 indexer），另有草稿块 1 层也带 indexer
+    output_gate:
+      enabled: true
+      type: sigmoid
+    sparse:
+      mechanism: >-
+        稀疏块选择：每个 full attention 层用一个融合的 index_qk_proj 产出
+        index q（4 头 × 128）与 index k（1 头 × 128），按 index 打分选块，
+        config 的 indexer_budget 2048 是预算、indexer_compress_ratio 4 是压缩比。
+        **打分与选块的具体规则没有读实现**，本记录只记权重侧能定的三件事：
+        投影是融合的、index k 单头共享、层覆盖与 full attention 层逐个相同
+      index_n_heads: 4
+      index_head_dim: 128
+      index_kv_dim: 128
+      index_kv_source: >-
+        index_qk_proj [640, 2560] 的 k 段输出维 —— 640 = q 4 × 128 + k 1 × 128，
+        所以落进缓存的 index K 每层只有 128 个元素，不是 4 × 128 = 512
+      index_topk: 2048
+    kv_sharing:
+      index_kv_source_layers: [3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43, 47]
+      layer_coverage: >-
+        三类产出的层覆盖都是同一组 12 层（full attention 的 k/v、indexer 的 index k），
+        线性注意力的 36 层不产出任何随上下文增长的缓存。
+        主干口径 48 层 + 1 草稿块；草稿块带全套 full attention 与 indexer，
+        开草稿侧时两类都要按 13 层算
+      note: >-
+        **index K 的条目数按 1:1 计费，是上界。** config 的 indexer_compress_ratio 4
+        与 indexer_budget 2048 都可能让实际条目数更低（前者像 DeepSeek V4 一代的
+        时序池化、后者像固定预算的选块），但本代权重里**没有任何压缩器张量**
+        （没有 compressor.ape 之类能定比值的东西），所以本仓不替公式折算。
+        derived JSON 里的 per_token_elems_bound 标的是 exact，
+        那只说明「宽度 × 层数」这两个因子是实测的，不代表条目覆盖已经核过
+    hybrid:
+      layer_types_count:
+        linear: 36
+        full: 12
+      interval: 4
+      note: >-
+        12 层 full attention 的 KV 与 index K 随上下文线性增长，
+        36 层线性注意力只带每序列固定的递归状态。
+        以上层数都是主干口径（48 主干层 + 1 草稿块）：草稿块 mtp.layers.0 带一套与主干
+        full attention 同名的 q/k/v/o 投影与 indexer、没有 linear_attn，
+        所以开草稿侧时累积缓存的是 13 层，线性状态仍是 36 层。
+        本记录与 data/derived/ 都按主干口径记账
+    linear_state:
+      mechanism: 门控线性注意力 + 短卷积
+      num_key_heads: 16
+      num_value_heads: 48
+      key_head_dim: 128
+      value_head_dim: 128
+      conv_kernel_dim: 4
+      state_dtype: FP32
+      state_layout_note: >-
+        与同代旗舰同构，四个因子都钉在清单的形状上：状态头数 48（= value 头数，
+        每层 A_log [48] 与 dt_bias [48]）；conv 通道数 10240
+        = 2 × 16 × 128 + 48 × 128，36/36 层 conv1d.weight 都是 [10240, 1, 4]，
+        与 in_proj_qkv [10240, 2560] 的输出维相等。
+        状态精度有一手来源：config 的 mamba_ssm_dtype: float32。
+        **另有一处本代独有的 conv 状态**：PLE 块里还有一张 conv1d [10240, 1, 4]
+        （ple_conv_kernel_size 4，作用在 4 × hidden 的残差流上），
+        它也要每序列保存 4 × 10240 个位置 —— 一层 163,840 B（FP32），
+        本记录的 per_sequence 没有把它计入（derive 的公式只建模线性注意力层），
+        所以每序列状态是**略低的**，差 0.14%
+
+  ffn:
+    type: moe
+    layer_pattern: >-
+      48 层全是 MoE 层，线性层与 full 层的 FFN 形态相同。
+      **这个模型没有任何稠密 FFN** —— 派生 JSON 里的 dense_ffn 316,538,880
+      全部是被错归的 mlp_hyper_connection 残差系数（见 R1）
+
+  moe:
+    routed_experts: 512
+    shared_experts: 1
+    top_k: 10
+    intermediate: 640
+    routing: 带辅助损失（router_aux_loss_coef 0.001）
+    balance: aux-loss
+    storage_note: >-
+      主干与草稿块都是堆叠存储：每层一个 mlp.experts.gate_up_proj [512, 1280, 2560]
+      （1280 = 2 × 640，gate 与 up 融合）与一个 down_proj [512, 2560, 640]。
+      草稿块同样是堆叠的 —— Qwen3.5-397B-A17B 那一代「主干堆叠、草稿逐专家」
+      的过渡态到这里已经统一（Qwen3.6 起就是如此）。
+      grouped GEMM 吃 3 维权重，EP 按首维切
+
+  retrieval:
+    mechanism: >-
+      PLE n-gram 嵌入查表：按 n-gram（ngram_size 3）哈希到 16 个 n-gram 头上，
+      每头查一行 160 维，拼成 ple_embed_dim 2560 后经 key_proj / value_proj
+      与一张短卷积并入残差流。表按 split_ngram_parts 128 分片存放，
+      每片 [2500012, 160]
+    layers: [1]
+    table_rows: [320001536]
+    entry_dim: 160
+    lookup_bytes_per_token: 5120.0
+    projection: >-
+      ple.key_proj [10240, 2560] 与 ple.value_proj [2560, 2560]，
+      另有 ple.conv1d [10240, 1, 4] 与三张 [10240] 的 norm
+      （norm_conv / norm_key / norm_query）。10240 = 4 × hidden，
+      即投影作用在 hyper-connections 加宽后的残差流上
+    placement: >-
+      **config 声明 ple_layer_ids: [2]，而清单里这些张量在 layers.1 下** ——
+      两者冲突，按本仓约定取权重（config 描述模块配置、不描述落盘位置）。
+      差一位可能是 0/1 起点的口径差，本仓没有读实现确认
+
+  residual:
+    type: hyper-connections（hc_count 4、hc_lowrank 320）
+    multiplier: 4
+    coef_proj: >-
+      每层两套：attn_hyper_connection 与 mlp_hyper_connection，各含
+      block_inject_weight [4, 10240]、input_mix_weight_down [320, 10240]、
+      input_mix_weight_up [10240, 320]、hc_norm [10240]；
+      另有模型级 model.hyper_connection_mixer（hc_norm + down/up）。
+      合计 639,631,360 参数
+    note: >-
+      残差流宽度 = hc_count 4 × hidden 2560 = **10240**。
+      参数代价可以忽略（0.36%），真正的影响在**激活显存**：
+      每 token 的残差流元素数是 hidden 的 4 倍，prefill 峰值与逐层缓冲区都要跟着放大。
+      这与 DeepSeek V4 一代的 mHC 是同类机制；本仓的子系统归类正则
+      认 hc_attn_* / hc_ffn_* 那套名字，认不出本代的 *_hyper_connection.*（见 R1）
+
+  decoding:
+    mtp_layers: 1
+    mtp_layers_note: >-
+      config 有两处声明且一致：mtp_num_hidden_layers: 1 与嵌套的 mtp 字典
+      （hybrid: true、layer_types: ["full_attention"]、num_hidden_layers: 1、
+      rope_theta 1e7）。清单一致：mtp.layers.0 一个块，块内是 full attention
+      + indexer + 堆叠的 512 专家 MoE + 共享专家 + router + hyper_connection，
+      块外有 mtp.fc_embedding / fc_hidden（**本代拆成两张**，旗舰那一代是一张 mtp.fc）、
+      pre_fc_norm_embedding / pre_fc_norm_hidden、mtp.hyper_connection_mixer。
+      共 31 条目、2,607,150,848 参数（主干的 1.4%）
+
+  vision:
+    encoder: Qwen3.8 vision tower
+    layers: 27
+    hidden: 1152
+    num_heads: 16
+    intermediate: 4304
+    patch_size: 16
+    spatial_merge_size: 2
+    temporal_patch_size: 2
+    out_hidden: 2560
+    params: 448931056.0
+    fusion: >-
+      patch merge 后投影到主干 hidden：merger.linear_fc1 [4608, 4608] →
+      linear_fc2 [2560, 4608]。deepstack_visual_indexes 是空列表，
+      只在输入侧并入。与 Qwen3.5 两档的视觉塔同构，只有 out_hidden 不同
+
+precision:
+  weights_release: [BF16]
+  quantization:
+    per_subsystem:
+      attention: BF16
+      expert: BF16
+      shared_expert: BF16
+      router: BF16
+      indexer: BF16
+      retrieval: BF16
+      residual: BF16
+      draft: BF16
+      vision: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+    subsystem_method: >-
+      来自完整权重清单（131 分片 1658 条目）逐项统计，非抽样：每个条目都带 shape 与 dtype，
+      failed_shards 为空。1655 条 BF16 + 3 条 I64（PLE 的索引元数据，共 35 个元素，
+      是非训练缓冲区但被 HF 的 tally 算进了参数量，本仓也计入以保持逐位对账）。
+      **A_log 与 linear_attn.norm 在本代是 BF16** —— Qwen3.5 一代那两类是 F32，
+      3.6 起回到 BF16，本代延续。
+      本记录的子系统键按实际归属写（retrieval / residual / indexer 各自成项），
+      与 subsystems.py 的归类不同，见 R1。
+      没有 quantization_config，所以 per_subsystem_block 不填；
+      同代没有看到本档的 FP8 或 INT4 发布仓（名单里只有 Qwen3.8-Flash-Next 与
+      Qwen3.8-Flash-Next-FP8 两个 —— 后者存在，但本仓没有取它的清单，
+      所以 weights_release 只写 BF16，FP8 那一项留 open question）
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: unknown
+    precision: BF16
+    caveat: >-
+      model_type 是 qwen4_exp、transformers_version 是 5.8.0.dev0，
+      三类机制（稀疏 indexer、hyper-connections、PLE 查表）都需要对应实现；
+      本仓没有核过任何引擎的支持状态，所以 status 填 unknown 而不是 supported
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/Qwen/Qwen3.8-Flash-Next
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      三类缓存要分开算：12 层 full attention 的 KV（12,288 元素/token）、
+      同 12 层的 index K（**1,536 元素/token，上界**）、
+      36 层线性注意力的递归状态（每序列固定 113.62 MiB）。
+      索引只占随上下文增长那部分的 11.1% —— 和 DeepSeek V4.1 的结论同向
+      （主要压力在主 KV 不在索引），而本仓在那一份上曾把结论写反过。
+    quantified: >-
+      27,648 B/token（全局 KV 24,576 + index K 3,072，均按模型 dtype 兜底 2 B/元素）
+      + 113.62 MiB/序列（36 层 × (48×128×128 矩阵 + 4×10240 短卷积) × 4 B，
+      FP32 有 config 声明）。元素口径 13,824 元素/token（可跨代比）。
+      262144 满上下文 6.75 GiB + 113.62 MiB。
+      **per_sequence 略低**：PLE 块自己那张 conv1d 的状态（163,840 B）没有计入
+    visibility: public
+  - dimension: weight-bandwidth
+    finding: >-
+      查表必须排除在带宽口径之外，否则结论会错 8.7 倍：带宽口径的激活参数是
+      6,671,295,360（每 token 12.43 GiB），而把 51.2B 的查表算成常驻会得到
+      57,871,541,155（107.79 GiB）。表每 token 只读 16 行 × 160 维 = 5,120 B。
+      **这正是 data/derived/ 现在的状态** —— 子系统归类认不出 PLE（见 R1）。
+    quantified: >-
+      带宽口径 6,671,295,360 × 2 B = 12.43 GiB/token；权重存储 335.28 GiB
+      （查表一项 95.37 GiB）；查表的每 token 读取 5,120 B（16 行 × 160 维 × 2 B）
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      一代之内三类新算子：(1) 稀疏索引的打分与选块（融合的 index_qk_proj
+      + 单头 index K + budget 2048）；(2) hyper-connections 的低秩混合
+      （320 维瓶颈）与 block_inject，作用在 4 倍宽的残差流上；
+      (3) n-gram 哈希查表 + 短卷积 + 两处投影。
+      前两类有 DeepSeek V4 一代的对照（DSA 与 mHC），第三类在本仓是第一次出现。
+    visibility: public
+  - dimension: host-io
+    finding: >-
+      95.37 GiB 的 n-gram 查表每 token 只读 5,120 B，是典型的「大容量、极低带宽」
+      对象 —— 可以放主存、放外置存储、或按分片懒加载，不必占 HBM。
+      128 个分片的切分本身就便于这种放置。但每次查表是 16 次随机行读取，
+      延迟敏感，放在哪一级存储要按 decode 的时延预算算。
+    fix: 把查表与权重分开规划；128 片的分片粒度可直接用于放置与预取
+    visibility: public
+
+infra_signals:
+  - text: >-
+      **三类机制同时首发在一个「Flash」小档位上**（稀疏 indexer、hyper-connections、
+      n-gram 查表），而同代旗舰 qwen3.8-2.4t-a95b 一个都没有、架构类还是 Qwen3.5 那一套。
+      新结构在小档位先落地，所以跟踪下一代时要盯的是这一档而不是旗舰。
+    evidence: derived
+    horizon: watch
+    axis: attention
+  - text: >-
+      **index K 的缓存宽度是产出张量的输出维（128），不是 index 头数乘积（512）。**
+      本代把 index q 与 k 融合成一张 [640, 2560]，640 = 4×128 + 1×128 ——
+      读这张张量的形状时要先按 indexer_kv_heads 把两段拆开，
+      否则宽度会高估 4 倍（本仓在 DeepSeek V4.1 上按 32×128 算过，那次高估 32 倍）。
+    evidence: derived
+    horizon: now
+    axis: attention
+  - text: >-
+      **一个占总参数 28.4% 的子系统可以几乎不占带宽。** PLE 查表 95.37 GiB
+      而每 token 只读 5,120 B。参数量、权重存储、带宽这三个口径在这一档上
+      第一次差到让「模型多大」这个问题没有单一答案：
+      按参数量是 180B，按 decode 带宽是 6.67B，按容量要备 335 GiB。
+      记录与算子表里凡是引用「模型大小」的地方都要带口径。
+    evidence: judgement
+    horizon: now
+    axis: retrieval
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  params.counting_note: judgement
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: judgement
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.attention.output_gate: official
+  arch.attention.sparse.mechanism: judgement
+  arch.attention.sparse.index_kv_dim: derived
+  arch.attention.sparse.index_kv_source: derived
+  arch.attention.kv_sharing: derived
+  arch.attention.hybrid.layer_types_count: derived
+  arch.attention.hybrid.note: judgement
+  arch.attention.linear_state.mechanism: judgement
+  arch.attention.linear_state.state_layout_note: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.shared_experts: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.retrieval: derived
+  arch.retrieval.mechanism: judgement
+  arch.retrieval.placement: derived
+  arch.residual: derived
+  arch.residual.note: judgement
+  arch.decoding.mtp_layers_note: derived
+  arch.vision.encoder: judgement
+  arch.vision.params: derived
+  arch.vision.fusion: derived
+  precision: official
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  Qwen3.8 一代的「Flash-Next」档（2026-08-24），`track: side`，predecessor 取同代旗舰。
+  它是整个 Qwen 名单里结构最新的一份：model_type qwen4_exp、
+  架构名 Qwen4ExpForConditionalGeneration，三类机制（稀疏 indexer、
+  hyper-connections、PLE n-gram 查表）在 Qwen 线都是第一次出现，
+  而同代旗舰 qwen3.8-2.4t-a95b 一个都没有（清单里 indexer / hyper_connection /
+  ple / ngram 四个关键词全部零命中，架构类仍是 Qwen3_5MoeForCausalLM）。
+  混合线性注意力、堆叠专家、MTP、mRoPE、248320 词表这些都沿用 Qwen3.5/3.8 主线。
+  **本记录的 params.breakdown 与 data/derived/ 的 params_by_subsystem 不一致**，
+  原因与需要的改动见 counting_note、R1 与交接报告 —— 引用子系统拆分与激活参数时
+  以本记录为准。
+
+open_questions:
+  - >-
+    **index K 的条目覆盖没有核过**：本记录按 1:1 计费得 1,536 元素/token，是上界。
+    config 的 indexer_compress_ratio 4 与 indexer_budget 2048 都可能让实际条目数更低，
+    但权重侧没有任何压缩器张量能定这件事（DeepSeek V4 一代有 compressor.ape
+    的首维可以定比值，本代没有对应物）。要钉死得读实现
+  - >-
+    稀疏选块的打分规则、块大小与 budget 2048 的语义（是选中的块数还是 token 数）
+    都没有读实现，arch.attention.sparse 只记权重侧能定的三件事
+  - >-
+    **config 的 ple_layer_ids 是 [2] 而清单里 PLE 在 layers.1 下**，差一位。
+    本记录按权重取 [1]，可能是 0/1 起点的口径差，没有读实现确认
+  - >-
+    PLE 块自己那张 conv1d [10240, 1, 4] 的状态（4 × 10240 × 4 B = 163,840 B/序列）
+    没有计入 per_sequence —— derive 的公式只建模线性注意力层的 conv。
+    这使每序列状态偏低 0.14%（113.62 MiB 对 113.78 MiB）
+  - >-
+    n-gram 哈希的算法（怎么从 3-gram 映到 16 个头的行号）没有来源，
+    arch.retrieval.mechanism 只写了权重与 config 能支撑的部分
+  - >-
+    hyper-connections 的混合是作用在 4 份残差流之间还是 4 份与主流之间，
+    没有读实现；block_inject_weight [4, 10240] 的 4 对应 hc_count，
+    但注入规则未核
+  - >-
+    KV 与 index K 的实际落盘精度未披露，按模型 dtype 兜底 ——
+    **缓存账的两个分量 basis 不同**（per_token 兜底、per_sequence 的 FP32 有声明），
+    合计不能当单一口径用
+  - >-
+    同代有 Qwen3.8-Flash-Next-FP8 仓，本仓没有取它的清单，
+    weights_release 只写 BF16，量化配置未知
+  - >-
+    训练精度没有一手来源：config 的 dtype: bfloat16 说的是发布权重，
+    模型卡正文未核，故不填 precision.training
+  - >-
+    **params.breakdown 与 data/derived/qwen3.8-flash-next.json 的
+    params_by_subsystem 不一致，且派生的激活参数偏高 8.7 倍**（见 R1）：
+    scripts/lib/subsystems.py 的正则认不出 PLE 查表（落进 other，
+    于是被算成常驻）与 hyper-connections（分别落进 attention 与 dense_ffn）。
+    本轮按任务约定不改共享脚本（另有家族会话在并行跑），
+    需要的最小改动已写进交接报告：retrieval 正则加 ngram_embedding|ple_embedding，
+    residual 正则加 hyper_connection。改完要重跑本记录的 derive
+
+reviewed:
+  date: '2026-10-30'
+  scope:
+    - official
+    - derived
+    - judgement
+  reviewer: 本会话逐字段复算
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序对 facts/qwen3.8-flash-next 核：config 全部键
+    （含嵌套的 mtp 字典与三类新机制的 9 个键）、完整权重清单（1658 条目逐项
+    numel / dtype / 层索引）、repoinfo 的 tags / cardData / sha 与逐 dtype 的
+    safetensors tally（BF16 179,999,981,424 + I64 35）。
+    缓存账按 skill 的六问逐问答：分三类（全局 KV / index K / 线性状态）、
+    产出张量各自是谁、宽度逐层量（12/12 层一致）、条目覆盖（index K 按 1:1 是上界，
+    已写明）、每元素字节（兜底 / config 声明两种 basis 分开记）、
+    层覆盖（三类的层集合与 full attention 层逐个相同，线性层零命中）。
+    参数十三项按**本仓实际子系统归属**手工归类并逐项按形状重算，
+    合计与清单求和、与 HF tally 逐位相同；
+    与 subsystems.py 归类的差异逐项对出来了（见 R1）。
+    派生的激活参数按两种归类各算一遍，差 8.7 倍。
+    derive.py 以默认 --ep 1 带 --model 重跑，0 处不一致。
+    **原理上核不了的**：稀疏选块与 n-gram 哈希的规则、hyper-connections 的注入规则、
+    index K 的条目覆盖、PLE 的层号口径、KV 落盘精度、训练精度，都在 open_questions 里。
+review:
+  - id: R1
+    field: params.breakdown
+    severity: miscategorized
+    claim: >-
+      breakdown 直接用 data/derived/qwen3.8-flash-next.json 的 params_by_subsystem
+    finding: >-
+      那份派生值有三处错归，第三处有量级实害。
+      (1) **PLE 查表**（128 片 × [2500012, 160] = 51,200,245,760，加 3 条 I64 元数据）
+      与 PLE 的投影（32,808,960）整块落进 other —— retrieval 正则是
+      `engram|memory_table|retriev`，认不出 ngram_embedding / ple_embedding。
+      (2) **hyper-connections** 的 attn_hyper_connection.*（316,538,880）落进 attention、
+      mlp_hyper_connection.*（316,538,880）落进 dense_ffn，
+      于是一个**没有任何稠密 FFN 的模型**显示出 316,538,880 的 dense_ffn ——
+      和本仓在 DeepSeek V4-Flash 上修掉的是同一类（那次修完 dense_ffn 正确地消失了）。
+      residual 正则是 `\bhc_[a-z]+_(base|fn|scale)\b|^hc_|residual|_res_proj\b`，
+      认 V4 一代的 hc_attn_* 那套名字，认不出 *_hyper_connection.*。
+      (3) **实害最重的一处**：other 在 active_params 的常驻名单里，
+      所以 51.2B 的查表被算成每 token 常驻 —— 带宽口径从 6,671,295,360
+      变成 57,871,541,155（**8.7 倍**），每 token 权重搬运量 12.43 → 107.79 GiB，
+      arithmetic_intensity 一并失真。而查表每 token 只读 16 行 × 160 维 = 5,120 B。
+      本轮按任务约定不改共享脚本，改法写进交接报告
+    resolution: open
+    changed_to: >-
+      breakdown 改用本仓实际子系统归属手工归类（13 项，合计与 HF tally 逐位相同），
+      counting_note 与 open_questions 写明与派生值的差异及其两处实害；
+      subsystems.py 的最小改动（retrieval 加 ngram_embedding|ple_embedding、
+      residual 加 hyper_connection）在交接报告里
+  - id: R2
+    field: arch.attention.sparse.index_kv_dim
+    severity: unsupported
+    claim: index K 每层 128 个元素，不是 512
+    finding: >-
+      index_qk_proj 是**一张融合张量** [640, 2560]，而 640 = indexer_n_heads 4 ×
+      indexer_head_dim 128（q 段 512）+ indexer_kv_heads 1 × 128（k 段 128）。
+      落进缓存的只有 k 段，所以宽度 128。
+      按 index_n_heads × index_head_dim = 512 折算会高估 4 倍；
+      本仓在 DeepSeek V4.1 上按 32 × 128 = 4096 折算过，那次高估 32 倍（R27）。
+      12/12 层的 index_qk_proj 形状一致，所以「宽度 × 层数」这个乘式成立
+    resolution: confirmed
+  - id: R3
+    field: arch.attention.kv_sharing.note
+    severity: imprecise
+    claim: >-
+      草稿按 1,536 元素/token 写 index K，没有说这是上界
+    finding: >-
+      config 里有 indexer_compress_ratio 4 与 indexer_budget 2048 两个键，
+      任一个都可能让实际条目数低于 1:1：前者像 DeepSeek V4 一代的时序池化
+      （那一代每 token 只摊 1/ratio 个条目），后者像固定预算的选块
+      （那样 index K 就不是随上下文线性增长，而是每序列有上限）。
+      **但本代权重里没有任何压缩器张量**（没有 compressor.ape 之类能定比值的东西），
+      所以本仓不替公式折算，按 1:1 记为上界并写明。
+      derived JSON 的 per_token_elems_bound 标 exact，那只说明宽度与层数两个因子
+      是实测的 —— skill 提问顺序的第 4 问（一个条目覆盖几个 token）在本代没有答案
+    resolution: corrected
+    changed_to: >-
+      kv_sharing.note 写明 1:1 是上界、两个 config 键各自可能的含义、
+      以及 derived 的 exact 标记指的是哪两个因子；留 open question
+  - id: R4
+    field: arch.retrieval.placement
+    severity: wrong
+    claim: >-
+      草稿按 config 的 ple_layer_ids 写「PLE 在主干第 2 层」
+    finding: >-
+      清单里这些张量的层索引是 **1**
+      （model.language_model.layers.1.ple.*，9 个非表张量加 128 个表分片都在这一层下）。
+      config 声明 [2]。按本仓约定「config 与权重冲突时权重赢」取 1，
+      并写明差一位可能是 0/1 起点的口径差
+    resolution: corrected
+    changed_to: arch.retrieval.layers 取 [1]，placement 里写明与 config 的冲突
+  - id: R5
+    field: params.counting_note
+    severity: imprecise
+    claim: >-
+      草稿把 179,999,981,459 当成「180B 声明值」填进了 params.total
+    finding: >-
+      **模型名里没有任何参数量**（Qwen3.8-Flash-Next），cardData 与 tags 里也没有。
+      179,999,981,459 离 180e9 只差 18,541，看着像是按 180B 配的，
+      但那是本仓的观察不是厂商声明 —— 填进 total 会让 Gate B 的
+      「参数总量」显示成「声明值与实测吻合」，而那是自己比自己
+      （glm-4-9b 的 R13 点过这件事）。
+      所以 total 与 active_decode 都不填，Gate B 那一项 skip，
+      把 180B 这个观察写进 counting_note
+    resolution: corrected
+    changed_to: 删掉 params.total 与 active_decode，counting_note 写明为什么不填
+  - id: R6
+    field: arch.attention.linear_state.state_layout_note
+    severity: missing
+    claim: >-
+      草稿只写了线性注意力层的 conv 状态
+    finding: >-
+      PLE 块里**另有一张 conv1d [10240, 1, 4]**（config 的 ple_conv_kernel_size 4），
+      作用在 4 倍宽的残差流上，它同样需要每序列保存一份状态：
+      4 × 10240 × 4 B = 163,840 B。derive 的公式只建模线性注意力层的 conv，
+      所以 per_sequence 偏低 0.14%（113.62 MiB 对 113.78 MiB）。
+      量很小，但「缓存分几类」这一问漏了一类就是漏了 —— 写明比忽略好
+    resolution: corrected
+    changed_to: >-
+      state_layout_note 与 bottleneck 的 quantified 都写明这一项未计入及其大小，
+      并留 open question
+  - id: R7
+    field: platforms
+    severity: unsupported
+    claim: >-
+      草稿里 status 写 supported、precision BF16
+    finding: >-
+      本仓没有核过任何引擎对 qwen4_exp 的支持状态。
+      transformers_version 是 5.8.0.dev0（dev 版），而三类机制都需要对应实现。
+      按「没核过就不写」，status 应是 unknown ——
+      平台矩阵上一个假的 supported 比空格子更糟
+    resolution: corrected
+    changed_to: status 改为 unknown 并写 caveat
+  - id: R8
+    field: arch.attention.output_gate.type
+    severity: unsupported
+    claim: output_gate_type sigmoid
+    finding: >-
+      config 有 output_gate_type: sigmoid 这个键（一手来源，标 official）。
+      **与同代其余档位不同**：Qwen3.6 / Qwen3.8 的 27B 与 2.4T 旗舰都是 swish，
+      Qwen3.5 两档根本没有这个键。所以门的函数形式在 Qwen3.8 一代内部就不一致，
+      不能从旗舰推本档
+    resolution: confirmed
