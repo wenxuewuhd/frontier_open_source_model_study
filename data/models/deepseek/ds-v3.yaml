@@ -85,7 +85,7 @@ arch:
     head_dim: 192
     v_head_dim: 128
     head_dim_note: num_kv_heads 128 是 query 侧可见的 KV 头数，不是缓存宽度：落盘缓存是 kv_a_proj_with_mqa 的 576 维
-      （latent 512 + rope 64），按 2 × 128 × 192 折算会高估 42.7 倍。head_dim 192 不是 config 字段，
+      （latent 512 + rope 64），按 2 × 128 × 192 = 49152 折算会高估 85.3 倍。head_dim 192 不是 config 字段，
       是 qk_nope 128 + qk_rope 64，只适用于 QK 路径。V 的每头维度是 v_head_dim 128，所以 o_proj
       入口宽度是 128 头 × 128 = 16384（权重实测 [hidden, 16384]），不是 128 × 192 = 24576。按单一 head_dim 推 o_proj 会高
       50%
@@ -268,7 +268,7 @@ review:
   field: arch.attention.num_kv_heads
   severity: missing
   claim: num_kv_heads 128 原样抄自 config，旁边没有口径说明
-  finding: 落盘缓存是 576 维 latent + rope，按 2 × 128 × 192 折算高估 42.7 倍（同 ds-v2 的 R5、glm-5.3 的 R4）
+  finding: 落盘缓存是 576 维 latent + rope，按 2 × 128 × 192 = 49152 折算高估 85.3 倍（同 ds-v2 的 R5；glm-5.3 的 R4 是 64 头、42.7 倍）
   resolution: corrected
   changed_to: head_dim_note 开头补上
 - id: R9
