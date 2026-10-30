@@ -178,38 +178,41 @@ def _():
     assert not errors, f"契约检查报错：{errors}"
 
 
-@case("二·正例：空着的 KV 精度分成「未公布」与「不适用」两种，没有「未录」")
+@case("二·正例：空着的 KV 精度按 kind 分成「未公布」与「不适用」，没有「未录」")
 def _():
-    # 期望值跟着真实状态走：第一份生成类记录（wan2.2-ti2v-5b）进来之后，
-    # 「空着的 KV 精度」不再只有一种含义。
-    #   自回归模型空着  = 厂商没公布落盘精度，字节按权重 dtype 兜底 → confirmed_absent
-    #   扩散模型空着    = 每步重算、根本不建 KV，没有这笔账 → not_applicable
+    # **这条用例断言的是规则，不是人口普查。**
+    # 原先写死「46 份」「47 份」，于是每进一份生成类记录就红一次 ——
+    # 红得有道理（分布确实变了），但每次都只能把数字加一，用例什么也没守住。
+    # 现在按 kind 推期望值：
+    #   生成类空着 = 每步重算、根本不建 KV，没有这笔账      → not_applicable
+    #   自回归空着 = 厂商没公布落盘精度，字节按权重 dtype 兜底 → confirmed_absent
     # **两者都不是 unsurveyed**，unsurveyed 才是「本仓还没查」。
     blank = [i for i, d in RECS.items() if not ((d.get("precision") or {}).get("kv_cache"))]
-    gen = [i for i in blank if RECS[i].get("kind") in ("video-gen", "image-gen")]
-    assert len(blank) == 47, f"空着的应当是 47 份，实际 {len(blank)}"
-    assert len(gen) == 1, f"其中生成类应当是 1 份，实际 {len(gen)}"
+    assert blank, "一份空着的都没有，判据多半失效了"
     for mid in blank:
+        is_gen = RECS[mid].get("kind") in ("video-gen", "image-gen")
+        want = "not_applicable" if is_gen else "confirmed_absent"
         a = columns.absence("kv_dtype", RECS[mid], derived(mid))
-        want = "not_applicable" if mid in gen else "confirmed_absent"
-        assert a["state"] == want, f"{mid} 的 KV 精度判成了 {a['state']}，应当是 {want}"
+        assert a["state"] == want, \
+            f"{mid}（kind={RECS[mid].get('kind')}）判成了 {a['state']}，应当是 {want}"
         assert not a["is_gap"], f"{mid}：这两态都是信息，不该算成缺口"
         assert a["why"], f"{mid}：判了却说不出凭什么"
 
 
-@case("二·正例：契约判出来的和站点侧手写的 kvCachePrecision 一致")
+@case("二·正例：契约判出来的两种说法与 kind 一一对应")
 def _():
-    # 站点侧 data.ts 的 kvCachePrecision 委托给同一份契约，注释里复述了当前的分布。
-    # 契约要能复现那个分布 —— 复现不了就说明注释与判据分叉了，
-    # 而这条线存在的理由就是消灭这种口径不一致。
-    # 分布随记录增减而变，改这里时**同步改 data.ts 那段注释**，两边一起动。
-    seen = collections.Counter()
+    # 同上，不数总数 —— 只查「标签 ↔ kind」这个对应关系没有串。
+    # 站点侧 data.ts 的 kvCachePrecision 委托给同一份契约，所以这里过了那边就一致。
+    pairs = collections.Counter()
     for mid, d in RECS.items():
         if (d.get("precision") or {}).get("kv_cache"):
             continue
-        seen[columns.absence("kv_dtype", d, derived(mid))["label"]] += 1
-    assert seen == collections.Counter({"未公布": 46, "不适用": 1}), \
-        f"契约判出来是 {dict(seen)}，data.ts 的注释说的是 46 份「未公布」、1 份「不适用」"
+        kind = "生成类" if d.get("kind") in ("video-gen", "image-gen") else "自回归"
+        pairs[(kind, columns.absence("kv_dtype", d, derived(mid))["label"])] += 1
+    bad = [k for k in pairs if k not in (("生成类", "不适用"), ("自回归", "未公布"))]
+    assert not bad, f"出现了不该有的组合：{bad}（全部：{dict(pairs)}）"
+    assert pairs[("自回归", "未公布")] > 0 and pairs[("生成类", "不适用")] > 0, \
+        f"两种组合要各有至少一份，否则这条用例没验到对应关系：{dict(pairs)}"
 
 
 @case("二·正例：三态都真的用得上 —— 没有一态是摆设")

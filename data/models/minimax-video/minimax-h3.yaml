@@ -358,7 +358,8 @@ precision:
   weights_release: [BF16, FP32]
   weights_release_scope:
     BF16:
-      measured: true
+      manifest_taken: true
+      in_precision_table: true
       repo: MiniMaxAI/MiniMax-H3
       note: >-
         DiT 的 626 / 638 条是 BF16（全部注意力、FFN、AdaLN 投影、norm），
