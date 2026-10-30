@@ -1,7 +1,7 @@
 {
  "id": "ds-v2",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T16:01:52+00:00",
+ "generated_at": "2026-10-30T01:41:43+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v2",
   "config_present": true,
@@ -150,14 +150,9 @@
   {
    "item": "参数总量",
    "YAML 声明": 235741000000.0,
-   "shapes 实测(扣除 draft)": 235741434880.0,
+   "shapes 实测": 235741434880.0,
    "delta_pct": 0.0,
    "status": "ok"
-  },
-  {
-   "item": "口径说明",
-   "status": "ok",
-   "why": "声明值不含 draft；含在内的实测总量为 235.7B"
   },
   {
    "item": "外部参数量对账",

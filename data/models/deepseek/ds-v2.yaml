@@ -26,7 +26,9 @@ lineage:
     text: 家族首次用 MLA：KV 压到 512 维 latent（kv_a_proj_with_mqa 下投影 + kv_b_proj 上投影），128 头，head_dim 192
       = nope 128 + rope 64
     benefit: KV 缓存每层每 token 从 MHA 的 40960 个元素（K 128×192 + V 128×128）压到 576 个（latent 512 + 解耦 RoPE
-      64），约 71 倍。代价是每步要做一次上投影复原 KV —— 用算力换带宽，而且上投影在 TP 下不能跟着 KV 切，要全量复制
+      64），约 71 倍。代价在算力侧：参考实现每步用 kv_b_proj 把 latent 升回 128 头（也可以把它吸收进 Q 与 O 两侧、不显式复原，
+      取决于实现，本仓未读实现）。TP 下 kv_b_proj [32768, 512] 按头切（32768 = 128 头 × (nope 128 + v 128)），
+      不能按头切的是 latent 缓存本身 —— 576 维只有一份，每个 TP rank 都要存全量
   - axis: moe
     text: 160 路由专家 + 2 共享，top-6，专家分 8 组取 3 组（group_limited_greedy），softmax 打分
     benefit: group-limited routing 约束的是目的地设备数的上界：不分组时一个 token 最多落到 min(top_k 6, n_group 8) = 6 组，分组后最多
@@ -40,8 +42,6 @@ lineage:
     benefit: 不重训就把 4K 原生长度外推 40 倍。代价是外推段质量和 mscale 调参强相关，上游随后的 V2.5 刷新改的正是这个参数（零结构差异，本仓不单独立记录）
 params:
   total: 235741000000.0
-  excludes:
-  - draft
   breakdown:
     expert: 222718000000.0
     attention: 8953530000.0
@@ -51,7 +51,13 @@ params:
     dense_ffn: 188744000.0
     router: 48332800.0
     norm: 742400.0
-  counting_note: 按完整权重清单（29102 张量）逐项统计。total 不含草稿侧 0.0B；含在内的实测总量为 235.7B，权重存储 439.1 GiB。
+  counting_note: >-
+    total 与 breakdown 都是本仓按完整权重清单逐项求和的实测值（取 6 位有效数字），不是厂商声明值 ——
+    所以 Gate B 的参数总量一项（delta 0.0）是拿实测比实测，不构成核对；真正的外部核对是 HF 的
+    safetensors tally，与实测 235,741,434,880 逐位相同。清单 29102 个条目全是 BF16 权重张量：
+    这一版没有量化 scale 容器、没有低位打包，条目数即张量数、numel 即参数数。
+    V2 没有 MTP 草稿块（config 无 num_nextn_predict_layers，清单层号止于 59），所以没有 excludes。
+    权重存储 439.1 GiB。激活参数两个口径见 data/derived/：带宽口径 20.85B、含输入词表 21.38B
 context:
   max: 163840
   train_native: 4096
@@ -73,12 +79,14 @@ arch:
     q_lora_rank: 1536
     head_dim: 192
     v_head_dim: 128
-    head_dim_note: head_dim 192 = qk_nope 128 + qk_rope 64，只适用于 QK 路径。V 的每头维度是 v_head_dim 128，所以 o_proj
+    head_dim_note: num_kv_heads 128 是 query 侧可见的 KV 头数，不是缓存宽度：落盘缓存是 kv_a_proj_with_mqa [576, 5120] 的
+      576 维（latent 512 + rope 64），按 2 × 128 × 192 折算会高估 42.7 倍。head_dim 192 不是 config 字段，
+      是 qk_nope 128 + qk_rope 64，只适用于 QK 路径。V 的每头维度是 v_head_dim 128，所以 o_proj
       入口宽度是 128 头 × 128 = 16384（权重实测 [hidden, 16384]），不是 128 × 192 = 24576。按单一 head_dim 推 o_proj 会高
       50%
   ffn:
     type: moe
-    layer_pattern: 第 0–0 层稠密（intermediate 12288），其余为 MoE。稠密层的 FFN 比单个专家宽 8 倍，是全模型最宽的单个 GEMM
+    layer_pattern: 第 0 层稠密（intermediate 12288），其余 59 层为 MoE。稠密层的 FFN 中间维是单个专家（1536）的 8 倍
   moe:
     routed_experts: 160
     top_k: 6
@@ -91,7 +99,8 @@ arch:
     balance: 辅助损失（aux_loss_alpha 0.001，seq_aux）
     dense_intermediate: 12288
 infra_signals:
-- text: MLA 的 kv_b_proj 让 KV 缓存只存 512 维 latent，但每步要做一次上投影 —— 算子上是「省带宽换算力」，这个取舍一路演进到 V4 被推翻
+- text: MLA 的 kv_b_proj 让 KV 缓存只存 576 维（latent 512 + rope 64），代价是上投影的算力（或吸收进 Q/O 后的等价开销）——
+    算子上是「省带宽换算力」。kv_b_proj 在 V3.2 / V3.2-Exp 的清单里仍在（各 124 个），V4 起零命中，这个结构在 V4 被去掉
   evidence: judgement
   horizon: settled
   axis: attention
@@ -100,13 +109,14 @@ evidence:
   family: official
   kind: derived
   display_name: official
-  released: official
+  released: derived
   license: official
   hf: official
   lineage: judgement
   params: derived
   context: official
   arch: official
+  arch.attention.head_dim: derived
   arch.attention.type: derived
   arch.norm: derived
   arch.activation: derived
@@ -116,6 +126,7 @@ evidence:
   infra_signals: judgement
   notes: judgement
   open_questions: judgement
+  precision.weights_release: derived
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived
   arch.moe.storage_note: derived
@@ -126,8 +137,10 @@ evidence:
   arch.ffn.layer_pattern: derived
 notes: 谱系起点。MLA 的两段式（下投影存 latent、上投影复原 KV）在这里定型，一直用到 V3.2；V4 把上投影彻底去掉。
 open_questions:
-- 未取权重清单，参数量与各子系统占比待补
+- KV cache 的实际存储精度未披露，derive.py 按模型 dtype（BF16）兜底，bytes_basis 是 dtype_fallback
+- 训练精度没有一手来源，故不填 precision.training
 precision:
+  weights_release: [BF16]
   quantization:
     per_subsystem:
       expert: BF16
@@ -138,4 +151,89 @@ precision:
       embed: BF16
       lm_head: BF16
       norm: BF16
-    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 5 个分片头
+    subsystem_method: >-
+      早先按抽样填（每个子系统 6 个代表张量，读 5 个分片头）。现有完整清单：29102 个张量全部是 BF16，
+      所以各子系统 BF16 是全量结论，不只是代表值
+reviewed:
+  date: '2026-10-30'
+  scope:
+  - official
+  - derived
+  - judgement
+  reviewer: 本会话逐字段复算（派出的核查代理因连接错误中途退出，未产出结论）
+  method: >-
+    按 .claude/skills/model-audit 的顺序逐字段对 facts/ds-v2 核：config 全部键、完整清单 29102 张量
+    （dtype 计数、层号 0–59、每层投影形状）、repoinfo 的 tags / cardData / createdAt / safetensors tally，
+    以及 data/derived/ds-v2.json 的分项与 KV 公式路。lineage 里的乘式逐因子复算：MLA 40960 → 576
+    （K 128×192 + V 128×128；kv_a_proj_with_mqa [576, 5120]）、all-to-all 2·6·5120·2 B × 59 层 = 7,249,920 B、
+    分组上界 min(6, 8) = 6 → topk_group 3。V2 → V2.5 的 config 差异（只有 rope_scaling 的 mscale 0.707 → 1.0
+    与元字段 ep_size）与 kv_b_proj 在 V3.2 / V3.2-Exp / V4 线的命中数（124 / 124 / 0）都在 facts/ 上重跑过。
+review:
+- id: R1
+  field: lineage.changed_from_predecessor
+  severity: wrong
+  claim: MLA 的代价是「每步要做一次上投影复原 KV …… 而且上投影在 TP 下不能跟着 KV 切，要全量复制」
+  finding: >-
+    方向反了。kv_b_proj [32768, 512] 是逐头的（32768 = 128 头 × (qk_nope 128 + v 128)），TP 下按头切；
+    不能按头切的是 latent 缓存本身 —— 576 维只有一份，每个 TP rank 都存全量。「每步复原」也只对参考实现的写法成立，
+    把 kv_b_proj 吸收进 Q 与 O 两侧时不显式复原，本仓没有读过实现，不能写成定论
+  resolution: corrected
+  changed_to: 改为「kv_b_proj 按头切、latent 缓存每个 TP rank 存全量」，复原与否注明取决于实现
+- id: R2
+  field: arch.ffn.layer_pattern
+  severity: wrong
+  claim: 「稠密层的 FFN 比单个专家宽 8 倍，是全模型最宽的单个 GEMM」
+  finding: >-
+    8 倍对（12288 / 1536），「最宽」不对：同一层的 o_proj [5120, 16384] 是 83,886,080 元素，大于稠密
+    gate/up [12288, 5120] 的 62,914,560；lm_head [102400, 5120] 是 524,288,000。按输出维比也不成立
+    （kv_b_proj 32768、q_b_proj 24576 都大于 12288）。另「第 0–0 层」应为第 0 层
+  resolution: corrected
+  changed_to: 删掉「最宽 GEMM」，只留中间维是单个专家的 8 倍
+- id: R3
+  field: open_questions
+  severity: stale
+  claim: 「未取权重清单，参数量与各子系统占比待补」
+  finding: facts/ds-v2/shapes.json 是完整清单（29102 张量），params.total 与 breakdown 早已按它填好，这条问题与记录自相矛盾
+  resolution: corrected
+  changed_to: 换成两条真正开着的：KV 精度按 BF16 兜底、训练精度无一手来源
+- id: R4
+  field: params
+  severity: imprecise
+  claim: excludes [draft]；counting_note「total 不含草稿侧 0.0B」
+  finding: >-
+    V2 没有 MTP 草稿块：config 没有 num_nextn_predict_layers，清单层号 0–59 恰是 num_hidden_layers。
+    excludes 一项草稿侧为 0 的子系统没有意义。另 total 是清单实测值而不是厂商声明值，Gate B 的参数总量一项
+    （delta 0.0）因此是实测比实测，真正的外部核对是 HF tally（235,741,434,880，逐位相同）—— 原 note 没有说
+  resolution: corrected
+  changed_to: 删掉 excludes，counting_note 写明 total 的来源、条目数即张量数（全 BF16、无 scale、无打包）、外部核对与激活参数两口径
+- id: R5
+  field: arch.attention.num_kv_heads
+  severity: missing
+  claim: num_kv_heads 128 原样抄自 config，旁边没有口径说明
+  finding: >-
+    落盘缓存是 kv_a_proj_with_mqa 的 576 维（latent 512 + rope 64），按 2 × 128 × 192 = 49152 折算会高估 42.7 倍。
+    glm-5.3 的 R4 是同一个坑
+  resolution: corrected
+  changed_to: head_dim_note 开头补上这条口径说明
+- id: R6
+  field: evidence
+  severity: miscategorized
+  claim: arch.attention.head_dim 与 released 继承 official
+  finding: >-
+    config 里没有 head_dim 键，192 是 qk_nope 128 + qk_rope 64 算出来的；released 2024-04-22 是 repoinfo 的 createdAt
+    （HF 仓库创建时间），不是厂商公告的发布日期
+  resolution: corrected
+  changed_to: 两者标 derived；新增的 precision.weights_release 也标 derived（来自清单 dtype 计数）
+- id: R7
+  field: precision.quantization.subsystem_method
+  severity: imprecise
+  claim: 「抽样：每个子系统 6 个代表张量，共读 5 个分片头」
+  finding: 现在有完整清单，29102 个张量 dtype 全是 BF16。per_subsystem 的值不变，但它已经是全量结论，写成抽样会让人低估它的覆盖面
+  resolution: corrected
+  changed_to: 注明早先按抽样填、完整清单全部 BF16；补 weights_release [BF16]
+- id: R8
+  field: license
+  severity: unsupported
+  claim: license other
+  finding: repoinfo 的 tags 是 license:other，cardData 是 license_name deepseek（LICENSE-MODEL）。原值成立
+  resolution: confirmed
