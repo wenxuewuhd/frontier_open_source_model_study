@@ -316,6 +316,64 @@ def _():
         assert not release_errors(bare), f"{mid} 被误报了（且不是靠 scope 兜的）"
 
 
+# ================================================== 标签表：按结构找不按词找
+#
+# 取值表有过多份各自不全的拷贝：vendor_declared 进了 derive.py 和 schema 之后，
+# 三个用它的地方一个都没跟上，于是全仓证据第三强的那一档在页面上渲染成一个不带
+# 口径的裸数字。判据要能抓到三元写法（按形状找 `const <NAME> = {` 抓不到），
+# 又不能误伤散文（按词找会把口径说明全部误伤）。
+
+@case("标签·正例：对象键式的标签表抓得到")
+def _():
+    assert validate.label_table_hit("  theoretical_floor: '理论下限',") == "theoretical_floor"
+
+
+@case("标签·正例：三元式的抓得到 —— 按形状找正是漏在这里")
+def _():
+    line = ("{lw.bytes_basis === 'theoretical_floor' ? '，理论下限' "
+            ": '，按模型 dtype 兜底'}")
+    assert validate.label_table_hit(line) == "theoretical_floor"
+
+
+@case("标签·正例：JSX 文本式的抓得到")
+def _():
+    line = ("{kv?.bytes_basis === 'dtype_fallback' && "
+            "<span class=\"muted\">（精度兜底）</span>}")
+    assert validate.label_table_hit(line) == "dtype_fallback"
+
+
+@case("标签·负例：真·basis 行为不是标签表，要放过")
+def _():
+    # main 的 LayerMap 里这两处是行为不是标签：R31 交叉引用、Evidence judgement 标记，
+    # 都只对 theoretical_floor 成立。放过它们是这条判据能不能用的前提
+    for line in (
+        "const floor = basis === 'theoretical_floor';",
+        "{r.s.basis === 'theoretical_floor' ? <> <Evidence tag=\"judgement\" /></> : ''}</td>",
+        "          {floor ? <>（缺口见核查区 <b>R31</b>）</> : ''}。</>}",
+    ):
+        assert validate.label_table_hit(line) is None, f"误伤了行为：{line}"
+
+
+@case("标签·负例：散文提到取值名不是标签表，要放过")
+def _():
+    for line in (
+        "    字节由落盘精度决定（<code>theoretical_floor</code> 是查到落盘格式的理论下限，",
+        "                {/* 查表，不写 ternary：原先是「=== theoretical_floor ? 理论下限」，",
+        '    """整体 basis 取记录里写的那个；没写就看各分量是否一致，不一致记 mixed。"""',
+    ):
+        assert validate.label_table_hit(line) is None, f"误伤了散文：{line}"
+
+
+@case("标签·正例：现在剩下的三处都被报出来")
+def _():
+    w = []
+    validate.check_stray_labels(ROOT, w)
+    got = sorted(x.split(":")[0] for x in w)
+    want = ["scripts/derive.py", "site/src/lib/data.ts",
+            "site/src/pages/models/[id].astro"]
+    assert got == want, f"实际报的是 {got}，应当是 {want}"
+
+
 # ============================================================ 跑
 
 def main() -> int:

@@ -26,6 +26,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import sys
 
 # evidence 里不需要逐个声明的结构性键
@@ -176,6 +177,91 @@ def check_absence_contract(errors, warnings):
         if col.get("scope") == "measured" and not col.get("scope_from"):
             errors.append(f"columns.json: 列 '{key}' 声明 scope=measured 却没有 scope_from "
                           "—— 这一格说不出测自哪个仓")
+
+
+# 带中文的「标签」：引号里的中文字面量，或 JSX 里 > < 之间的中文文本
+CJK_LABEL = re.compile(r"""['"][^'"]*[一-鿿][^'"]*['"]|>[^<>]*[一-鿿][^<>]*<""")
+COMPARE = re.compile(r"[!=]==?")
+BASIS_VALUES = ["theoretical_floor", "vendor_declared", "declared_dtype",
+                "dtype_fallback", "mixed"]
+LABEL_SCAN = [os.path.join("site", "src"), "scripts"]
+# 读注册表的入口本身要写标签，不在检查范围里
+LABEL_HOME = {os.path.join("scripts", "lib", "columns.py"),
+              os.path.join("scripts", "validate.py"),
+              os.path.join("site", "src", "lib", "columns.ts")}
+
+
+def label_table_hit(line):
+    """这一行是不是在把某个 basis 取值映射成中文？返回命中的取值名。
+
+    只认手写标签表实际会长的两种样子，别的都放过：
+
+      1. 当成对象键用        `theoretical_floor: '理论下限',`
+      2. 拿它做比较再给中文  `basis === 'theoretical_floor' ? '理论下限' : '兜底'`
+                             `{kv.bytes_basis === 'dtype_fallback' && <span>（精度兜底）</span>}`
+
+    **按结构找，不按词找。** 「同一行里既有取值名又有中文」会把散文全部误伤：页面上的
+    口径说明会写 `<code>theoretical_floor</code> 是查到落盘格式的理论下限`，注释会写
+    「原先是 === theoretical_floor ? 理论下限 : …」。散文里怎么写这些概念是行文的事；
+    这里要管的是**有没有第二份标签表**。
+
+    反过来，按形状找（认 `const <NAME> = {`）又会漏掉写成三元或两分支 if 的那种 ——
+    LayerMap 里那几处正是三元，而且只盖两档，vendor_declared 落进 else 被标成
+    「记录没给落盘精度」，说反了。**不是漏标签，是标错。**
+
+    真·basis 相关的行为要放过：`const floor = basis === 'theoretical_floor'`（没有中文）、
+    `{basis === 'theoretical_floor' ? <Evidence tag="judgement"/> : ''}`（没有中文标签）
+    都不是标签表，照常通过。
+    """
+    if not CJK_LABEL.search(line):
+        return None
+    for v in BASIS_VALUES:
+        if re.search(r"""(^|[{,\s])['"]?%s['"]?\s*:\s*['"][^'"]*[一-鿿]""" % v, line):
+            return v
+        if re.search(r"""['"]%s['"]""" % v, line) and COMPARE.search(line):
+            return v
+    return None
+
+
+def check_stray_labels(root, warnings):
+    """第二份标签表：代码里不许把 basis 取值自己映射成中文。
+
+    取值表已经有过多份各自不全的拷贝 —— `vendor_declared` 进了 derive.py 和 schema
+    之后，三个用它的地方一个都没跟上，于是全仓证据第三强的那一档在页面上渲染成一个
+    不带口径的裸数字。单位和口径必须跟着数字走，而跟不跟得上，取决于有没有人又抄一份。
+
+    **现在报 warning 不报 error**：站点侧还没有读注册表的入口（`site/src/lib/columns.ts`
+    不存在），所以那两份拷贝暂时是站点唯一的标签来源，删不得。入口落地、两处改成查
+    注册表之后，这里改成 errors。
+
+    已知边界：**逐行判，所以键和中文值分在两行的条目漏得掉**（`theoretical_floor:`
+    换行再写值）。不致命 —— 一张表里总有写成一行的条目，表本身还是会被报出来；
+    但「这一条没被报」不等于「这一行没问题」。
+    """
+    for base in LABEL_SCAN:
+        for dirpath, dirnames, filenames in os.walk(os.path.join(root, base)):
+            dirnames[:] = [d for d in dirnames
+                           if d not in ("node_modules", "__pycache__", "dist", ".astro")]
+            for fn in sorted(filenames):
+                if not fn.endswith((".ts", ".astro", ".py")):
+                    continue
+                full = os.path.join(dirpath, fn)
+                rel = os.path.relpath(full, root)
+                if rel in LABEL_HOME:
+                    continue
+                try:
+                    lines = open(full, encoding="utf-8").read().split("\n")
+                except OSError:
+                    continue
+                hits = [(n, v) for n, line in enumerate(lines, 1)
+                        if (v := label_table_hit(line))]
+                if hits:
+                    where = "、".join(f"{n}（{v}）" for n, v in hits[:6])
+                    more = f" 等 {len(hits)} 处" if len(hits) > 6 else ""
+                    warnings.append(
+                        f"{rel}: 第 {where}{more} 行把 basis 取值自己映射成中文 —— "
+                        "又一份标签表。标签该从 data/schema/columns.json 读；"
+                        "站点侧的读取入口（site/src/lib/columns.ts）落地后这一条收紧成 error")
 
 
 def check_absence_resolves(doc, path, derived_dir, errors, warnings, gaps):
@@ -428,6 +514,7 @@ def main():
 
     errors, warnings, judgements, gaps = [], [], [], []
     check_absence_contract(errors, warnings)
+    check_stray_labels(os.path.dirname(os.path.abspath(args.data_dir)) or ".", warnings)
     models = sorted(glob.glob(os.path.join(args.data_dir, "models", "**", "*.yaml"),
                               recursive=True))
     loaded = {}
