@@ -30,8 +30,8 @@ sources:
 
 hf:
   repo: Qwen/Qwen2-72B
-  sha: 5f149cae83c1b4ce1a61bbdf48a24efccf1a4e5c
-  last_modified: '2024-10-09T07:21:45.000Z'
+  sha: 5f149cae83c11c408a953dec64b12e7e662e8cb9
+  last_modified: '2024-10-09T06:01:50.000Z'
   pipeline_tag: text-generation
   gated: false
 
@@ -329,3 +329,19 @@ review:
     resolution: corrected
     changed_to: >-
       counting_note 与 lineage 的 moe 条都补上两项的变化量与「省缓存不省带宽」这句
+  - id: R6
+    field: hf.sha
+    severity: wrong
+    claim: >-
+      草稿里的 hf.sha 与 hf.last_modified 是按 12 位前缀「补全」的，不是从取数产物读的
+    finding: >-
+      本轮对全部新记录做了一次机械核对：把每份 YAML 的 hf.sha / hf.last_modified
+      与 facts/<id>/repoinfo.json 逐字符比。本记录两项都对不上 ——
+      sha 的后 28 位与 lastModified 的时分秒都是写记录时臆造的。
+      sha 是整份记录的可复现锚点（sources 的 locator 也引它），
+      错了之后「按 pinned sha 复现取数」这件事就断了，而**它不会被任何校验拦住**：
+      validate.py 不核对 facts/，derive.py 也不读 hf 块
+    resolution: corrected
+    changed_to: >-
+      两项都改为从 facts/<id>/repoinfo.json 直接读出的值；
+      核对脚本已对全部 11 份新记录跑过，现在逐字符一致

@@ -1,0 +1,159 @@
+{
+ "id": "qwen3-235b-a22b",
+ "generated_by": "scripts/derive.py",
+ "generated_at": "2026-10-30T06:32:06+00:00",
+ "inputs": {
+  "facts_dir": "facts/qwen3-235b-a22b",
+  "config_present": true,
+  "shapes_present": true,
+  "model_yaml": "data/models/qwen/qwen3-235b-a22b.yaml",
+  "ep_size": 1
+ },
+ "from_shapes": {
+  "available": true,
+  "complete": true,
+  "tensor_count": 36945,
+  "params_total": 235093634560.0,
+  "params_by_subsystem": {
+   "norm": 798208.0,
+   "expert": 227096395776.0,
+   "router": 49283072.0,
+   "attention": 6702497792.0,
+   "embed": 622329856.0,
+   "lm_head": 622329856.0
+  },
+  "scale_elements": 0.0,
+  "weight_bytes_total": 470187269120.0,
+  "weight_bytes_by_subsystem": {
+   "norm": 1596416.0,
+   "expert": 454192791552.0,
+   "router": 98566144.0,
+   "attention": 13404995584.0,
+   "embed": 1244659712.0,
+   "lm_head": 1244659712.0
+  },
+  "weight_bytes_by_dtype": {
+   "BF16": 470187269120.0
+  },
+  "weight_dtype_containers": {},
+  "experts_seen": 128,
+  "expert_storage": "individual",
+  "layers_present": 94,
+  "mtp_layers_seen": [],
+  "mtp_attention_suffixes": [],
+  "draft_blocks_seen": 0,
+  "layer_index_max": 94,
+  "layers_missing": [],
+  "moe_layers_seen": 94,
+  "unknown_dtypes": [],
+  "packing_applied": {},
+  "packing_suspect": [],
+  "incomplete_note": null
+ },
+ "kv_cache": {
+  "status": "ok",
+  "attention_type": "GQA",
+  "kv_dtype": "bfloat16",
+  "layers": 94,
+  "full_attention_layers": 94,
+  "linear_attention_layers": 0,
+  "per_token_bytes": 192512,
+  "per_sequence_bytes": 0,
+  "per_token_elems": 96256,
+  "per_token_elems_bound": "exact",
+  "components": {
+   "full_attention": {
+    "layers": 94,
+    "bytes_per_layer": 2048,
+    "bytes_per_token": 192512,
+    "dtype": "bfloat16",
+    "elements_per_token": 96256,
+    "terms": {
+     "num_kv_heads": 4,
+     "head_dim": 128,
+     "formula": "2 * num_kv_heads * head_dim * bytes"
+    }
+   }
+  },
+  "notes": [],
+  "dtype_assumed": true,
+  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML",
+  "bytes_basis": "dtype_fallback"
+ },
+ "kv_capacity_bytes_at_context": {
+  "4096": 788529152,
+  "32768": 6308233216,
+  "40960": 7885291520
+ },
+ "kv_capacity_basis": "dtype_fallback",
+ "active_params": {
+  "status": "ok",
+  "total": 21568433664.0,
+  "total_with_embed": 22190763520.0,
+  "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的输入词表）；total_with_embed 含输入词表，用于和各家公布的「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
+  "expert_active": 14193524736.0,
+  "expert_total": 227096395776.0,
+  "expert_ratio": "8/128",
+  "always_active": 7374908928.0,
+  "lm_head": 622329856.0,
+  "dense": false,
+  "excluded": {
+   "embed_tokens": 622329856.0,
+   "retrieval_table": 0.0,
+   "vision": 0.0,
+   "draft": 0.0
+  },
+  "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
+ },
+ "flops": {
+  "linear_per_token": 43136867328.0,
+  "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
+ },
+ "arithmetic_intensity": {
+  "decode_weight_bytes_per_token": 43136867328.0,
+  "decode_flops_per_byte": 1.0,
+  "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
+ },
+ "ep_communication": {
+  "status": "ok",
+  "ep_size": 1,
+  "moe_layers": 94,
+  "bytes_per_token": 12320768,
+  "bytes_per_layer": 131072,
+  "formula": "2(dispatch+combine) * top_k * hidden * bytes * moe_layers",
+  "note": "EP=1 时为 0；跨机时该量按互联带宽折算成时间，是 decode 尾延迟的主因之一"
+ },
+ "reconciliation": [
+  {
+   "item": "路由专家数",
+   "config": 128.0,
+   "shapes": 128.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "专家存储布局",
+   "status": "ok",
+   "why": "individual（逐专家独立张量）"
+  },
+  {
+   "item": "层数",
+   "config": 94.0,
+   "shapes": 94.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "参数总量",
+   "YAML 声明": 235000000000.0,
+   "shapes 实测": 235093634560.0,
+   "delta_pct": 0.04,
+   "status": "ok"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "ok",
+   "why": "与 HF 的 safetensors tally 逐位相同（235,093,634,560）"
+  }
+ ]
+}

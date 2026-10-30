@@ -24,8 +24,8 @@ sources:
 
 hf:
   repo: Qwen/Qwen2.5-14B-Instruct-1M
-  sha: 620fad32de7bd3b1b0b90b1b1a1a1cfa98c3f7ca
-  last_modified: '2025-01-29T02:40:00.000Z'
+  sha: 620fad32de7bdd2293b3d99b39eba2fe63e97438
+  last_modified: '2025-01-29T12:38:27.000Z'
   pipeline_tag: text-generation
   gated: false
 
@@ -341,3 +341,19 @@ review:
       status 改为 partial 并写 caveat。caveat 本身是判断，但 platforms 是列表、
       evidence 不展开到列表下标（validate.py 的 leaf_paths 把整个列表算一个归属点），
       所以只能整列表挂 official —— 这个粒度缺口记在这里
+  - id: R6
+    field: hf.sha
+    severity: wrong
+    claim: >-
+      草稿里的 hf.sha 与 hf.last_modified 是按 12 位前缀「补全」的，不是从取数产物读的
+    finding: >-
+      本轮对全部新记录做了一次机械核对：把每份 YAML 的 hf.sha / hf.last_modified
+      与 facts/<id>/repoinfo.json 逐字符比。本记录两项都对不上 ——
+      sha 的后 28 位与 lastModified 的时分秒都是写记录时臆造的。
+      sha 是整份记录的可复现锚点（sources 的 locator 也引它），
+      错了之后「按 pinned sha 复现取数」这件事就断了，而**它不会被任何校验拦住**：
+      validate.py 不核对 facts/，derive.py 也不读 hf 块
+    resolution: corrected
+    changed_to: >-
+      两项都改为从 facts/<id>/repoinfo.json 直接读出的值；
+      核对脚本已对全部 11 份新记录跑过，现在逐字符一致
