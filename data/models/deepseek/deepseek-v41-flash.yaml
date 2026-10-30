@@ -282,7 +282,104 @@ arch:
     downsample_ratio: 3
     intermediate: 2816
     max_image_tokens: 1024
-    fusion: aligner MLP 投影到主干 hidden
+    params: 485268480.0
+    fusion: >-
+      aligner MLP 投影到主干 hidden：aligner.w1 [5120, 9216]（带 bias）→
+      w2 [5120, 5120]（带 bias）。**9216 = 1024 × 3²，即 3×3 合并** ——
+      downsample_ratio 3 这一项在这里闭合。
+      另有 3 个顶层的可学习标记向量 image_start / image_end / image_newline
+      （各 [5120]，不在 embed 表里，但与 embed.weight 同分片）。
+      patch_embed 是 **Linear [1024, 588]**（588 = 3 × 14 × 14），
+      即 patch 先拉平再投影，不是别家的 Conv —— 算 FLOPs 时它仍是每 token 一次
+    tokens:
+      reference_resolution: 672x672
+      patch_grid: 48x48
+      encoder_tokens: 2304
+      llm_tokens: 256
+      compression_ratio: 9
+      compression_stage: >-
+        aligner 入口一步到位：3×3 相邻 patch 在通道维拼接
+        （w1 的输入维 9216 = 1024 × 9 就是这个拼接），**压缩在两层 MLP 之前**，
+        所以 aligner 的两个 GEMM 只跑 256 次而不是 2304 次。
+        **9 是本仓 12 份 vlm 里第二高的压缩比**（只有 StepFun 两档的 16 更高），
+        其余九份都是 2×2 的 4
+      dynamic_resolution: true
+      max_llm_tokens_declared: 1024
+      derivation: >-
+        两个因子：
+        (1) patch 14 —— config.vision_config.patch_size，并由
+        vision.patch_embed.proj.weight [1024, 588] 的 588 = 3 × 14 × 14 印证；
+        (2) 3×3 空间合并 —— config 的 downsample_ratio 3，
+        并由 aligner.w1.weight 的输入维 9216 = 1024 × 9 印证。
+        672 / 14 = 48，48² = 2304 个 encoder token；
+        48 / 3 = 16，16² = 256 个主干 token。
+        **max_image_tokens 1024 这个上限独立闭合了压缩比**：
+        1024 × 3² = 9216 个 patch，× 14² = 1,806,336 像素 = 恰好 1344²。
+        即这一项是**主干侧 token 的上限**、不是 encoder patch 的上限，
+        且它与 downsample_ratio 3、patch 14 三者自洽 ——
+        把它当 encoder patch 上限读会把可用分辨率低估 3 倍。
+        config 另有 min_pixels 295,936 = 544²（像素面积下界，
+        在网格对齐之前施加，所以不对应一个整数 token 数）。
+        672×672 是本仓为跨模型比较选的参考分辨率，不是厂商默认值
+      scope_note: >-
+        只覆盖单张静态图。vision_config 里没有任何时间维的键
+        （没有 temporal_patch_size、没有帧数上限），patch_embed 也是
+        2D 的 Linear，所以本记录不涉及视频 token 账
+    prefill:
+      encoder_linear_gflops: 1896.9
+      projector_linear_gflops: 37.58
+      backbone_token_budget: 256
+      backbone_linear_gflops_per_token: 30.23
+      image_as_text_tokens: 320
+      attention_excluded: >-
+        被排除的是 encoder 自注意力的 QK^T 与 AV，形式
+        4 × n² × hidden × layers。跨度没有一手来源：vision_config 里没有
+        window_size 一类的键，厂商参考实现的视觉部分本轮没读。
+        按整图一段取 n = 2304 约 2304² × 4 × 1024 × 32 = 696 GFLOPs。
+        没有加进上面几格，因为主干那侧的分母也是线性项、不含注意力
+      derivation: >-
+        encoder 线性项 = 2 × 2304 × (patch_embed 602,112 + 32 层 ×
+        每层 12,845,056 = 411,041,792) = 2 × 2304 × 411,643,904
+        = 1,896,855,109,632。每层 12,845,056 逐因子核过：
+        wqkv [3072, 1024] + wo [1024, 1024] + w1 [5632, 1024] + w2 [1024, 2816]
+        （w1 是门控 MLP 的两支合并，5632 = 2 × 2816），
+        四项相加与清单里 128 个 blocks 线性张量的求和逐位相同。
+        aligner 线性项 = 2 × 256 × (5120 × 9216 + 5120²) = 37,580,963,840。
+        主干分母 = 2 × (active_params.total 15,776,610,304 −
+        active_params.lm_head 661,913,600) = 30,229,393,408 ——
+        **不能用 derived 里的 flops.linear_per_token 31,553,220,608**，
+        那一项含 lm_head（decode 口径）。
+        换算 = 256 + 1,934,436,073,472 / 30,229,393,408 = 256 + 64.0 = 320。
+        **9:1 的压缩比把主干的位置预算压到了全批最低的一档（256）**，
+        代价是塔的相对占比升到 1.25（塔值 64 个位置当量、占 20%）——
+        塔的绝对 FLOPs 和 Kimi / Qwen 那几档差不多（1896.9 对 1897.3 / 1456.5），
+        但分母小了，所以占比高。
+        **这是 token 压缩比的真实权衡：压得越狠，主干越省、塔的占比越高。**
+        和 kimi-k2.5 同分辨率比才有意义：256 对 576 个主干 token，
+        一张图少占 320 个位置
+    separability:
+      weight_prefix: >-
+        vision.（259 个张量）与 aligner.（4 个）；主干在 layers. / mtp. /
+        embed. / head. / norm.。两个前缀不相交。
+        另有 3 个标记向量 image_start / image_end / image_newline 是顶层名，
+        既不在 vision. 下也不属于主干 —— 它们是序列标记，
+        归谁要看切分方式（见 shard_note）
+      shard_isolation: partial
+      shard_note: >-
+        实测 index 的 weight_map：48 个分片里**第 1 个是纯视觉分片**——
+        model-00001-of-00048 装 263 个张量（259 个 vision. + 4 个 aligner.），
+        非视觉张量 **0 个**。
+        溢出的只有 3 个标记向量 image_start / image_end / image_newline，
+        它们落在第 2 个分片里、与 **embed.weight** 同片 ——
+        这个归置是合理的（它们是序列标记、和词表一起用），
+        但也意味着「只读第 1 个文件」拿不到完整的视觉入口，
+        还差 3 × 5120 = 15,360 个参数。
+        所以记 partial 而不是 dedicated：塔与 aligner 单文件可分，
+        标记向量不可分
+      cross_prefix_sharing: >-
+        weight_map 的 96,085 个名字里没有任何一个同时匹配 vision. / aligner.
+        与主干前缀，即没有重名共享。落盘层面的 tied weights 要看
+        safetensors 头的数据偏移是否重合，weight_map 答不了，本轮没读偏移
 precision:
   weights_release:
   - FP8_E4M3
@@ -479,6 +576,16 @@ evidence:
   arch.retrieval.placement: judgement
   arch.retrieval.lookup_bytes_per_token: derived
   arch.vision.fusion: judgement
+  arch.vision.params: derived
+  arch.vision.tokens: derived
+  arch.vision.tokens.max_llm_tokens_declared: official
+  arch.vision.tokens.scope_note: judgement
+  arch.vision.prefill: derived
+  arch.vision.prefill.attention_excluded: judgement
+  arch.vision.prefill.derivation: judgement
+  arch.vision.separability: derived
+  arch.vision.separability.shard_note: judgement
+  arch.vision.separability.cross_prefix_sharing: judgement
   precision: official
   precision.quantization.packing_note: derived
   precision.quantization.block_size_note: derived
@@ -913,6 +1020,48 @@ review:
     新增字段 arch.attention.kv_sharing.declared_per_token_bytes 与 derive.py 的
     「外部 KV 字节对账」行。本仓每个分量都有公布格式时做对账，否则直接采用公布值
     （bytes_basis: vendor_declared），不让兜底值盖过厂商
+
+- id: R40
+  field: arch.vision.tokens.compression_ratio
+  severity: missing
+  claim: >-
+    这份记录是本仓做得最深的一份，但视觉侧只有结构尺寸，
+    fusion 一整句就是「aligner MLP 投影到主干 hidden」，连 3×3 合并都没写出来；
+    params 也空着。一张图几个 token、encoder 多少 FLOPs、能不能分离部署，
+    三件事都答不上来
+  finding: >-
+    补 arch.vision 下 tokens / prefill / separability 三组，逐因子核过，
+    另补 params 与展开的 fusion。本档有三个值得单独记的点：
+    (1) **max_image_tokens 1024 独立闭合了压缩比**：
+    1024 × 3² = 9216 个 patch，× 14² = 1,806,336 像素 = 恰好 1344²。
+    即这一项是**主干侧 token 的上限**、不是 encoder patch 的上限，
+    且与 downsample_ratio 3、patch 14 三者自洽。
+    把它当 encoder patch 上限读会把可用分辨率低估 3 倍。
+    (2) **压缩比 9 是全批第二高**（只有 StepFun 两档的 16 更高，其余九份都是 4），
+    它把主干位置预算压到 256 —— 同分辨率下 kimi-k2.5 是 576，
+    一张图少占 320 个位置。代价是塔的相对占比升到 1.25
+    （塔值 64 个位置当量、占 20%）：塔的绝对 FLOPs 和 Kimi / Qwen 那几档
+    差不多（1896.9 对 1897.3 / 1456.5），分母小了所以占比高。
+    **这是压缩比的真实权衡，不是哪家做得更好。**
+    (3) patch_embed 是 **Linear [1024, 588]**（588 = 3 × 14 × 14）而不是
+    别家的 Conv2d/Conv3d —— patch 先拉平再投影。不影响 FLOPs 口径
+    （仍是每 token 一次），但判型时容易按 Conv 去找形状而找不到。
+    分片上记 **partial**：48 个分片的第 1 个是纯视觉分片
+    （263 个张量 = 259 vision. + 4 aligner.，非视觉 0 个），
+    但 3 个标记向量 image_start / image_end / image_newline 溢到第 2 片、
+    与 embed.weight 同片。归置本身合理（序列标记和词表一起用），
+    可是「只读第 1 个文件」就拿不到完整视觉入口，还差 15,360 个参数 ——
+    所以不是 dedicated
+  resolution: corrected
+  changed_to: >-
+    补 arch.vision.params 485,268,480（= encoder 411,842,560 +
+    aligner 与标记向量 73,425,920，实测自清单）；
+    fusion 展开到逐张量并写出 9216 = 1024 × 3² 与 Linear patch_embed；
+    新增 arch.vision.tokens（2304 → 256，压缩比 9，并写出 max_image_tokens
+    的闭合式与 min_pixels 544²）、arch.vision.prefill（encoder 线性
+    1896.9 GFLOPs、一张图 ≈ 320 个文本 token，并写明压缩比的权衡）、
+    arch.vision.separability（partial，第 1 片纯视觉但 3 个标记向量溢到第 2 片）；
+    evidence 加十条，四格判断类进 Gate C
 
 notes: 本记录是 P0-A 的 schema 压力测试用例：选它是因为它同时带有 MLA、细粒度 MoE、 跨层 KV 共享、稀疏选块、残差流改造、外置查表、自带草稿模型和混合精度， 字段覆盖最宽。schema
   撑不住的地方会先在这里暴露。
