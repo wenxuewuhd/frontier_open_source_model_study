@@ -1,7 +1,7 @@
 {
  "id": "kimi-k2.5",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T08:03:44+00:00",
+ "generated_at": "2026-10-30T08:52:46+00:00",
  "inputs": {
   "facts_dir": "facts/kimi-k2.5",
   "config_present": true,
