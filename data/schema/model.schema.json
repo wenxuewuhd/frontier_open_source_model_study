@@ -787,8 +787,32 @@
         "training": { "$ref": "#/$defs/dtype" },
         "weights_release": {
           "type": "array",
-          "description": "官方发布的权重精度，可多种",
+          "description": "官方发布的权重精度，可多种。**口径见同级的 weights_release_scope**：这一列单看读不出「厂商只发了这些」还是「本仓只取了这些」，两种记法在本仓同时存在过",
           "items": { "$ref": "#/$defs/dtype" }
+        },
+        "weights_release_scope": {
+          "type": "object",
+          "description": "weights_release 里每种精度的口径：它在哪个仓、本记录的实测清单有没有覆盖到。为什么需要这个字段：同一种情况本仓有两种相反的记法同时存在 —— 通义列厂商发布过的全部变体（含从没取数的独立仓，qwen3.5-27b 声明 [BF16, FP8_E4M3, INT4] 而清单实测只有 [BF16, FP32]），MiniMax-M3 只列本仓取数那个仓实测到的（weights_release: [BF16, FP32]，厂商另发的 MiniMax-M3-MXFP8 只写在 benefit 的散文里）。两种都讲得通，同时存在不行：读者无从知道一行「BF16」是「厂商只发过 BF16」还是「本仓只取了 BF16 那个仓」，而精度表只显示取数那个仓，于是 M3 在表上看着像莫名退回不量化。约定是「列全部变体 + 标记哪些取过数」，缺口由 scripts/check_meaning.py 报出来",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["measured"],
+            "properties": {
+              "measured": {
+                "type": "boolean",
+                "description": "本记录的实测清单（precision.quantization.per_subsystem 那一套）有没有覆盖这种精度。false 表示厂商发过但本仓没取数 —— 它在精度表上不可见，这个标记就是让它可见的那一半"
+              },
+              "repo": {
+                "type": "string",
+                "description": "这种精度所在的 HF 仓。与 hf.repo 不同就说明它是独立发布的变体，本记录的实测口径不覆盖它"
+              },
+              "container": {
+                "$ref": "#/$defs/dtype",
+                "description": "逻辑精度落盘时装在哪种容器 dtype 里。**声明与实测不符常常不是错，而是正确记法**：FP4 装 INT8 容器（deepseek-v41-flash 声明 FP4 实测 I8）、8 个 INT4 打包进一个 I32（kimi-k2-thinking / kimi-k2.5）、MXFP4 一字节两个（kimi-k3 实测 UINT8）。全仓 7 份声明与实测不符的记录里 4 份是这一类，不要去改声明；只有三份 Qwen 是真的「厂商另发了仓、本仓没取数」"
+              },
+              "note": { "type": "string" }
+            }
+          }
         },
         "kv_cache": { "$ref": "#/$defs/dtype" },
         "kv_cache_scale": { "$ref": "#/$defs/dtype" },

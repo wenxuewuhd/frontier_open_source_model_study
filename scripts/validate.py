@@ -8,6 +8,9 @@
               derived 的字段不允许手写；judgement 的字段列出来给人看
   3. 防泄漏   公开仓里不允许出现 visibility: internal 或 source.type: self
   4. 声明对账 precision.weights_release 里声明的每种精度，都要在实测清单里出现（告警）
+  5. 缺值三态 每一个会渲染成空格子的列，都要能说出自己是「没查」「不适用」
+              还是「查了但没有」（data/schema/columns.json 的声明；第三态是信息，
+              前两态是缺口，渲染成同一个 `—` 就等于把信息和缺口混为一谈）
 
 第 3 条是公开站与私有数据仓分离的最后一道闸。脱敏做不干净，所以这里不做
 字段级脱敏，而是整条记录拒绝。
@@ -16,6 +19,7 @@
   python3 scripts/validate.py                    # 公开模式，含防泄漏
   python3 scripts/validate.py --allow-internal   # 内部 overlay 构建时放行
   python3 scripts/validate.py --list-judgements  # 列出所有判断类字段，供 Gate C
+  python3 scripts/validate.py --list-gaps        # 列出判为「未录」的格子：调研进度
 """
 import argparse
 import glob
@@ -84,6 +88,107 @@ def check_release_vs_measured(doc, path, derived_dir, warnings):
             f"那就在记录里写明是哪个仓、本记录的实测口径只覆盖主仓；"
             f"要么声明本身不对。两种在字段上长得一样，页面会并排显示"
             f"「声明发了 X」和「实测全是 Y」，读者会当成数据错")
+
+
+def check_absence_contract(errors, warnings):
+    """缺值的三态：每一个会渲染成空格子的列，都要能说出自己是哪一种空。
+
+    四道闸全绿的那一周被问出三个问题，三个都不是数值错，全在呈现层。其中一个是
+    **`—` 一个符号背着三种含义**：没查 / 不适用 / 查了但没有。45 份记录的
+    `precision.kv_cache` 是空的，真相是「厂商没公布，字节按权重 dtype 兜底」——
+    那是一条结论，不是缺口，可它和「还没查」渲染成同一个符号。
+
+    最省力的修法是在模板里把 `—` 换成一句话。那只是把问题挪了个地方，下一张新表
+    会重犯。所以区分放在 data/schema/columns.json：每一列声明空格子的默认含义，
+    加若干条按顺序试的结构判据。这道检查管那份声明本身是完整的 ——
+    渲染器照它渲染就无从含糊，而漏声明一列会在这里被拦住，不是等到页面上。
+
+    只查**声明**，不查渲染。渲染侧（站点怎么画这三态）有它自己的归属，
+    在这里顺带查会变成两道闸管同一件事，而两道闸迟早会各自漂。
+    """
+    try:
+        from lib import columns
+    except ImportError as e:  # pragma: no cover
+        errors.append(f"缺 scripts/lib/columns.py（{e}）—— 缺值三态没有定义入口")
+        return
+
+    states = set(columns.absence_states())
+    if states != {"unsurveyed", "not_applicable", "confirmed_absent"}:
+        errors.append(f"columns.json 的 absence_states 不是约定的三态：{sorted(states)}")
+
+    items = list(columns.columns().items()) + [("$subsystem", columns.subsystem_template())]
+    for key, col in items:
+        a = col.get("absent")
+        if not a:
+            errors.append(f"columns.json: 列 '{key}' 没有 absent 声明 —— "
+                          "它的空格子无从判别是「没查」「不适用」还是「查了但没有」")
+            continue
+        rules = a.get("rules") or []
+        for st, where in ([(a.get("state"), "默认态")]
+                          + [(r.get("state"), f"规则 {n}") for n, r in enumerate(rules)]):
+            if st not in states:
+                errors.append(f"columns.json: 列 '{key}' 的{where} '{st}' 不是三态之一")
+        # 「不适用」与「查了但没有」是在替记录下结论，必须说出凭什么；
+        # 「未录」是进度陈述，三态表里的通用说明就够了
+        if a.get("state") in ("not_applicable", "confirmed_absent") and not a.get("why"):
+            errors.append(f"columns.json: 列 '{key}' 默认判为 '{a['state']}' 却没写 why —— "
+                          "这是在替记录下结论，要说出凭什么")
+        for n, r in enumerate(rules):
+            if r.get("state") in ("not_applicable", "confirmed_absent") and not r.get("why"):
+                errors.append(f"columns.json: 列 '{key}' 规则 {n} 判为 '{r['state']}' 却没写 why")
+            t = r.get("test") or {}
+            if t:
+                if t.get("op") not in columns.OPS:
+                    errors.append(f"columns.json: 列 '{key}' 规则 {n} 的 op "
+                                  f"'{t.get('op')}' 没有实现（已实现：{sorted(columns.OPS)}）")
+                if not t.get("path"):
+                    errors.append(f"columns.json: 列 '{key}' 规则 {n} 的 test 没有 path")
+        # 会被读错成另一种量的列必须带单位。元素/token 与字节/token 两张表并排时，
+        # 列名离数字十几个字符 —— 1,600（元素）被读成了字节，和另一张表的 890 B 对不上
+        if col.get("quantity") and not col.get("unit"):
+            errors.append(f"columns.json: 列 '{key}' 声明了 quantity（一种会被读错成"
+                          "别的量的物理量）却没有 unit")
+        # 实测值要说得出测自哪个仓，否则厂商另发的精度变体在页面上不可见
+        if col.get("scope") == "measured" and not col.get("scope_from"):
+            errors.append(f"columns.json: 列 '{key}' 声明 scope=measured 却没有 scope_from "
+                          "—— 这一格说不出测自哪个仓")
+
+
+def check_absence_resolves(doc, path, derived_dir, errors, warnings, gaps):
+    """这份记录的每一个空格子，按声明判出来是哪一种空。
+
+    判不出来就是 columns.json 漏了一列（上面那道已经拦住）。这里管的是另一半：
+    判出来的结果要能复现，而且「未录」要攒成一份清单 —— 它是调研进度，
+    该有人看见还剩哪些没查，而不是和「不适用」一起沉在页面的 `—` 里。
+    """
+    try:
+        from lib import columns
+    except ImportError:
+        return
+    mid = doc.get("id")
+    if not mid:
+        return
+    dp = os.path.join(derived_dir, f"{mid}.json")
+    derived = None
+    if os.path.exists(dp):
+        try:
+            derived = json.load(open(dp))
+        except (ValueError, OSError):
+            derived = None
+
+    q = ((doc.get("precision") or {}).get("quantization") or {})
+    ps = q.get("per_subsystem") or {}
+    subs = [s["key"] for s in json.load(
+        open(os.path.join(os.path.dirname(derived_dir), "schema", "subsystems.json")))["subsystems"]]
+
+    for key in list(columns.columns()) + [f"sub_{s}" for s in subs if s not in ps]:
+        try:
+            a = columns.absence(key, doc, derived)
+        except KeyError as e:
+            errors.append(f"{path}: 列 '{key}' 的缺值判据跑不起来（{e}）")
+            continue
+        if a["state"] == "unsurveyed" and key.startswith("sub_"):
+            gaps.append((mid, key[4:]))
 
 
 def leaf_paths(obj, prefix=""):
@@ -288,6 +393,8 @@ def main():
                     help="内部 overlay 构建时放行 internal 记录")
     ap.add_argument("--list-judgements", action="store_true",
                     help="列出所有判断类字段。Gate C 看这个")
+    ap.add_argument("--list-gaps", action="store_true",
+                    help="列出判为「未录」的格子。那是调研进度，不是模型事实")
     args = ap.parse_args()
 
     schema_dir = os.path.join(args.data_dir, "schema")
@@ -295,7 +402,8 @@ def main():
     ops_schema_path = os.path.join(schema_dir, "ops-table.schema.json")
     ops_schema = json.load(open(ops_schema_path)) if os.path.exists(ops_schema_path) else None
 
-    errors, warnings, judgements = [], [], []
+    errors, warnings, judgements, gaps = [], [], [], []
+    check_absence_contract(errors, warnings)
     models = sorted(glob.glob(os.path.join(args.data_dir, "models", "**", "*.yaml"),
                               recursive=True))
     loaded = {}
@@ -310,6 +418,8 @@ def main():
         check_review(doc, p, errors, warnings)
         check_leak(doc, p, errors, args.allow_internal)
         check_release_vs_measured(doc, p, os.path.join(args.data_dir, "derived"), warnings)
+        check_absence_resolves(doc, p, os.path.join(args.data_dir, "derived"),
+                               errors, warnings, gaps)
     check_review_pointers(loaded, errors, warnings)
 
     ops = sorted(glob.glob(os.path.join(args.data_dir, "ops", "**", "*.yaml"), recursive=True))
@@ -325,6 +435,18 @@ def main():
         print(f"  warn  {w}")
     for e in errors:
         print(f"  ERROR {e}")
+
+    if gaps:
+        by = {}
+        for mid, k in gaps:
+            by.setdefault(mid, []).append(k)
+        if args.list_gaps:
+            print(f"\n--- 判为「未录」的逐子系统精度：{len(by)} 份记录")
+            for mid, ks in sorted(by.items()):
+                print(f"  {mid}: {', '.join(ks)}")
+        else:
+            print(f"\n{len(by)} 份记录有判为「未录」的逐子系统精度"
+                  "（--list-gaps 看明细）—— 调研进度，不是模型事实")
 
     if args.list_judgements:
         print(f"\n--- 判断类字段 {len(judgements)} 处（Gate C 要人看过）")
