@@ -17,8 +17,13 @@ interface Props {
 }
 const { L, recorded } = Astro.props;
 
+// 键必须覆盖产物里 logical_dtype / dtype 的取值全集。少一个键页面不报错，
+// 那一格静默降级成灰 `?` —— MXFP4 刚踩过一次（kimi-k3 的路由专家整行变灰）。
+// 槽位按位宽排序；MXFP4 与 FP4 同为 4 bit，共用 4 号槽：颜色编码的是位宽档，
+// 具体格式由格子里的字母和图例区分，不另占一个校验过的调色板槽位。
 const DT: Record<string, { short: string; cls: string }> = {
   FP4: { short: '4', cls: 'dt-fp4' },
+  MXFP4: { short: '4', cls: 'dt-fp4' },
   FP8_E4M3: { short: '8', cls: 'dt-fp8' },
   BF16: { short: 'B', cls: 'dt-bf16' },
   FP32: { short: '32', cls: 'dt-fp32' },
@@ -83,6 +88,7 @@ const cellTitle = (l: any, g: string) =>
 const srcLayers = cols.filter((l: any) => l.cache.global_kv || l.cache.index_k);
 const tot = L.cache_totals ?? {};
 const lw = tot.local_window;
+const rec = tot.recurrent_state;
 const kvs = L.kv_storage ?? {};
 const basis = tot.global_kv?.bytes_basis;
 const floor = basis === 'theoretical_floor';
@@ -96,6 +102,21 @@ const storage = [
 ]
   .filter((r) => kvs[r.key])
   .map((r) => ({ ...r, s: kvs[r.key], width: anyLayer(r.key) }));
+// 每 token 合计只来自产出全局 KV / index K 的层。不加说明地显示一个合计，
+// 读起来像覆盖了全部层 —— kimi-k3 有 69/93 层是递归式注意力，每 token 贡献为 0，
+// 按那个合计做显存预算会少算一大块。所以把覆盖的层数印在合计旁边。
+const srcMain = srcLayers.filter((l: any) => l.kind === 'main').length;
+const PER_SEQ_LABEL: Record<string, string> = {
+  local_window: '滑窗局部 KV',
+  recurrent_state: '递归状态',
+};
+const restLabels = [
+  ...new Set(
+    cols
+      .filter((l: any) => l.kind === 'main' && !l.cache.global_kv && !l.cache.index_k)
+      .flatMap((l: any) => Object.keys(l.cache)),
+  ),
+].map((k: any) => PER_SEQ_LABEL[k] ?? k);
 const fmtB = (b?: number) =>
   b === undefined || b === null ? '—' : `${Number.isInteger(b) ? b.toLocaleString() : b.toFixed(1)} B`;
 // 漂移检查：记录是折算后的每 token 元素数，和逐层的 per_token_elems_sum 比，不和未折算的条目宽比
@@ -149,7 +170,7 @@ const classRoles = (c: any) => {
 </div>
 
 <div class="scroll-x lm-wrap">
-  <div class="lm" style={`--n:${cols.length};--main:${nMain}`}>
+  <div class={`lm ${cols.length === nMain ? 'no-mtp' : ''}`} style={`--n:${cols.length};--main:${nMain}`}>
     <div class="lm-h lm-row-label">算子组 \ 层</div>
     {cols.map((l: any) => <div class={`lm-h ${l.kind === 'mtp' ? 'mtp' : ''}`}>{l.kind === 'main' ? l.index : `M${l.index}`}</div>)}
 
@@ -301,7 +322,10 @@ const classRoles = (c: any) => {
             </tr>
           ))}
           <tr>
-            <td><b>合计</b></td>
+            <td>
+              <b>合计</b>
+              {srcMain < nMain && <div class="small muted">{srcMain} / {nMain} 主干层</div>}
+            </td>
             <td />
             <td class="num">{tot.global_kv?.per_token_elems_sum} 元素 · {fmtB(tot.global_kv?.per_token_bytes_sum)}</td>
             <td class="num">{tot.index_k?.per_token_elems_sum} 元素 · {fmtB(tot.index_k?.per_token_bytes_sum)}</td>
@@ -312,6 +336,15 @@ const classRoles = (c: any) => {
           </tr>
         </tbody>
       </table>
+      {srcMain < nMain && (
+        <p class="small muted">
+          这个合计只覆盖 <b>{srcMain} / {nMain} 个主干层</b>（产出全局 KV 或 index K 的那些），不是全部主干层的和。
+          其余 {nMain - srcMain} 层对本列没有贡献
+          {restLabels.length > 0
+            ? `，它们的缓存是${restLabels.join(' / ')}，每序列固定、不随上下文增长，单独列在下面的分量表里`
+            : ''} —— 和本列不是同一个口径，不要相加也不要算倍数。
+        </p>
+      )}
       <p class="small muted">
         元素数：条目宽度是产出张量的输出维，实测<Evidence tag="derived" />；一个条目池化 compress_ratio 个 token，
         所以每 token = 条目宽 ÷ 压缩比（依据见核查区 <b>R30</b>：参考实现的 r:1 时序池化，
@@ -325,7 +358,7 @@ const classRoles = (c: any) => {
           {floor ? <>（缺口见核查区 <b>R31</b>）</> : ''}。</>}
       </p>
 
-      {storage.length > 0 && (
+      {(storage.length > 0 || rec) && (
         <table>
           <thead>
             <tr>
@@ -355,6 +388,19 @@ const classRoles = (c: any) => {
                     {r.s.basis === 'theoretical_floor' ? <> <Evidence tag="judgement" /></> : ''}</td>
               </tr>
             ))}
+            {rec && (
+              <tr>
+                <td>递归状态（{rec.layers} 层线性注意力）</td>
+                <td>—</td>
+                <td>—</td>
+                <td class="num">—</td>
+                <td class="num">
+                  {rec.elems_per_sequence.toLocaleString()} 元素 / 序列
+                  <span class="muted">（未折字节）</span>
+                </td>
+                <td>每序列固定 <Evidence tag="derived" /></td>
+              </tr>
+            )}
           </tbody>
         </table>
       )}
@@ -369,6 +415,15 @@ const classRoles = (c: any) => {
           主干 {lw.main?.layers} 层 {fmtBytes(lw.main?.bytes_per_sequence)}
           {lw.mtp && <> + MTP {lw.mtp.layers} 块 {fmtBytes(lw.mtp.bytes_per_sequence)}（投机解码时常驻）</>}
           {' '}= {fmtBytes(lw.bytes_per_sequence)}{lw.bytes_basis ? `，${KV_BASIS_LABEL[lw.bytes_basis] ?? lw.bytes_basis}` : ''}。
+        </p>
+      )}
+      {rec && (
+        <p class="small muted">
+          递归状态分两段，都由权重定形状：卷积 {rec.conv_state_elems.toLocaleString()}
+          + 矩阵 {rec.matrix_state_elems.toLocaleString()}
+          = {rec.elems_per_sequence.toLocaleString()} 元素 / 序列<Evidence tag="derived" />。
+          <b>不折字节</b> —— 状态的落盘精度没有一手来源，所以上表那两列是 —，不是忘了填。
+          <Prose text={rec.note} />
         </p>
       )}
       {
@@ -467,6 +522,12 @@ const classRoles = (c: any) => {
     gap: 2px;
     min-width: calc(132px + var(--n) * 22px);
     font-size: 11px;
+  }
+  /* 没有 MTP 块的模型（minimax-m3、kimi-k3）单独一条轨道定义。
+     `repeat(0, …)` 在 CSS 里不合法，浏览器把计数钳到 1 —— 于是轨道比每行格子多一条，
+     整行右移、行标题被挤出可视区。不能靠 calc 表达「一条都不要」，只能不写这个 repeat。 */
+  .lm.no-mtp {
+    grid-template-columns: 132px repeat(var(--n), minmax(20px, 1fr));
   }
   .lm-row-label {
     position: sticky; left: 0; z-index: 1; background: var(--surface);
