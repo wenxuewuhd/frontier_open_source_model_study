@@ -1,0 +1,440 @@
+{
+  "$comment": "列的含义：每一列的空格子是三态里的哪一种（未查 / 不适用 / 查了但没有），以及会被读错成别的量的那几列带什么单位。Python 侧由 scripts/lib/columns.py 读取，闸口 scripts/validate.py 校验这份定义本身是完整的。为什么要有这份文件：三次误读都不是数值错，而是读者无从判断一个格子里的数是什么量、或者一个空格子是「没查」还是「不适用」。把区分放在渲染措辞里，下一张新表会重犯；放在这里，渲染器无从含糊，闸口也能机械校验。**bytes_basis 的取值表、标签与证据强度排序不在这里** —— 那一套归 kv_table.py 与站点侧，在这里再写一份只会变成第四份拷贝。设计与迁移计划见 docs/field-absence.md。",
+  "absence_states": {
+    "$comment": "缺值的三态。现状是三者同形（都渲染成 —），其中第三态是信息、前两态是缺口。",
+    "unsurveyed": {
+      "label": "未录",
+      "short": "未录",
+      "meaning": "本仓还没查、或查了还没录进记录。这是调研进度，不是模型事实",
+      "is_gap": true
+    },
+    "not_applicable": {
+      "label": "不适用",
+      "short": "不适用",
+      "meaning": "这一代结构上没有这个东西，不存在可填的值",
+      "is_gap": false
+    },
+    "confirmed_absent": {
+      "label": "确认无",
+      "short": "确认无",
+      "meaning": "查过，确认厂商没公布 / 这一代不做这件事。这是信息，不是缺口",
+      "is_gap": false
+    }
+  },
+  "columns": {
+    "$comment": "key 必须与 site/src/lib/data.ts 的 TRACKED_FIELDS 一一对应（闸口两侧都校验）。unit 为 null 表示不是带单位的数；非 null 时渲染器必须把它贴在数字上，不能只写在表头 —— 元素/token 与字节/token 两张表并排时，列名离数字十几个字符，1,600（元素）被读成了字节。basis 指向 derived 里的口径字段，渲染器必须把它和数字放同一格。absent.state 是「空格子」的默认含义，absent.rules 按顺序试、第一条命中的赢；op 的实现见 columns.py / columns.ts 的 test()，两侧必须一致。",
+    "layers": {
+      "unit": null,
+      "absent": {
+        "state": "unsurveyed"
+      }
+    },
+    "hidden": {
+      "unit": null,
+      "absent": {
+        "state": "unsurveyed"
+      }
+    },
+    "vocab": {
+      "unit": null,
+      "absent": {
+        "state": "unsurveyed"
+      }
+    },
+    "attn_type": {
+      "unit": null,
+      "absent": {
+        "state": "unsurveyed"
+      }
+    },
+    "heads": {
+      "unit": null,
+      "absent": {
+        "state": "unsurveyed"
+      }
+    },
+    "head_dim": {
+      "unit": null,
+      "absent": {
+        "state": "unsurveyed"
+      }
+    },
+    "kv_lora": {
+      "unit": null,
+      "absent": {
+        "state": "unsurveyed",
+        "rules": [
+          {
+            "state": "not_applicable",
+            "why": "非 latent 注意力，结构上没有 KV 低秩压缩",
+            "test": {
+              "src": "rec",
+              "op": "not_in",
+              "path": "arch.attention.type",
+              "values": [
+                "MLA",
+                "hybrid",
+                "MQA-latent"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "q_lora": {
+      "unit": null,
+      "absent": {
+        "state": "unsurveyed",
+        "rules": [
+          {
+            "state": "not_applicable",
+            "why": "这一代的 Q 投影不走低秩分解",
+            "test": {
+              "src": "rec",
+              "op": "not_in",
+              "path": "arch.attention.type",
+              "values": [
+                "MLA",
+                "MQA",
+                "MQA-latent",
+                "hybrid"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "o_lora": {
+      "unit": null,
+      "absent": {
+        "state": "not_applicable",
+        "why": "输出投影不分组、不走低秩 —— 目前只有 MQA-latent 一代有这一项"
+      }
+    },
+    "swa": {
+      "unit": null,
+      "absent": {
+        "state": "not_applicable",
+        "why": "全层 full attention，没有滑窗"
+      }
+    },
+    "sink": {
+      "unit": null,
+      "absent": {
+        "state": "not_applicable",
+        "why": "没有 attention sink"
+      }
+    },
+    "sparse": {
+      "unit": null,
+      "absent": {
+        "state": "not_applicable",
+        "why": "稠密注意力，没有稀疏 index 头"
+      }
+    },
+    "kv_src": {
+      "unit": null,
+      "absent": {
+        "state": "not_applicable",
+        "why": "每层各自产出 KV，没有跨层共享"
+      }
+    },
+    "idx_src": {
+      "unit": null,
+      "absent": {
+        "state": "not_applicable",
+        "why": "没有稀疏索引器，不存在产出 index K 的层"
+      }
+    },
+    "kv_elems": {
+      "unit": "元素",
+      "quantity": "随上下文线性增长的每 token 缓存元素数",
+      "absent": {
+        "state": "unsurveyed",
+        "rules": [
+          {
+            "state": "not_applicable",
+            "why": "非自回归生成模型，推理过程中没有跨步复用的 KV",
+            "test": {
+              "src": "derived",
+              "op": "eq",
+              "path": "kv_cache.status",
+              "values": [
+                "not_applicable"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "experts": {
+      "unit": null,
+      "absent": {
+        "state": "unsurveyed",
+        "rules": [
+          {
+            "state": "not_applicable",
+            "why": "稠密模型，没有路由专家",
+            "test": {
+              "src": "rec",
+              "op": "absent",
+              "path": "arch.moe"
+            }
+          }
+        ]
+      }
+    },
+    "shared": {
+      "unit": null,
+      "absent": {
+        "state": "unsurveyed",
+        "rules": [
+          {
+            "state": "not_applicable",
+            "why": "稠密模型，没有专家可共享",
+            "test": {
+              "src": "rec",
+              "op": "absent",
+              "path": "arch.moe"
+            }
+          },
+          {
+            "state": "confirmed_absent",
+            "why": "是 MoE 但不设共享专家，全部 FFN 容量走路由",
+            "test": {
+              "src": "rec",
+              "op": "truthy",
+              "path": "arch.moe.routed_experts"
+            }
+          }
+        ]
+      }
+    },
+    "moe_inter": {
+      "unit": null,
+      "absent": {
+        "state": "unsurveyed",
+        "rules": [
+          {
+            "state": "not_applicable",
+            "why": "稠密模型，没有专家中间维",
+            "test": {
+              "src": "rec",
+              "op": "absent",
+              "path": "arch.moe"
+            }
+          }
+        ]
+      }
+    },
+    "dense_k": {
+      "unit": null,
+      "absent": {
+        "state": "unsurveyed",
+        "rules": [
+          {
+            "state": "not_applicable",
+            "why": "稠密模型，不存在「dense 前缀」这个概念",
+            "test": {
+              "src": "rec",
+              "op": "absent",
+              "path": "arch.moe"
+            }
+          },
+          {
+            "state": "confirmed_absent",
+            "why": "是 MoE 但第 0 层起就全是 MoE 层，没有 dense 前缀",
+            "test": {
+              "src": "rec",
+              "op": "truthy",
+              "path": "arch.moe.routed_experts"
+            }
+          }
+        ]
+      }
+    },
+    "routing": {
+      "unit": null,
+      "absent": {
+        "state": "unsurveyed"
+      }
+    },
+    "hash": {
+      "unit": null,
+      "absent": {
+        "state": "not_applicable",
+        "why": "没有 hash 路由层"
+      }
+    },
+    "residual": {
+      "unit": null,
+      "absent": {
+        "state": "unsurveyed"
+      }
+    },
+    "retrieval": {
+      "unit": null,
+      "absent": {
+        "state": "not_applicable",
+        "why": "没有检索层"
+      }
+    },
+    "mtp": {
+      "unit": null,
+      "absent": {
+        "state": "not_applicable",
+        "why": "没有 MTP 层"
+      }
+    },
+    "spec_method": {
+      "unit": null,
+      "absent": {
+        "state": "not_applicable",
+        "why": "不带投机解码"
+      }
+    },
+    "vision": {
+      "unit": null,
+      "absent": {
+        "state": "not_applicable",
+        "why": "纯语言模型，没有视觉塔",
+        "rules": [
+          {
+            "state": "unsurveyed",
+            "why": "是多模态记录，但视觉塔的规格还没录",
+            "test": {
+              "src": "rec",
+              "op": "eq",
+              "path": "kind",
+              "values": [
+                "vlm"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ctx": {
+      "unit": null,
+      "absent": {
+        "state": "unsurveyed"
+      }
+    },
+    "quant_block": {
+      "unit": null,
+      "scope": "config",
+      "absent": {
+        "state": "unsurveyed",
+        "rules": [
+          {
+            "state": "confirmed_absent",
+            "why": "config 没有声明量化块 —— 这一代不带 config 级量化声明，实测值看下面的逐子系统行",
+            "test": {
+              "src": "rec",
+              "op": "absent",
+              "path": "precision.quantization.method"
+            }
+          }
+        ]
+      }
+    },
+    "scale_fmt": {
+      "unit": null,
+      "scope": "config",
+      "absent": {
+        "state": "unsurveyed",
+        "rules": [
+          {
+            "state": "confirmed_absent",
+            "why": "config 没有声明 scale 格式；实测的 scale dtype 在下面的逐子系统行里",
+            "test": {
+              "src": "rec",
+              "op": "absent",
+              "path": "precision.quantization.method"
+            }
+          }
+        ]
+      }
+    },
+    "act_scheme": {
+      "unit": null,
+      "scope": "config",
+      "absent": {
+        "state": "unsurveyed",
+        "rules": [
+          {
+            "state": "confirmed_absent",
+            "why": "没有激活量化：权重不量化，激活也就没有 scale 要算",
+            "test": {
+              "src": "rec",
+              "op": "absent",
+              "path": "precision.quantization.method"
+            }
+          }
+        ]
+      }
+    },
+    "kv_dtype": {
+      "unit": null,
+      "absent": {
+        "state": "unsurveyed",
+        "rules": [
+          {
+            "state": "confirmed_absent",
+            "why": "厂商没公布缓存精度。字节那一行因此按模型权重 dtype 兜底（basis「精度兜底」），不含任何精度信息",
+            "test": {
+              "src": "derived",
+              "op": "truthy",
+              "path": "kv_cache.dtype_assumed"
+            }
+          }
+        ]
+      }
+    },
+    "kv_bytes": {
+      "unit": "B",
+      "quantity": "随上下文线性增长的每 token 缓存字节数",
+      "basis": "kv_cache.bytes_basis",
+      "absent": {
+        "state": "unsurveyed",
+        "rules": [
+          {
+            "state": "not_applicable",
+            "why": "非自回归生成模型，推理过程中没有跨步复用的 KV",
+            "test": {
+              "src": "derived",
+              "op": "eq",
+              "path": "kv_cache.status",
+              "values": [
+                "not_applicable"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "$subsystem": {
+      "$comment": "逐子系统实测精度行的模板。key 由 data/schema/subsystems.json 的 key 加前缀 sub_ 生成，所以这里只写一条、不写 16 条。scope=measured：这一格是实测值，渲染器必须把「测自哪个仓」贴在这一段上 —— 否则厂商另发的独立精度变体（M3 的 MXFP8 在另一个仓、本仓没取数）在页面上不可见，表上看起来像 M2 都低精度了而 M3 莫名退回 BF16。",
+      "unit": null,
+      "scope": "measured",
+      "scope_from": "hf.repo",
+      "absent": {
+        "state": "unsurveyed",
+        "why": "这份记录还没取过逐子系统的权重 dtype",
+        "rules": [
+          {
+            "$comment": "穷举过完整清单的记录，缺的那个桶就是这个模型里没有这个子系统；按抽样填的记录不能这么说 —— 抽样没抽到不等于不存在。这里只能按 subsystem_method 的散文判断（op=matches），因为记录里没有结构化的「是否穷举」标志。这是本次唯一一处靠文本判断的规则，闸口会把匹配与不匹配的记录都列出来，让它藏不住；第二段应改成 subsystem_method.exhaustive 布尔字段，届时这条规则换成 op=truthy。",
+            "state": "not_applicable",
+            "why": "已对完整权重清单穷举过，这个子系统在这个模型里不存在",
+            "test": {
+              "src": "rec",
+              "op": "matches",
+              "path": "precision.quantization.subsystem_method",
+              "pattern": "非抽样|不是抽样|穷举|逐项核对|全量结论|全量复核|完整清单[^。]*复核"
+            }
+          }
+        ]
+      }
+    }
+  }
+}
