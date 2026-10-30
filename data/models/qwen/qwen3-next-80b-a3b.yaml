@@ -1,0 +1,551 @@
+# 机械字段来自 config（official）；形状、参数量、层分布、草稿块的存在与子系统拆分
+# 来自完整权重清单（41 分片 75944 条目，无读失败分片，全 BF16）。
+# 本代 config **不声明** layer_types、attn_output_gate、mamba_ssm_dtype、MTP 层数，
+# 这四件事全部只在权重里，所以都标 derived。
+id: qwen3-next-80b-a3b
+family: qwen
+kind: llm
+display_name: Qwen3-Next-80B-A3B-Instruct
+released: '2025-09-09'
+license: apache-2.0
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct
+    locator: config.json @ 9c7f2fbe8446
+    accessed: '2026-10-30'
+    note: >-
+      许可取自 HF tags license:apache-2.0 与 cardData license: apache-2.0。
+      BF16 发布，41 分片 75944 个张量，逐分片读头取全，failed_shards 为空。
+      config 用 full_attention_interval: 4 表达混合层分布（**没有 layer_types 这个键**，
+      那是 Qwen3.5 才有的），也**没有** attn_output_gate / mamba_ssm_dtype /
+      任何 MTP 层数键 —— 后三件事都只在权重里
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3-Coder-Next
+    locator: repoinfo safetensors tally @ a7fbcb5c0e12
+    accessed: '2026-10-30'
+    note: >-
+      草稿块参数量的外部交叉验证：Qwen3-Coder-Next 的主干名族与本记录逐族相同
+      但**整块没有 mtp.***，而 HF 给它的 safetensors tally 是 79,674,391,296，
+      与本记录的 81,324,862,720 相差 **1,650,471,424**，恰等于本仓从清单算出的
+      draft 子系统参数量，逐位相同。两个仓的 tally 都不依赖本仓任何一行代码
+
+hf:
+  repo: Qwen/Qwen3-Next-80B-A3B-Instruct
+  sha: 9c7f2fbe84461fa4198f2cbd522b1c1e4c4a2b94
+  last_modified: '2025-09-17T04:31:04.000Z'
+  pipeline_tag: text-generation
+  gated: false
+
+lineage:
+  track: main
+  predecessor: qwen3-235b-a22b
+  successor: qwen3.5-397b-a17b
+  changed_from_predecessor:
+    - axis: attention
+      text: >-
+        **混合线性注意力第一次出现**，这是整条 Qwen 线最大的一次结构转折。
+        48 层按 3:1 分成 36 层线性 + 12 层 full attention
+        （config 只给 full_attention_interval: 4，**没有 layer_types** ——
+        层集合是从清单读的：trunk 的 self_attn.q_proj 恰在 3/7/11/…/47，
+        linear_attn.conv1d 恰在其余 36 层，两个集合无交集）。
+        线性层的张量是一张融合的 in_proj_qkvz [12288, 2048]
+        （= q 16×128 + k 16×128 + v 32×128 + **z 32×128**）、
+        in_proj_ba [64, 2048]（= b 32 + a 32，每状态头一个）、
+        conv1d [8192, 1, 4]、A_log [32]、dt_bias [32]、norm [128]、
+        out_proj [2048, 4096]。full 层仍是 GQA（16 头 / 2 KV 头）但 head_dim
+        128 → **256**，且 q_proj 是 [8192, 2048] = **2 ×** 16 × 256 ——
+        输出门已经在权重里，而 config 这一代没有 attn_output_gate 这个键
+      benefit: >-
+        累积 KV 的层数从 94 降到 12，每层宽度 1024 → 1024（2 × 2 × 256，
+        KV 头减半而 head_dim 翻倍，正好抵消），每 token 从 96,256 元素
+        降到 **12,288 元素，7.83 倍**。代价是多出一类显存对象：
+        36 层各带一份与上下文无关的递归状态（矩阵 32×128×128 + 短卷积 4×8192），
+        **每序列固定 38.25 MiB**（BF16 兜底口径）。
+        容量模型从此必须写成「per_token × 上下文 + per_sequence」两个分量，
+        262144 满上下文是 6.00 GiB + 38.25 MiB
+    - axis: moe
+      text: >-
+        **共享专家回来了**（前代删掉的那条常驻通路）：每层一套
+        mlp.shared_expert.{gate,up,down}_proj（中间维 512）加一张
+        shared_expert_gate [1, 2048]。路由专家 128 → **512**，top_k 8 → **10**，
+        专家中间维 1536 → 512（相对稠密 5120 是 1/10）。
+        专家仍逐个独立存张量（48 层 × 512 × 3 = 73,728 条目，占总条目 97.1%）
+      benefit: >-
+        每 token 的 FFN 中间维 = 5120（路由 10 × 512）+ 512（共享）= 5632，
+        仍是一份稠密 FFN 上下。**单专家缩到 3 × 2048 × 512 = 3,145,728**
+        （前代 18,874,368，0.17 倍），grouped GEMM 的单个 M 维更小、
+        更依赖批量聚合；而 512 个专家让 EP 的目的地分布更散
+    - axis: decoding
+      text: >-
+        **家族首个 MTP 草稿块**，而且 **config 里没有任何 MTP 键** ——
+        它只在权重里：mtp.fc [2048, 4096]、mtp.pre_fc_norm_embedding /
+        pre_fc_norm_hidden、mtp.layers.0 的一整套 full attention +
+        512 专家 MoE + 共享专家 + router、mtp.norm。共 1553 个条目、
+        1,650,471,424 参数
+      benefit: >-
+        草稿块自带完整的注意力与 MoE，是个真正的 transformer 块而不是一个轻头 ——
+        它的参数量相当于主干的 2.07%，但**开草稿侧时累积 KV 的层数从 12 变 13**
+        （+8.3%）。外部交叉验证：Qwen3-Coder-Next 没有这个块，
+        它的 HF tally 与本记录恰好差 1,650,471,424
+    - axis: context
+      text: 40960 → **262144**（max_position_embeddings），rope_theta 1e6 → 1e7，partial_rotary_factor 0.25
+      benefit: >-
+        上下文 ×6.4 与混合注意力是同一代的两件事：满上下文的 KV 从
+        7.34 GiB（40960 × 94 层）变成 6.00 GiB（262144 × 12 层），
+        **放大 6.4 倍上下文而缓存还略降**。partial_rotary_factor 0.25
+        意味着 rope 只作用在 head_dim 256 的前 64 维
+    - axis: scale
+      text: 235.1B 总 / A22B → 81.3B 总 / A3B
+      benefit: >-
+        总量降到 1/2.9 而带宽口径的激活参数从 21,568,433,664 降到 3,563,858,230
+        （1/6.1）—— 激活占比 9.2% → 4.5%。这一代是「小总量 + 更小激活」的档位，
+        不是旗舰规模的继续放大
+
+params:
+  total: 8.0e+10
+  excludes: [draft]
+  breakdown:
+    expert: 77309400000.0
+    draft: 1650470000.0
+    attention: 1541020000.0
+    embed: 311165000.0
+    lm_head: 311165000.0
+    shared_expert: 151093000.0
+    router: 50331648.0
+    norm: 209408.0
+  counting_note: >-
+    total 取自模型名（80B），属厂商声明；breakdown 是本仓按完整权重清单
+    （41 分片 75944 条目，全 BF16、无量化 scale、无低位打包）实测的分项，取 6 位有效数字。
+    实测全量 81,324,862,720，与 HF 平台自己从分片头统计的 safetensors tally 逐位相同。
+    对 80B 是 +1.66%（容差内）；扣掉草稿块（1,650,471,424）后是 79,674,391,296，
+    对 80B 是 **−0.41%**，偏差更小，所以 excludes 取 [draft]。
+    **这个扣法有外部证据，不只是选偏差小的那个**：Qwen3-Coder-Next 的主干名族与本记录
+    逐族相同而整块没有 mtp.*，它的 HF tally 恰好就是 79,674,391,296 ——
+    即「本记录扣掉草稿块」与「另一个仓根本没有草稿块」两条路得到同一个数，逐位相同。
+    **A3B 是档位名而不是激活参数声明**，所以 active_decode 不填：
+    带宽口径 3,563,858,230 对 3B 是 +18.8%、含输入词表 3,875,023,158 是 +29.2%，
+    两种口径都远超 2% 容差；而同代 Qwen3-30B-A3B（总量 30.5B）与后来的
+    Qwen3.5-35B-A3B（35.9B）也都叫 A3B —— 总量差一倍而激活档位名相同。
+    激活的专家部分 = 77,309,411,328 × 10/512 = 1,510,043,190，常驻部分 2,053,815,040
+    （注意力 + 共享专家 + router + norm + lm_head）—— **常驻比激活的专家还多**，
+    因为线性注意力层的投影（in_proj_qkvz 等）全部常驻、合计 1.21B。
+    词表与输出层不共享权重（各 311,164,928）。权重存储 151.48 GiB。
+
+context:
+  max: 262144
+
+arch:
+  layers: 48
+  hidden: 2048
+  vocab: 151936
+  norm: RMSNorm
+  norm_eps: 1.0e-06
+  activation: SwiGLU
+  position: >-
+    RoPE theta 1e7，partial_rotary_factor 0.25 —— 只对 head_dim 256 的 1/4
+    即前 64 维加 rope。这一代还是普通 RoPE（mRoPE 要到 Qwen3.5 才进主线）
+
+  attention:
+    type: hybrid
+    num_heads: 16
+    num_kv_heads: 2
+    head_dim: 256
+    head_dim_note: >-
+      head_dim 256 是 config 显式字段，而 hidden 2048 / 16 头 = 128，又一次不相等。
+      **full attention 层的 q_proj 是 [8192, 2048] = 2 × 16 × 256** —— 输出维翻倍，
+      一半是 query、一半是输出门，而**本代 config 没有 attn_output_gate 这个键**
+      （Qwen3.5 起才有）。o_proj 入口 4096 = 16 × 256 只对应 query 那一半，
+      按 num_heads × head_dim 推 q_proj 会低一半。
+      k_proj 与 v_proj 都是 [512, 2048]（512 = 2 × 256），缓存宽度按它们的输出维算：
+      每层 2 × 512 = 1024 元素。另有每层 q_norm [256] 与 k_norm [256]（QK-Norm），
+      归 norm 子系统
+    partial_rotary_factor: 0.25
+    layer_pattern: >-
+      3:1 linear:full，full attention 落在层号 ≡ 3 (mod 4) 上 ——
+      清单里 trunk 的 self_attn.q_proj 恰在 3/7/11/15/19/23/27/31/35/39/43/47 这 12 层，
+      linear_attn.conv1d 恰在其余 36 层，两个集合无交集、并集是全部 48 层。
+      config 只给 full_attention_interval: 4，没有 layer_types 列表
+    output_gate:
+      enabled: true
+      type: 未声明（config 本代没有 output_gate_type；门的存在由 q_proj 的输出维翻倍定）
+    hybrid:
+      layer_types_count:
+        linear: 36
+        full: 12
+      interval: 4
+      note: >-
+        12 层 full attention 的 KV 随上下文线性增长，36 层线性注意力只带每序列固定的
+        递归状态，两者增长方式不同，容量规划必须分开算。
+        以上层数都是主干口径（48 主干层 + 1 草稿块）：草稿块 mtp.layers.0 带一套与主干
+        full attention 同名的 q/k/v/o 投影、没有 linear_attn，
+        所以开草稿侧时累积 KV 的是 13 层、24576 → 26624 B/token，线性状态仍是 36 层。
+        本记录与 data/derived/ 都按主干口径记账。
+    linear_state:
+      mechanism: 门控线性注意力 + 短卷积
+      num_key_heads: 16
+      num_value_heads: 32
+      key_head_dim: 128
+      value_head_dim: 128
+      conv_kernel_dim: 4
+      state_layout_note: >-
+        状态头数 32（= value 头数）由清单定：每层 linear_attn.A_log [32] 与
+        dt_bias [32]，衰减参数每状态头一个。in_proj_ba [64, 2048] = 32 + 32 也对得上。
+        **conv 通道数这一代不能写成「= in_proj_qkv 输出维」**：本代 q/k/v **和 z 门
+        融合在一张** in_proj_qkvz [12288, 2048] 里，而 conv1d.weight 是
+        [8192, 1, 4] —— 8192 = q 2048 + k 2048 + v 4096，**不含 z 的 4096**。
+        正确的说法是「conv 通道数 = q + k + v 三段之和」，
+        即 2 × num_key_heads × key_head_dim + num_value_heads × value_head_dim
+        = 2 × 16 × 128 + 32 × 128 = 8192，36/36 层零例外。
+        Qwen3.5 起投影拆成 in_proj_qkv + in_proj_z 两张，那一代起首维才与
+        in_proj_qkv 的输出维相等。
+        **状态精度本代没有一手来源**：config 没有 mamba_ssm_dtype 这个键
+        （Qwen3.5 起才有，值是 float32），所以本记录不填 state_dtype，
+        推导按模型 dtype（BF16）兜底 —— 若实际是 FP32，每序列状态要翻倍到 76.50 MiB。
+        矩阵状态的实际存储是否就是一个 [32, 128, 128] 的张量仍需按实现核
+        （两维都是 128，维序不影响容量）
+
+  ffn:
+    type: moe
+    layer_pattern: >-
+      48 层全是 MoE 层（decoder_sparse_step: 1、mlp_only_layers: []，
+      清单里 48/48 层都有 experts 与 shared_expert）。
+      **线性注意力层与 full attention 层的 FFN 形态相同** —— 混合只发生在注意力一侧
+
+  moe:
+    routed_experts: 512
+    shared_experts: 1
+    top_k: 10
+    intermediate: 512
+    dense_intermediate: 5120
+    routing: 带辅助损失（router_aux_loss_coef 0.001），norm_topk_prob 为 true
+    balance: aux-loss
+    storage_note: >-
+      专家逐个独立存张量：每层 512 个专家 × 3 个投影（[512, 2048] / [512, 2048] /
+      [2048, 512]），48 层共 73,728 个条目，占总条目 97.1%。
+      单专家只有 3,145,728 参数（前代 18,874,368 的 0.17 倍）。
+      grouped GEMM 吃 2 维张量的列表；3 维堆叠布局要到 Qwen3.5 一代才出现。
+      草稿块自己也有一套 512 专家的逐专家张量（1536 条目）
+
+  decoding:
+    mtp_layers: 1
+    mtp_layers_note: >-
+      **config 里没有任何 MTP 键**（既没有 num_nextn_predict_layers 也没有
+      mtp_num_hidden_layers），1 这个数是从清单数出来的：mtp.layers.0 一个块，
+      外加 mtp.fc / mtp.pre_fc_norm_embedding / mtp.pre_fc_norm_hidden / mtp.norm
+      这些块外胶水张量。草稿块自带完整的 full attention（q/k/v/o + q_norm/k_norm）
+      与 512 专家 MoE + 共享专家 + router，共 1553 条目、1,650,471,424 参数。
+      DeepSeek 一代是「config 声明 1 而权重里有 3 块」，这里是「config 什么都不声明
+      而权重里有 1 块」—— 两个方向都出现过，所以 MTP 层数一律以清单为准
+
+precision:
+  weights_release: [BF16]
+  quantization:
+    per_subsystem:
+      attention: BF16
+      expert: BF16
+      shared_expert: BF16
+      router: BF16
+      draft: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+    subsystem_method: >-
+      来自完整权重清单（41 分片 75944 条目）逐项统计，非抽样：每个条目都带 shape 与 dtype，
+      failed_shards 为空，75944 条全是 BF16 —— **包括 A_log 与 linear_attn.norm**。
+      这一点要记住：Qwen3.5 一代把这两类升成了 F32，Qwen3.6 又回到 BF16，
+      所以「线性注意力的衰减参数是什么精度」每代都要重测。
+      这一代没有 quantization_config；同代另有 FP8 与 GGUF 发布，本仓不另录
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      混合结构把显存账拆成两类对象：12 层 full attention 的 KV 随上下文线性增长，
+      36 层线性注意力的递归状态每序列固定、与上下文长度无关。
+      合成一个数表达不了 —— 长上下文下状态便宜（262144 时状态只占 0.62%），
+      大批量短序列下状态贵（4096 上下文时状态占 28.5%）。
+      引擎要同时管理两种生命周期不同的显存对象，而且线性状态无法像 KV 那样按 block 分页复用。
+    quantified: >-
+      24,576 B/token（12 层 × 1024 元素 × 2 B 兜底）+ 38.25 MiB/序列
+      （36 层 × (32×128×128 矩阵 + 4×8192 短卷积) × 2 B 兜底）。
+      262144 满上下文 6.00 GiB + 38.25 MiB；4096 上下文 96.00 MiB + 38.25 MiB。
+      两个分量都是 dtype_fallback 口径 —— 状态精度本代 config 没有声明
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      一代之内新增三类算子：门控线性注意力的递归状态更新、作用在 qkv 流上的
+      depthwise 短卷积（通道 8192、窗长 4）、以及异构层调度（3:1 交替，
+      图捕获与内存池都要按两种层组织）。full attention 一侧还多了输出门
+      （q_proj 的后一半与 query 那一半逐元素相乘）。
+      这是 Qwen 线第一次「同一套算子换形状」解决不了的代际。
+    visibility: public
+  - dimension: weight-bandwidth
+    finding: >-
+      带宽口径的激活参数 3,563,858,230，其中**常驻部分 2,053,815,040 比被激活的
+      专家 1,510,043,190 还多** —— 线性注意力层的投影（in_proj_qkvz / in_proj_ba /
+      out_proj，36 层合计 1,213,860,096）全部常驻。
+      MoE 做得越稀疏，常驻部分在激活参数里的占比就越高：这一代常驻占 57.6%
+      （其中注意力一项占 43.2%），而前代（94 层 GQA）常驻占 34.2%、注意力占 31.1%。
+    quantified: >-
+      带宽口径 3,563,858,230 × 2 B = 6.64 GiB/token；权重存储 151.48 GiB。
+      常驻 / 激活 = 2,053,815,040 / 3,563,858,230 = 57.6%
+      （前代 7,374,908,928 / 21,568,433,664 = 34.2%）；
+      只算注意力一项是 1,541,015,808 / 3,563,858,230 = 43.2%
+      （前代 6,702,497,792 / 21,568,433,664 = 31.1%）
+    visibility: public
+
+infra_signals:
+  - text: >-
+      **混合线性注意力在 Qwen 线从这一代开始**，而层分布在 config 里只有一个
+      full_attention_interval: 4 —— 没有 layer_types 列表（Qwen3.5 才加）。
+      要知道哪 12 层产出 KV，只能去清单里看 self_attn.q_proj 出现在哪些层。
+      缓存容量的第一个因子（哪些层）在这一代拿不到声明值，必须实测。
+    evidence: derived
+    horizon: settled
+    axis: attention
+  - text: >-
+      conv 状态的通道数这一代**不能**按「= in_proj_qkv 输出维」算：
+      本代 q/k/v 与 z 门融合在一张 in_proj_qkvz [12288, 2048] 里，
+      而 conv1d 是 [8192, 1, 4]，差的正好是 z 的 4096。
+      恒等式要写成「= q + k + v 三段之和」才跨代成立 ——
+      Qwen3.5 起投影拆开，两种写法才又重合。
+      本仓在 README 的「Qwen3.8 复核」一节里把它写成了前一种，
+      用在这一代会高估 1.5 倍（12288 对 8192）。
+    evidence: derived
+    horizon: now
+    axis: attention
+  - text: >-
+      输出门在这一代的权重里已经存在（q_proj 输出维是 2 × heads × head_dim），
+      而 config 没有 attn_output_gate 这个键。照 config 判断门的存在，
+      会把 q_proj 的 N 维算低一半 —— 又一例「config 描述模块配置、不描述落盘形状」。
+    evidence: derived
+    horizon: settled
+    axis: attention
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: official
+  params.breakdown: derived
+  params.excludes: derived
+  params.counting_note: judgement
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.attention.output_gate: derived
+  arch.attention.hybrid.layer_types_count: derived
+  arch.attention.hybrid.note: judgement
+  arch.attention.linear_state.mechanism: judgement
+  arch.attention.linear_state.state_layout_note: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.shared_experts: derived
+  arch.moe.dense_intermediate: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.decoding.mtp_layers: derived
+  arch.decoding.mtp_layers_note: derived
+  precision: official
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  Qwen 线的结构转折点（2025-09）：混合线性注意力、512 专家 top-10、首个 MTP 草稿块
+  三件事同时进来。它在发布时不是旗舰（同期旗舰是 qwen3-235b-a22b），
+  但 Qwen3.5 起的主线用的就是这一代的结构，所以本仓把它接在主链上
+  （track: main，predecessor = qwen3-235b-a22b）。
+  **本代 config 不声明的四件事**：混合层集合（只给 interval）、输出门、
+  状态精度、MTP 层数 —— 全部只在权重里，Qwen3.5 的 config 才把前三件写出来。
+  同代的 Qwen3-Coder-Next（2026-01）主干名族与本记录逐族相同、整块没有草稿块，
+  rope_theta 1e7 → 5e6，是领域变体，不另录 —— 但它的 HF tally 给了本记录
+  草稿块参数量一个独立的外部交叉验证（见 sources[1] 与 R2）。
+
+open_questions:
+  - >-
+    **状态精度没有一手来源**：本代 config 没有 mamba_ssm_dtype 键
+    （Qwen3.5 起才有且为 float32），清单里 A_log / dt_bias / linear_attn.norm
+    三类权重都是 BF16，但「权重精度」不等于「运行期状态精度」。
+    本记录不填 state_dtype，推导按模型 dtype 兜底；若实际是 FP32，
+    每序列状态从 38.25 MiB 翻到 76.50 MiB
+  - >-
+    矩阵状态的实际存储是否就是一个 [32, 128, 128] 的张量需按实现确认
+    （两维都是 128，维序不影响容量）；状态头数与 conv 通道数已由清单确定
+  - >-
+    短卷积的状态按全窗 4 计是上界，实现若只存 k−1 = 3 个位置会低 1/4
+  - >-
+    输出门的激活函数未知：本代 config 没有 output_gate_type 键
+    （Qwen3.5 起是 swish、Qwen3.8-Flash-Next 是 sigmoid），门的存在由形状定、
+    函数形式没有来源
+  - >-
+    KV cache 的实际落盘精度未披露，按 config 的 torch_dtype=bfloat16 兜底，
+    bytes_basis 是 dtype_fallback
+  - >-
+    训练精度没有一手来源：config 的 torch_dtype: bfloat16 说的是发布权重，
+    模型卡正文未核，故不填 precision.training
+
+reviewed:
+  date: '2026-10-30'
+  scope:
+    - official
+    - derived
+    - judgement
+  reviewer: 本会话逐字段复算
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序对 facts/qwen3-next-80b-a3b 核：
+    config 全部键（含「缺哪些键」—— layer_types / attn_output_gate / mamba_ssm_dtype /
+    任何 MTP 键都不存在）、完整权重清单（75944 条目逐项 numel / dtype / 层索引、
+    experts.N 下标集合 0–511）、repoinfo 的 tags / cardData / sha 与 safetensors tally，
+    以及 facts/qwen3-coder-next 的名族与 tally（草稿块的外部核对，见 R2）。
+    混合层的两个集合（full 12 层、linear 36 层）由清单的层索引交并集定，
+    已验两集合无交集、并集为 0–47 全部 48 层。
+    conv 通道恒等式在 36/36 层上逐层验过，并查出本代与 README 写法不符（见 R3）。
+    参数八项逐项按形状重算并与清单求和、HF tally 三方比对；
+    草稿块 1,650,471,424 由两条独立路径确认（见 R2）。
+    derive.py 以默认 --ep 1 带 --model 重跑，0 处不一致。
+    **原理上核不了的**：状态精度、矩阵状态的实际布局、conv 窗长、输出门的函数形式、
+    KV 落盘精度、训练精度，都在 open_questions 里。
+review:
+  - id: R1
+    field: arch.attention.linear_state.state_layout_note
+    severity: wrong
+    claim: >-
+      草稿按 README「Qwen3.8 复核」一节的恒等式写「conv1d 首维 = in_proj_qkv 输出维」，
+      于是 conv 通道数取 12288
+    finding: >-
+      本代没有 in_proj_qkv 这张张量 —— q/k/v **和 z 门**融合成一张
+      in_proj_qkvz [12288, 2048]，而 conv1d.weight 是 [8192, 1, 4]。
+      8192 = q 2048 + k 2048 + v 4096，**z 的 4096 不参与短卷积**。
+      按 12288 算每层 conv 状态会高估 1.5 倍（98,304 B 对实际 65,536 B，BF16）。
+      恒等式的正确形式是「q + k + v 三段之和」，即 derive.py 现在算的
+      2 × num_key_heads × key_head_dim + num_value_heads × value_head_dim ——
+      它在本代 36/36 层、Qwen3.5 两档、Qwen3.8 三档上都零例外。
+      **README 那一节的写法钉的是 Qwen3.5 之后的布局**，用在本代会错
+      （skill 规则 5：结构规律要钉代际）
+    resolution: corrected
+    changed_to: >-
+      state_layout_note 改为按三段之和写并列出本代的 z 例外；
+      infra_signals 加一条，交接笔记里也记了 README 该补的代际作用域
+  - id: R2
+    field: params.excludes
+    severity: unsupported
+    claim: excludes [draft]，草稿块 1,650,471,424
+    finding: >-
+      两条独立路径给同一个数。(1) 本仓按清单归类求和：mtp.* 的 1553 个条目
+      合计 1,650,471,424（逐项按形状重算过：1 个 full attention 层 27,262,976
+      + 512 专家 1,610,612,736 + 共享专家 3,147,776 + router 1,048,576
+      + fc 8,388,608 + 7 张 norm 共 10,752）。
+      (2) 外部：Qwen3-Coder-Next 的主干名族与本记录逐族相同但没有 mtp.*，
+      HF 给它的 tally 是 79,674,391,296，与本记录 tally 之差恰为 1,650,471,424，
+      **逐位相同**。第二条不依赖本仓任何一行代码，也不依赖本仓的子系统归类
+    resolution: confirmed
+  - id: R3
+    field: arch.attention.hybrid.layer_types_count
+    severity: unsupported
+    claim: linear 36 / full 12
+    finding: >-
+      config 没有 layer_types（Qwen3.5 才有），只有 full_attention_interval: 4。
+      所以两个数是从清单的层索引算的：trunk 的 self_attn.q_proj 恰在
+      3/7/11/15/19/23/27/31/35/39/43/47（12 层，全部 ≡ 3 mod 4），
+      linear_attn.conv1d 恰在其余 36 层，**两个集合交集为空、并集是 0–47 全部 48 层**。
+      只按 48 / 4 = 12 推会得到同一个数但不知道落在哪些层，
+      而层集合是缓存乘式的第一个因子
+    resolution: confirmed
+  - id: R4
+    field: arch.decoding.mtp_layers
+    severity: missing
+    claim: >-
+      草稿没有 arch.decoding —— config 里没有任何 MTP 键，很容易就漏了
+    finding: >-
+      清单里有一整套 mtp.*（1553 条目、1,650,471,424 参数），是个自带注意力与
+      512 专家 MoE 的完整 transformer 块。config 既没有 num_nextn_predict_layers
+      也没有 mtp_num_hidden_layers。
+      DeepSeek 一代的错是「config 声明 1 而权重里 3 块」，这里是反方向：
+      **config 零声明而权重里有 1 块**。漏掉它有两处实害：
+      参数量口径（+1.66% 对 −0.41%）与 KV 层数（开草稿侧 12 → 13 层）
+    resolution: corrected
+    changed_to: >-
+      补 arch.decoding.mtp_layers 1 与 mtp_layers_note（标 derived），
+      hybrid.note 与 excludes 一并写明主干口径与草稿口径的差
+  - id: R5
+    field: arch.attention.output_gate
+    severity: missing
+    claim: 草稿没有 output_gate（config 本代没有这个键）
+    finding: >-
+      13/13 个 q_proj（12 主干 full 层 + 草稿块）都是 [8192, 2048] = 2 × 16 × 256，
+      而 o_proj 入口是 4096 = 16 × 256 —— 输出维翻倍的那一半是门。
+      Qwen3.5 起 config 才有 attn_output_gate: true。
+      按 num_heads × head_dim 推 q_proj 会低一半（4096 对 8192），
+      整模型少算 13 × 4096 × 2048 = 109,051,904
+    resolution: corrected
+    changed_to: >-
+      补 output_gate（enabled true、type 写「未声明」）与 head_dim_note 里的两半说明，
+      标 derived
+  - id: R6
+    field: arch.attention.linear_state.state_dtype
+    severity: unsupported
+    claim: >-
+      草稿按同族 Qwen3.8 两档的写法填了 state_dtype: FP32
+    finding: >-
+      那两档的 FP32 来自 config 的 mamba_ssm_dtype: float32，而**本代 config 没有这个键**。
+      清单里 A_log / dt_bias / linear_attn.norm 都是 BF16，但那是权重精度、
+      不是运行期状态精度，两者不是一回事。
+      从别代抄一个容量关键参数，正是 license 那一类错的同构版本
+    resolution: corrected
+    changed_to: >-
+      不填 state_dtype，推导按模型 dtype 兜底（每序列 38.25 MiB），
+      并在 open_questions 写明若实际是 FP32 要翻倍到 76.50 MiB
+  - id: R7
+    field: params.counting_note
+    severity: unsupported
+    claim: A3B 是档位名，不填 active_decode
+    finding: >-
+      两种口径都算了：带宽口径 3,563,858,230 对 3B 是 +18.8%、
+      含输入词表 3,875,023,158 是 +29.2%，**都远超 2% 容差**。
+      而同代 Qwen3-30B-A3B（30.5B 总）与 Qwen3.5-35B-A3B（35.9B 总）也都叫 A3B。
+      所以这里按 glm-4-9b 的 R12 定下的做法：声明值与任何口径都对不上时，
+      判成档位命名并把两个偏差写出来，而不是硬填一个会让 Gate B 显示 ok 的数
+    resolution: confirmed
+  - id: R8
+    field: bottlenecks
+    severity: imprecise
+    claim: >-
+      草稿里「混合结构把 KV 压了 7.83 倍」
+    finding: >-
+      7.83 倍是**每 token 元素数**的比（96,256 → 12,288），对；
+      但它掩盖了同代上下文从 40960 涨到 262144。满上下文的占用
+      7.34 GiB → 6.00 GiB，只降 18%。两个数都要给 ——
+      和 qwen2-72b 的 R4 是同一类（每 token 比 vs 满上下文比）。
+      另外这一代多出一个前代没有的分量（每序列 38.25 MiB），
+      它在短上下文、大批量下才是主角（4096 上下文时占 28.9%）
+    resolution: corrected
+    changed_to: >-
+      attention 条给每 token 的 7.83 倍，context 条给满上下文的「×6.4 上下文而缓存还略降」，
+      bottleneck 里给两个上下文档位下状态的占比
