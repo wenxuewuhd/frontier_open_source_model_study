@@ -31,13 +31,21 @@ sources:
       并加粗强调「the cfg distilled model we provided, must use 50 steps」。
       **加速比 1.87× 没有给基线配置，只作定性参照，没有写进 performance**
   - kind: paper
-    url: https://arxiv.org/abs/2511.18870
-    locator: 卡上给的技术报告链接
+    url: https://arxiv.org/html/2511.18870v2
+    locator: Table 1（架构超参）、§3.1（VAE / 文本编码器 / SSTA）、§3.2 与 §4.3（超分）、§6 Table 7–8（速度）
     accessed: '2026-10-31'
     note: >-
-      **本轮没有读**。结构与采样全部取自模型卡、厂商实现与权重清单三路；
-      报告里若有与本记录冲突的数，按本仓来源优先级（技术报告 > 模型卡）要以报告为准，
-      届时需重核。列在这里是为了让下一个人知道这条线还没走
+      **技术报告，本仓来源优先级最高的一档，2026-10-31 补读。**
+      Table 1 的架构超参与权重清单逐项相同：双流块 54、Model Dimension 2048、
+      FFN Dimension 8192、Attention Heads 16、Head dim 128
+      （单流块数报告没列，与清单里一个单流张量都没有自洽）。
+      §3.1 的 VAE：空间 16×、时间 4×、latent 32 通道。
+      **§3.1 直接把 Qwen2.5-VL 写成模型用的编码器**（「This design leverages a
+      visual-language multimodal encoder Qwen2.5-VL」，与 Glyph-ByT5 合成
+      "dual-channel text encoder"），全文**没有出现 HunyuanMLLM** —— 见 R5。
+      §6 Table 7/8 给了 SSTA 的速度，**而且有基线、有硬件、有配置** —— 见 R7。
+      报告**没有**给主结果的采样步数与 CFG 强度（只有 Table 8 的 50 步），
+      所以那两项仍以模型卡的采样表为准
   - kind: repo
     url: https://github.com/Tencent-Hunyuan/HunyuanVideo-1.5/blob/main/hyvideo/pipelines/hunyuan_video_pipeline.py
     locator: get_latent_size()、target_size_config、get_closest_resolution_given_original_size() @ main
@@ -200,24 +208,27 @@ generation:
 
   text_encoders:
     - role: primary
-      name: MLLM（官方 HunyuanMLLM 未发布；文档推荐 Qwen2.5-VL-7B-Instruct 替代）
+      name: Qwen2.5-VL（报告称「dual-channel text encoder」的视觉-语言那一路）
       hf_repo: Qwen/Qwen2.5-VL-7B-Instruct
       params: 8292166656
       hidden: 3584
       shipped_with_weights: false
       gated: false
       release_dtype: BF16
-      substitutable: true
+      substitutable: false
       note: >-
-        **官方权重未发布**，`checkpoints-download.md` 原话是
-        「we have not yet released the latest HunyuanMLLM. We recommend the users in
-        community to use an open-source alternative, such as Qwen2.5-VL-7B-Instruct」。
-        params 与 hidden 都是**替代品的**，不是官方 MLLM 的：
-        8,292,166,656（HF 的 safetensors tally，BF16），hidden 3584 与 DiT config 的
-        `text_states_dim: 3584` 对得上。
-        **它几乎和 DiT 一样大**（8.29B vs 8.33B），而 DiT 要跑满 50 步、它只跑一遍
+        **这是模型本身用的编码器，不是替代品** —— 技术报告 §3.1 原话
+        「This design leverages a visual-language multimodal encoder Qwen2.5-VL」，
+        与 Glyph-ByT5 合成 dual-channel text encoder，全文没有出现 HunyuanMLLM。
+        仓里的 `checkpoints-download.md` 说「尚未发布最新的 HunyuanMLLM，建议社区用
+        Qwen2.5-VL-7B-Instruct 这类替代」—— 那是第三档来源，且说的是**更新的**内部模型，
+        不改变已发布这一版用的是什么。按来源优先级以报告为准（见 R5）。
+        params 8,292,166,656（HF 的 safetensors tally，BF16）、hidden 3584 与 DiT config
+        的 `text_states_dim: 3584` 对得上 —— 后者是这条判断的第三路旁证。
+        **它几乎和 DiT 一样大**（8.29B vs 8.33B），而 DiT 要跑满 50 步、它只跑一遍。
+        注意报告只写「Qwen2.5-VL」没写档位，7B 这一档是从 `text_states_dim 3584` 反推的
     - role: glyph
-      name: byT5（google/byt5-small + Glyph-SDXL-v2）
+      name: Glyph-ByT5（google/byt5-small + Glyph-SDXL-v2）
       hf_repo: google/byt5-small
       hidden: 1472
       shipped_with_weights: false
@@ -307,6 +318,16 @@ generation:
         两边被 16 整除的档，再取与 16:9 最近的一档 —— 结果比值恰好是 0.5625，
         正中 16:9。121 帧与 24 fps 取自 `generate.py` 的默认值。
         latent 31 × 45 × 80 = 111,600 token
+    - width: 1280
+      height: 720
+      frames: 241
+      fps: 24
+      duration_s: 10.0416667
+      note: >-
+        **报告 §6 Table 7/8 的速度实验用的就是这一档**（720p / 241 帧）。
+        241 = 4×60+1，满足 4n+1。latent 61 × 45 × 80 = 219,600 token，
+        是默认档的 1.97 倍 —— 而注意力是 O(n²)，所以 SSTA 的收益在这一档
+        明显高于 121 帧档（1.87× vs 1.28×，见 bottlenecks）
     - width: 848
       height: 480
       frames: 121
@@ -427,7 +448,17 @@ bottlenecks:
       **注意力占 90.0%。** 对照 minimax-h3 同口径：72,576 token、注意力占 66.2%。
       （`data/derived/` 里的数是 74.8% 与 54.2%，那是把 AdaLN 当逐 token 算出来的）
     fix: >-
-      SSTA 就是冲这里来的，卡称 10 秒 720p 端到端 1.87×。
+      SSTA 就是冲这里来的，**而且报告给了带基线的数**（§6 Table 7，8×H800、
+      无工程加速、CFG 蒸馏档、每步秒）：
+      720p 241 帧 5.5070 → 2.9475 s/step（**1.87×**）、
+      720p 121 帧 2.0084 → 1.5638 s/step（**1.28×**）。
+      Table 8 叠上 SageAttention + torch.compile + 特征缓存后跑 50 步：
+      241 帧 96.78 → 58.39 s（1.66×）、121 帧 28.33 → 26.41 s（1.07×）。
+
+      **加速比随序列长度走，正好印证注意力占比**：121 帧档注意力占 90.0%、
+      241 帧档占 94.7%，对应 1.28× 与 1.87×。稀疏只能吃 O(n²) 那一项，
+      所以短片段上它几乎白给 —— 这条对排产能比那个 1.87× 的标题数有用得多。
+
       但官方只发了 `720p_i2v_distilled_sparse` 一套稀疏权重，
       而且它是单独微调的（R2）—— 想在 t2v 或 480p 上用稀疏，现在没有权重
     visibility: public
@@ -626,20 +657,53 @@ review:
       真值记在这里。建议的共享改法：`gen_workload()` 对带 `resolution` 的阶段
       按该阶段自己的 token 数算单步，并把 `end_to_end_terms.note` 渲染出来。
       在没改之前，引端到端请用本条的 1.030e18。已报主会话
-  - id: R5
-    field: generation.text_encoders
+  - id: R7
+    field: '-'
     severity: missing
-    claim: 三个编码器的参数量都应该能填
+    claim: 报告 §6 Table 7/8 的速度数据可以进 `performance[]`
     finding: >-
-      只填得出一个。MLLM 那栏填的是**替代品** Qwen2.5-VL-7B-Instruct 的
-      8,292,166,656（HF 的 safetensors tally），官方 HunyuanMLLM 根本没发布，
-      它多大不知道。byT5 那路要 `google/byt5-small` 加 ModelScope 的
-      Glyph-SDXL-v2 两处权重，后者没核实规模。
-      SigLIP 没有单独发布，混在 gated 的 FLUX.1-Redux-dev 包里，取不到
+      **进不去，schema 装不下。** 这组数据按本仓的标准是够格的 ——
+      `source.type: official`（技术报告）、硬件 8×H800、分辨率与帧数、
+      50 步、说明了开不开工程加速、而且**有基线**（FlashAttention-3），
+      比模型卡那句没基线的「1.87×」强得多。
+
+      但 `performance[]` 的字段全是自回归形状：`throughput_tok_s`、
+      `throughput_per_device`、`ttft_ms`、`tpot_ms`、`input_len`、`output_len`。
+      生成类要记的是**每去噪步秒数**与**端到端秒数**，一个都没有。
+      硬塞进 `tpot_ms`（time per output token）是范畴错误 ——
+      那正是本仓反复强调不能做的事。
+
+      本记录因此没有 `performance` 块，数据放在 bottlenecks.quantified 里带出处
     resolution: open
     changed_to: >-
-      params 只填 MLLM 替代品那一个并在 note 写明「是替代品的数不是官方的」；
-      另两个留空并写明是哪一种空
+      建议给 `performance[]` 加生成类字段：`seconds_per_step`、`seconds_end_to_end`、
+      `steps`、`frames`、`resolution`，以及一个 `baseline` 子块
+      （对照项是什么、同一配置下的值）—— 「有没有基线」是本仓判断一个倍数能不能用的
+      分水岭，值得做成字段而不是写在 note 里。
+      `data/schema/` 是共享文件，本记录没碰。已报主会话
+  - id: R5
+    field: generation.text_encoders
+    severity: miscategorized
+    claim: >-
+      主文本编码器是「官方未发布的 HunyuanMLLM，社区用 Qwen2.5-VL-7B-Instruct 替代」——
+      本记录初稿按 `checkpoints-download.md` 这么写的
+    finding: >-
+      **口径标错了。技术报告 §3.1 直接把 Qwen2.5-VL 写成模型用的编码器**：
+      「This design leverages a visual-language multimodal encoder Qwen2.5-VL」，
+      与 Glyph-ByT5 合成 dual-channel text encoder，**全文没有出现 HunyuanMLLM**。
+      仓里那句「尚未发布最新的 HunyuanMLLM，建议用 Qwen2.5-VL-7B-Instruct 这类替代」
+      说的是**更新的**内部模型，不改变已发布这一版用的是什么。
+      报告是第一档来源、下载文档是第三档，按优先级以报告为准。
+      第三路旁证：DiT config 的 `text_states_dim` 是 3584，正是 Qwen2.5-VL-7B 的 hidden。
+
+      参数量那一问仍然只答得出一个：Qwen2.5-VL-7B 8,292,166,656（HF tally）；
+      Glyph-ByT5 要 `google/byt5-small` 加 ModelScope 的 Glyph-SDXL-v2 两处，没核实规模；
+      SigLIP 没单独发布，混在 gated 的 FLUX.1-Redux-dev 里
+    resolution: corrected
+    changed_to: >-
+      `substitutable` 从 true 改成 **false**，name 改成「Qwen2.5-VL（报告称
+      dual-channel text encoder 的视觉-语言那一路）」，note 写明两档来源的分歧与取舍。
+      参数量仍只填这一个，另两个留空并写明是哪一种空（这部分未变）
 
 notes: >-
   **字节对账。** 14 个 safetensors 实测 numel×4 B 之和 371,757,753,484 B，
@@ -665,9 +729,15 @@ notes: >-
 
 open_questions:
   - >-
-    **技术报告 arXiv 2511.18870 没读。** 结构与采样全部来自模型卡、厂商实现与权重，
-    按本仓来源优先级报告在模型卡之上，所以报告里若有冲突的数要以它为准。
-    尤其是 SSTA 的稀疏率、训练配方与那个 1.87× 的基线配置，报告里多半有
+    **技术报告已补读（2026-10-31），改掉一处口径（R5）、补上带基线的速度数据。**
+    报告仍未给的：主结果的采样步数与 CFG 强度（只有 Table 8 的 50 步），
+    所以那两项仍以模型卡的采样表为准；SSTA 的 tile / window 尺寸报告只给符号
+    （tile_t × tile_h × tile_w、WS = (w_t, w_h, w_w)），数值仍只在
+    `720p_i2v_distilled_sparse` 的 config 里；超分的步数报告只说「few-step」，
+    具体 6 / 8 步来自模型卡。
+    **报告自身有一处不自洽**：§1 与 §3.2 说超分输出 1080p，而 Table 4 的对比列
+    写的是「HY1.5 480pSR」，即 480p→720p 那一级。仓里两级 SR 权重都有，
+    所以两种说法可能各指一级，但报告没有点明
   - >-
     `derive.py` 的单步线性 FLOPs 对双流 MMDiT 偏高约一倍（R4）。
     注意力项是准的、「注意力占四分之三」这个结论不变，但线性项的真值是 9.12e14
@@ -685,11 +755,14 @@ open_questions:
     的参数量没填 —— 前者混在 gated 的 FLUX.1-Redux-dev 里没有单独发布，后者在 ModelScope。
     两者都影响「一次部署要驻留多少」这个账
   - >-
-    SSTA 的实际稀疏率不知道。config 给了 `tile_size [6,8,8]`、
+    SSTA 的实际稀疏率仍不知道。报告 §3.1 给了算法（按 Q–K 相似度减 K–K 冗余打分、
+    取 top-k 块，再与滑动窗口掩码合并），config 给了 `tile_size [6,8,8]`、
     `win_size [[3,3,3]]`、`ssta_topk 64`、`ssta_lambda 0.7`、`win_ratio 10`，
-    但从这些参数推不出在默认档上实际省掉多少注意力计算 ——
-    那要么读 `ssta_attention.py` 的实现，要么实测。
-    **所以本记录的单步注意力 FLOPs 是稠密口径**，对稀疏档位偏高
+    但两者都推不出默认档上实际省掉多少注意力计算。
+    **所以本记录的单步注意力 FLOPs 是稠密口径**，对稀疏档位偏高。
+    能反推的只有端到端：报告 Table 7 给 720p 241 帧 1.87×、121 帧 1.28×，
+    而同档注意力占比是 94.7% 与 90.0% —— 若加速全部来自注意力，
+    反推稀疏后注意力只剩约 46% 与 56% 的计算量，但这是**推算不是实测**，没有写进字段
   - >-
     **前代 `hunyuanvideo-13b` 缺什么才能录 —— 逐条查过了。**
 

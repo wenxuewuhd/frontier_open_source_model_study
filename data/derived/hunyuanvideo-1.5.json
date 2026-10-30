@@ -1,7 +1,7 @@
 {
  "id": "hunyuanvideo-1.5",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T16:29:53+00:00",
+ "generated_at": "2026-10-30T16:34:03+00:00",
  "inputs": {
   "facts_dir": "/Users/yuan/Work/frontier-llm-tracking/frontier_open_source_model_study/facts/hunyuanvideo-1.5",
   "config_present": true,
