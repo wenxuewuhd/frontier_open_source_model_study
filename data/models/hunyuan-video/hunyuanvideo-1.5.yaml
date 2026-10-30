@@ -1,0 +1,680 @@
+id: hunyuanvideo-1.5
+family: hunyuan-video
+kind: video-gen
+display_name: HunyuanVideo-1.5
+released: '2025-11-20'
+license: other
+license_restriction: >-
+  腾讯混元社区许可。模型卡的 front-matter 带 `extra_gated_eu_disallowed: true`，
+  即欧盟不可用。和 minimax-h3 的「按地区申请」是两种不同的限制形态，
+  但后果同类：决定这套权重能不能进某个部署区域
+visibility: public
+
+# 视频线第三份记录，口径沿用 wan2.2-ti2v-5b 定下的三条：
+# params.total 只算 DiT；不建 arch 块；没有 KV cache 这笔账。
+#
+# 这一份的特点是**多 checkpoint 矩阵**：11 套各 33.3 GB 的 DiT（分辨率 × 任务 ×
+# 蒸馏 × 稀疏 × 超分），LFS oid 两两不同，一套都没有复用。
+# params 取 720p_t2v，理由见 counting_note。
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/tencent/HunyuanVideo-1.5
+    locator: README.md §Introduction / §Key Features / §Optimal Inference Configurations @ 9b49404b3f5d
+    accessed: '2026-10-31'
+    note: >-
+      官方口径来源。卡上直接给出的：8.3B DiT + 3D 因果 VAE，空间 16× / 时间 4×；
+      SSTA（Selective and Sliding Tile Attention）「prunes redundant spatiotemporal
+      kv blocks」，10 秒 720p 端到端相对 FlashAttention-3 加速 **1.87×**；
+      另有少步超分网络把输出升到 1080p；训练用 Muon 优化器；最低显存 14 GB（开 offload）。
+      §Optimal Inference Configurations 给了完整的采样表（CFG / flow shift / 步数），
+      并加粗强调「the cfg distilled model we provided, must use 50 steps」。
+      **加速比 1.87× 没有给基线配置，只作定性参照，没有写进 performance**
+  - kind: paper
+    url: https://arxiv.org/abs/2511.18870
+    locator: 卡上给的技术报告链接
+    accessed: '2026-10-31'
+    note: >-
+      **本轮没有读**。结构与采样全部取自模型卡、厂商实现与权重清单三路；
+      报告里若有与本记录冲突的数，按本仓来源优先级（技术报告 > 模型卡）要以报告为准，
+      届时需重核。列在这里是为了让下一个人知道这条线还没走
+  - kind: repo
+    url: https://github.com/Tencent-Hunyuan/HunyuanVideo-1.5/blob/main/hyvideo/pipelines/hunyuan_video_pipeline.py
+    locator: get_latent_size()、target_size_config、get_closest_resolution_given_original_size() @ main
+    accessed: '2026-10-31'
+    note: >-
+      厂商参考实现（第三档来源）。**latent 口径的一手依据**：
+      `get_latent_size()` 整个函数就三行 ——
+      `video_length = (video_length - 1) // temporal_compression_ratio + 1`、
+      `height, width = height // spatial_compression_ratio, width // spatial_compression_ratio`，
+      然后 `n_tokens = latent_target_length * latent_height * latent_width`。
+      即**标准因果公式，没有分块**（与 minimax-h3 的 17 帧切片相反，见 notes 的对照）。
+
+      分辨率不是固定表而是**分桶**：`target_size_config` 给
+      480p → `bucket_hw_base_size 640`、720p → `960`、1080p → `1440`，stride 均 16；
+      `generate_crop_size_list(base, 16)` 枚举面积约 base² 且两边都被 16 整除的档，
+      再取与请求长宽比最近的一档。照这套算出 16:9 的结果见 generation.buckets
+  - kind: repo
+    url: https://github.com/Tencent-Hunyuan/HunyuanVideo-1.5/blob/main/hyvideo/models/autoencoders/hunyuanvideo_15_vae.py
+    locator: AutoencoderKLConv3D 全文，重点 encode() 与 temporal_tiled_encode() @ main
+    accessed: '2026-10-31'
+    note: >-
+      **确认 VAE 没有分块编码**：`temporal_tiled_encode()` 第一行就是
+      `raise RuntimeError('Temporal tiling is not supported for this VAE.')`，
+      整个函数是死代码；`encode()` 走 `self.encoder(x)` 整段因果卷积。
+      所以 (F−1)/4+1 在这一份上**真的成立** —— 这一条是专门去验的，
+      因为同线 minimax-h3 的 VAE 按 17 帧切片，公式在那边不成立（见 notes）。
+      `CausalConv3d` 带 `time_causal_padding`，`Downsample` 按
+      `add_temporal_downsample` 逐级减半，与 config 的 ffactor_temporal 4 对上
+  - kind: repo
+    url: https://github.com/Tencent-Hunyuan/HunyuanVideo-1.5/blob/main/generate.py
+    locator: argparse 默认值 @ main
+    accessed: '2026-10-31'
+    note: >-
+      默认档的依据：`--video_length` 默认 **121**（而且代码里 `if args.video_length != 121`
+      会打 WARNING）、`--aspect_ratio` 默认 **16:9**、`--resolution` 只接受 480p/720p、
+      `--dtype` 默认 **bf16**、`--sr` 默认 **true**、`--total_steps` 默认 50、
+      导出 `imageio.mimwrite(path, vid, fps=24)`
+  - kind: repo
+    url: https://huggingface.co/tencent/HunyuanVideo-1.5/blob/main/checkpoints-download.md
+    locator: §Downloading TextEncoders and Vision Encoders @ 9b49404b3f5d
+    accessed: '2026-10-31'
+    note: >-
+      三个编码器**都不在本仓里**，要各自去别处取：MLLM（官方 HunyuanMLLM **未发布**，
+      文档推荐 `Qwen/Qwen2.5-VL-7B-Instruct` 替代）、byT5（`google/byt5-small`
+      + ModelScope 的 Glyph-SDXL-v2）、SigLIP（要从 **gated** 的
+      `black-forest-labs/FLUX.1-Redux-dev` 取，需先申请）
+  - kind: modelcard
+    url: https://huggingface.co/tencent/HunyuanVideo-1.5
+    locator: 11 个 transformer + vae + 2 个 upsampler 共 14 个 safetensors 的头 @ 9b49404b3f5d
+    accessed: '2026-10-31'
+    note: >-
+      权重清单逐文件读头取全。11 套 DiT 里 **8 套逐字同形**
+      （1793 张量 / 8,326,608,160 参数 / 33,306,432,640 B），
+      另外 3 套各多 4 个张量（两个 SR 与 480p_i2v_step_distilled，都开 `use_meanflow`）。
+      全部 F32，无 scale 容器、无打包容器。
+      另用 HF tree API 的 LFS sha256 比对了 11 套的 oid，结论见 review R2
+
+hf:
+  repo: tencent/HunyuanVideo-1.5
+  sha: 9b49404b3f5df2a8f0b31df27a0c7ab872e7b038
+  last_modified: '2025-12-25T03:58:59.000Z'
+  pipeline_tag: text-to-video
+  gated: false
+
+lineage:
+  track: main
+  # hunyuan-video family 的第二代。前代 hunyuanvideo-13b（2024-12）还没录 ——
+  # 它的权重是 .pt（pickle），读不了清单，卡在取数上。
+  # 所以 predecessor 暂缺，等那一份进来再补 changed_from_predecessor。
+  # 跨代的三处主要变化（VAE 16×/4×/32ch、双流 54 层无单流段、SSTA）
+  # 在录前代时要逐项对照，现在只在 notes 里留了线索。
+
+params:
+  total: 8326608160
+  # 稠密主干，每一步对全部 token 过全部权重，没有路由、没有跨步复用
+  active_decode: 8326608160
+  active_prefill: 8326608160
+  breakdown:
+    adaln_modulation: 2723964928
+    ffn_img: 1812492288
+    ffn_txt: 1812492288
+    self_attention_img: 906425856
+    self_attention_txt: 906425856
+    token_refiner: 141105152
+    byt5_proj: 11412352
+    patch_embed: 8593440
+    vision_proj: 3696000
+  counting_note: >-
+    **只含 DiT 主干，且只含 11 套里的 `transformer/720p_t2v`**，
+    按完整权重清单（单文件 1793 张量）逐项统计。全 F32，numel 即参数数：
+    8,326,608,160 × 4 B = 33,306,432,640 B，与文件的 HTTP 大小差 199,552 B（= safetensors 头）。
+
+    **为什么取 720p_t2v**：11 套里 8 套逐字同形（含 480p/720p × t2v/i2v ×
+    基座/CFG 蒸馏，以及那套稀疏），参数量完全相同，取哪套都一样；
+    另外 3 套（两个 SR 与 480p_i2v_step_distilled）各多 4 个张量、多约 4.7M 参数，
+    都开了 `use_meanflow`。720p_t2v 是默认分辨率下的基座，拿它当代表。
+    **11 套 LFS oid 两两不同**，不是同一批权重的多次打包（见 R2）。
+
+    **三个编码器不在这个数里，而且不在仓里**：MLLM（官方未发布，文档推荐
+    Qwen2.5-VL-7B-Instruct，8,292,166,656 参数 BF16 —— **与 DiT 几乎一样大**）、
+    byT5（google/byt5-small + Glyph-SDXL-v2）、SigLIP（在 gated 的 FLUX.1-Redux-dev 里）。
+    视觉 VAE 也单列：1,260,634,115 参数 / 5,042,536,460 B，全 F32。
+
+    分桶口径：`adaln_modulation` 含逐层两路 `img_mod.linear` 与 `txt_mod.linear`
+    （各 [12288, 2048]，12288 = 6 × 2048）加 `time_in` 与 `cond_type_embedding`；
+    `*_img` / `*_txt` 按双流分开记 —— 两路**参数逐字节相同**，
+    但处理的 token 数差三个量级，合在一起会掩盖这件事（见 bottlenecks）。
+
+generation:
+  backbone:
+    stream_design: dual_stream
+    layers: 54
+    double_blocks: 54
+    single_blocks: 0
+    hidden: 2048
+    heads: 16
+    head_dim: 128
+    ffn: 8192
+    text_conditioning: dual_stream
+    patch_size: [1, 1, 1]
+    refiner_layers: 2
+    position: 3D RoPE，rope_dim_list [16, 56, 56]（t/h/w），rope_theta 256
+    note: >-
+      **纯双流**：`mm_double_blocks_depth 54` / `mm_single_blocks_depth 0`，
+      没有前代 HunyuanVideo 13B 那种「20 双流 + 40 单流」的单流段。
+      每个双流块里 img 与 txt 各有一整套 q/k/v/proj（[2048,2048]）、
+      各一套 FFN（fc1 [8192,2048] + fc2 [2048,8192]，**非门控**，
+      `mlp_width_ratio 4`）、各一套 modulation（[12288,2048] = 6 组）。
+      **patch_size 是 (1,1,1)** —— VAE 已经压到 16×/4×，DiT 不再 patchify，
+      所以有效空间压缩就是 16×，而不是同线 minimax-h3 的 32×。
+      这一条直接决定序列长度：同为 720p 档，这一份 111,600 个 token，
+      h3 只有 72,576，而这一份的参数只有 h3 的 1/4。
+
+      **`img_in.proj.weight` 的入口是 65 通道，config 写的 `in_channels` 是 32** ——
+      权重赢。65 = 2×32+1，与 `concat_condition: true` 自洽（噪声 latent + 条件 latent
+      + 1 个掩码通道）。两个 SR checkpoint 的 config 写 98，同理是 3×32+2。见 R3
+
+  vae:
+    spatial_compression: 16
+    temporal_compression: 4
+    latent_channels: 32
+    causal: true
+    decoder_arch: conv3d
+    params: 1260634115
+    name: HunyuanVideo-1.5 3D 因果 VAE（AutoencoderKLConv3D）
+    note: >-
+      1,260,634,115 参数 / 5,042,536,460 B，218 条张量**全 F32**（逐条实测）。
+      `ffactor_spatial 16` / `ffactor_temporal 4` / `latent_channels 32` 三项
+      config 与卡一致。解码器是卷积栈（`Upsample` 逐级 `add_temporal_upsample`），
+      不是 minimax-h3 那种 36 层 ViT。
+
+      **(F−1)/4+1 在这一份上成立，这是专门去验的**：厂商实现里
+      `get_latent_size()` 原样就是这个式子，而 `temporal_tiled_encode()`
+      第一行 `raise RuntimeError('Temporal tiling is not supported for this VAE.')`，
+      没有任何分块路径。所以 `latent_frames` 没有声明，走公式路径
+      （`latent_frames_source` 应为 `formula_causal`）。
+      默认档 121 帧 → 31 个 latent 帧，端到端有效时间压缩率 3.903，
+      与块内卷积比 4 差 2.4% —— **差额来自首帧单独编码，不是分块**，
+      和 wan2.2-ti2v-5b 同一个形态
+
+  text_encoders:
+    - role: primary
+      name: MLLM（官方 HunyuanMLLM 未发布；文档推荐 Qwen2.5-VL-7B-Instruct 替代）
+      hf_repo: Qwen/Qwen2.5-VL-7B-Instruct
+      params: 8292166656
+      hidden: 3584
+      shipped_with_weights: false
+      gated: false
+      release_dtype: BF16
+      substitutable: true
+      note: >-
+        **官方权重未发布**，`checkpoints-download.md` 原话是
+        「we have not yet released the latest HunyuanMLLM. We recommend the users in
+        community to use an open-source alternative, such as Qwen2.5-VL-7B-Instruct」。
+        params 与 hidden 都是**替代品的**，不是官方 MLLM 的：
+        8,292,166,656（HF 的 safetensors tally，BF16），hidden 3584 与 DiT config 的
+        `text_states_dim: 3584` 对得上。
+        **它几乎和 DiT 一样大**（8.29B vs 8.33B），而 DiT 要跑满 50 步、它只跑一遍
+    - role: glyph
+      name: byT5（google/byt5-small + Glyph-SDXL-v2）
+      hf_repo: google/byt5-small
+      hidden: 1472
+      shipped_with_weights: false
+      gated: false
+      substitutable: false
+      note: >-
+        字形编码器，`glyph_byT5_v2: true`、`byt5_max_length: 256`。
+        hidden 1472 是**权重实测**：DiT 的 `byt5_in.fc1.weight` 形状 [2048, 1472]。
+        要两处权重：`google/byt5-small` 与 ModelScope 的 `AI-ModelScope/Glyph-SDXL-v2`。
+        params 未填 —— 没核实 Glyph-SDXL-v2 的规模
+    - role: vision
+      name: SigLIP（从 FLUX.1-Redux-dev 取）
+      hf_repo: black-forest-labs/FLUX.1-Redux-dev
+      hidden: 1152
+      shipped_with_weights: false
+      gated: true
+      substitutable: false
+      note: >-
+        i2v 的语义编码器，`vision_states_dim: 1152`、`vision_num_semantic_tokens: 729`。
+        **要先在 HF 上申请 FLUX.1-Redux-dev 的访问**（`gated: auto`）——
+        一个腾讯的模型，视觉编码器要去 Black Forest Labs 的 gated 仓拿。
+        params 未填：没有单独发布，混在 Redux 包里
+
+  sampling:
+    steps: 50
+    cfg:
+      scale: 6.0
+      distilled: false
+      embedded: false
+      forwards_per_step: 2
+    step_distilled:
+      available: true
+      steps: 8
+      checkpoint: transformer/480p_i2v_step_distilled
+      note: >-
+        官方只对 **480p i2v** 发了步数蒸馏档，卡上写「8 或 12 步（推荐）」，
+        这里填下限 8。4 步也能跑但卡说质量略降。
+        **它和 CFG 蒸馏是两根独立的轴**：CFG 蒸馏档把每步前向从 2 砍到 1，
+        但卡加粗强调「必须仍跑 50 步」
+    scheduler: FlowMatchDiscreteScheduler（euler，num_train_timesteps 1000）
+    shift: 9.0
+    note: >-
+      默认档（720p t2v 基座）：CFG 6.0、flow shift 9.0、50 步 → **100 次主干前向**。
+      flow shift 逐档不同（480p 两任务 5、720p t2v 9、720p i2v 7），
+      顶层 `config.json` 里的 `flow_shift: 7.0` 是 pipeline 缺省值，
+      不是 720p t2v 的推荐值 —— 推荐值在卡的采样表里。
+      `embedded_guidance_scale: None` 且各 checkpoint 的 `guidance_embed: false`，
+      所以不是前代 13B 那种嵌入式引导，是真 CFG
+
+  pipeline_stages:
+    - name: DiT 去噪
+      model: same-backbone
+      steps: 50
+      cfg_scale: 6.0
+      forwards_per_step: 2
+      resolution: 720p（1280×720）
+      open_source: true
+      note: 本记录的负载推导覆盖的就是这一段
+    - name: 720p 超分
+      model: transformer/720p_sr_distilled + upsampler/720p_sr_distilled
+      steps: 6
+      forwards_per_step: 1
+      resolution: 480p → 720p
+      open_source: true
+      note: >-
+        **SR 不是一个小模块**：`transformer/720p_sr_distilled` 是另一套
+        8,331,398,432 参数 / 33.3 GB 的完整 DiT，`upsampler/` 那个只有
+        21,461,152 参数（85.8 MB）。开 `--sr`（默认开）就要再驻留一套 33 GB
+    - name: 1080p 超分
+      model: transformer/1080p_sr_distilled + upsampler/1080p_sr_distilled
+      steps: 8
+      forwards_per_step: 1
+      resolution: 720p → 1080p
+      open_source: true
+      note: transformer 8,331,398,432 参数，upsampler 50,350,112 参数
+
+  buckets:
+    - width: 1280
+      height: 720
+      frames: 121
+      fps: 24
+      duration_s: 5.0416667
+      default: true
+      note: >-
+        **算出来的，不是抄的**：厂商的分桶逻辑 `target_size_config['720p']` 给
+        base 960 / stride 16，`generate_crop_size_list(960, 16)` 枚举面积约 960²、
+        两边被 16 整除的档，再取与 16:9 最近的一档 —— 结果比值恰好是 0.5625，
+        正中 16:9。121 帧与 24 fps 取自 `generate.py` 的默认值。
+        latent 31 × 45 × 80 = 111,600 token
+    - width: 848
+      height: 480
+      frames: 121
+      fps: 24
+      duration_s: 5.0416667
+      note: >-
+        480p 档（base 640 / stride 16）。16:9 最近档的比值 0.56604，
+        不正中 16:9 —— 枚举里没有恰好 0.5625 的。latent 31 × 30 × 53 = 49,290 token
+    - width: 1904
+      height: 1072
+      frames: 121
+      fps: 24
+      duration_s: 5.0416667
+      note: >-
+        1080p 是 SR 的**输出**档（base 1440 / stride 16，比值 0.56303），
+        不是 DiT 能直接出的。latent 31 × 67 × 119 = 247,163 token
+
+  constraints:
+    width_divisor: 16
+    height_divisor: 16
+    frame_formula: 4n+1
+    note: >-
+      除数 16 = VAE 空间压缩 16 × DiT patch 1。分桶的 stride 也是 16，两者一致。
+      帧数 4n+1 来自时间因果 VAE 的首帧单独编码：121 = 4×30+1；
+      训练文档也要求 `pixel_values` 的时间维是 4n+1。
+      **这一条与 minimax-h3 的 17n+5 形成对照** —— 同是「因果 VAE」，
+      一个没有分块、公式成立，一个按 17 帧切片、公式不成立。
+      看到帧数约束就该去读 VAE 实现，约束本身是分块规则的外在表现
+
+  checkpoint_variants:
+    - name: 720p_t2v
+      role: base
+      bytes: 33306432640
+      resident: true
+      note: 本记录的 params 量的就是它。默认分辨率下的文生视频基座
+    - name: 480p_t2v / 480p_i2v / 720p_i2v
+      role: base
+      bytes: 33306432640
+      resident: false
+      note: 与 720p_t2v **逐字同形**（1793 张量 / 8,326,608,160 参数），config 只差 ideal_resolution 与 ideal_task
+    - name: 480p_t2v_distilled / 480p_i2v_distilled / 720p_i2v_distilled
+      role: cfg-distilled
+      bytes: 33306432640
+      resident: false
+      note: CFG 蒸馏档，同形。用它每步前向从 2 降到 1，但卡要求仍跑 50 步
+    - name: 720p_i2v_distilled_sparse
+      role: sparse
+      bytes: 33306432640
+      resident: false
+      note: >-
+        唯一开了 SSTA 的权重。架构与参数量和 `720p_i2v_distilled` 完全相同，
+        config 只多 `attn_mode: flex-block-attn` 与 `attn_param`，
+        **但 LFS oid 不同 —— 是单独微调过的，不是翻个开关**（见 R2）
+    - name: 480p_i2v_step_distilled
+      role: step-distilled
+      bytes: 33325323392
+      resident: false
+      note: 8,331,330,848 参数，比基座多 4 个张量 / 约 4.7M，开 `use_meanflow`
+    - name: 720p_sr_distilled
+      role: sr
+      bytes: 33325593728
+      resident: true
+      note: >-
+        8,331,398,432 参数。`--sr` 默认开，所以**常规部署要同时有基座与这一套**，
+        两套 F32 就是 66.6 GB
+    - name: 1080p_sr_distilled
+      role: sr
+      bytes: 33325593728
+      resident: false
+      note: 参数量与 720p SR 相同（8,331,398,432），但 oid 不同，是另一批权重
+    - name: vae
+      role: vae
+      bytes: 5042536460
+      resident: true
+    - name: upsampler/720p_sr_distilled + upsampler/1080p_sr_distilled
+      role: sr
+      bytes: 287245056
+      resident: false
+      note: 21,461,152 与 50,350,112 参数。SR 的重活在上面那两套 33 GB 的 DiT 里，不在这里
+
+precision:
+  weights_release: [FP32]
+  weights_release_scope:
+    FP32:
+      manifest_taken: true
+      in_precision_table: true
+      repo: tencent/HunyuanVideo-1.5
+      note: >-
+        14 个 safetensors（11 套 DiT + VAE + 2 个 upsampler）**无一例外全是 F32**，
+        逐文件读头确认。和 wan 全系一样，发布格式不是部署格式 ——
+        `generate.py` 的 `--dtype` 默认就是 `bf16`
+  inference_default: BF16
+
+bottlenecks:
+  - dimension: compute
+    finding: >-
+      **一半的参数在为不到 1% 的 token 服务。** 双流 MMDiT 的 txt 侧与 img 侧
+      参数逐字节相同，但 img 侧处理 111,600 个视频 token，txt 侧只处理
+      几百个文本 token（byT5 那路上限 256）
+    quantified: >-
+      `ffn_txt` 1,812,492,288 = `ffn_img`；`self_attention_txt` 906,425,856 =
+      `self_attention_img`。两路合计占主干 65.3%，其中一半走文本。
+      默认档 720p×121 帧 → latent 31×45×80 = 111,600 个视频 token
+    fix: >-
+      按参数量分配 kernel 与量化预算会把一半力气投在 txt 侧。
+      和 wan2.2-ti2v-5b 的 cross-attn 是同一类错误，但这一份更极端：
+      那边 cross-attn 至少还对全部视频 token 做 query，这边 txt 流是独立的一路
+    visibility: public
+  - dimension: compute
+    finding: >-
+      注意力占单步算力的四分之三，而模型只有 8.3B ——
+      根因是 patch_size (1,1,1)：VAE 压到 16× 之后 DiT 不再 patchify，
+      序列长度是同线 minimax-h3 的 1.54 倍，而参数只有它的 1/4
+    quantified: >-
+      默认档 111,600 token。单步注意力 4×54×2048×111,600² = 5.510e15，
+      单步线性 2×8,326,608,160×111,600 = 1.859e15，注意力占 74.8%。
+      对照 minimax-h3：72,576 token、注意力占 54.2%
+    fix: >-
+      SSTA 就是冲这里来的，卡称 10 秒 720p 端到端 1.87×。
+      但官方只发了 `720p_i2v_distilled_sparse` 一套稀疏权重，
+      而且它是单独微调的（R2）—— 想在 t2v 或 480p 上用稀疏，现在没有权重
+    visibility: public
+  - dimension: host-io
+    finding: >-
+      「8.3B / 消费级显卡可跑」只说 DiT 一套。`--sr` 默认开，
+      常规一次生成要串起基座 DiT、SR DiT、VAE 三套，
+      再加三个**都不在仓里**的编码器，其中一个还在别家的 gated 仓
+    quantified: >-
+      基座 33,306,432,640 B + 720p SR 33,325,593,728 B + VAE 5,042,536,460 B
+      = 71,674,562,828 B（66.75 GiB，F32）。外加 MLLM 替代品 8.29B。
+      卡说最低 14 GB 显存 —— 那是开 offload 的数
+    fix: >-
+      文本编码器与 VAE 每次生成各跑一遍，两套 DiT 分属两个阶段、不必同时在显存里。
+      厂商脚本给的就是 group offloading（`--group_offloading`、
+      `--overlap_group_offloading` 默认开）
+    visibility: public
+
+infra_signals:
+  - text: >-
+      **AdaLN 调制分支吃掉主干三分之一，这已经不是个例。** 这一份 32.71%，
+      同线 minimax-h3 39.41% —— 两家厂商、两种流设计（双流 / 单流），
+      modulation 都稳定在三分之一上下。生成类 DiT 的「参数量」里有很大一块
+      不参与 token 之间的交互，按参数量估算力会系统性偏高
+    evidence: derived
+  - text: >-
+      **VAE 压缩率与 DiT patch 的乘积决定一切，而两家的分法不同。**
+      这一份 16×1 = 16，minimax-h3 是 16×2 = 32。
+      结果是 8.3B 的模型要处理 111,600 个 token，而 33B 的模型只处理 72,576 个，
+      前者的注意力占比反而更高（74.8% vs 54.2%）。
+      **给生成类模型排产能，看参数量会得出相反的结论**
+    evidence: derived
+  - text: >-
+      稀疏注意力这一代仍是「按 checkpoint 发」而不是「按开关开」。
+      SSTA 的架构与参数量和稠密版完全相同，但权重是单独微调的，
+      而且官方只发了 720p i2v 一套。引擎侧要支持稀疏，拿到的不是一个 flag，
+      是一套额外的 33 GB 权重与一个只覆盖部分档位的矩阵
+    evidence: judgement
+
+evidence:
+  id: official
+  family: judgement
+  kind: judgement
+  display_name: official
+  released: official
+  license: official
+  license_restriction: official
+  hf: official
+  lineage: judgement
+  params: derived
+  generation: official
+  generation.backbone.note: derived
+  generation.vae.params: derived
+  generation.vae.note: derived
+  generation.text_encoders: derived
+  generation.sampling: official
+  generation.sampling.note: derived
+  generation.pipeline_stages: official
+  generation.buckets: derived
+  generation.constraints: derived
+  generation.checkpoint_variants: derived
+  precision: derived
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: derived
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-31'
+  method: >-
+    Gate B 三路：组件 config（15 份）、权重清单（14 个 safetensors 逐文件读头）、
+    厂商参考实现（pipeline 的 `get_latent_size` / `target_size_config`、
+    VAE 的 `encode` / `temporal_tiled_encode`、`generate.py` 的默认值）。
+    结构字段三路一致：hidden 2048 / 54 双流 0 单流 / heads 16 /
+    `mlp_width_ratio 4` 四项 config 与清单逐项对上（`img_mlp.fc1` 是 [8192, 2048]
+    = 2048×4，`img_attn_q_norm` 是 [128] = 2048/16）；
+    VAE 的 16×/4×/32ch 在卡与 config 两处一致，且与 `get_latent_size` 用的
+    压缩率一致。字节对账：实测 numel×4 B 与文件 HTTP 大小差 199,552 B（= 头）。
+    **专门验了两件**：(1) VAE 有没有分块编码 —— 没有，`temporal_tiled_encode` 直接 raise；
+    (2) 11 套 checkpoint 是不是同一批权重的多次打包 —— 不是，LFS oid 两两不同。
+    Gate C：判断类字段 6 处，逐条在 evidence 里标了 judgement。
+
+review:
+  - id: R1
+    field: generation.buckets
+    severity: unsupported
+    claim: 480p / 720p 对应哪组像素，卡上有写
+    finding: >-
+      卡上没写，`generate.py` 也只接受 `--resolution 480p|720p` 这种字符串。
+      像素是**算出来的**：`target_size_config` 给 base_size 与 stride，
+      `generate_crop_size_list(base, 16)` 枚举候选，再取与长宽比最近的一档。
+      照这套复现 16:9：720p → 1280×720（比值恰好 0.5625，正中）、
+      480p → 848×480（0.56604）、1080p → 1904×1072（0.56303）。
+      **720p 那档正中 16:9 是巧合而不是设计** —— 另两档都不正中
+    resolution: confirmed
+    changed_to: >-
+      buckets 按复现结果填，每档的 note 写明是算出来的以及比值偏差。
+      evidence 标 derived 而不是 official
+  - id: R2
+    field: generation.checkpoint_variants
+    severity: unsupported
+    claim: >-
+      11 套 transformer 里参数量相同的那些，是同一批权重按不同名字放了多份
+      （minimax-h3 就是那种情况）
+    finding: >-
+      **不是。** 用 HF tree API 取 11 套的 LFS sha256，**两两全不相同**，
+      包括参数量逐字节相同的 8 套。
+      最值得记的一条是 `720p_i2v_distilled` 与 `720p_i2v_distilled_sparse`：
+      两者 config 只差 `attn_mode` 与 `attn_param`，张量数与参数量完全相同，
+      **但 oid 不同** —— 说明 SSTA 不是推理期翻个开关，是重新微调过的。
+      仓的 usedStorage 371,771,397,110 B 与我逐文件相加的 371,757,753,484 B
+      只差 13.6 MB（= README 与 assets），**没有重复计数** ——
+      这和 minimax-h3（两套布局，usedStorage 是实际的 2.46 倍）、
+      wan2.2-ti2v-5b（旧修订版 LFS 对象，多算一份 DiT）都不同
+    resolution: confirmed
+    changed_to: >-
+      checkpoint_variants 逐套列出并标 resident；
+      infra_signals 里写明「稀疏是按 checkpoint 发不是按开关开」
+  - id: R3
+    field: generation.backbone
+    severity: miscategorized
+    claim: DiT 的输入通道是 32（config 的 `in_channels`）
+    finding: >-
+      **config 与权重冲突，权重赢。** `img_in.proj.weight` 的形状是
+      [2048, 65, 1, 1, 1] —— 入口 65 通道，不是 32。
+      65 = 2×32 + 1，与 `concat_condition: true` 自洽：噪声 latent 32 +
+      条件 latent 32 + 1 个掩码通道。两个 SR checkpoint 的 config 写 98 = 3×32 + 2，
+      同一套规律。config 的 `in_channels` 描述的是 latent 本身的通道数，
+      不是投影层的入口宽度
+    resolution: corrected
+    changed_to: >-
+      `generation.vae.latent_channels` 填 32（那确实是 latent 的通道数），
+      入口 65 通道写进 backbone.note。两个数不矛盾，是两个位置
+  - id: R4
+    field: '-'
+    severity: imprecise
+    claim: >-
+      `derive.py` 给出的单步线性 FLOPs 对双流 MMDiT 成立
+    finding: >-
+      **偏高约一倍。** `gen_workload()` 的线性项是
+      `2 × 激活参数 × 序列 token 数`，隐含「每个参数都要过每个 token」——
+      对单流模型（minimax-h3）成立，对双流不成立：
+      txt 侧那 2,718,918,144 参数只过几百个文本 token，不过 111,600 个视频 token。
+
+      按双流分开算：img 侧参数（`ffn_img` + `self_attention_img` + `patch_embed`
+      + `img_mod` 那一半 ≈ 4.087e9）× 2 × 111,600 ≈ **9.12e14**，
+      而 derive 给 1.859e15。注意力项（5.510e15，占大头）不受影响，
+      所以单步合计的真值约 6.42e15、derive 给 7.37e15，**高约 15%**。
+
+      `derive.py` 是共享文件，本记录没碰
+    resolution: open
+    changed_to: >-
+      bottlenecks 与 infra_signals 里用的是 derive 的口径（注意力占 74.8%），
+      因为注意力项是准的、结论不变；但线性项的真值记在这里。
+      建议的共享改法：双流模型让 `params.breakdown` 的分桶参与推导，
+      或在 backbone 里声明两路各自的参数量。已报主会话
+  - id: R6
+    field: '-'
+    severity: imprecise
+    claim: 推导给的端到端 FLOPs 8.400e17 可以直接引
+    finding: >-
+      **低约 18%，而且页面上看不到这一点。** `gen_workload()` 把三个阶段按
+      **同一个单步 FLOPs** 相加（50×2 + 6×1 + 8×1 = 114 次 × 7.368e15），
+      但三个阶段的 token 数不同：DiT 与 720p SR 在 111,600，
+      1080p SR 的输出是 1904×1072 → latent 31×67×119 = **247,163**，
+      而注意力是 O(n²)，这一段的单步是 3.114e16 而不是 7.368e15。
+
+      逐段算：DiT 100×7.368e15 = 7.368e17；720p SR 6×7.369e15 = 4.421e16；
+      1080p SR 8×3.114e16 = 2.491e17；**合计 1.030e18**，derive 给 8.400e17，低 18.5%。
+
+      derive 自己知道这件事 —— `end_to_end_terms.note` 写着「各阶段按同一个单步
+      FLOPs 估算…这里是粗估，不要当精确值」。**但那条 note 没有渲染到页面上**，
+      页面只显示 8.400e17 与求和公式。产物存在、没有消费点
+    resolution: open
+    changed_to: >-
+      真值记在这里。建议的共享改法：`gen_workload()` 对带 `resolution` 的阶段
+      按该阶段自己的 token 数算单步，并把 `end_to_end_terms.note` 渲染出来。
+      在没改之前，引端到端请用本条的 1.030e18。已报主会话
+  - id: R5
+    field: generation.text_encoders
+    severity: missing
+    claim: 三个编码器的参数量都应该能填
+    finding: >-
+      只填得出一个。MLLM 那栏填的是**替代品** Qwen2.5-VL-7B-Instruct 的
+      8,292,166,656（HF 的 safetensors tally），官方 HunyuanMLLM 根本没发布，
+      它多大不知道。byT5 那路要 `google/byt5-small` 加 ModelScope 的
+      Glyph-SDXL-v2 两处权重，后者没核实规模。
+      SigLIP 没有单独发布，混在 gated 的 FLUX.1-Redux-dev 包里，取不到
+    resolution: open
+    changed_to: >-
+      params 只填 MLLM 替代品那一个并在 note 写明「是替代品的数不是官方的」；
+      另两个留空并写明是哪一种空
+
+notes: >-
+  **字节对账。** 14 个 safetensors 实测 numel×4 B 之和 371,757,753,484 B，
+  HF 的 usedStorage 371,771,397,110 B，差 13,643,626 B（README、assets 与
+  14 个 safetensors 头）。**这个仓的 usedStorage 是干净的** ——
+  没有旧修订版残留（wan2.2-ti2v-5b 多算了一份 DiT），
+  也没有两套并列布局（minimax-h3 是实际的 2.46 倍）。视频线三份记录，
+  usedStorage 三种行为，所以它**不能当成「当前修订版权重总字节」直接用**。
+
+  **帧数→latent 的映射，与同线 minimax-h3 的对照。**
+  这一份：`get_latent_size()` 就是 `(F−1)//4 + 1`，VAE 的
+  `temporal_tiled_encode()` 直接 raise，没有分块路径 —— 公式成立，
+  121 帧 → 31 个 latent 帧，端到端有效时间压缩率 3.903。
+  minimax-h3：VAE 按 17 帧一块编码、每块 5 个 token、整段末尾丢 3 个，
+  公式不成立，243 帧 → 72 个 latent 帧，有效比值 3.375。
+  **两份都自称「时间因果、压缩 4×」，而端到端比值一个 3.903 一个 3.375。**
+  看到帧数约束（这边 4n+1、那边 17n+5）就该去读 VAE 实现。
+
+  **取数提醒。** 这个仓有顶层 config.json（pipeline 级，不含 DiT 形状），
+  15 份组件 config，14 个 safetensors。
+  `fetch_hf.py --include 'transformer/720p_t2v/*'` 取一套即可 ——
+  11 套 DiT 的张量名完全相同，不收窄会撞名。
+
+open_questions:
+  - >-
+    **技术报告 arXiv 2511.18870 没读。** 结构与采样全部来自模型卡、厂商实现与权重，
+    按本仓来源优先级报告在模型卡之上，所以报告里若有冲突的数要以它为准。
+    尤其是 SSTA 的稀疏率、训练配方与那个 1.87× 的基线配置，报告里多半有
+  - >-
+    `derive.py` 的单步线性 FLOPs 对双流 MMDiT 偏高约一倍（R4）。
+    注意力项是准的、「注意力占四分之三」这个结论不变，但线性项的真值是 9.12e14
+    而不是 1.859e15，单步合计真值约 6.42e15。要改共享文件，已报主会话
+  - >-
+    **推导给的端到端 FLOPs 偏低约 18%（R6）**：三个阶段按同一个单步 FLOPs 相加，
+    而 1080p SR 那段的 token 数是 247,163 不是 111,600。真值约 1.030e18。
+    derive 的 `end_to_end_terms.note` 已经声明了这是粗估，但那条 note 没渲染到页面
+  - >-
+    官方 HunyuanMLLM 未发布，文本编码器那栏填的是社区替代品 Qwen2.5-VL-7B-Instruct 的数。
+    官方 MLLM 多大、与替代品的 hidden 是否同为 3584，都不知道 ——
+    只知道 DiT 的 `text_states_dim` 是 3584，替代品恰好对得上
+  - >-
+    `generation.text_encoders` 里只有一栏填得出 params（R5）：SigLIP 与 Glyph-SDXL-v2
+    的参数量没填 —— 前者混在 gated 的 FLUX.1-Redux-dev 里没有单独发布，后者在 ModelScope。
+    两者都影响「一次部署要驻留多少」这个账
+  - >-
+    SSTA 的实际稀疏率不知道。config 给了 `tile_size [6,8,8]`、
+    `win_size [[3,3,3]]`、`ssta_topk 64`、`ssta_lambda 0.7`、`win_ratio 10`，
+    但从这些参数推不出在默认档上实际省掉多少注意力计算 ——
+    那要么读 `ssta_attention.py` 的实现，要么实测。
+    **所以本记录的单步注意力 FLOPs 是稠密口径**，对稀疏档位偏高
+  - >-
+    前代 `hunyuanvideo-13b` 还没录，它的权重是 .pt（pickle）读不了清单。
+    跨代的三处主要变化（VAE 从 8×/4×/16ch 到 16×/4×/32ch、
+    从 20 双流+40 单流到 54 双流、新增 SSTA）现在只有线索没有对账
+  - >-
+    卡上那句「10 秒 720p 端到端相对 FlashAttention-3 加速 1.87×」没有给基线配置
+    （几卡、什么精度、开不开 cache），**不能当性能基准**，没有写进 performance
+  - >-
+    训练精度无一手来源。发布权重全 F32 是实测，`generate.py` 默认 bf16 也是实测，
+    但那说的都是落盘与推理格式，不是训练格式
