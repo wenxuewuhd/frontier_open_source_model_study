@@ -180,7 +180,11 @@ generation:
         注意力占比被压成 54.2%（真值 66.2%）。
         文本 token 拼在同一条序列里（text_conditioning: in_sequence），
         所以没有单独的 per_text_token 桶，文本那部分并在 per_video_token 里；
-        而记录没给文本长度，序列长度本来就是下界
+        而记录没给文本长度，序列长度本来就是下界。
+        **注意桶名**：H3 的 405 个音频 token 也在同一条序列里，所以这里的
+        `per_video_token` 实际是「逐序列 token」。双流模型（img / txt 各自投影、
+        只有注意力矩阵联合）要分成 per_video_token + per_text_token 两桶，
+        别照着这一份填
     patch_size: [1, 2, 2]
     position: 3D MM-RoPE (t, h, w)，rope_freq_dim 16、rope_theta 10000
     note: >-
@@ -598,18 +602,29 @@ review:
       加音频 405 后序列 **72,981**；
       单步线性 2 × 33,122,992,896 × 72,981 = **4.835e15**；
       单步注意力 4 × 50 × 5376 × 72,981² = **5.727e15**；
-      单步合计 **1.056e16**（derive 给 8.320e15，低 **26.9%**），
-      注意力占比 **54.2%**（derive 给 50.3%）。
+      单步合计 1.056e16（derive 当时给 8.320e15，低 26.9%），
+      注意力占比 54.2%（derive 给 50.3%）。
       注意力那一项是 O(n²)，所以 token 数低 17% 会让它低 31%。
 
       `derive.py` 与 `data/schema/` 是共享文件，本记录不改它们
-    resolution: open
+
+      ——**以上那组「真值」自己也过期了。** 它是按
+      `线性 = 2 × 参数量 × token 数` 算的，而后来查出
+      **AdaLN 调制吃条件向量、不过 token 流**（占本模型主干 39.41%，
+      形状上就能断定：`adaln_proj.linear` 是 [96768, 2688] 而 hidden 5376）。
+      所以这一条记录了两次修正叠加之后才到位的数
+    resolution: corrected
     changed_to: >-
-      记录正文里的数按真值写（R3 与 notes），**derived JSON 暂时仍是偏低的那组**。
-      建议的共享改法：让 `generation.buckets[]` 支持声明 `latent_frames`，
-      `gen_workload()` 有声明就用声明值、没有才套公式 ——
-      这对别的 family 同样有用（LTX 的 8n+1、Wan 与 HunyuanVideo-1.5 的 4n+1
-      各有各的规矩）。已报给主会话
+      **两次共享改动各解决一半，都已落地**：
+      (1) `generation.buckets[]` 新增 `latent_frames`，`gen_workload()` 声明优先 ——
+      修掉 token 数那一半（61,992 → 72,576，与本条 finding 的前半段一致）；
+      (2) `generation.backbone.param_scaling` 按「乘什么」把主干参数分桶，
+      线性项改成 `2 × (每 token 参数 × token 数 + 每样本参数)` ——
+      修掉线性项那一半，这一半是本条 finding **当时没看出来**的。
+
+      两次之后 derived 与记录一致：latent token 72,576、序列 72,981、
+      单步线性 2.929e15、注意力 5.727e15、合计 **8.656e15**、注意力占 **66.2%**。
+      **derived JSON 现在可以直接引了**，原先那条「以 R3/R6 为准」的 open_question 已删
   - id: R4
     field: generation.vae.params
     severity: wrong
@@ -652,7 +667,7 @@ notes: >-
   编码 `T = ceil(F/17) × 5 − 3`，解码 `F = 17·C − 12`（`C = (T+3)/5` 为块数），
   合法帧数 `F ≡ 5 (mod 17)`。
   243 / 192 / 124 三种帧长对应 C = 15 / 12 / 8、latent 帧数 72 / 57 / 37。
-  默认档的 latent token 是 72 × 24 × 42 = **72,576**，序列 72,981，单步 FLOPs 1.056e16。
+  默认档的 latent token 是 72 × 24 × 42 = **72,576**，序列 72,981，单步 FLOPs **8.656e15**（注意力占 66.2%）。
   **`data/derived/` 里的那组数偏低 17%–27%**，原因与修法见 R6。
 
   **取数提醒。** 这个仓**没有顶层 config.json**，有 17 份组件 config，
@@ -661,13 +676,6 @@ notes: >-
   本记录的数来自按组件分开的逐分片读头。
 
 open_questions:
-  - >-
-    **`data/derived/minimax-h3.json` 里的 latent token 数与单步 FLOPs 偏低，已知未修（R6）。**
-    真值：latent 帧数 72、latent token 72,576、序列 72,981、单步 FLOPs 1.056e16；
-    derived 给的是 61,992 / 62,397 / 8.320e15，分别低 17.1% 与 26.9%。
-    原因是 `derive.py` 的 `gen_workload()` 只能套单一除数，而 H3 的帧数→token 映射是分块的。
-    要改 `derive.py` 与 schema，是共享文件，已报给主会话。
-    **引用这份记录的负载数时以 R3 / R6 的真值为准，不要直接引 derived JSON**
   - >-
     `generation.sampling.steps` 填不了（R5）：默认采样步数卡与厂商脚本都没有，
     引擎文档说 50 但那是第四档来源。
