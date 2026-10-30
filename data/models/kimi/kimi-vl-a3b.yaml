@@ -170,6 +170,96 @@ arch:
       视觉塔内部也带 bias（wqkv.bias [3456]、fc0.bias [4304]、norm0/norm1 带 bias），
       与无 bias 的语言主干不是一套算子配置
 
+    tokens:
+      reference_resolution: 672x672
+      patch_grid: 48x48
+      encoder_tokens: 2304
+      llm_tokens: 576
+      compression_ratio: 4
+      compression_stage: >-
+        projector 入口一步到位：2×2 相邻 patch 在通道维拼接
+        （linear_1 的输入维 4608 = 4 × 1152 就是这个拼接），
+        **压缩在两层 MLP 之前**，所以 projector 的两个 GEMM 只跑 576 次
+        而不是 2304 次。config 的 merge_kernel_size [2, 2] 是同一件事
+      dynamic_resolution: true
+      derivation: >-
+        两个因子：
+        (1) patch 14 —— config.vision_config.patch_size，并由
+        vision_tower.patch_embed.proj.weight [1152, 3, 14, 14] 的后两维印证。
+        **这是 Conv2d、没有时间维**（对比 Qwen / MiniMax 的 Conv3d），
+        所以静态图不需要补帧，一张图就是一层 patch 网格；
+        (2) 2×2 空间合并 —— config 的 merge_kernel_size [2, 2]，
+        并由 multi_modal_projector.linear_1.weight 的输入维 4608 = 1152 × 4 印证。
+        于是 672 / 14 = 48，48² = 2304 个 encoder token；
+        48 / 2 = 24，24² = 576 个主干 token。
+        位置编码是学习式的 [64, 64, 1152]（config 的 init_pos_emb_height /
+        _width 都是 64），48×48 的网格落在 64×64 内，按
+        pos_emb_interpolation_mode 插值取用 —— 所以 64 不是分辨率上限，
+        而是插值的基准网格。
+        672×672 是本仓为跨模型比较选的参考分辨率（能被 14/16/28/32/42/48 整除），
+        不是厂商默认值：本模型按原生分辨率走，没有 max_image_tokens
+      scope_note: >-
+        只覆盖单张静态图。本代**没有视频路径**（config 里没有
+        video_attn_type、也没有 init_pos_emb_time，那两项是下一代
+        kimi-k2.5 才有的），所以这里不涉及帧数折算
+    prefill:
+      encoder_linear_gflops: 1897.3
+      projector_linear_gflops: 35.33
+      backbone_token_budget: 576
+      backbone_linear_gflops_per_token: 4.49
+      image_as_text_tokens: 1007
+      attention_excluded: >-
+        被排除的是 encoder 自注意力的 QK^T 与 AV，形式
+        4 × n² × hidden × layers。跨度没有一手来源：vision_config 里没有
+        window_size 一类的键，本代的参考实现本轮没读
+        （下一代 kimi-k2.5 的读过，那边是按 t×h×w 切 cu_seqlens 的整段注意力，
+        但**不能把下一代的实现当本代的依据**）。
+        按整图一段取 n = 2304 约 2304² × 4 × 1152 × 27 = 660 GFLOPs ——
+        注意这一项在本档不可忽略，它是线性项 1897.3 的 35%，
+        而本档的主干又特别小，所以它会把下面那个换算再推高一截。
+        正因为影响不小又钉不住跨度，prefill 下面每一格都只装线性项
+      derivation: >-
+        encoder 线性项 = 2 × 2304 × (patch_embed 677,376 + 27 层 ×
+        每层 15,224,832 = 411,070,464) = 2 × 2304 × 411,747,840
+        = 1,897,335,951,360。每层 15,224,832 逐因子核过：
+        wqkv 3 × 1152² + wo 1152² + fc0 4304 × 1152 + fc1 1152 × 4304，
+        四项相加与清单里 108 个 blocks 线性张量的求和逐位相同。
+        projector 线性项 = 2 × 576 × (4608² + 2048 × 4608) = 35,332,816,896。
+        主干分母 = 2 × (active_params.total 2,579,233,600 −
+        active_params.lm_head 335,544,320) = 4,487,378,560 ——
+        **不能用 derived 里的 flops.linear_per_token 5,158,467,200**，
+        那一项含 lm_head（decode 口径）。
+        换算 = 576 + 1,932,668,768,256 / 4,487,378,560 = 576 + 431 = 1007。
+        **这是本仓 12 份 vlm 里塔开销占比最高的 MoE 档**（1007 / 576 = 1.75）：
+        视觉塔 4.5 亿参数，而 A3B 主干每 token 只有 4.5 GFLOPs 线性，
+        于是塔自己就值 431 个 token 的位置当量 —— 一张图的 prefill 成本
+        有 43% 花在视觉塔上，不是在主干。
+        这正是 encoder 分离部署最划算的一档：塔和主干的负载比接近 1:1.3，
+        放在同一张卡上会让两段互相排队。
+        **对比同塔的 kimi-k2.5**（塔逐张量相同、主干 61.0 GFLOPs/token）：
+        那边塔只值 32 个位置当量、占比 5.6% —— 同一座塔，占比差 7.7 倍，
+        差的全是主干
+    separability:
+      weight_prefix: >-
+        vision_tower.（329 个张量）与 multi_modal_projector.（6 个），
+        共 335 个；主干在 language_model.。两个前缀不相交
+      shard_isolation: mixed
+      shard_note: >-
+        实测 index 的 weight_map：335 个视觉张量全部落在**第 1 个分片**
+        model-00001-of-00007，而同一个分片里还有 583 个非视觉张量
+        （language_model.model.embed_tokens 与前若干层）。
+        7 个分片里只有这一个含视觉张量，但它同时装着主干的头部 ——
+        没有纯视觉分片。
+        **下一代改了发布习惯**：kimi-k2.5 把 335 个视觉张量放进最后两个分片
+        （第 63 片放 6 个 projector、第 64 片放 329 个塔），
+        两片都是**零非视觉张量**，于是成了 dedicated。
+        同一支族系从 mixed 变 dedicated，分离加载的工程成本差别很大
+      cross_prefix_sharing: >-
+        weight_map 的 5679 个名字里没有任何一个同时匹配 vision_tower. /
+        multi_modal_projector. 与 language_model.，即没有重名共享。
+        落盘层面的 tied weights 要看 safetensors 头的数据偏移是否重合，
+        weight_map 答不了，本轮没读偏移
+
 precision:
   weights_release: [BF16]
   quantization:
@@ -243,6 +333,14 @@ evidence:
   arch.vision.fusion: derived
   arch.vision.out_hidden: derived
   arch.vision.spatial_merge_size: derived
+  arch.vision.tokens: derived
+  arch.vision.tokens.scope_note: judgement
+  arch.vision.prefill: derived
+  arch.vision.prefill.attention_excluded: judgement
+  arch.vision.prefill.derivation: judgement
+  arch.vision.separability: derived
+  arch.vision.separability.shard_note: judgement
+  arch.vision.separability.cross_prefix_sharing: judgement
   precision.weights_release: derived
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived
@@ -363,6 +461,43 @@ review:
     resolution: corrected
     changed_to: 拆开写：2506 的判据列出来，非 2506 的注明「没有取数，只按共用 config 文件族推断，不作为依据」
 
+  - id: R9
+    field: arch.vision.prefill.image_as_text_tokens
+    severity: missing
+    claim: >-
+      视觉塔的结构侧填得很深（逐张量的 bias 配置、LayerNorm 与 RMSNorm 的差别
+      都写了），但 infra 那一维一格都没有：一张图几个 token、encoder 多少 FLOPs、
+      能不能分离部署，三件事都答不上来
+    finding: >-
+      补 arch.vision 下 tokens / prefill / separability 三组，逐因子核过。
+      本档是整批 12 份里**最该做 encoder 分离部署的一档**：
+      一张 672² 的图相当于 1007 个文本 token，而它只占 576 个位置 ——
+      也就是说一张图的 prefill 成本有 43% 花在视觉塔上、不在主干。
+      根因是两边严重不对称：塔 4.5 亿参数跑 2304 个 token，
+      而 A3B 主干扣掉 lm_head 后每 token 只有 4.49 GFLOPs。
+      **和同塔的 kimi-k2.5 对照最能说明问题**：那边的 vision_tower
+      与本档逐张量相同（记录里原有的结论），但主干是 61.0 GFLOPs/token，
+      于是塔只值 32 个位置当量、占比 5.6%。同一座塔，占比差 7.7 倍，
+      差的全是主干 —— 所以「视觉塔要不要拆出去」不是塔的属性。
+      两件**没能钉住**的事都写进了 open_questions：
+      (1) encoder 注意力跨度没有一手来源，而本档它不可忽略 ——
+      按整图一段算约 660 GFLOPs、是线性项的 35%，会把 1007 再推高约 147，
+      所以 1007 是下界。下一代 kimi-k2.5 的参考实现读过（整段注意力），
+      但那是下一代的实现，不能回填本代；
+      (2) 落盘层面的 tied weights 没查，weight_map 只能排除重名。
+      分片上本档是 mixed（335 个视觉张量全在第 1 片，同片另有 583 个主干张量），
+      而下一代 kimi-k2.5 改成了最后两片**零非视觉张量**的 dedicated ——
+      同一支族系的发布习惯变了，这件事写进了 separability.shard_note
+    resolution: corrected
+    changed_to: >-
+      新增 arch.vision.tokens（672² 下 2304 → 576，压缩比 4；并写明
+      patch_embed 是 Conv2d 无时间维、学习式位置表 [64,64,1152] 是插值基准
+      而非分辨率上限）、arch.vision.prefill（encoder 线性 1897.3 GFLOPs、
+      一张图 ≈ 1007 个文本 token，并与同塔的 kimi-k2.5 对照）、
+      arch.vision.separability（mixed，并记下一代改为 dedicated）；
+      evidence 加八条，四格判断类进 Gate C；
+      注意力跨度、参考分辨率、落盘 tied weights 三件事进 open_questions
+
 notes: >-
   Kimi 的视觉线起点，本仓按支线收录（track: side）：它的档位比同期旗舰小，
   但**它定义了这个家族的视觉前端**，而那套前端一直用到 K2.5，K3 才换代。
@@ -388,3 +523,20 @@ open_questions:
   - >-
     视觉塔的 max_image_tokens / 单图上限不在 config 里（原生分辨率，按 patch 网格走），
     prefill 的显存峰值因此只能按实际输入折算，本仓没有可引的上限值
+  - >-
+    **视觉塔自注意力的跨度没有来源，而本档它不可忽略。** vision_config 里
+    没有 window_size 一类的键，本代参考实现本轮没读。按整图一段算
+    （n = 2304）那一项约 660 GFLOPs，是线性项 1897.3 的 35%；
+    本档主干又只有 4.49 GFLOPs/token，所以这一项会把
+    image_as_text_tokens 从 1007 再推高约 147 个 token 当量。
+    **下一代 kimi-k2.5 的参考实现读过（整段注意力），但不能当本代的依据。**
+    arch.vision.prefill 因此只装线性项，1007 是下界
+  - >-
+    **「一张图」的参考分辨率是本仓选的，不是厂商默认。** 本模型按原生分辨率
+    走、config 里没有 max_image_tokens，arch.vision.tokens 因此钉在
+    672×672 上，只能和同样钉在 672 的其它记录比，
+    不是部署时的实际单图 token 数
+  - >-
+    视觉塔与主干**落盘层面**是否有 tied weights 未查。weight_map 的 5679 个
+    名字里两个前缀不重名，这只排除了重名；存储共享要看 safetensors 头的
+    数据偏移，本轮没读偏移
