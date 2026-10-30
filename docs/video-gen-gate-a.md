@@ -16,10 +16,10 @@
 
 ## 1. 入选清单
 
-一共 **11 份记录、7 个 family**，分两波。第一波 6 份是当代前沿，第二波 5 份是历史基线与旁支路线。
-波次只是排期建议，Gate A 的结论是这 11 份都该录。
+一共 **12 份记录、8 个 family**，分两波。第一波 7 份是当代前沿，第二波 5 份是历史基线与旁支路线。
+波次只是排期建议，Gate A 的结论是这 12 份都该录。
 
-### 第一波（当代前沿，6 份）
+### 第一波（当代前沿，7 份）
 
 | family | model_id | hf_repo | 发布日期 | 凭什么入选 |
 |---|---|---|---|---|
@@ -29,6 +29,7 @@
 | `wan` | `wan2.2-t2v-a14b` | `Wan-AI/Wan2.2-T2V-A14B` | 2025-07-24 | 第一个把 MoE 引进视频 DiT 的开源模型，但**路由轴是时间步不是 token**：两套各 14B 的专家按 boundary 切换。这和 LLM 侧的 MoE 不是一回事，硬塞进 `arch.moe` 会造出假事实 |
 | `wan` | `wan2.2-ti2v-5b` | `Wan-AI/Wan2.2-TI2V-5B` | 2025-07-18 | 同代同厂但**换了 VAE**（4×8×8/16ch → 4×16×16/48ch），latent token 数掉到 1/4。按「换 VAE 就是另一回事」的判据单独录 |
 | `hunyuan-video` | `hunyuanvideo-1.5` | `tencent/HunyuanVideo-1.5` | 2025-11-20 | SSTA 时空块稀疏注意力（厂商称 10s/720p 端到端 1.87× vs FA3）；VAE 换到 16×/4×/32ch 后 patch=(1,1,1)；CFG 蒸馏与步数蒸馏**两根轴同时存在**；11 个各 33 GB 的全量 checkpoint 并存 |
+| `magi` | `magi-2-preview` | `sand-ai/MAGI-2-preview` | 2026-08-03 | **唯一一个 token 级 MoE 的视频 DiT**：114B 总参 / 每 token 激活 6B，36 层各 3072 个专家。同时带 attention sink、逐头输出门控、**mHC 残差（×4 扩张）**，并复用 Wan2.2 的 VAE。几乎把本仓 LLM 侧跟踪的全部结构一次性搬进了视频生成 |
 
 ### 第二波（历史基线与旁支，5 份）
 
@@ -43,7 +44,7 @@
 > `sana-video-2.0-5b` 是唯一一个可以争论的：它来自 NVlabs/MIT 而不是本仓主要跟踪的厂商，
 > 下载量也不大。保留它的理由是**结构唯一性**，不是影响力。如果要砍，砍它，不要砍别的。
 
-### 为什么是 11 份而不是 6 份
+### 为什么是 12 份而不是 7 份
 
 本仓 `data/tracking.yaml` 的 policy 是「每个家族追最新旗舰」。那条 policy 是给语言模型线定的，
 前提是**家族内代际差异可以靠 lineage 文字讲清楚**。视频线不成立：
@@ -199,6 +200,7 @@ schema 可以共用生成类的 VAE / 文本编码器块，但采样与负载块
 | `cogvideox-1.5-5b` | 4×8×8 / 16 | (2,2,2) | 8×16×16 | 2（CFG） | — |
 | `stepvideo-t2v-30b` | 8×16×16 / 64 | 1 | 8×16×16 | 2（CFG 9.0） | 50 |
 | `sana-video-2.0-5b` | 8×32×32 / 128（复用 LTX-2.3 VAE） | — | — | 2（CFG 8） | 50 |
+| `magi-2-preview` | 4×16×16 / 48（复用 Wan2.2 VAE） | — | — | — | — |
 
 > 这张表就是 §5 的论据：**VAE 压缩率和 DiT patch 必须分两个字段存**，两者相乘才是 token 口径。
 > MiniMax-H3 的卡自己就这么写：「visual tokens 的有效空间下采样是 32×，时间下采样仍是 4×」（`official`）。
@@ -528,6 +530,76 @@ VAE 4×8×8 / 16ch，umT5-XXL（text_dim 4096），权重 57.15 GB F32 → 14.29
 
 ---
 
+### 4.9 `magi-2-preview` — sand-ai/MAGI-2-preview
+
+发布 2026-08-03（`derived`），License **Apache-2.0**，技术博客 sand.ai/blog/magi-2-preview。
+HF 下载量显示为 0、likes 122 —— **按采用度它不算主流**，按结构它是整个候选集里最值钱的一个。
+为什么漏掉过、以及这暴露了什么扫描方法问题，见 §7 第 16 条。
+
+**整体**（卡 `official`）
+
+> "Magi-2 Preview is a 114B-parameter unified audio-video generation model that activates just
+> 6B parameters per token. Built on MagiMoE…"
+
+两阶段：`magi2_preview` 低分辨率去噪 → `magi2_refiner` 升到 1080p。只支持 10 秒片段。
+音频与视频一起生成并 mux 进输出。硬件要求写死 **8 卡 Hopper**，依赖自研的
+MagiAttention 与 MagiCompiler。整仓约 307 GB。
+
+**DiT 主干**（全部权重头实测，`derived`）
+
+| 项 | 值 |
+|---|---|
+| 层数 / hidden | 40 / **3072** |
+| 注意力 | `linear_qkv [9216, 3072]` = 3×3072 → MHA；`linear_proj [3072, 3072]` |
+| 注意力头数 | **24**（由 `sinks [1, 24]` 与 `linear_g [24, 3072]` 定），head_dim 128 |
+| attention sink | **有**，逐头一个（`attention.sinks`，每层都有） |
+| 输出门控 | **有**，逐头一路（`attention.linear_g`） |
+| 残差 | **mHC**：残差流扩到 **12288 = 4 × 3072**（`mhc_phi_fused_attn [12288, 24]`、各 embedder 出口都是 12288）；每层 12 个 alpha/bias 标量 + `mhc_norm` |
+| FFN 层型 | 40 层里 **4 层稠密**（0、1、38、39，`up_gate_proj [49152, 3072]` → 中间维 24576）+ **36 层 MoE** |
+| MoE | `moe_mlp.W_up [3072, 256, 1280]`、`W_down [3072, 1280, 256]`、`W_gate` 同形 → **3072 个专家**，每个 256→1280；`gate [3072, 256]` |
+| MoE 的粒度 | 专家在 **256 维子空间**里工作，前后各有一个 `split_linear [3072,3072]` / `merge_linear [3072,3072]` —— 即把 3072 维切成 12 片 256 维再路由 |
+| 路由 | `moe_mlp.router.expert_bias` + `expert_bias_ema` → **aux-loss-free bias 路由，带 EMA** |
+| 共享专家 | `shared_expert_fc1 [2560, 3072]`；另有 `modality_specific_shared_expert_fc1 [7680, 3072]` = 3 × 2560 → **按模态分的共享专家**（视频 / 音频 / 文本各一个） |
+| 模态特定部分 | 只在 `pre_adapter`（video 48ch / audio 64ch / text 5120 三个 embedder，出口都是 12288）与 `post_adapter`（video / audio 两路 final linear+norm） |
+| 专家参数核对 | 36 层 × 3072 专家 × 3 × 256 × 1280 ≈ **108.7B**，加上其余约 114B —— 与卡的 114B 对得上 |
+| 权重落盘 | preview 228,107,858,176 B（1371 张量，BF16 为主、router 与 mHC 系数 F32）；refiner 13,484,611,648 B（281 张量） |
+
+**文本编码器**（`text_encoder/config.json`，`derived`）
+
+**Qwen3.5**（`Qwen3_5ForConditionalGeneration`），hidden 5120、head_dim 256、inter 17408，
+`attn_output_gate: true`，**linear:full = 3:1 的混合注意力**（`full_attention_interval: 4`）。
+落盘 55.59 GB。随仓发布。
+
+> 这是候选里唯一一个文本编码器**自己就是混合线性注意力**的 —— 本仓 LLM 侧的「线性/混合注意力」
+> 专题可以直接接上。
+
+**VAE 与音频**（`derived`）
+
+| 组件 | 内容 |
+|---|---|
+| 视频 VAE | **`vae/Wan2.2_VAE.pth`** —— 直接用阿里 Wan2.2 的 VAE（4×16×16 / 48 通道）。跨厂商复用 |
+| 快速解码 | `turbo_vae/TurboV3-Wan22-TinyShallow_7_7.json`：`AutoencoderKLTurboVAED`，只有解码器、latent 48ch、`patch_size` 2、`decoder_causal: false`。**一个蒸馏出来的浅层解码器**，专为降低 VAE decode 成本 |
+| 音频 VAE | **`stable-audio-open-1.0`** —— 第三方开源音频 VAE，4.85 GB |
+
+**对本仓的意义**
+
+1. **它是「token 级 MoE 视频 DiT」的唯一样本**，正好和 Wan2.2 的「时间步级专家切换」构成对照。
+   没有它，§5.4 里「Wan2.2 的 MoE 不是 LLM 那个 MoE」这句话只有否定没有肯定。
+2. **attention sink + 逐头输出门 + mHC 残差 + aux-loss-free bias 路由 + 堆叠专家** ——
+   这五件本仓都已经在 LLM 侧建了字段。MAGI-2 证明这些字段在生成类上要**保留而不是砍掉**。
+3. **turbo_vae 是一根新轴**：VAE decode 可以单独蒸馏加速。其它候选都没有，§5.2 第 12 条要加这一项。
+4. 它同时是**第 1 步脚本改造最狠的测试用例**：现有 `subsystems.py` 会把它 36 层的专家堆栈
+   整个算成稠密 FFN、把 mHC 系数算成注意力、把 Megatron 命名的注意力投影算成 other
+   （实跑验证见 [video-gen-step1-checklist.md](video-gen-step1-checklist.md) §A2）。
+
+**压力测试该选谁**：`minimax-h3` 和 `magi-2-preview`各压一头 ——
+H3 压的是**组件与部署口径**（四个大模型、两套 DiT、未开源模块、可预计算的 AdaLN）；
+MAGI-2 压的是**推导与归类**（MoE 账、mHC、sink、跨厂商复用的 VAE）。
+建议先录 MAGI-2：它暴露的是脚本缺陷，发现得越早越好；H3 暴露的是 schema 字段缺口，
+在第 1 步定 schema 时已经按 §5 覆盖了。
+
+---
+
 ## 5. 字段需求清单
 
 ### 5.1 §3.2 已列、且候选之间确有差异，值得进 schema
@@ -647,7 +719,7 @@ Wan2.2 MoE「保持相同计算成本」—— 这些可以作为 `official` 文
 `bottlenecks.quantified`，但**不能换算成绝对时延**，因为基线配置没公开。
 这正是 model-audit 规则 8「免责声明只免掉它点名的那件事」的生成类版本。
 
-**结论**：生成类记录的「性能」区在 11 份里大概只有 1 份（stepvideo）非空。
+**结论**：生成类记录的「性能」区在 12 份里大概只有 1 份（stepvideo）非空。
 这不是数据没收集，是口径决定的，要在站点上说清楚。
 
 ### 5.4 LLM 侧可以直接复用的结构
@@ -666,6 +738,9 @@ Wan2.2 MoE「保持相同计算成本」—— 这些可以作为 `official` 文
 - `hf`（repo / sha / last_modified / pipeline_tag / **gated**）—— `gated` 正好用来标 LTX-2.5
 - `visibility` 与公开/内部隔离机制
 - `precision.quantization` 与 `precision.per_subsystem` 的**实测机制**（`fetch_dtypes.py` 从权重头读）
+- `arch.residual`（type / multiplier / coef_proj）与 `arch.attention.attn_sink`、`arch.attention.output_gate`
+  —— 为 LLM 侧 mHC 建的这几个字段在 MAGI-2 上**原样成立**（权重实测：残差流 ×4 扩到 12288、
+  逐头 sink `[1, 24]`、逐头输出门 `linear_g [24, 3072]`）。这是「LLM 侧结构正在往视频 DiT 迁移」的直接证据
 
 **结构复用但语义要重新定义：**
 
@@ -678,7 +753,7 @@ Wan2.2 MoE「保持相同计算成本」—— 这些可以作为 `official` 文
 | 字段 | 为什么 |
 |---|---|
 | `context`（max / train_native / extension_method） | 没有「上下文长度」这回事。对应概念是「序列长度 = latent token 数」，由分辨率×帧数×压缩率推出，不是一个发布属性 |
-| `arch.moe.{routed_experts, top_k, routing, balance, expert_groups}` | Wan2.2 的「MoE」路由轴是**时间步**，没有 router、没有 top-k、没有 all-to-all。填进去会让站点显示一个不存在的 EP 通信量。它该进 `generation.expert_switching: {axis: timestep, boundary: 0.875, experts: 2}` |
+| `arch.moe.{routed_experts, top_k, routing, balance, expert_groups}` | **对 Wan2.2 不适用**：它的「MoE」路由轴是**时间步**，没有 router、没有 top-k、没有 all-to-all。填进去会让站点显示一个不存在的 EP 通信量。它该进 `generation.expert_switching: {axis: timestep, boundary: 0.875, experts: 2}`。**但对 MAGI-2 完全适用** —— 那是真的 token 级路由（3072 专家 + 共享专家 + aux-loss-free bias）。所以这两个字段要共存，由 `routing_axis ∈ {token, timestep}` 区分 |
 | `arch.decoding`（MTP / speculative） | 非自回归 |
 | 整个 KV cache 体系（`kv_sharing` / `kv_component` / `derived.kv_memory` / `cache_basis`） | 非自回归，推理过程中没有跨步复用的 KV。**但不要把这些块从生成类里删掉** —— §2.4 的世界模型线是自回归的，KV cache 会回来 |
 | `derived.active_params` | MoE 激活参数的概念不适用；Wan2.2 的「单步只用一套专家」是另一回事 |
@@ -745,7 +820,7 @@ Wan2.2 MoE「保持相同计算成本」—— 这些可以作为 `official` 文
 需要给 `model.schema.json` 的 `family` 枚举新增：
 
 ```
-wan, hunyuan-video, minimax-video, ltx, cogvideo, stepvideo, sana-video
+wan, hunyuan-video, minimax-video, ltx, cogvideo, stepvideo, sana-video, magi
 ```
 
 命名规则（与现有 `deepseek` / `qwen` / `glm` / `minimax` / `kimi` / `stepfun` 对齐）：
@@ -771,6 +846,7 @@ wan, hunyuan-video, minimax-video, ltx, cogvideo, stepvideo, sana-video
 | `cogvideo` | `cogvideox-1.5-5b` |
 | `stepvideo` | `stepvideo-t2v-30b` |
 | `sana-video` | `sana-video-2.0-5b` |
+| `magi` | `magi-2-preview` |
 
 两条约定：
 - 任务后缀（`t2v` / `ti2v` / `i2v`）**只在同代有多个任务档且结构不同时才写进 id**。
@@ -796,7 +872,8 @@ generation:
     ref_model_id: ltx-2.3                             # 本仓已有记录，不抄数字
 ```
 
-- **`ref_model_id`**：指向本仓已有的另一份记录。现成用例是 `sana-video-2.0-5b` 的 VAE → `ltx-2.3`。
+- **`ref_model_id`**：指向本仓已有的另一份记录。现成用例有两个，而且都是**跨厂商**的：
+  `sana-video-2.0-5b` 的 VAE → `ltx-2.3`，`magi-2-preview` 的 VAE → `wan2.2-ti2v-5b`（它直接用 `Wan2.2_VAE.pth`）。
   这正是 CLAUDE.md「数字只出现在一处」的要求：SANA 的记录不应该再抄一遍 LTX 的 128 通道和 8×32×32。
 - **`ref_external`**：本仓没录的外部模型（Qwen3-VL-32B、Gemma-3-12B、umT5-XXL、T5-XXL、
   SigLIP、byT5、Step-LLM）。只存 hf_repo + 参数量，不展开结构。
@@ -906,6 +983,18 @@ video_families:
     wave: 2
     note: 压缩率最激进（16×16×8 / 64ch）；卡上有峰值显存与端到端耗时，是唯一能填公开 performance 的一份
 
+  - family: magi
+    flagship: MAGI-2-preview
+    hf_repo: sand-ai/MAGI-2-preview
+    released: 2026-08-03
+    model_id: magi-2-preview
+    status: planned
+    wave: 1
+    note: 唯一的 token 级 MoE 视频 DiT（114B 总参 / 每 token 激活 6B，36 层各 3072 专家）；
+          带 attention sink、逐头输出门、mHC 残差（×4）；视频 VAE 直接用 Wan2.2_VAE.pth，
+          音频 VAE 用 stable-audio-open-1.0，另带一个蒸馏的 turbo 解码器。
+          采用度低（HF 下载量 0、likes 122），入选理由是结构不是影响力
+
   - family: sana-video
     flagship: SANA-Video 2.0 5B 720p
     hf_repo: Efficient-Large-Model/SANA-Video_2.0_5B_720p
@@ -999,3 +1088,23 @@ video_watchlist:
     反过来图像侧有视频侧没有的东西（多尺度/refiner/ControlNet 生态），本轮一条都没调研。
     **建议第 1 步先只落 video-gen 的字段，image-gen 留出扩展位但不猜字段** ——
     凭空设计会建一堆没人填的字段，这正是 Gate A 要避免的。
+
+16. **扫描方法有个缺口，已经漏过一次。** 本轮的候选是按 HF `pipeline_tag` + 下载量/likes 排序扫出来的，
+    而 `sand-ai/MAGI-2-preview` 的 HF **下载量显示为 0**（`sand-ai/MAGI-1` 也是 0），
+    于是它没有出现在任何一张榜上，是用户追问才补上的。
+    下载量为 0 的原因没查清 —— 可能是权重以非标准布局（`.pth`、`.ckpt`）发布导致计数器不统计。
+    结论：**下载量不能当唯一的发现手段**，双周采集要同时按 `createdAt` 扫全量 video 类 pipeline_tag，
+    并维护一份厂商 org 白名单（sand-ai 之前不在我的名单里）。
+    同理可能漏掉的还有：只发 `.pth` / `.ckpt` 的其它仓、以及 §7 第 13 条说的 ModelScope 独发。
+
+17. MAGI-2 的**采样参数全部未知**：默认步数、CFG、是否蒸馏、preview 与 refiner 各跑几步，
+    模型卡上一条都没有（卡只讲了 114B/6B、两阶段、10 秒、8 卡 Hopper）。
+    这些要去读 sand.ai 的技术博客或 GitHub 的推理代码。本轮没读博客，只读了卡与权重。
+
+18. MAGI-2 的 MoE 口径有三个数没定：top-k 是多少、`split_linear` 把 3072 维切成 12 片 256 维
+    之后每片各自路由还是共享路由、「每 token 激活 6B」是按几片算的。
+    这三个不定，激活参数与 EP 通信量都算不出来。权重形状只能告诉我们专家总数和每个专家的形状。
+
+19. MAGI-2 的视频 latent 48 通道是从 `pre_adapter.video_embedder.weight [12288, 48]` 读出来的，
+    与 Wan2.2-VAE 的 48 通道一致，所以判断它用的就是 `Wan2.2_VAE.pth`（仓里确有这个文件）。
+    但**没有核对这个 .pth 与 Wan-AI 官方发布的那份是否逐张量一致** —— 有可能是微调过的。
