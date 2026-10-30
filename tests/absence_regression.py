@@ -537,6 +537,50 @@ def _():
     assert cfgio.flatten({"num_hidden_layers": 40, "num_layers": 40})["num_hidden_layers"] == 40
 
 
+# ============================================ 倍数必须带基线
+#
+# CLAUDE.md 写着「没有基准的倍数不能用，最多进 open_question」。那条规矩此前只活在
+# 散文里 —— 而厂商材料里的倍数十有八九没说对照的是什么，正是最该查的一类。
+# `performance[].speedup` 与 `baseline.what` 做成一对之后它能被机械校验。
+
+@case("性能·正例：报了 speedup 没有 baseline.what 要被拦住")
+def _():
+    doc = {"performance": [{"source": {"type": "official"}, "hardware": "H800",
+                            "engine": "x", "speedup": 1.87}]}
+    errs = []
+    validate.check_speedup_baseline(doc, "probe.yaml", errs)
+    assert errs and "baseline.what" in errs[0], f"没拦住：{errs}"
+
+
+@case("性能·反例：带了基线就放行")
+def _():
+    doc = {"performance": [{"source": {"type": "official"}, "hardware": "H800",
+                            "engine": "x", "speedup": 1.87,
+                            "baseline": {"what": "FlashAttention-3 稠密注意力"}}]}
+    errs = []
+    validate.check_speedup_baseline(doc, "probe.yaml", errs)
+    assert not errs, errs
+
+
+@case("性能·反例：没报 speedup 的条目不查基线")
+def _():
+    # 只给绝对值不给倍数是合法的 —— 这条用例防的是把闸口写成「凡 performance 都要 baseline」
+    doc = {"performance": [{"source": {"type": "official"}, "hardware": "H800",
+                            "engine": "x", "seconds_per_step": 2.9475}]}
+    errs = []
+    validate.check_speedup_baseline(doc, "probe.yaml", errs)
+    assert not errs, errs
+
+
+@case("性能·正例：全仓真有带基线的条目，判据没有空转")
+def _():
+    hit = [(mid, p) for mid, d in RECS.items() for p in (d.get("performance") or [])
+           if p.get("speedup") is not None]
+    assert hit, "全仓一条带 speedup 的 performance 都没有 —— 这组用例没验到真数据"
+    for mid, p in hit:
+        assert (p.get("baseline") or {}).get("what"), f"{mid} 报了倍数却没基线"
+
+
 # ======================================== 取数：别把几个模型合并成一个不存在的模型
 #
 # Lightricks/LTX-2 的仓里 `ltx-2-19b-distilled.safetensors`（BF16）与

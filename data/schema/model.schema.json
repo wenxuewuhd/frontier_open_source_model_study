@@ -987,7 +987,30 @@
           "throughput_per_device": { "type": "number" },
           "ttft_ms": { "type": "number" },
           "tpot_ms": { "type": "number" },
-          "visibility": { "$ref": "#/$defs/visibility" }
+          "seconds_per_step": {
+              "type": "number",
+              "description": "每去噪步秒数。生成类的基本量不是 token/s —— 没有 token 在流出来。**不要硬塞进 tpot_ms**（time per output token），那是范畴错误"
+            },
+            "seconds_end_to_end": { "type": "number", "description": "端到端秒数，含几步要写在 steps 里" },
+            "steps": { "type": "integer", "description": "这次测量跑了几步去噪" },
+            "frames": { "type": "integer" },
+            "resolution": { "type": "string", "description": "如 720p 或 1280×720" },
+            "speedup": {
+              "type": "number",
+              "description": "相对基线的倍数。**填了它就必须填 baseline.what** —— 闸口会查。本仓的规矩是「没有基准的倍数不能用」（CLAUDE.md），此前那条规矩只活在散文里，现在这一对字段让它能被机械校验"
+            },
+            "baseline": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "对照项。**单独成字段而不是写在 note 里**：「有没有基线」是本仓判断一个倍数能不能用的分水岭，写在散文里闸口查不到",
+              "properties": {
+                "what": { "type": "string", "description": "对照的是什么，如 FlashAttention-3 稠密注意力" },
+                "seconds_per_step": { "type": "number" },
+                "seconds_end_to_end": { "type": "number" },
+                "note": { "type": "string" }
+              }
+            },
+            "visibility": { "$ref": "#/$defs/visibility" }
         }
       }
     },

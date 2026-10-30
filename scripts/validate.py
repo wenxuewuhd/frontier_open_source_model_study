@@ -346,6 +346,28 @@ def check_field_consumers(root, errors, warnings):
             "把 _UNREAD_FIELD_BUDGET 改成这个数，棘轮才收得紧")
 
 
+def check_speedup_baseline(doc, path, errors):
+    """报了倍数就必须报基线。
+
+    CLAUDE.md 写着「**没有基准的倍数不能用**，最多进 open_question」——
+    此前那条规矩只活在散文里，谁都可能漏。`performance[].speedup` 与
+    `baseline.what` 做成一对字段之后，它能被机械校验。
+
+    为什么基线单独成字段而不是写在 note 里（gatea-video 提的）：
+    **「有没有基线」是本仓判断一个倍数能不能用的分水岭**，写在散文里闸口查不到，
+    而这正是最该查的那一类 —— 厂商材料里的倍数十有八九没说对照的是什么。
+    """
+    for i, p in enumerate(doc.get("performance") or []):
+        if not isinstance(p, dict) or p.get("speedup") is None:
+            continue
+        what = ((p.get("baseline") or {}).get("what") or "").strip()
+        if not what:
+            errors.append(
+                f"{path}: performance[{i}] 报了 speedup {p['speedup']} 却没有 "
+                "baseline.what —— **没有基准的倍数不能用**（CLAUDE.md）。"
+                "对照的是什么要写成字段，不是写在 note 里")
+
+
 def check_family_registry(root, errors):
     """schema 的 family 枚举与站点的 FAMILY_LABEL / FAMILY_ORDER 必须一一对应。
 
@@ -762,6 +784,7 @@ def main():
         check_review(doc, p, errors, warnings)
         check_leak(doc, p, errors, args.allow_internal)
         check_release_vs_measured(doc, p, os.path.join(args.data_dir, "derived"), errors)
+        check_speedup_baseline(doc, p, errors)
         check_scope_coherence(doc, p, errors)
         check_absence_resolves(doc, p, os.path.join(args.data_dir, "derived"),
                                errors, warnings, gaps)

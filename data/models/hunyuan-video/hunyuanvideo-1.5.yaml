@@ -439,6 +439,44 @@ precision:
         `generate.py` 的 `--dtype` 默认就是 `bf16`
   inference_default: BF16
 
+performance:
+  # 技术报告 §6 Table 7/8。**这组数能进 performance 的理由是它带基线** ——
+  # 厂商材料里的倍数十有八九没说对照的是什么，那种只能进 open_question。
+  - source:
+      type: official
+      ref:
+        kind: paper
+        url: https://arxiv.org/abs/2511.18870
+        locator: §6 Table 7（SSTA 对稠密注意力，无工程加速）
+    hardware: H800
+    device_count: 8
+    engine: 官方实现（CFG 蒸馏档，未叠 SageAttention / torch.compile / 特征缓存）
+    resolution: 720p
+    frames: 241
+    seconds_per_step: 2.9475
+    speedup: 1.87
+    baseline:
+      what: 同配置下的稠密注意力（FlashAttention-3）
+      seconds_per_step: 5.5070
+    visibility: public
+  - source:
+      type: official
+      ref:
+        kind: paper
+        url: https://arxiv.org/abs/2511.18870
+        locator: §6 Table 7
+    hardware: H800
+    device_count: 8
+    engine: 官方实现（CFG 蒸馏档，未叠工程加速）
+    resolution: 720p
+    frames: 121
+    seconds_per_step: 1.5638
+    speedup: 1.28
+    baseline:
+      what: 同配置下的稠密注意力（FlashAttention-3）
+      seconds_per_step: 2.0084
+    visibility: public
+
 bottlenecks:
   - dimension: compute
     finding: >-
@@ -542,6 +580,7 @@ evidence:
   generation.constraints: derived
   generation.checkpoint_variants: derived
   precision: derived
+  performance: official
   bottlenecks: judgement
   infra_signals: judgement
   notes: derived
