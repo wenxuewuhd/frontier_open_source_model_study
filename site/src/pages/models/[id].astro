@@ -8,7 +8,7 @@ import Prose from '../../components/Prose.astro';
 import {
   allModels, modelById, url, fmtCount, fmtBytes, fmtInt, fmtSci, FAMILY_LABEL,
   reviewStatus, SEVERITY_LABEL, RESOLUTION_LABEL, HORIZON_LABEL, SUBSYSTEMS,
-  kvCachePrecision, KV_BASIS_LABEL,
+  kvCachePrecision, KV_BASIS_LABEL, evidenceFor,
 } from '../../lib/data';
 
 const SUBSYSTEM_LABEL: Record<string, string> = Object.fromEntries(
@@ -422,6 +422,29 @@ const rv = reviewStatus(m);
       ]}
     />
     {q.packing_note && <p class="small muted"><Prose text={q.packing_note} /><Evidence tag="derived" /></p>}
+    {/* 发布变体的口径。这个字段原先一处都不渲染 —— 而它存在的理由恰恰是让
+        「厂商发过但没进上面那张精度表」的档位在页面上可见：M3 主仓是 BF16，
+        精度表照实报 BF16，读者看着像这一代莫名退回不量化，而厂商同时发了 MXFP8。
+        不渲染就等于把这个字段当注释写，闸口也查不出来。 */}
+    {
+      Object.keys(m.precision?.weights_release_scope ?? {}).length > 0 && (
+        <div class="small muted" style="margin-top:10px">
+          <div>
+            <strong>发布变体的口径</strong>
+            <Evidence tag={evidenceFor('precision.weights_release_scope', ev)} />
+          </div>
+          {Object.entries(m.precision!.weights_release_scope!).map(([prec, sc]: [string, any]) => (
+            <p style="margin:4px 0 0">
+              <strong>{prec}</strong>
+              {sc?.repo ? ` · ${sc.repo}` : ''}
+              {sc?.container ? ` · 落盘容器 ${sc.container}` : ''}
+              {` · ${sc?.measured ? '已进上面的精度表' : '不在上面的精度表内'}`}
+              {sc?.note ? <> —— <Prose text={sc.note} /></> : null}
+            </p>
+          ))}
+        </div>
+      )
+    }
   </div>
 
   {
