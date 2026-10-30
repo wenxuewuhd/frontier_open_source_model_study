@@ -1,7 +1,7 @@
 {
  "id": "step-3.5-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T06:48:07+00:00",
+ "generated_at": "2026-10-30T07:06:49+00:00",
  "inputs": {
   "facts_dir": "facts/step-3.5-flash",
   "config_present": true,
@@ -74,53 +74,44 @@
   "layers": 45,
   "full_attention_layers": 12,
   "linear_attention_layers": 0,
-  "per_token_bytes": 49152.0,
-  "per_sequence_bytes": 69206016.0,
+  "per_token_bytes": 49152,
+  "per_sequence_bytes": 69206016,
   "per_token_elems": 24576,
   "per_token_elems_bound": "exact",
   "components": {
    "global_kv": {
-    "bytes_per_token": 49152.0,
+    "bytes_per_token": 49152,
     "elements_per_token": 24576,
-    "bytes_basis": "theoretical_floor",
+    "bytes_basis": "dtype_fallback",
     "terms": {
      "elements_per_token": 24576,
-     "bytes_per_element": 2.0,
-     "source": "完整权重清单实测",
-     "storage": {
-      "dtype": "BF16",
-      "note": "无 scale 张量"
-     }
+     "bytes_per_element": 2,
+     "source": "完整权重清单实测"
     }
    },
    "local_window": {
-    "bytes_per_sequence": 69206016.0,
+    "bytes_per_sequence": 69206016,
     "elements_per_sequence": 34603008,
-    "bytes_basis": "theoretical_floor",
+    "bytes_basis": "dtype_fallback",
     "terms": {
      "elements_per_sequence": 34603008,
-     "bytes_per_element": 2.0,
+     "bytes_per_element": 2,
      "source": "完整权重清单实测",
-     "storage": {
-      "dtype": "BF16",
-      "note": "无 scale 张量"
-     },
      "note": "滑窗局部 KV，每序列固定，不随上下文增长"
     }
    }
   },
   "notes": [
-   "逐因子：全局 K/V 每层 2（K 与 V）× 8 组 × 128 = 2048 元素 （k_proj / v_proj 输出维 1024，k_norm 逐头 [128] 不改宽度；48/48 层穷举一致）， × 12 个全局层 = 24,576； 滑窗 512 个位置 × 2048 元素 × 33 个主干滑窗层 = 34,603,008 元素/序列 （开草稿侧再加 3 × 1,048,576 = 3,145,728）。 **滑窗那一侧是结构下限，不是参考实现的行为**：滑窗靠掩码实现 （create_sliding_window_causal_mask，逐层 sliding_window=512）， 而参考实现的缓存是 transformers 的 DynamicCache —— 它不设上界， 滑窗层也会随上下文一直长。512 个位置是「正确解码所需」的量， 要靠引擎侧的有界滑窗缓存才拿得到（见 open_questions）",
-   "字节是理论下限：元素数 × 落盘精度（含 scale）的精确计数，不含分页、环页与对齐粒度。实际部署在它之上，不能直接当显存预算"
+   "逐因子：全局 K/V 每层 2（K 与 V）× 8 组 × 128 = 2048 元素 （k_proj / v_proj 输出维 1024，k_norm 逐头 [128] 不改宽度；48/48 层穷举一致）， × 12 个全局层 = 24,576； 滑窗 512 个位置 × 2048 元素 × 33 个主干滑窗层 = 34,603,008 元素/序列 （开草稿侧再加 3 × 1,048,576 = 3,145,728）。 **滑窗那一侧是结构下限，不是参考实现的行为**：滑窗靠掩码实现 （create_sliding_window_causal_mask，逐层 sliding_window=512）， 而参考实现的缓存是 transformers 的 DynamicCache —— 它不设上界， 滑窗层也会随上下文一直长。512 个位置是「正确解码所需」的量， 要靠引擎侧的有界滑窗缓存才拿得到（见 open_questions）。 **精度那一侧的出处**：Step3p5Attention 第 504 行把 k_norm 与 RoPE 之后的 key_states / value_states 交给 past_key_value.update()，缓存对象是 Step3p5Model.forward 第 705 行唯一的 DynamicCache()（无 dtype 形参）， 原样保留传入 dtype，而 q/k/v 投影权重全是 BF16、路径上没有量化或 cast。 这是追数据流追出来的**激活 dtype**，不是落盘格式 —— 本记录因此不填 precision.kv_cache_components，让 bytes_basis 老实落在 dtype_fallback"
   ],
-  "bytes_basis": "theoretical_floor"
+  "bytes_basis": "dtype_fallback"
  },
  "kv_capacity_bytes_at_context": {
-  "4096": 270532608.0,
-  "32768": 1679818752.0,
-  "262144": 12954107904.0
+  "4096": 270532608,
+  "32768": 1679818752,
+  "262144": 12954107904
  },
- "kv_capacity_basis": "theoretical_floor",
+ "kv_capacity_basis": "dtype_fallback",
  "active_params": {
   "status": "ok",
   "total": 11459365952.0,

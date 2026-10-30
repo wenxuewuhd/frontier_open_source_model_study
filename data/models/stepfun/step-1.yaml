@@ -1,8 +1,8 @@
 id: step-1
 family: stepfun
 kind: llm
-display_name: Step-1-130B
-aliases: [Step-Audio-Chat]
+display_name: Step-1
+aliases: [Step-Audio-Chat, Step-1-130B]
 released: '2025-02-13'
 license: apache-2.0
 visibility: public
@@ -63,9 +63,11 @@ arch:
   hidden: 12288
   vocab: 74752
   norm: >-
-    常规 RMSNorm：x × rsqrt(mean(x²) + eps) × w，权重落盘 BF16、以 1 为中心
-    （参考实现 StepRMSNorm，方差在 FP32 里算）。**不是**后两代的零中心写法
-    （Step-3.5 / Step-5 是 × (1 + w)），按零中心读会把每层激活乘以约 2
+    常规 RMSNorm：x × rsqrt(mean(x²) + eps) × w（参考实现 StepRMSNorm 第 50–56 行，
+    方差在 FP32 里算、乘权重在输入 dtype 里做），权重落盘 BF16。
+    **不是**后两代的零中心写法（Step-3.5 / Step-5 是 × (1 + w)）。
+    公式决定了训练出来的 w 以 1 为中心、按零中心读会把每层激活乘以约 2 ——
+    这一句**是从公式推的，没有读张量数值**（shapes.json 只有形状与 dtype）
   norm_eps: 1.0e-05
   activation: SwiGLU，无截断（参考实现 StepMLP：silu(gate) × up，无 clamp）
   position: >-
@@ -73,14 +75,18 @@ arch:
     Python 侧唯一的位置信号在 eager 回退路径：build_alibi_cache 造一个逐头斜率的加性偏置，
     斜率 2^(-8k/n)（n = 2^floor(log2(96)) = 64，96 > 64 所以另 32 头用 2^(-4/64) 的奇数次幂补齐），
     而衰减按距离的**平方根**：bias[q, k] = -m_h × √(q − k)，不是标准 ALiBi 的线性距离。
-    快路径 torch.ops.Optimus.fwd(q, k, v, None, dropout, scale, causal, …) 签名里没有 bias 形参，
-    偏置是否在算子内部加无法从可读源码判定（见 open_questions）
+    快路径（第 76–82 行）调随仓预编译的 torch.ops.Optimus.fwd，**调用处不传任何 bias /
+    slopes 张量** —— 11 个位置参数里第 4 与第 9 个都是 None。这是调用处的事实，
+    **不是算子签名**：算子本体在 .so 里，参数表读不到
+    （flash-attn 2 的 mha_fwd ABI 在 v 之后正好是 out_ 与 alibi_slopes_ 两个可选位，
+    那两个 None 落在哪无从确认）。偏置是否在算子内部加，可读源码判不出来（见 open_questions）
 
   attention:
     type: GQA
     num_heads: 96
     num_kv_heads: 8
     head_dim: 128
+    v_head_dim: 128
     head_dim_note: >-
       head_dim **不在 config 里**，参考实现按 hidden_size // num_heads = 12288 / 96 = 128 算；
       权重穷举一致：q_proj / o_proj 全 88 层都是 [12288, 12288]（96 × 128），
@@ -92,12 +98,16 @@ arch:
     kv_sharing:
       layer_coverage: >-
         88 层**全部**产出随上下文线性增长的全量 K/V，没有每序列固定的分量。
-        这是这一族唯一一份不需要分两个分量记账的记录
+        这一族**前两代**（本代与 Step-3）都只有一个分量；滑窗是 Step-3.5-Flash 起才有的，
+        从那一代开始必须分两个分量记账
 
   ffn:
     type: dense
     intermediate: 31232
-    layer_pattern: 88 层全部稠密 SwiGLU（mlp.gate_proj / up_proj [31232, 12288]、down_proj [12288, 31232]），无 MoE、无共享专家
+    layer_pattern: >-
+      88 层全部稠密 SwiGLU（mlp.gate_proj / up_proj [31232, 12288]、down_proj [12288, 31232]，
+      88 层一个签名、0 例外），无 MoE、无共享专家。
+      作用域：本代 —— 下一代 Step-3 起就是 MoE 与稠密混排
 
   decoding:
     mtp_layers: 0
@@ -111,11 +121,22 @@ precision:
   kv_cache_components:
     global_kv:
       dtype: BF16
-      note: 无 scale 张量
+      note: >-
+        无 scale 张量。**这个键在本代指的是全部 88 层**，而在 Step-3.5-Flash / Step-5-Preview
+        里同一个键只指那 12 / 23 个全局层 —— 跨代读这个键名要先看层集合。
+        另：本记录没有 kv_sharing.measured_per_token，derive.py 走的是公式路，
+        **根本不读这个块**（_component_bpe 只在实测分支里被调用），
+        derived JSON 里的分量键是 `full_attention` 而不是 global_kv
     source: >-
-      读参考实现（二手于部署 kernel）：StepAttention 直接把 k_proj / v_proj 的输出交给
-      past_key_value.update()，用的是 transformers 的 DynamicCache —— 它原样保留传入 dtype，
-      而 q/k/v 投影权重全是 BF16、路径上没有任何量化或 cast。参考实现里缓存精度不可配置
+      读参考实现（二手于部署 kernel）：StepAttention 第 97 行直接把 k_proj / v_proj 的输出
+      交给 past_key_value.update()，缓存对象是 transformers 的 DynamicCache
+      （Step1Model.forward 第 280 行唯一的构造点，无 dtype 形参）—— 它原样保留传入 dtype，
+      而 q/k/v 投影权重全是 BF16、路径上没有任何量化或 cast。
+      **性质要说清**：这是追数据流追出来的激活 dtype，**不是一个带声明格式的缓存分配**
+      （DynamicCache 没有「落盘格式」这回事）。数值上它与「按权重 dtype 兜底」相同，
+      区别只在出处：这里排除了「路径上有 cast」这一种可能。
+      所以 derive.py 把本记录的 bytes_basis 记成 `declared_dtype`（声明精度），
+      不是 `theoretical_floor` —— 后者要求一个真实的落盘格式
   quantization:
     per_subsystem:
       attention: BF16
@@ -136,7 +157,11 @@ platforms:
     caveat: >-
       注意力快路径是随仓发布的预编译 torch.ops.Optimus.fwd，只有
       torch 2.2/2.3/2.5 × cu121/cu124 × cpython-310 × x86_64-linux 这几个组合的 .so；
-      其余环境落到 eager 的 SDPA + ALiBi 回退路径。两条路径的位置偏置是否一致未验（见 open_questions）
+      其余环境落到 eager 的 SDPA + ALiBi 回退路径。两条路径的位置偏置是否一致未验（见 open_questions）。
+      **这一条的依据是仓里的东西，不是模型卡**：卡里没有部署一节、没有点名任何引擎、
+      没有版本配方、没有用法片段，只有简介、三张评测表和一个 GitHub 指针。
+      status 记 supported 的依据是仓里有 auto_map + 可用的 modeling_step1.py，
+      precision 与 .so 组合取自文件清单 —— 所以 evidence 记 derived 而不是 official
     ref:
       kind: repo
       url: https://huggingface.co/stepfun-ai/Step-Audio-Chat/tree/e0335e2510b20d8b10e0ac1e07b159ef86681f14
@@ -150,9 +175,14 @@ bottlenecks:
     quantified: >-
       元素口径：每层 2 × 8 组 × 128 = 2048 元素（k_proj / v_proj 输出维，逐层穷举一致），
       × 88 层 = **180,224 元素/token**，无每序列固定分量。
-      按参考实现的 BF16 折算 360,448 B/token，32K 上下文满长度 11.00 GiB/序列（单份逻辑 KV 的下限，
-      不含分页与对齐粒度）。对照同口径的后代：Step-3 31,232、Step-3.5-Flash 24,576、
-      Step-5-Preview 36,064 元素/token —— 元素口径跨代可比，与各代缓存精度无关
+      按参考实现的 BF16 折算 360,448 B/token，32K 上下文满长度 11.00 GiB/序列。
+      **字节那一列的口径是 `declared_dtype`（声明精度），不是 `theoretical_floor`** ——
+      本代没有带格式的缓存分配，dtype 是追数据流得来的（见 precision.kv_cache_components.source），
+      所以这一列不要和 Step-3.5-Flash / Step-5-Preview 的字节比。
+      跨代比**只用元素那一列**：Step-3 31,232、Step-3.5-Flash 24,576、Step-5-Preview 36,064 元素/token。
+      比之前先对齐账的形状：本代与 Step-3 只有一个分量，而后两代是混合结构，
+      上面那两个数**只是它们随上下文增长的那一个分量**，各自另有每序列固定的
+      34,603,008 与 54,263,808 元素（Step-5 的 36,064 里还含 736 个按 1/8 摊的 FP8 区域摘要）
     visibility: public
   - dimension: weight-bandwidth
     finding: >-
@@ -166,7 +196,8 @@ bottlenecks:
     finding: >-
       位置编码既不是 RoPE 也不是标准 ALiBi：可读的回退路径按 **-m_h × √(距离)** 加偏置。
       按标准 ALiBi（线性距离）实现的 kernel 在这里分布会错，而且错得不报错。
-      另一侧是快路径的预编译算子签名里根本没有 bias 形参，两条路径对不对得上无法从源码判定
+      另一侧是快路径的**调用处一个 bias / slopes 张量都不传**（两个位置参数是 None），
+      而算子本体在预编译 .so 里 —— 两条路径对不对得上无法从可读源码判定
     visibility: public
 
 infra_signals:
@@ -178,19 +209,20 @@ infra_signals:
     horizon: settled
     axis: attention
   - text: >-
-      快路径依赖随仓发布的预编译 .so（torch 版本 × CUDA 版本 × cp310 × x86_64 四重绑定），
-      换硬件或换框架版本就只剩 eager 回退。这类「算子随模型发布」的做法在
-      昇腾一侧没有对应物，适配时等于要从 Python 回退路径的语义重新实现一遍
+      快路径依赖随仓发布的预编译 .so，绑死 torch 版本 × CUDA 版本 × cp310 × x86_64 四重组合，
+      换一档就只剩 eager 回退。这类「算子随模型发布」的做法把算子语义藏进二进制：
+      任何其它推理栈要对上它，只能从 Python 回退路径的语义重新实现一遍，
+      而那条回退路径本身与快路径对不对得上还判不出来（见 R4）
     evidence: judgement
     horizon: settled
-    axis: precision
+    axis: operator
 
 evidence:
   id: official
   family: official
   kind: judgement
   display_name: official
-  aliases: official
+  aliases: judgement
   released: official
   license: official
   hf: official
@@ -217,7 +249,7 @@ evidence:
   precision.kv_cache_components: judgement
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived
-  platforms: official
+  platforms: derived
   bottlenecks: judgement
   infra_signals: judgement
   notes: judgement
@@ -226,7 +258,7 @@ evidence:
 reviewed:
   date: '2026-10-30'
   scope: [official, derived, judgement]
-  reviewer: 本会话复算（逐条读厂商实现源码 + 穷举全量权重清单）
+  reviewer: 本会话复算（逐条读厂商实现源码 + 穷举全量权重清单），再加两个独立代理分片对抗式复核
   method: >-
     按 .claude/skills/model-audit 的取数与提问顺序过一遍。元素数一律**穷举全量清单**
     （facts/step-1/shapes.json，27 个分片逐分片读头、795 个张量），不用抽样产物。
@@ -239,6 +271,11 @@ reviewed:
     （modeling_step1.py / configuration_step1.py，只读未执行），行号记在各条 finding 里。
     预编译的 lib/liboptimus_ths-*.so 未执行、未反编译 —— 相关结论只到「可读源码判不出来」为止。
     Gate B：derive.py --model 0 处不一致（层数、参数总量、外部 tally 三项全 ok）
+    **第二轮**：两个独立代理分片对抗式复核（一个只看注意力与缓存账、一个只看参数量 /
+    MoE / 精度 / 平台 / 排除依据），各自从权重清单与厂商源码重新验、不看本会话的结论。
+    它们的发现由本会话逐条复核后采纳，本记录因此新增 R8–R14 七条。
+    代理报的有一条没采纳（关于 step-5-preview 的参数量差额），复算后是代理错了，
+    理由记在交接笔记里。
 
 review:
   - id: R1
@@ -334,6 +371,114 @@ review:
       这一条是**特意反向验的**，不是从「条目数相等」推的
     resolution: confirmed
     changed_to: 原值成立，不改；counting_note 里写明三者逐位相同
+  - id: R8
+    field: arch.attention.kv_sharing.layer_coverage
+    severity: wrong
+    claim: 「这是这一族唯一一份不需要分两个分量记账的记录」
+    finding: >-
+      与同一批录的 step-3 直接矛盾：那一份的 layer_coverage 用几乎相同的话说
+      「61 层全部产出随上下文线性增长的全量 K/V，没有每序列固定的分量」，
+      data/derived/step-3.json 的 per_sequence_bytes 也是 0。
+      单分量的是**前两代**，滑窗是 Step-3.5-Flash 起才有的
+    resolution: corrected
+    changed_to: 改成「这一族前两代（本代与 Step-3）都只有一个分量；滑窗是 Step-3.5-Flash 起才有的」
+  - id: R9
+    field: arch.position
+    severity: overreach
+    claim: 「快路径 torch.ops.Optimus.fwd(…) **签名**里没有 bias 形参」
+    finding: >-
+      把调用处当成了签名。第 82 行是一个**调用**，11 个位置参数里第 4 与第 9 个是 None；
+      算子本体在预编译 .so 里，参数表读不到。而且 flash-attn 2 的 mha_fwd ABI 在 v 之后
+      正好是 out_ 与 alibi_slopes_ 两个可选位 —— 那两个 None 落在哪无从确认，
+      所以「没有 bias 形参」这句话本身就不成立。
+      可读源码支持的只有「调用处不传任何 bias / slopes 张量」。
+      记录下一句（「偏置是否在算子内部加无法从可读源码判定」）本来就是对的，
+      前一句既多余又自相矛盾 —— skill 规则 6 与 9 的交叉地带
+    resolution: corrected
+    changed_to: >-
+      arch.position 与 bottlenecks[2] 都改成「调用处不传任何 bias / slopes 张量
+      （两个位置参数是 None），这是调用处的事实、不是算子签名」
+  - id: R10
+    field: bottlenecks[0].quantified
+    severity: miscategorized
+    claim: >-
+      「360,448 B/token，32K 满长度 11.00 GiB/序列（单份逻辑 KV 的下限，不含分页与对齐粒度）」，
+      并把四代的元素数并列为「同口径可比」
+    finding: >-
+      两处口径问题。(a)「下限、不含分页与对齐粒度」是
+      docs/kv-cache-accounting.md 给 `theoretical_floor` 的定义原话，
+      而 derive.py 给本记录的 bytes_basis 是 **`declared_dtype`**
+      （data/derived/step-1.json 里可查；derive 的摘要行也只对 step-3.5-flash 打「[理论下限]」，
+      不对本记录打）。本代没有带格式的缓存分配，floor 的措辞claim 了一个不存在的落盘格式。
+      (b) 四代的元素数轴是同一根（元素），但**账的形状不同**：后两代是混合结构，
+      引用的 24,576 / 36,064 只是它们随上下文增长的那**一个**分量，
+      各自另有 34,603,008 / 54,263,808 元素/序列，而 36,064 里还含 736 个按 1/8 摊的区域摘要。
+      docs 第 82 行：「比数字之前先比账的形状。形状不同，per_token 这一个数就不可比」
+    resolution: corrected
+    changed_to: >-
+      quantified 改成点名 `declared_dtype` 并写明字节列不可跨代比；
+      元素对照补上后两代的每序列固定分量与「先对齐账的形状」
+  - id: R11
+    field: precision.kv_cache_components
+    severity: miscategorized
+    claim: 分量键用 global_kv
+    finding: >-
+      两件事。(a) 同一个键在这一族里指**不同的层集合**：本代与 step-3 的 global_kv
+      是全部 88 / 61 层，而 step-3.5-flash 与 step-5-preview 的 global_kv 只指
+      那 12 / 23 个全局层 —— 正是跨代最容易出的那类同名异义。
+      (b) 本记录没有 kv_sharing.measured_per_token，所以 derive.py 走公式路，
+      `_component_bpe` 只在实测分支里被调用，**这个块根本没被读**；
+      derived JSON 里的分量键是 `full_attention`，与记录声明的 global_kv 对不上。
+      此外 kv_table.py 的 COMPONENT_LABEL 把 global_kv 渲染成「全局压缩 KV」，
+      对一个未压缩的 GQA 缓存同样不成立（step-3.5-flash 的 R12 记的是同一处仓库级缺陷）
+    resolution: corrected
+    changed_to: >-
+      global_kv.note 写明本代指全部 88 层、与后两代同名异义，
+      以及 derive 走公式路不读这个块、derived 里的键是 full_attention
+  - id: R12
+    field: arch.norm
+    severity: unsupported
+    claim: 「权重落盘 BF16、**以 1 为中心**」，以及「按零中心读会把每层激活乘以约 2」
+    finding: >-
+      这两句是关于发布权重里**数值**的断言，而本轮的证据集里没有读过任何张量数值 ——
+      shapes.json 只有形状与 dtype，而两份参考实现都用 `nn.Parameter(torch.ones(...))`
+      初始化，与中心化方式无关。从公式推出来是合理的（常规 RMSNorm 的 w 自然以 1 为中心），
+      但原话把它写成了落盘事实，而「×2」是一个未实测前提的量化结论
+    resolution: corrected
+    changed_to: arch.norm 改成「公式决定了……—— 这一句是从公式推的，没有读张量数值」
+  - id: R13
+    field: display_name
+    severity: unsupported
+    claim: display_name「Step-1-130B」，evidence 标 official
+    finding: >-
+      模型卡里「Step-1-130B」0 次出现，卡上只有「a 130 billion parameter multimodal LLM」
+      一句散文，而实测是 131.95B（记录自己在 open_questions 里标了差 1.5%）。
+      把厂商取整后的数字焊进模型名，再标成 official，等于给一个本仓造的标签盖官方章。
+      官方有依据的名字是 `model_type: step1` / `architectures: ["Step1ForCausalLM"]` 给的 Step-1。
+      顺带：platforms 也标着 official，而模型卡**没有部署一节**、没点名任何引擎 ——
+      那一块的依据全在仓里的文件清单
+    resolution: corrected
+    changed_to: >-
+      display_name 改成 Step-1（official 有据），Step-1-130B 移进 aliases（标 judgement）；
+      evidence 的 platforms 从 official 改成 derived，并在 caveat 里写明依据是仓里的东西不是卡
+  - id: R14
+    field: arch.attention.v_head_dim
+    severity: missing
+    claim: 只有 head_dim 128，没有 v_head_dim
+    finding: >-
+      另三份阶跃记录都声明了 v_head_dim，而 CLAUDE.md 规则 2 正好点名这个坑
+      （「head_dim 只管 QK 而 v_head_dim 另有其值，按前者推 o_proj 高 50%」）。
+      本代两者确实相同：v_proj 在 88/88 层都是 [1024, 12288]，即 8 × 128。
+      head_dim_note 的散文里覆盖了，但不是一个下游能读的字段。
+      同批补的还有两处作用域：arch.ffn.layer_pattern 原本没写代际
+      （兄弟字段 arch.attention.layer_pattern 写了「作用域：本代」），
+      以及 infra_signals[1] 原本带一句硬件侧的适配判断 ——
+      CLAUDE.md 规定硬件相关分析只进 data-private，而本仓 18 份公开记录里只有这一份出现过，
+      validate.py 的防泄漏检查又只拦 visibility/source.type/basis 三项，拦不住它
+    resolution: corrected
+    changed_to: >-
+      补 v_head_dim: 128；arch.ffn.layer_pattern 补「作用域：本代」与穷举表述；
+      infra_signals[1] 去掉硬件侧那一句，改写成与栈无关的「算子语义藏进二进制」，axis 改 operator
 
 notes: >-
   阶跃星辰家族的公开起点，也是这一族唯一的稠密代。model_type step1、

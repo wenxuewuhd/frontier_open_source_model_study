@@ -34,7 +34,7 @@ lineage:
   changed_from_predecessor:
     - axis: attention
       text: >-
-        滑窗与全局 1:3、窗口 512 两件照搬前代，但三个尺寸都变了：主干 45 → 92 层、
+        滑窗与全局 3:1、窗口 512 两件照搬前代，但三个尺寸都变了：主干 45 → 92 层、
         head_dim 128 → 192、KV 组 8 → 4，于是全局层每层每 token 的 KV 元素 2048 → 1536。
         全局层下标也从 ≡0 (mod 4)（前代 [0, 4, …, 44]）移到 ≡3 (mod 4)（本代 [3, 7, …, 91]）
       benefit: >-
@@ -572,12 +572,17 @@ review:
     finding: >-
       Gate C 那一轮本记录是这一族唯一的记录，没有前代可接。本轮补录了
       step-1 / step-3 / step-3.5-flash 三代之后，前代是 step-3.5-flash
-      （model_type step3p5 → step5，滑窗 1:3 与窗口 512、逐头门、q/k norm、
+      （model_type step3p5 → step5，滑窗与全局 3:1 与窗口 512、逐头门、q/k norm、
       零中心 RMSNorm、sigmoid + router_bias 路由、MTP 3 层六件直接沿用）。
       补进去的 changed_from_predecessor 每一条都对照两份的 config 与权重清单核过：
       头数两型合一有 95/95 层的 q_proj / g_proj 同形为证，
       旋转维数两代同为 64 由 0.5 × 128 与 1/3 × 192 两边算出，
-      norm 落盘精度 BF16 → FP32 由两份清单的 dtype 分布给出（本代 459 个 norm 张量全 F32）
+      norm 落盘精度 BF16 → FP32 由两份清单的 dtype 分布给出（**文本侧**口径：
+      本代 459 个 norm 张量全 F32，逐类穷举为 input/post_attention_layernorm 各 95、
+      q_norm/k_norm 各 95、enorm/hnorm/shared_head.norm 各 3、
+      sparse_indexer_k_norm 的 weight 与 bias 各 23、sparse_indexer_q_norm 23、model.norm 1）。
+      **视觉塔另有 190 个 ln_* 张量，全是 BF16** —— 「norm 全 F32」这句话不覆盖塔，
+      作用域要写明（skill 规则 4 与 5）
     resolution: corrected
     changed_to: >-
       lineage 补 predecessor: step-3.5-flash 与 8 条 changed_from_predecessor
