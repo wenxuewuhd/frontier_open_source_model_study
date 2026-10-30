@@ -520,6 +520,11 @@ const rv = reviewStatus(m);
                   {gw.flops_per_step.linear_terms.factors.per_text_token
                     ? ` · 仅文本 ${fmtCount(gw.flops_per_step.linear_terms.factors.per_text_token)}`
                     : ''}
+                  {/* 文本 token 数是线性项的一个因子 —— 不显示就没法逐因子验。
+                      没填时 derive 会把线性项标成下界，那条在 notes 里 */}
+                  {gw.flops_per_step.linear_terms.factors.text_tokens
+                    ? ` × ${gw.flops_per_step.linear_terms.factors.text_tokens} 个文本 token`
+                    : ''}
                 </div>
               </>
             ) : (
@@ -757,6 +762,61 @@ const rv = reviewStatus(m);
 
   {act?.note && <p class="small muted" style="margin-top:10px"><Prose text={act.note} /></p>}
   {act?.semantics && <p class="small muted">{act.semantics}</p>}
+
+  {/* 厂商公布的实测性能。**此前整块没有渲染** —— 公开仓里一直没有合格的数据
+      （自测性能按 CLAUDE.md 只进 data-private/），直到视频线的两份厂商材料进来。
+      倍数那一列只在有基线时才显示：没有基准的倍数不能用，而 validate 已经把
+      「报了 speedup 必须有 baseline.what」做成闸口，这里只负责把基线摆在倍数旁边。 */}
+  {
+    Array.isArray(m.performance) && m.performance.length > 0 && (
+      <>
+        <h2>厂商公布的实测性能</h2>
+        <p class="small muted">
+          本仓不自测。这里只收厂商材料里<strong>说清了配置</strong>的那些 ——
+          硬件、分辨率、帧数、步数、开没开工程加速。
+        </p>
+        <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th>配置</th><th>硬件</th><th class="num">每步</th><th class="num">端到端</th>
+            <th class="num">显存峰值</th><th>对照</th><th>出处</th>
+          </tr></thead>
+          <tbody>
+            {m.performance.map((pf: any) => (
+              <tr>
+                <td>
+                  {[pf.resolution, pf.frames && `${pf.frames} 帧`, pf.steps && `${pf.steps} 步`]
+                    .filter(Boolean).join(' · ')}
+                  {pf.engine && <div class="small muted">{pf.engine}</div>}
+                </td>
+                <td>{pf.hardware}{pf.device_count ? ` ×${pf.device_count}` : ''}</td>
+                <td class="num">{pf.seconds_per_step ? `${pf.seconds_per_step} s` : '—'}</td>
+                <td class="num">{pf.seconds_end_to_end ? `${pf.seconds_end_to_end} s` : '—'}</td>
+                <td class="num">{pf.peak_memory_bytes ? fmtBytes(pf.peak_memory_bytes) : '—'}</td>
+                <td>
+                  {pf.baseline?.what
+                    ? <>
+                        {pf.baseline.what}
+                        <div class="small muted">
+                          {pf.baseline.seconds_per_step ? `${pf.baseline.seconds_per_step} s/步` : ''}
+                          {pf.baseline.seconds_end_to_end ? `${pf.baseline.seconds_end_to_end} s` : ''}
+                          {pf.speedup ? ` → ${pf.speedup}×` : ''}
+                        </div>
+                      </>
+                    : <span class="muted">无</span>}
+                </td>
+                <td class="small">
+                  {pf.source?.ref?.locator ?? pf.source?.type}
+                  <Evidence tag={pf.source?.type === 'official' ? 'official' : 'judgement'} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        </div>
+      </>
+    )
+  }
 
   <h2>交叉核对</h2>
   <p class="small muted">

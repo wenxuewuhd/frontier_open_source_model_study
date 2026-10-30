@@ -776,16 +776,18 @@ def gen_workload(gen: dict, kind: str, dit_params: float, dit_params_src: str,
         p_smp = psc.get("per_sample") or 0
         # 文本 token 数本仓目前没有字段装；有 per_text_token 却没有 token 数时，
         # 那一项只能漏掉并标明是下界 —— 不替它猜一个长度
-        flops["linear"] = 2 * (p_vid * seq + p_smp)
+        n_txt = bucket.get("text_tokens") or 0
+        flops["linear"] = 2 * (p_vid * seq + p_txt * n_txt + p_smp)
         flops["linear_terms"] = {
-            "formula": "2 × (每视频 token 参数 × token 数 + 每样本参数 × 1)",
+            "formula": "2 × (每视频 token 参数 × token 数 + 每文本 token 参数 × 文本 token 数"
+                       " + 每样本参数 × 1)",
             "factors": {"per_video_token": p_vid, "per_sample": p_smp,
-                        "per_text_token": p_txt, "tokens": seq},
+                        "per_text_token": p_txt, "tokens": seq, "text_tokens": n_txt},
             "note": "AdaLN 这类吃条件向量的参数每次前向只过一遍，不随 token 数增长",
         }
-        if p_txt:
-            notes.append(f"per_text_token 声明了 {p_txt:,.0f} 但记录没给文本 token 数，"
-                         "线性项漏掉了这一项 —— 是下界")
+        if p_txt and not n_txt:
+            notes.append(f"per_text_token 声明了 {p_txt:,.0f} 但档位没给 text_tokens，"
+                         "线性项漏掉了这一项 —— 是下界。填 buckets[].text_tokens 可以补上")
     elif dit_params:
         flops["linear"] = 2 * dit_params * seq
         flops["linear_terms"] = {
