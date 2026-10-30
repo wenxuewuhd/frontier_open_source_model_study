@@ -7,10 +7,10 @@
 
 ```
 main            babf717   未推 21
-记录            48 份     六个语言模型家族 + MiniMax-M3.1-Flash 支线
+记录            49 份     六个语言模型家族 + M3.1-Flash 支线 + **第一份视频生成记录**
 逐层产物        6 份      六个旗舰全有（原先只有 deepseek）
 注意力架构图    5 张      差 minimax-m3 一张
-闸口            五道      全绿（validate 0 错 0 警 / 回归 27 / kv_table / 站点 60 页 / check_rendered）
+闸口            五道      全绿（validate 0 错 0 警 / 回归 32 / kv_table / 站点 63 页 / check_rendered）
 ```
 
 **告警归零了**（原先那 2 条 basis 标签表的告警见下面「做完了的」最后一行）。
@@ -32,6 +32,9 @@ main            babf717   未推 21
 | **E2 脚手架** | `styles/attn-figure.css` + `AttentionFigure.astro` 分发器 + DeepSeek 参照图两张。**加一张图只要新建 `attention/<id>.astro`**，不改分发器也不改 `[id].astro` |
 | **E1 逐层产物** | `extract_layers.py` 推广到六族，五个旗舰补齐 `.layers.json`，deepseek 那份重跑逐字节相同 |
 | **E2 四张图** | glm-5.3 / kimi-k3 / qwen3.8-2.4t-a95b / step-5-preview，四个家族会话各画各的，**没有一张套模板** |
+| **视频线 C1 / C2** | 取数认四种布局；**拒绝把几个模型合并成一个**（LTX-2 实测 7,132 个同名张量跨文件 dtype 不同，旧代码按线程完成顺序静默覆盖） |
+| **视频线 policy 与名册** | 8 个 family / 12 份进 `tracking.yaml`，与语言模型那条并列 |
+| **首录 wan2.2-ti2v-5b** | 本仓第一份 `kind: video-gen`，Gate B 两路 0 处不一致。三条口径判断定在这份记录的头注释里 |
 | **M3.1-Flash（原 B1）** | 录为支线。顺带修掉三个页面早就印着的字面量 `undefined`（五道闸当时全绿） |
 | **LayerMap 三修** | 零 MTP 块的轨道错位（`repeat(0,…)` 被钳成 1）、`DT` 补 `MXFP4`、**`recurrent_state` 进表**。第三条原被当成「图的口径限制」，实际是 kimi 93 层里 69 层的缓存去向在表上不存在、而每 token 合计看着像覆盖全部层 |
 
@@ -80,7 +83,18 @@ main            babf717   未推 21
 
 ### C. 视频生成线（Gate A 已完，step 1 做了一半）
 
-- **C1 `fetch_hf.py` 对生成类仓取不到 config** —— Diffusers 布局没有顶层 `config.json`，
+- ~~C1 取不到 config~~ / ~~C2 多 index 仓的分桶与静默覆盖~~ —— **都已修**，见上面「做完了的」。
+  原文里「Diffusers 布局没有顶层 config.json」这个前提**不普遍成立**：实扫 12 个仓是四种布局。
+- **C5 两份仓里没有 safetensors** —— `tencent/HunyuanVideo` 是 4 个 `.pt`、
+  `SANA-Video_2.0_5B_720p` 是单个 `.pth`，读头拿清单这条路不成立。
+  已在 tracking.yaml 标 `blocked-no-safetensors`。
+  **录它们之前要先定「没有清单的记录怎么过 Gate B」**。
+  而且这不是边缘情况：首录 wan2.2-ti2v-5b 的 VAE 与文本编码器也都是 `.pth`，
+  **DiT 在 safetensors、VAE 与文本编码器是 pickle，是这条线的通例**。
+- **C6 usedStorage 在这条线上不能直接当权重总字节** —— wan2.2-ti2v-5b 实测差
+  19,999,532,688 B，约等于多算了一份 DiT（仓有两次 `Upload folder`，
+  旧修订版的 LFS 对象仍计入）。要逐文件取 HTTP 大小。
+- ~~C1 原文~~ `fetch_hf.py` 对生成类仓取不到 config —— Diffusers 布局没有顶层 `config.json`，
   配置散在 `transformer/` `vae/` `audio_vae/` 等各组件目录里。不加按组件取 config 的模式，
   **12 份视频记录全部没有 config 侧，Gate B 的双路对账只剩一路**。
 - **C2 `component()` 按顶层前缀分桶在多 index 仓上不成立** —— LTX-2.5 有 7 个独立 index，
@@ -147,6 +161,12 @@ main            babf717   未推 21
 
 - **D1 `derive.py` 的算术强度按参数量比例折算 decode 权重字节** —— 对混合精度模型不成立
   （kimi-k3 偏 2.34×）。
+- **D5 `kv_dtype` 那一格不走 Cell** —— 它的取值器 `kvCachePrecision()` 把**缺值标签当成值**
+  返回，于是 `cell()` 看到非空字符串直接当文本渲染，那一格丢掉 `absent` 类与解释用的
+  `title`。**三态契约的招牌字段反而不按契约渲染**，49 份全部如此。既有缺陷，不是视频线引入的。
+- **D6 `[family].astro` 的 `norm_eps` 是手写行** —— 绕过 Cell，硬编码
+  `<span class="dash">—</span>`。它不是 TRACKED_FIELD、也不在 columns.json，
+  所以「key 必须一一对应」那道闸查不到它。家族页上唯一一个裸 `—` 就是它。
 - **D3 `derive.py` 没法把「已查清的口径差」标成良性** —— step-5-preview 的外部参数量对账
   永远报 MISMATCH，而记录第 106–114 行早已查清：HF 的 tally 含两份 index 外的同名副本
   （`vit.safetensors`、`model-mtp3-00001`），是口径差不是算错。
