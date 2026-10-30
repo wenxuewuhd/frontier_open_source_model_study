@@ -37,7 +37,10 @@ lineage:
     text: 首次以 FP8 块量化发布，块 [128,128]，每个量化张量配一个 weight_scale_inv
     benefit: 权重带宽与显存对半砍（BF16→FP8），块量化把 scale 粒度限制在 128×128，比逐张量更抗离群值。代价是每个 GEMM 都要带 scale，反量化进了内循环
   - axis: decoding
-    text: 首次带 MTP 模块（1 层）。权重借用层索引 61：eh_proj / enorm / hnorm / shared_head，没有独立命名空间 —— V4 才改掉
+    text: >-
+      首次带 MTP 模块（1 块）。权重借用层索引 61，没有独立命名空间（V4 才改用 mtp.N.*）。layers.61.* 共 1564 个条目，
+      是一个完整的 transformer 块（MLA 投影 + 256 专家 MoE + 共享专家），另带拼接胶水 eh_proj / enorm / hnorm，
+      以及自己的一份 embed_tokens [129280, 7168] 与 shared_head.head [129280, 7168]。只看胶水会把草稿侧低估成几个小张量
     benefit: 训练时多预测一个 token 提升主干质量，推理时这一层可以直接当草稿头做投机解码。但权重借用层索引 61，加载时容易被当成第 62 层误载
 params:
   total: 671026000000.0
@@ -53,8 +56,13 @@ params:
     lm_head: 926679000.0
     router: 106445000.0
     norm: 1006590.0
-  counting_note: 按完整权重清单（91991 条目）逐项统计，其中 45808 条是 weight_scale_inv（FP8 的 per-block scale 容器）—— 不计入参数，只计入权重存储。total
-    不含草稿侧 13.5B；含在内的实测总量为 684.5B，权重存储 641.3 GiB。
+  counting_note: >-
+    total 与 breakdown 都是本仓按完整权重清单逐项求和的实测值（取 6 位有效数字），不是厂商声明值。
+    清单 91991 个条目，其中 45808 条是 weight_scale_inv（FP8 的 per-block scale 容器）—— 不计入参数、只计入权重存储；
+    真权重张量 46183 条（FP8_E4M3 45808、BF16 316、F32 的 e_score_correction_bias 59）。
+    total 扣掉草稿侧 13.46B（layers.61.* 整块，含它自己的 embed_tokens 与 shared_head.head），含在内的实测总量
+    684,489,845,504，与 HF 的 safetensors tally 逐位相同。因为 total 本身是实测值，Gate B 的参数总量一项（delta 0.0）
+    是实测比实测，不构成核对。权重存储 641.3 GiB。激活参数两个口径见 data/derived/：带宽口径 36.63B、含输入词表 37.55B
 context:
   max: 163840
   train_native: 4096
@@ -76,12 +84,14 @@ arch:
     q_lora_rank: 1536
     head_dim: 192
     v_head_dim: 128
-    head_dim_note: head_dim 192 = qk_nope 128 + qk_rope 64，只适用于 QK 路径。V 的每头维度是 v_head_dim 128，所以 o_proj
+    head_dim_note: num_kv_heads 128 是 query 侧可见的 KV 头数，不是缓存宽度：落盘缓存是 kv_a_proj_with_mqa 的 576 维
+      （latent 512 + rope 64），按 2 × 128 × 192 折算会高估 42.7 倍。head_dim 192 不是 config 字段，
+      是 qk_nope 128 + qk_rope 64，只适用于 QK 路径。V 的每头维度是 v_head_dim 128，所以 o_proj
       入口宽度是 128 头 × 128 = 16384（权重实测 [hidden, 16384]），不是 128 × 192 = 24576。按单一 head_dim 推 o_proj 会高
       50%
   ffn:
     type: moe
-    layer_pattern: 第 0–2 层稠密（intermediate 18432），其余为 MoE。稠密层的 FFN 比单个专家宽 9 倍，是全模型最宽的单个 GEMM
+    layer_pattern: 第 0–2 层稠密（intermediate 18432），第 3–60 层为 MoE（58 层）。稠密层的 FFN 中间维是单个专家（2048）的 9 倍
   moe:
     routed_experts: 256
     top_k: 8
@@ -91,10 +101,14 @@ arch:
     expert_groups: 8
     routing: sigmoid 打分 / noaux_tc 选路
     storage_note: 逐专家独立张量，不是堆叠。grouped GEMM 因此吃 2 维权重列表而非 3 维张量，EP 切分是切张量列表
-    balance: 无辅助损失，靠逐专家偏置 mlp.gate.e_score_correction_bias 调节（第 3 层起，59 个）
+    balance: 无辅助损失，靠逐专家偏置 mlp.gate.e_score_correction_bias 调节。清单里 59 个 = 主干 MoE 层 3–60 的 58 个 + MTP 块（layers.61）1 个
     dense_intermediate: 18432
   decoding:
     mtp_layers: 1
+    mtp_layers_note: >-
+      config 的 num_nextn_predict_layers 1 与清单一致（只有 layers.61 一块）。KV 层覆盖按主干口径记：data/derived/ 的 KV
+      是 61 层、70272 B/token（BF16 兜底）。MTP 块带着与主干同名的整套 MLA 投影，开草稿侧时它也产出 KV，
+      按 62 层算（61 主干 + 1 草稿块），+1152 B/token
 precision:
   quantization:
     method: fp8
@@ -119,7 +133,10 @@ precision:
       attention: FP32
       dense_ffn: FP32
       draft: FP32
-    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 10 个分片头
+    subsystem_method: >-
+      早先按抽样填（每个子系统 6 个代表张量，读 10 个分片头）。已用完整清单按 lib/subsystems.py 归类（mtp_from=61）
+      按元素数复核：expert / shared_expert / attention / dense_ffn 100% F8_E4M3，embed / lm_head / norm 100% BF16，
+      router 99.99% BF16（余下是 F32 偏置），draft 85.5% F8_E4M3 / 14.5% BF16（它自带的 embed 与 head），代表值都不变
     per_subsystem_block:
       expert: '[128,128]'
       shared_expert: '[128,128]'
@@ -127,7 +144,10 @@ precision:
       dense_ffn: '[128,128]'
       draft: '[128,128]+[128ceil,128]'
 infra_signals:
-- text: FP8 块量化 [128,128] + 逐张量 weight_scale_inv 成为之后所有代的底座，块大小与 scale 格式在 V3.1 和 V4.1 两次收紧
+- text: >-
+    FP8 块量化 [128,128] + 逐张量 FP32 scale（weight_scale_inv）从这一代开始，V3.1 / V3.2-Exp 沿用。之后变的不止一处：
+    V3.1 起 config 声明 scale_fmt ue8m0，但 scale 张量实测仍是 FP32，到 V4-Flash 才真换成 FP8_E8M0；V4 起后缀改为 .scale、
+    路由专家改为 FP4 块 [1,32]；FP8 子系统的块到 V4.1 才从 [128,128] 收到 [32,32]
   evidence: judgement
   horizon: now
   axis: precision
@@ -136,12 +156,14 @@ evidence:
   family: official
   kind: derived
   display_name: official
-  released: official
+  released: derived
   hf: official
   lineage: judgement
   params: derived
   context: official
   arch: official
+  arch.attention.head_dim: derived
+  arch.decoding.mtp_layers_note: derived
   arch.attention.type: derived
   arch.norm: derived
   arch.activation: derived
@@ -164,4 +186,102 @@ evidence:
   arch.ffn.layer_pattern: derived
 notes: FP8 发布与无辅助损失路由都是从这一代开始的，两者都直接改算子：前者让权重 GEMM 变成带 scale 的块量化 GEMM，后者在 router 里加一条偏置加法。
 open_questions:
-- 未取权重清单，FP8 之外有哪些张量保持 BF16 待核
+- KV cache 的实际存储精度未披露，derive.py 按模型 dtype（BF16）兜底，bytes_basis 是 dtype_fallback
+- 训练精度没有一手来源，故不填 precision.training
+- HF 元数据里没有 license 标签（tags 与 cardData 都没有），故 license 不填
+reviewed:
+  date: '2026-10-30'
+  scope:
+  - official
+  - derived
+  - judgement
+  reviewer: 本会话逐字段复算（派出的核查代理因连接错误中途退出，未产出结论）
+  method: >-
+    按 .claude/skills/model-audit 的顺序逐字段对 facts/ds-v3 核：config 全部键、完整清单 91991 条目（dtype 计数、
+    scale 判据命中数、layers.61.* 的构成、e_score_correction_bias 的层号）、repoinfo 的 tags / cardData / createdAt /
+    safetensors tally、data/derived/ds-v3.json 的分项与 KV 公式路。逐子系统精度用 lib/subsystems.py 在完整清单上
+    按元素数重算。lineage 的乘式逐因子复算：单专家 3×1536×5120 = 23,592,960 → 3×2048×7168 = 44,040,192（1.87 倍）、
+    中间维/hidden 0.300 → 0.286、每层激活 FFN (6+2)×23.59M = 188.7M → (8+1)×44.04M = 396.4M（2.10 倍）、
+    路由容量 222.7B → 653.9B（2.94 倍）、稀疏度 6/160 = 3.75% → 8/256 = 3.125%，都成立。
+review:
+- id: R1
+  field: lineage.changed_from_predecessor
+  severity: imprecise
+  claim: MTP「权重借用层索引 61：eh_proj / enorm / hnorm / shared_head」
+  finding: >-
+    layers.61.* 共 1564 个条目，是完整的 transformer 块（q_a/q_b/kv_a/kv_b/o 投影、256 专家 MoE、共享专家），
+    另有胶水 eh_proj / enorm / hnorm，以及它自己的 embed_tokens 与 shared_head.head（各 [129280, 7168]）。
+    只列胶水张量正是 README 记过的那个坑（subsystems.py 早先只把这 5 个归到 draft）
+  resolution: corrected
+  changed_to: 写明 layers.61 是完整块，并点出它自带一份 embed 与 head
+- id: R2
+  field: arch.ffn.layer_pattern
+  severity: wrong
+  claim: 「稠密层的 FFN 比单个专家宽 9 倍，是全模型最宽的单个 GEMM」
+  finding: >-
+    9 倍对（18432 / 2048）。「最宽」不对：lm_head [129280, 7168] 是 926,679,040 元素，稠密层的 gate/up/down
+    各 132,120,576。与 ds-v2 的 R2 是同一句模板话
+  resolution: corrected
+  changed_to: 删掉「最宽 GEMM」，写明 MoE 层是 3–60 共 58 层
+- id: R3
+  field: open_questions
+  severity: stale
+  claim: 「未取权重清单，FP8 之外有哪些张量保持 BF16 待核」
+  finding: facts/ds-v3/shapes.json 是完整清单，per_subsystem 早已填好；BF16 的是 316 个张量（embed / lm_head / norm / router gate 与草稿侧的 embed、head、norm）
+  resolution: corrected
+  changed_to: 换成真正开着的三条：KV 精度兜底、训练精度无来源、HF 元数据无 license
+- id: R4
+  field: params.counting_note
+  severity: imprecise
+  claim: 「91991 条目……45808 条是 weight_scale_inv」，total 不含草稿侧
+  finding: >-
+    条目与 scale 已经分开了，但没给真权重张量数（46183），也没说 total 本身是实测值而非厂商声明值 ——
+    于是 Gate B 的参数总量一项 delta 0.0 读起来像核对通过，其实是实测比实测。外部核对是 HF tally（684,489,845,504，逐位相同）
+  resolution: corrected
+  changed_to: 补真权重张量数及 dtype 构成、total 的来源、外部核对与激活参数两口径
+- id: R5
+  field: arch.decoding
+  severity: missing
+  claim: 只有 mtp_layers 1，没有 KV 层覆盖的口径说明
+  finding: >-
+    derive.py 报「公式按主干 61 层算；清单里另有 1 个草稿块带着同名的 10 个投影」。derived 的 70272 B/token 是主干口径，
+    开草稿侧时是 62 层、+1152 B/token。glm-5.3 的 R1 已定按主干口径记、补括号说明
+  resolution: corrected
+  changed_to: 新增 mtp_layers_note，写明主干口径与开草稿时的 62 层
+- id: R6
+  field: arch.moe.balance
+  severity: imprecise
+  claim: 「第 3 层起，59 个」
+  finding: 59 个 e_score_correction_bias 的层号是 3–61：主干 MoE 层 3–60 是 58 个，第 61 个属于 MTP 块。数对，但把两种口径混在一个数里
+  resolution: corrected
+  changed_to: 拆成 58 + 1
+- id: R7
+  field: infra_signals
+  severity: overreach
+  claim: 「FP8 块量化 [128,128] + 逐张量 weight_scale_inv 成为之后所有代的底座，块大小与 scale 格式在 V3.1 和 V4.1 两次收紧」
+  finding: >-
+    「之后所有代」不成立：V4 起后缀改为 .scale、路由专家改为 FP4 块 [1,32]。「V3.1 收紧 scale 格式」只是声明 ——
+    V3.1 的 scale 张量实测仍是 FP32（README 的 scale_fmt 一节），到 V4-Flash 才换成 FP8_E8M0；块大小也只有 FP8 子系统在 V4.1 收到 [32,32]
+  resolution: corrected
+  changed_to: 改为逐代写清哪一处在哪一代变
+- id: R8
+  field: arch.attention.num_kv_heads
+  severity: missing
+  claim: num_kv_heads 128 原样抄自 config，旁边没有口径说明
+  finding: 落盘缓存是 576 维 latent + rope，按 2 × 128 × 192 折算高估 42.7 倍（同 ds-v2 的 R5、glm-5.3 的 R4）
+  resolution: corrected
+  changed_to: head_dim_note 开头补上
+- id: R9
+  field: evidence
+  severity: miscategorized
+  claim: arch.attention.head_dim 与 released 继承 official
+  finding: config 没有 head_dim 键（192 = 128 + 64）；released 2024-12-25 是 repoinfo 的 createdAt，不是厂商公告日期
+  resolution: corrected
+  changed_to: 两者与新增的 mtp_layers_note 标 derived
+- id: R10
+  field: precision.quantization.subsystem_method
+  severity: imprecise
+  claim: 「抽样：每个子系统 6 个代表张量，共读 10 个分片头」
+  finding: 已有完整清单。按元素数全量复核，代表值全部不变；draft 是 85.5% FP8 / 14.5% BF16（BF16 那部分是它自带的 embed 与 head）
+  resolution: corrected
+  changed_to: 写明全量复核的结果

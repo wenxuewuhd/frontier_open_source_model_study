@@ -1,7 +1,7 @@
 {
  "id": "ds-v3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T16:01:54+00:00",
+ "generated_at": "2026-10-30T01:43:51+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v3",
   "config_present": true,
@@ -184,7 +184,7 @@
   {
    "item": "KV 层覆盖口径",
    "status": "ok",
-   "why": "公式按主干 61 层算（config num_hidden_layers）；清单里另有 1 个草稿块，带着与主干注意力同名的 10 个投影，即它们也产出 KV。开草稿侧时容量要按 62 层算 —— 记录里要写明用哪个口径"
+   "why": "公式按主干 61 层 full attention 算（主干共 61 层，其余是不累积 KV 的线性层）；清单里另有 1 个草稿块，带着与主干 full attention 同名的 10 个投影，即它们也产出 KV。开草稿侧时累积 KV 的层要按 62 层算 —— 记录里要写明用哪个口径"
   }
  ]
 }
