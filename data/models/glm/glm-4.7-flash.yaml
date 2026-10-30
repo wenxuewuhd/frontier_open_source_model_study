@@ -1,0 +1,616 @@
+# 机械字段来自 config（official）；注意力几何、层集合、参数量与子系统拆分来自完整权重清单（derived）。
+# 这一份是支线，收录理由是结构对照：MLA 第一次进入 GLM 家族就在这里。
+id: glm-4.7-flash
+family: glm
+kind: llm
+display_name: GLM-4.7-Flash
+released: '2026-01-19'
+license: mit
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/zai-org/GLM-4.7-Flash
+    locator: config.json @ 7dd20894a642
+    accessed: '2026-10-30'
+    note: >-
+      BF16 发布，48 分片。权重清单逐分片读头取全，9703 个张量，无读失败分片。
+      model_type 是 glm4_moe_lite，不是主干旗舰的 glm4_moe —— 换了架构，不是档位缩小
+  - kind: modelcard
+    url: https://huggingface.co/zai-org/GLM-4.7-Flash/blob/7dd20894a642a0aa287e9827cb1a1f7f91386b67/README.md
+    locator: README.md 第 27 行（"a 30B-A3B MoE model"）、第 18 行（技术报告指向 GLM-4.5 的 arXiv 2508.06471）
+    accessed: '2026-10-30'
+    note: >-
+      卡正文（8156 字节 / 172 行）。第 27 行是厂商的参数量声明；
+      全文搜 kv.?cache / per-token byte / cache size|capacity|memory|footprint 命中 0，
+      **没有每 token KV 字节**，也没有训练精度。
+      本代没有自己的技术报告，卡里引的是 GLM-4.5 那一份
+
+hf:
+  repo: zai-org/GLM-4.7-Flash
+  sha: 7dd20894a642a0aa287e9827cb1a1f7f91386b67
+  last_modified: '2026-01-29T08:06:19.000Z'
+  pipeline_tag: text-generation
+  gated: false
+
+lineage:
+  track: side
+  predecessor: glm-4.7
+  changed_from_predecessor:
+    - axis: attention
+      text: >-
+        **MLA 第一次进入 GLM 家族**：GQA（96 头 / 8 KV 头 / head_dim 128）换成
+        MLA（kv_lora_rank 512 + qk_rope_head_dim 64），落盘缓存是
+        kv_a_proj_with_mqa [576, 2048] 的 576 维 latent。上投影 kv_b_proj [8960, 512]
+        把 latent 升回 20 头，8960 = 20 × (K-nope 192 + V 256)；
+        K 的 rope 64 维由 kv_a_proj_with_mqa 的尾段直接产出、不经 kv_b_proj。
+        Q 侧也走两段（q_a_proj [768, 2048] + q_b_proj [5120, 768]，5120 = 20 × 256，
+        其中 256 = qk_nope 192 + qk_rope 64 —— **本代 config 没有 qk_head_dim 这个键**，
+        那是 GLM-5 一代才有的，这里是自己加出来的）。
+        QK-Norm 去掉了，换成 MLA 自己的 kv_a_layernorm [512] 与 q_a_layernorm [768]；
+        q/k/v 的 bias 也一并去掉（config attention_bias true → false，
+        清单里 9703 条一个 .bias 都没有）；partial_rotary_factor 从 0.5 变成 1.0
+      benefit: >-
+        每层缓存从 2 × 8 × 128 = 2048 元素压到 576，**3.56 倍**；
+        本档只有 47 主干层，所以每 token 从（按主干 92 层算的）188416 元素降到 27072，
+        6.96 倍。代价是算力：每步要用 kv_b_proj 把 512 维 latent 升回
+        20 × 448 = 8960 维（或把它吸收进 Q 与 O 两侧、不显式复原，取决于实现，本仓未读实现）。
+        TP 下 kv_b_proj 按头切（8960 = 20 头 × 448），不能按头切的是 latent 缓存本身 ——
+        576 维只有一份，每个 TP rank 都要存全量。
+        **注意 config 的 num_kv_heads=20 是 query 侧可见的头数，不是缓存宽度**：
+        按 2 × 20 × 256 折算得 10240，对实际 576 是 17.8 倍高估
+    - axis: moe
+      text: >-
+        160 专家 top-8 → 64 专家 top-4，专家中间维仍 1536；稠密层从 3 层变 1 层
+        （first_k_dense_replace 3 → 1），稠密中间维 12288 → 10240。
+        config 第一次显式声明 topk_method=noaux_tc，routed_scaling_factor 2.5 → 1.8
+      benefit: >-
+        带宽口径激活参数 32,856,319,904 → 3,579,571,840 是 **9.18 倍**，
+        但 top_k 8 → 4 只占其中 2 倍，不能把整个降幅挂在它旁边。逐因子拆：
+        专家那一半 expert_active 16,798,187,520 → 1,736,441,856 = **9.67 倍**
+        = 单层激活专家 5.0 倍（top_k 2 倍 × hidden 2.5 倍）× 主干 MoE 层数 89/46 = 1.935 倍；
+        常驻那一半 always_active 16,058,132,384 → 1,843,129,984 = **8.71 倍**。
+        两半合起来才是 9.18 倍 —— 专家与常驻两侧的降幅不同，所以总比值既不是 9.67 也不是 8.71。
+        EP 侧每 token 每 MoE 层 2 × top_k 4 × hidden 2048 × 2 B = 32,768 B，
+        46 个主干 MoE 层合计 1,507,328 B/token，是主干旗舰（14,581,760 B）的 1/9.7。
+        topk_method 从「config 不声明、只能从 e_score_correction_bias 推」
+        变成显式写明，是口径上的收益：GLM-4.5–4.7 三代的打分方式一直没有一手来源
+    - axis: scale
+      text: >-
+        358B → 31.2B（总参数 1/11.5），层数 92 → 47、hidden 5120 → 2048、
+        词表 151552 → 154880
+      benefit: >-
+        这是「小档位」的部分，但它和前代不是同一个架构（model_type glm4_moe_lite
+        vs glm4_moe），所以本仓按支线收录的理由是结构对照而不是档位：
+        它是 GLM 线上第一份 MLA 记录，而 GLM-5 的 MLA 几何（kv_lora 512 /
+        rope 64 / v_head_dim 256 / 两段式 Q）与词表 154880 全部沿用自这里
+    - axis: context
+      text: 202752（与 GLM-4.7 相同），rope base 仍 1,000,000
+      benefit: >-
+        上下文没变而每 token 缓存降到 1/6.96，所以同样 202752 的上下文下
+        KV 从 71.16 GiB 降到 10.2 GiB（都是 BF16 兜底口径，同一套 basis，可比）
+
+params:
+  # 厂商声明值（模型卡第 27 行 "30B-A3B"）。breakdown 是清单实测，见 counting_note。
+  total: 30000000000.0
+  excludes:
+    - draft
+  breakdown:
+    expert: 27783069696.0
+    draft: 1278094656.0
+    attention: 1022623744.0
+    shared_expert: 434110464.0
+    embed: 317194240.0
+    lm_head: 317194240.0
+    dense_ffn: 62914560.0
+    router: 6032256.0
+    norm: 254720.0
+  counting_note: >-
+    按完整权重清单（48 分片 9703 条目）逐项求和，与 HF 平台自己从分片头统计的
+    safetensors tally（31,221,488,576）逐位相同。清单 dtype 只有 BF16（9656）与
+    F32（e_score_correction_bias [64]，清单里 47 份、共 3,008 元素 ——
+    主干 46 个 MoE 层各一份加 MTP 块一份），
+    没有量化 scale 容器、没有低位打包，条目数即张量数、numel 即参数数。
+    **total 是厂商声明值，不是实测值**：模型卡（README.md @ 7dd20894a642 第 27 行）写
+    「GLM-4.7-Flash is a 30B-A3B MoE model」。
+    清单实测 31,221,488,576，比声明高 **+4.072%，超出 Gate B 的 2% 容差**；
+    **扣掉 draft（第 47 层整块 1,278,094,656）后是 29,943,393,920，对声明的 30B 是
+    −0.189%** —— 所以 excludes 填 [draft]。
+    本份是这个「声明值不含 MTP 块」口径最硬的一个判例：不扣就超容差、扣了就几乎逐位，
+    而同口径在 glm-5（−0.012%）与 glm-4.5（−0.620%）上同时成立。
+    **激活那一半对不上，照实记**：名字里的 A3B 即声明激活 3B，而本仓带宽口径
+    3,579,571,840 对它是 +19.3%、带宽口径再扣 lm_head 的 3,262,377,600 是 +8.7% ——
+    两套口径都差得远。glm-4.5 / glm-5 的 active 声明值都能对到千分之几
+    （见那两份的 counting_note），本份对不上，所以「A3B」更像档位命名的取整
+    而不是参数量声明。本记录因此**不填** active_decode / active_prefill，
+    也不把 3B 当可对账的声明值。
+    draft 一项是第 47 层整块（1,278,094,656），按层索引归类；主干是 0–46，total 含草稿侧。
+    逐因子核过：注意力 21,757,952/层 = q_a 768×2048 + q_b 5120×768 + kv_a 576×2048
+    + kv_b 8960×512 + o 2048×5120，× 47 主干层 = 1,022,623,744；
+    专家 603,979,776/层 = 64 × 3 × 1536×2048，× 46 个主干 MoE 层（L1–L46）= 27,783,069,696；
+    共享专家 9,437,184/层 × 46 = 434,110,464；稠密 FFN 1 层 × 3 × 10240×2048 = 62,914,560；
+    router 46 × (64×2048 + 64) = 6,032,256。
+    kv_a_layernorm [512] 与 q_a_layernorm [768] 按 subsystems.py 的优先级归在 norm 桶，
+    不在 attention 桶的乘式里
+
+context:
+  max: 202752
+
+arch:
+  layers: 47
+  hidden: 2048
+  vocab: 154880
+  norm: RMSNorm（每层 2 处：input / post_attention；另有 MLA 内的 kv_a_layernorm [512] 与 q_a_layernorm [768]）
+  norm_eps: 1.0e-05
+  activation: SwiGLU（hidden_act silu；gate / up / down 三张独立张量）
+  position: RoPE theta 1,000,000，partial_rotary_factor 1.0（作用在解耦出来的 64 维 rope 段上，不再是前代的半维）
+
+  attention:
+    type: MLA
+    num_heads: 20
+    num_kv_heads: 20
+    head_dim: 192
+    v_head_dim: 256
+    qk_rope_head_dim: 64
+    qk_nope_head_dim: 192
+    kv_lora_rank: 512
+    q_lora_rank: 768
+    head_dim_note: >-
+      **config 的 num_kv_heads=20 是 query 侧可见的 KV 头数，不是缓存宽度**：
+      落盘缓存是 kv_a_proj_with_mqa [576, 2048] 的 576 维 latent
+      （kv_lora_rank 512 + qk_rope_head_dim 64）。
+      按本家族其它记录的同一公式 2 × num_kv_heads × head_dim 192 = 7680 折算，
+      对实际 576 是 **13.3 倍**高估（glm-5 / glm-5.3 用同一公式得 24576、42.7 倍，
+      两者可以直接比）；若按 V 的每头 256 折算则是 10240、17.8 倍。
+      两个都是错算，列出来是为了说明「头数乘积当缓存宽度」这个 skill 规则 2
+      点名的坑有多大，不是两套结论。
+      head_dim 192 不是 config 字段（config 只给 qk_nope_head_dim 192），
+      它只管 QK 的 nope 段；QK 全宽是 192 + 64 = 256，与 V 的每头 256 相等。
+      不对称只在 kv_b_proj [8960, 512] 内部：8960 = 20 × (K-nope 192 + V 256)，
+      K 的 rope 64 维由 kv_a_proj_with_mqa 的尾段直接产出、不经 kv_b_proj。
+      o_proj 入口是 20 × v_head_dim 256 = 5120（权重实测 [2048, 5120]）；
+      按 head_dim 192 推会得 3840，低 25% —— 与 GLM-5.3 同向，与 DeepSeek 一代反向
+    kv_sharing:
+      layer_coverage: >-
+        **主干口径**（0–46）：47/47 层每层都有自己的 kv_a_proj_with_mqa，
+        无跨层共享、无滑窗、无稀疏索引（清单里没有任何 indexer / compressor 张量，
+        按全名正则穷举过）。另有 MTP 块（第 47 层）自带自己的 kv_a_proj_with_mqa，
+        **也产出自己的 KV**；config 的 num_hidden_layers=47 不含它。
+        所以清单里产出 KV 的层共 48 个，开 MTP 时按这个数算（+576 元素/token，+2.13%）
+    layer_pattern: 47 层同构 MLA，无混合、无稀疏 —— DSA 要到 GLM-5 才加
+
+  ffn:
+    type: moe
+    layer_pattern: >-
+      第 0 层稠密（中间维 10240），其余 46 层为 MoE；MTP 块（第 47 层）也是 MoE。
+      稠密层的 FFN 比单个专家宽 6.67 倍（10240 / 1536），单层 62,914,560 参数，
+      是一层注意力 21,757,952 的 2.89 倍
+
+  moe:
+    routed_experts: 64
+    shared_experts: 1
+    top_k: 4
+    intermediate: 1536
+    first_k_dense: 1
+    dense_intermediate: 10240
+    routing: >-
+      topk_method=noaux_tc（config 第一次显式声明）、norm_topk_prob=true、
+      routed_scaling_factor 1.8。n_group=1 且 topk_group=1，分组路由未启用。
+      scoring_func 这一代仍不声明（GLM-5 起才写 sigmoid）
+    balance: e_score_correction_bias [64]（F32；清单里 47 份 —— 主干 46 个 MoE 层各一份加 MTP 块一份）—— 偏置纠偏、无辅助损失，与 noaux_tc 一致
+    storage_note: 逐专家独立张量，不是堆叠的 3 维权重；grouped GEMM 吃 2 维张量列表，EP 切分按张量分配
+
+  decoding:
+    mtp_layers: 1
+    mtp_layers_note: >-
+      config 声明 1，权重里确实只有 1 块（第 47 层，层索引 0–47 连续）。
+      这一块自带 embed_tokens [154880, 2048] 与 shared_head.head [154880, 2048]
+      （与 GLM-4.5 / GLM-4.7 的做法相同、与 GLM-4.6 相反），
+      外加 eh_proj [2048, 4096]、enorm、hnorm、shared_head.norm，
+      以及完整的 MLA 注意力与 64 专家 MoE
+
+precision:
+  weights_release: [BF16, FP32]
+  quantization:
+    per_subsystem:
+      expert: BF16
+      shared_expert: BF16
+      attention: BF16
+      dense_ffn: BF16
+      draft: BF16
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+    subsystem_method: >-
+      来自完整权重清单（48 分片 9703 条目）逐项统计，非抽样：每个条目都带 shape 与 dtype，
+      failed_shards 为空。9656 个 BF16 + 47 个 F32。
+      router 桶内部不同质：主干 46 层（L1–L46）的 mlp.gate.weight [64, 2048] 是 BF16，
+      同样 46 份 e_score_correction_bias [64] 是 F32 真参数（不是 scale 容器，
+      所以**本代根本没有 per_subsystem_scale 这个字段** —— 不量化，不存在 scale 张量），按元素数 router 桶 99.95% 是 BF16。
+      清单里这两种各有 47 份，第 47 份在 MTP 块（L47）、按层索引归在 draft 桶 ——
+      所以 **draft 桶也不同质**：{BF16 1,278,094,592, F32 64}，那 64 个元素就是
+      model.layers.47.mlp.gate.e_score_correction_bias [64]。代表值报 BF16 没问题，
+      但按「MTP 块整体 BF16」做名字精确匹配的流程要知道有这一张。
+      这一代没有 quantization_config，不存在 scale 张量与量化块
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    caveat: architectures 是 Glm4MoeLiteForCausalLM（transformers 5.0.0rc0），与主干旗舰的 Glm4MoeForCausalLM 不是同一套实现
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/zai-org/GLM-4.7-Flash
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      MLA 把每层缓存压到 576 元素。和主干旗舰 GLM-4.7 的每层 2048 相比是 3.56 倍 ——
+      **但那是跨档比较**（31.2B 支线对 358B 旗舰）：2048 来自旗舰的 8 KV 头 × 128，
+      本档若仍走 GQA 会用几个 KV 头没有来源，所以这个倍数衡量的是
+      「这一档选了 MLA 而旗舰选了 GQA」，不是「同档位换 MLA 省了 3.56 倍」。
+      这是 GLM 线上第一次在结构上改缓存账。但省的是「每层多宽」这根轴 ——
+      层覆盖面一点没省：47/47 层逐层全量存，无跨层共享、无滑窗。
+      与 DeepSeek V4.1 那条「只有 4 层产出 KV」的路线相比，
+      GLM 这一代走的是压宽度而不是减层数。
+    quantified: >-
+      口径为**主干 47 层，不含 MTP 块**：576 元素/层/token（kv_lora 512 + rope 64）
+      × 47 层 = 27072 元素/token。开 MTP 时 48 层、27648 元素/token（+576，+2.13%）。
+      KV 落盘精度未披露，按 config 的 dtype=bfloat16 兜底（2 B/元素）得
+      54144 B/token、202752 上下文 10.22 GiB —— dtype_fallback 兜底口径，
+      不是实测落盘量
+    visibility: public
+  - dimension: compute
+    finding: >-
+      MLA 用算力换带宽：latent 512 维每步要经 kv_b_proj [8960, 512] 升回
+      20 × 448 维（或吸收进 Q / O 两侧，取决于实现）。
+      本档 kv_b_proj 占注意力参数的 21.1%（4,587,520 / 21,757,952），
+      是单层注意力里第二大的投影（最大的是 o_proj 的 10,485,760）。
+      按 GQA 的算子图排 MLA 会缺两段式 Q 与 latent 上投影这两类算子。
+    quantified: >-
+      每层 kv_b_proj 4,587,520 参数 = 8960 × 512；
+      Q 侧两段 q_a 1,572,864 + q_b 3,932,160 = 5,505,024，占 25.3%
+    visibility: public
+
+infra_signals:
+  - text: >-
+      **MLA 进入 GLM 家族是在这个支线档位上，不是在主干旗舰上。**
+      GLM-5 的 MLA 几何（kv_lora_rank 512、qk_rope_head_dim 64、qk_nope_head_dim 192、
+      v_head_dim 256、两段式 Q、kv_a_layernorm / q_a_layernorm）与新词表 154880
+      全部沿用自这里。放大的是另外四个因子：头数 20 → 64、层数 47 → 78、
+      hidden 2048 → 6144、q_lora_rank 768 → 2048（所以 q_a_proj / q_a_layernorm /
+      q_b_proj 三张的形状都跟着变）—— **latent 宽度 576 这一项逐代不变**，
+      那才是「沿用」的那部分。
+      所以跟踪一个家族的架构转折点时，不能只看主干旗舰 ——
+      小档位常常是新结构的首发位置，而算子适配的工作量在首发那一代就已经发生。
+    evidence: derived
+    horizon: now
+    axis: attention
+  - text: >-
+      同一代里 MLA 省了 3.56 倍缓存宽度、却一层都没省层覆盖面。
+      「稀疏注意力 / 压缩注意力省 KV」这句话要分成两根轴问清楚：
+      省的是每层多宽，还是哪些层产出。GLM 这一代省前者，
+      DeepSeek V4.1 省后者，GLM-5.2 省的又是第三根轴（哪些层算 topk）。
+      三者不能互相代入。
+    evidence: judgement
+    horizon: now
+    axis: attention
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  params.total: official
+  params.excludes: judgement
+  params.counting_note: judgement
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.head_dim: derived
+  arch.attention.v_head_dim: official
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.attention.kv_sharing.layer_coverage: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.routing: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.moe.first_k_dense: derived
+  arch.moe.dense_intermediate: official
+  arch.decoding.mtp_layers: derived
+  arch.decoding.mtp_layers_note: derived
+  precision: official
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-30'
+  scope:
+    - official
+    - derived
+    - judgement
+  reviewer: 本会话逐字段复算，另派四路独立核查代理分管互不重叠的因子组
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序逐字段对 facts/glm-4.7-flash 核：config 全部键、
+    完整权重清单（9703 条目，逐项 numel / dtype / 层索引）、repoinfo 的 tags / cardData /
+    createdAt / lastModified / sha 与逐 dtype 的 safetensors tally，以及
+    data/derived/glm-4.7-flash.json 的分项与 KV 公式路。
+    本会话另做了两遍机械扫描：(1) 把记录里**每一个带逗号的数字**与从清单重算的集合比对
+    （张量 numel、逐层分组求和、各子系统求和、derived 的每一项、跨版本差值），未匹配的逐个手算；
+    (2) 同样扫 4–6 位纯数字，核出的口径错已改（留痕见下）。
+    记录里每一个「X 倍」「X%」都逐个重算过分子分母。
+    「没有任何 indexer / compressor 张量」是在 9703 条清单上用全名正则穷举过的
+    （index|compress|sparse|topk 四个词，命中 0），不是抽样；self_attn 下只有 7 个族
+    （kv_a_layernorm / kv_a_proj_with_mqa / kv_b_proj / o_proj / q_a_layernorm /
+    q_a_proj / q_b_proj），K 侧没有任何独立的 rope 投影。
+    **哪些是实际重跑过的、哪些不是**，按本仓约定分开写明。
+    本会话实际重跑/重算：清单逐项求和得 params.total 与 breakdown，并与 breakdown
+    逐项求和、HF 的 safetensors tally 三方比对（逐 dtype 的元素数也比了）；
+    derive.py 的 reconciliation 与 active_params；缓存账公式路的四个因子
+    （宽度 / 层集合 / 条目覆盖 / 每元素字节）各自落到某个张量形状上；
+    cfg.json 的逐键 diff 与张量名集合的对称差、shape+dtype 字典的逐条相等；
+    dtype 的逐条计数。
+    **未逐项复跑、依据核查代理枚举的**：各子系统桶内的元素占比（99.9x% 这类分母的
+    归类优先级链没有逐张量重判）。
+    **原理上核不了的**（清单只有名字、形状与 dtype，所以不在 reviewed.scope 的覆盖内）：
+    运行期标量（top_k / index_topk / routed_scaling_factor / norm_eps / rope 参数 /
+    scoring_func / topk_method / attention_bias 等）只有 config 一个来源；
+    MTP 块自带的词表副本与主干那份是不是同值；KV 条目是 1:1 计费还是选存；
+    KV 的实际落盘精度。后三项都挂在 open_questions 里。
+    **第二轮（卡正文）**：按新定的来源优先级把九份模型卡 README.md 按 pinned sha 全抓下来
+    逐行读过，并全文搜了 kv.?cache / per-token byte / cache size|capacity|memory|footprint
+    与参数量、训练精度、上下文数字。KV 字节九份全部命中 0；参数量声明在
+    glm-4.5 / glm-5 / glm-4.7-flash / glm-4-32b-0414 四份卡里有、另五份没有。
+    技术报告（arXiv 2602.15763 / 2603.12201 / 2508.06471）与 z.ai 博客**均未读**，
+    所以「厂商从未公布每 token KV 字节」这个结论的作用域只到卡正文，不含报告。
+review:
+  - id: R1
+    field: precision.quantization.subsystem_method
+    severity: imprecise
+    claim: >-
+      router 桶用「47 个」描述
+    finding: >-
+      47 是全清单份数（层 1–47，含 MTP 块那一份）；router 桶里只有 46 份（主干 L1–L46），
+      桶的参数量 6,032,256 = 46 × (64×2048 + 64) 自己就证明了。同 glm-4.5 的 R3。
+    resolution: corrected
+    changed_to: >-
+      区分「清单里 47 份」与「router 桶里 46 份」
+  - id: R2
+    field: evidence.lineage
+    severity: miscategorized
+    claim: >-
+      lineage 标 derived
+    finding: >-
+      同 glm-4-9b 的 R3。
+    resolution: corrected
+    changed_to: >-
+      evidence 的 lineage 改为 judgement
+  - id: R3
+    field: arch.attention
+    severity: imprecise
+    claim: >-
+      MLA 几何：latent 576、kv_b_proj 8960 = 20 × (192 + 256)、o_proj 入口 5120 = 20 × 256
+    finding: >-
+      逐张量核过：kv_a_proj_with_mqa [576, 2048]、kv_b_proj [8960, 512]、
+      o_proj [2048, 5120]、q_a_proj [768, 2048]、q_b_proj [5120, 768]。
+      8960 = 20 × 448、5120 = 20 × 256 都成立；K 侧无独立 rope 投影，
+      所以「rope 的 64 维在 kv_a_proj_with_mqa 输出的 576 之内」在清单上成立
+      （与 glm-5.3 的 R22 关闭依据同型）。
+      num_kv_heads 20 当缓存宽度会得 2 × 20 × 256 = 10240，对 576 是 17.8 倍高估。
+    resolution: confirmed
+  - id: R4
+    field: lineage.changed_from_predecessor
+    severity: imprecise
+    claim: >-
+      attention 轴写「q_b_proj [5120, 768]，5120 = 20 × qk_head_dim 256」
+    finding: >-
+      facts/glm-4.7-flash/cfg.json **没有 qk_head_dim 这个键**（只有 qk_nope_head_dim 192
+      与 qk_rope_head_dim 64）。那个键是 GLM-5 / 5.1 / 5.2 才有的，措辞从那边搬了过来。
+      同一份记录的 head_dim_note 写对了（「QK 全宽是 192 + 64 = 256」）。
+    resolution: corrected
+    changed_to: >-
+      改成「5120 = 20 × 256，其中 256 = qk_nope 192 + qk_rope 64」并点明本代 config 没有这个键
+  - id: R5
+    field: arch.attention.head_dim_note
+    severity: imprecise
+    claim: >-
+      「按 2 × 20 × 256 折算得 10240，对实际 576 是 17.8 倍高估」
+    finding: >-
+      本家族其它三份（glm-5 / glm-5.2 / glm-5.3）一律用 2 × num_kv_heads × head_dim(192)，
+      得 24576、42.7 倍。按同一公式本份应是 2 × 20 × 192 = 7680 → 13.3 倍。
+      两个都是「头数乘积当缓存宽度」这个错算，但同一族系用两套公式会让
+      17.8 与 42.7 不可比 —— 读者会以为支线的坑比旗舰小一半。
+    resolution: corrected
+    changed_to: >-
+      两个都给出并说明用的是哪个公式，点明 13.3 倍才与 42.7 倍可比
+  - id: R6
+    field: infra_signals
+    severity: imprecise
+    claim: >-
+      「GLM-5 的 MLA 几何……全部沿用自这里，只是把头数从 20 放到 64、层数从 47 放到 78」
+    finding: >-
+      「只是」漏了两个因子：hidden 2048 → 6144、q_lora_rank 768 → 2048
+      （后者让 q_a_proj / q_a_layernorm / q_b_proj 三张的形状都跟着变）。
+      glm-5 自己的 lineage 文字把 q_lora_rank 列了。
+      真正逐代不变的是 latent 宽度 576 这一项，那才是「沿用」的那部分。
+    resolution: corrected
+    changed_to: >-
+      列齐四个变化的因子，并点明 576 是不变的那一项
+  - id: R7
+    field: bottlenecks
+    severity: overreach
+    claim: >-
+      kv-capacity 一条写「MLA 把每层缓存从 2048 元素压到 576（3.56 倍）」
+    finding: >-
+      算术成立，但 2048 是主干旗舰 GLM-4.7 的每层宽度（8 KV 头 × 128 × 2），
+      而本份是 31.2B 支线。同一块的每 token 数字标了跨档（「本档只有 47 主干层」），
+      这个每层数字没标 —— 把它整笔归给 MLA 隐含了「2048-hidden 的档位仍会用
+      8 KV 头 × 128」这个没有来源的前提。
+    resolution: corrected
+    changed_to: >-
+      写明这是跨档比较，倍数衡量的是「这一档选了 MLA 而旗舰选了 GQA」
+  - id: R8
+    field: precision.quantization.per_subsystem
+    severity: missing
+    claim: >-
+      draft 标 BF16，subsystem_method 只点名 router 桶内部不同质
+    finding: >-
+      draft 桶实测 {BF16 1,278,094,592, F32 64}，那 64 个元素是
+      model.layers.47.mlp.gate.e_score_correction_bias [64]（第 47 份，前 46 份在 router 桶）。
+      量级极小，但 glm-5.3 的 R8 立的规矩是「桶内异质要写出来」，
+      同族的 glm-5 / glm-5.2 都写了 draft 桶那 256 个元素。
+    resolution: corrected
+    changed_to: >-
+      subsystem_method 补上 draft 桶的构成
+  - id: R9
+    field: evidence.arch.moe.first_k_dense
+    severity: miscategorized
+    claim: >-
+      first_k_dense 标 official
+    finding: >-
+      glm-5.3 的 R12 已经判定这个字段须标 derived（skill 规则 2 点名要用权重验的字段），
+      glm-5 / glm-5.2 / glm-5.3 三份都是 derived，只有本份退回 official，
+      于是不进 --list-judgements。值本身对：清单里只有 L0 有 mlp.gate_proj [10240, 2048]。
+    resolution: corrected
+    changed_to: >-
+      改 derived
+  - id: R10
+    field: lineage.changed_from_predecessor
+    severity: imprecise
+    claim: >-
+      moe 轴写「这一档的激活专家从 8 个降到 4 个，带宽口径激活参数 32.86B → 3.58B」
+    finding: >-
+      两个数都对，但并列的因果不成立：9.18 倍的降幅里 top_k 8 → 4 只占 2 倍。
+      逐因子拆（都取自 derived 的 active_params）：
+      专家那一半 expert_active 16,798,187,520 → 1,736,441,856 = **9.67 倍**
+      = 单层激活专家 5.0 倍（top_k 2 倍 × hidden 2.5 倍）× 主干 MoE 层数 89/46 = 1.935 倍；
+      常驻那一半 always_active 16,058,132,384 → 1,843,129,984 = **8.71 倍**；
+      两半合起来才是 total 的 9.18 倍。
+      注意 9.67 × 不等于 9.18 —— 只拆专家那一侧同样不闭合，这正是 skill 规则 1。
+    resolution: corrected
+    changed_to: >-
+      把 9.18 倍拆成 expert_active 9.67 倍与 always_active 8.71 倍两侧，并给出专家侧的两个子因子
+  - id: R11
+    field: lineage.changed_from_predecessor
+    severity: missing
+    claim: >-
+      attention 轴列了 QK-Norm 去掉、partial_rotary 0.5 → 1.0，没列 q/k/v bias 的消失
+    finding: >-
+      config attention_bias 从 true 变 false，清单里 9703 条一个 .bias 都没有
+      （GLM-4.7 有 q/k/v 各一份 bias）。glm-5 的同轴条目把它显式写了
+      （「QK-Norm 与 q/k/v 的 bias 都去掉了」），两份口径不齐。
+    resolution: corrected
+    changed_to: >-
+      attention 轴补上 bias 这一项与清单依据
+  - id: R12
+    field: arch.attention.head_dim
+    severity: imprecise
+    claim: >-
+      head_dim 存 192
+    finding: >-
+      schema 对 v_head_dim 的描述把本仓口径写死了：「MLA 一代的 head_dim（nope+rope）
+      只管 QK」—— ds-v3 照此存 192 = qk_nope 128 + qk_rope 64，即 **QK 全宽**。
+      本份（以及 glm-5 / glm-5.2 / glm-5.3）存的 192 只是 **nope 段**，QK 全宽是 256。
+      同一个字段在两个族系里是两个量，站点的 head_dim 行会把它们并排显示。
+      数值上目前无害（derive.py 对有 kv_lora_rank 的 MLA 走 latent + rope，
+      head_dim 不参与），但同一函数在无 kv_lora_rank 时会拿 num_kv_heads × head_dim
+      当 latent 宽度。
+    resolution: open
+    changed_to: >-
+      不单方面改值（会与已复核的 glm-5.3 不一致），补 open question 说明两套语义与风险，留给跨族系统一处理
+  - id: R13
+    field: precision.quantization.subsystem_method
+    severity: imprecise
+    claim: >-
+      「per_subsystem_scale 里没有 router 项」
+    finding: >-
+      同 glm-4.5 的 R11：本代不量化，没有这个字段。
+    resolution: corrected
+    changed_to: >-
+      改成「本代不量化，没有 per_subsystem_scale 这个字段」
+  - id: R14
+    field: params.counting_note
+    severity: missing
+    claim: >-
+      没说 Gate B 的参数总量一项是实测比实测
+    finding: >-
+      同 glm-4-9b 的 R13。
+    resolution: corrected
+    changed_to: >-
+      补上这一句
+  - id: R15
+    field: params
+    severity: wrong
+    claim: >-
+      counting_note 写「厂商未声明总参数或激活参数；名字里的「Flash」不含数字，所以没有可对账的声明值」
+    finding: >-
+      本轮按新定的来源优先级（模型卡 / 技术报告 > 厂商参考实现 > 引擎实现）
+      回头去读卡正文时查出来的。原来九份记录的 sources 里每条 locator 都是
+      `config.json @ <sha>`，读的只有 config、repoinfo 与权重清单，卡正文一行没读 ——
+      `glm-4-9b` 的 open_question 甚至明写着「模型卡正文未读」。
+      模型卡 README.md @ 7dd20894a642 **第 27 行**写着
+      「GLM-4.7-Flash is a **30B-A3B** MoE model」—— 总参数与激活参数都声明了。
+      总参数这一侧是本家族最硬的判例：实测 31,221,488,576 对 30B 是 **+4.072%，超 2% 容差**；
+      扣掉 draft 后 29,943,393,920 是 **−0.189%**，不扣就超、扣了就几乎逐位。
+      **激活那一侧对不上**：A3B 即 3B，而带宽口径 +19.3%、带宽口径扣 lm_head 后 +8.7%，
+      两套都差得远（glm-4.5 / glm-5 的 active 声明值都能对到千分之几）。
+      所以 A3B 更像档位命名的取整而不是参数量声明 —— 照实记，不当可对账的声明值。
+    resolution: corrected
+    changed_to: >-
+      params.total 改 30000000000 + excludes: [draft]，counting_note 写明总参数这一侧对上了、激活那一侧对不上及其理由，sources 补卡正文，evidence 补三项
+notes: >-
+  支线（lineage.track: side），收录理由是结构对照：**MLA 第一次进入 GLM 家族就在这一份**，
+  而且 GLM-5 的 MLA 几何与新词表全部沿用自它。model_type 是 glm4_moe_lite，
+  不是主干旗舰的 glm4_moe —— 它不是 GLM-4.7 的档位缩小版，是另一套架构。
+  没有任何 indexer / compressor 张量（按全名正则在 9703 条清单上穷举过），
+  所以 DSA 不在这一代。
+  层数、宽度、MLA 几何、层集合、专家分布、MTP 块构成、参数量与逐子系统精度
+  都对照完整权重清单核过；top_k / routed_scaling_factor / rope 参数这类运行期标量
+  只有 config 一个来源。
+
+open_questions:
+  - >-
+    **arch.attention.head_dim 的语义在本仓两个族系里不一致，这是跨族系的口径问题。**
+    schema 对 v_head_dim 的描述把「MLA 一代的 head_dim（nope+rope）只管 QK」写死了，
+    ds-v3 照此存 192 = qk_nope 128 + qk_rope 64，即 **QK 全宽**；
+    而 GLM 这几份存的 192 只是 **nope 段**（QK 全宽是 192 + 64 = 256，
+    config 的 qk_head_dim 就是 256）。两边读同一个字段会拿到不同的量。
+    数值上目前无害 —— derive.py 对有 kv_lora_rank 的 MLA 走 (latent + rope)，
+    head_dim 不参与；但同一函数在无 kv_lora_rank 时会拿 num_kv_heads × head_dim
+    当 latent 宽度。要么统一到 nope+rope 并逐份改值，要么在 schema 里把 GLM 这套
+    写成第二种合法语义；本记录不单方面改值（会与已复核的 glm-5.3 不一致），
+    留给跨族系统一处理
+  - >-
+    KV cache 的实际落盘精度未披露，按 config 的 dtype=bfloat16 兜底，
+    bytes_basis 是 dtype_fallback，不能和按落盘格式算出来的理论下限比倍数
+  - 训练精度无一手声明，config 只有 dtype=bfloat16，所以 precision.training 不填
+  - >-
+    kv_b_proj 在推理时是否被吸收进 Q 与 O 两侧（从而不显式复原 KV），
+    本仓没有读实现，所以「每步升回 8960 维」这一句只对参考写法成立。
+    这件事决定了 MLA 的算力代价到底有多大
+  - >-
+    scoring_func 仍不声明（topk_method 这一代写了 noaux_tc，但打分函数是
+    sigmoid 还是 softmax 没有一手来源）。GLM-5 的 config 才写 scoring_func=sigmoid，
+    不能回填到这一代
+  - >-
+    这一代为什么把 QK-Norm 去掉没有一手来源。MLA 自带 kv_a_layernorm / q_a_layernorm
+    是结构要求，但那是作用在 latent 上的，和 QK-Norm 作用在每头 QK 上不是同一件事

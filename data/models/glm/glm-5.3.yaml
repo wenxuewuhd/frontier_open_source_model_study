@@ -14,14 +14,76 @@ sources:
     note: >-
       FP8 发布（tags 带 fp8），141 分片。权重清单逐分片读头取全，
       118629 个张量，无读失败分片
+  - kind: modelcard
+    url: https://huggingface.co/zai-org/GLM-5.3/blob/ba32f8c19c8738e2c57c71798c601d477a7bf844/README.md
+    locator: README.md 全文（90 行）
+    accessed: '2026-10-30'
+    note: >-
+      卡正文（14163 字节 / 90 行）。**没有参数量声明、没有训练精度、没有技术报告链接**
+      （同代里只有 GLM-5.2 的卡引了 arXiv 2602.15763 与 2603.12201），
+      也**没有每 token KV 字节**（全文搜 kv.?cache / per-token byte /
+      cache size|capacity|memory|footprint 命中 0）。
+      所以 counting_note 里「厂商未在 config 或模型卡里声明总参数或激活参数」这句
+      现在是逐行核过的 —— 本代确实没有，不是没查。
+      注意前代 GLM-5 的卡（第 32 行）声明了 744B / 40B，GLM-5.2 与本代都没有再声明
 
 hf:
   repo: zai-org/GLM-5.3
+  sha: ba32f8c19c8738e2c57c71798c601d477a7bf844
+  last_modified: '2026-10-14T12:22:48.000Z'
   pipeline_tag: text-generation
   gated: false
 
 lineage:
   track: main
+  predecessor: glm-5.2
+  changed_from_predecessor:
+    - axis: precision
+      text: >-
+        主仓的发布精度从 BF16 换成 FP8_E4M3。**结构轴（层数、宽度、层集合、
+        专家分布、MTP 构成）零差异，但两份清单的条目数不同**：
+        本记录的清单是 118629 条、GLM-5.2 是 59585 条 —— 多出的 59044 条是新增的
+        weight_scale_inv 容器（见 counting_note），加载器要多读这一批。
+        真权重那 59585 条与 GLM-5.2 的名字、形状逐个相同（逐条比对过，不是抽样），
+        59044 个从 BF16 换成 F8_E4M3，其余 541 个（embed / lm_head / router gate /
+        draft 的 eh_proj / indexer 的 weights_proj / norm / e_score_correction_bias）
+        保持 BF16 或 F32。config 新增 quantization_config
+        （quant_method fp8 / fmt e4m3 / weight_block_size [128,128] /
+        activation_scheme dynamic / **modules_to_not_convert 541 条** ——
+        与那 541 个未量化张量一一对应，逐模式计数是 norm 四类各 79 +
+        mlp.gate 76 + e_score_correction_bias 76 + indexers_proj 22 +
+        indexer.k_norm 22 + k_norm.bias 22 + 单例 7；
+        本记录 infra_signals 与 R15 说的「22 个」只是其中 indexers_proj 那一种的份数，
+        不是整张清单的长度），
+        其余字段只差 transformers_version（5.12.0 → 5.15.0）
+      benefit: >-
+        权重存储 1403.19 GiB → 703.72 GiB（1.99 倍），而**按清单实测的参数量**
+        两代逐项逐位相同（都是 753,329,940,480）—— 省的是存储与带宽，
+        不是容量口径下的「模型多大」。
+        注意本记录 params 里存的是 6 位有效数字的取整值（total 753,330,000,000，
+        breakdown 十项求和 753,330,181,660），所以「逐位相同」说的是清单实测值，
+        不是两份记录的存值；glm-5.2 存的是精确值。
+        这 1.99 倍不到整 2 倍，差额来自 45,853,104 个 FP32 的 per-block scale 元素
+        （175 MiB）与 541 个未量化张量（3.92 GiB BF16 + 19,456 个 F32 真参数）。
+        代价有两笔：反量化要按 [128,128] 的块走，而 kv_a_proj_with_mqa 的输出维
+        576 = 4×128 + 64 末块不满（记作 128ceil）；以及两个桶内部不同质
+        （indexer 的 weights_proj、draft 的 eh_proj 仍是 BF16），
+        按「整桶 FP8」写的加载器会在这两处解错 —— 见 precision.quantization.subsystem_method
+    - axis: training
+      text: >-
+        许可从 mit 换成 other（repoinfo 的 tags 由 license:mit 变 license:other，
+        cardData 另有 license_name: glm-5.3）。GLM-4-32B-0414 起整条线一直是 mit，
+        到本代才换回自有条款
+      benefit: >-
+        与结构和负载无关，但它决定下游能不能直接商用分发 ——
+        而 license 挂在顶层、容易继承 official 而不进人工复核
+        （Qwen 一轮的教训三就是这个字段）
+    - axis: context
+      text: 1048576（与 GLM-5.2 相同），rope theta 8,000,000 也相同
+      benefit: >-
+        上下文与位置编码一个字没动。KV 每 token 47616 元素 / 95232 B
+        （BF16 兜底口径）与 GLM-5.2 逐位相同 —— 发布权重换成 FP8
+        **不推定 KV 也存 FP8**，缓存属激活侧，没有一手来源（见 open_questions）
 
 params:
   total: 753330000000.0
@@ -40,10 +102,21 @@ params:
     按完整权重清单（141 分片 118629 条目）逐项统计。118629 是 safetensors 条目数，
     其中 59044 条是 weight_scale_inv（FP8 的 per-block scale 容器）—— 不计入参数、
     只计入权重存储；真权重张量 59585 条。厂商未在 config 或模型卡里声明总参数或
-    激活参数，total 是本仓按清单求和的实测值，不是声明值；它与 HF 平台自己从分片头
+    激活参数（**模型卡正文已逐行核过，90 行里没有参数量数字**），
+    total 是本仓按清单求和的实测值，不是声明值；它与 HF 平台自己从分片头
     统计的 safetensors tally（753,329,940,480，同样排 scale）逐 dtype 逐位相同。
+    前代 GLM-5 的卡声明过 744B / 40B，且那个声明值的口径是「不含 MTP 块」
+    （见 glm-5 的 counting_note）；本代与 GLM-5.2 的卡都没有再声明，
+    所以本记录没有可填的 params.excludes —— 这是「厂商没说」，不是「含草稿侧」。
     全清单 dtype 只有 F8_E4M3 / BF16 / F32 三种，无 INT8/UINT8 打包容器，
-    numel 即参数数，不需还原。激活参数有带宽口径与可比官方口径两套，见 data/derived/，
+    numel 即参数数，不需还原。
+    total 与 breakdown 取 6 位有效数字，所以 breakdown 十项求和（753,330,181,660）
+    与 total（753,330,000,000）并不相等，两者都不等于清单实测的 753,329,940,480 ——
+    精确值在 data/derived/glm-5.3.json 里。也因此 Gate B 的「参数总量」一项
+    （delta_pct −0.0、status ok）是**拿取整的实测值比实测值，不构成核对**；
+    真正的外部核对是 HF 的 safetensors tally。
+    **total 含草稿侧**：breakdown 的 draft 一项（第 78 层整块）在 total 之内，
+    没有 excludes。激活参数有带宽口径与可比官方口径两套，见 data/derived/，
     这里不写单一值 —— 两者不是同一个量。
 
 context:
@@ -287,10 +360,10 @@ evidence:
   family: official
   kind: derived
   display_name: official
-  released: official
+  released: derived
   license: official
   hf: official
-  lineage: official
+  lineage: judgement
   params: derived
   params.counting_note: derived
   context: official
@@ -588,6 +661,128 @@ review:
       total 753,329,940,480）与本仓排 scale 后的逐 dtype 求和逐位相同。
     resolution: confirmed
     changed_to: subsystem_method 补上「每个条目都带 shape 与 dtype、无读失败分片」的依据，counting_note 与 open question 补上 HF tally 这条交叉验证
+  - id: R20
+    field: lineage
+    severity: missing
+    claim: >-
+      lineage 只有 track main 一项，没有 predecessor，也没有 changed_from_predecessor
+    finding: >-
+      本仓的家族页按 lineage.predecessor 逐字段比两份记录生成变化矩阵与逐维度演进，
+      没有 predecessor 的记录在家族页上是个孤点 —— 这份记录当时是 GLM 家族唯一的一条，
+      所以缺口不显。补齐 GLM 历史线之后前代已经在仓里（glm-5.2），
+      而两代的关系恰好是本仓最想说清的那一类：张量名与形状逐个相同、
+      参数量逐项逐位相同，差异只有 59044 个张量的 dtype 与许可。
+      另外原 evidence 把 lineage 标成 official，而 changed_from_predecessor 的内容
+      来自清单比对与推论，挂在 official 下不会进 --list-judgements。
+    resolution: corrected
+    changed_to: >-
+      补 lineage.predecessor: glm-5.2 与两条 changed_from_predecessor（precision / context），
+      evidence 的 lineage 从 official 改为 judgement（与 ds-v2 / deepseek-v41-flash 同口径 —— changed_from_predecessor 的 benefit 是推论，标 derived 会让它不进 --list-judgements）
+  - id: R21
+    field: lineage.changed_from_predecessor
+    severity: wrong
+    claim: >-
+      本轮新加的 precision 轴写「config 新增 quantization_config（…… modules_to_not_convert 22 项）」
+    finding: >-
+      实测 facts/glm-5.3/cfg.json：modules_to_not_convert 有 **541 条**，
+      与同一句里的「其余 541 个未量化张量」一一对应。逐模式计数是
+      四类 norm 各 79（input / post_attention / kv_a_layernorm / q_a_layernorm）
+      + mlp.gate 76 + e_score_correction_bias 76 + indexers_proj 22 +
+      indexer.k_norm 22 + k_norm.bias 22 + 单例 7。
+      **22 只是其中 self_attn.indexers_proj 那一种的份数** —— 恰好是本记录
+      infra_signals 第三条与 R15 的主题，那里 22 带着限定词、是对的。
+      新文本把限定词丢了，于是一份记录里同一个列表一处 22 条、一处 541 条。
+    resolution: corrected
+    changed_to: >-
+      改成 541 条并给出逐模式计数，同时点明 22 是 indexers_proj 那一种的份数
+  - id: R22
+    field: params.counting_note
+    severity: wrong
+    claim: >-
+      本轮新加的 benefit 写「参数量逐项逐位相同（753,329,940,480）」，而 params.total 存的是 753,330,000,000
+    finding: >-
+      三方互不相等：total 753,330,000,000、breakdown 十项求和 753,330,181,660
+      （与自己的 total 差 181,660）、清单实测 753,329,940,480。
+      params 存的是 6 位有效数字的取整值，所以「逐位相同」只能说清单实测值。
+      标杆 ds-v2 的 breakdown 同样取 6 位有效数字，但它的 counting_note **明写**
+      「取 6 位有效数字」并补了「Gate B 的参数总量一项是拿实测比实测，不构成核对」——
+      本记录两句都没有。derive.py 对本份报 delta_pct −0.0 / ok，
+      是 2% 容差把偏差（7.9e-8）盖住了，正是 R17 描述的那种「Gate B 拦不住」。
+    resolution: corrected
+    changed_to: >-
+      benefit 限定成「按清单实测的参数量」，counting_note 补上取整声明、三个值的关系与「Gate B 这一项不构成核对」
+  - id: R23
+    field: lineage.changed_from_predecessor
+    severity: missing
+    claim: >-
+      本轮新加的两条只有 precision 与 context 两轴，没有许可这一轴
+    finding: >-
+      R20 自己的 finding 原话是「差异只有 59044 个张量的 dtype **与许可**」，
+      glm-5.2 的 notes 也把许可列为差异之一。repoinfo 已核：
+      tags 从 license:mit 变 license:other，cardData 另有 license_name: glm-5.3，
+      而 GLM-4-32B-0414 起整条线一直是 mit。
+      许可正是 Qwen 一轮教训三（顶层前缀继承绕过 Gate C）点名的字段。
+      R20 的 finding 说了什么、changed_to 就该补什么 —— 这里缺一环。
+    resolution: corrected
+    changed_to: >-
+      补一条 training 轴写许可变化及其影响
+  - id: R24
+    field: lineage.changed_from_predecessor
+    severity: imprecise
+    claim: >-
+      新文本写「结构轴零差异：与 GLM-5.2 的 59585 个张量名、形状逐个相同」
+    finding: >-
+      「59585 条逐个相同」成立（逐条比对过），但紧挨着的「结构轴零差异」
+      会被读成「清单没变」—— 而本记录的清单是 118629 条、GLM-5.2 是 59585 条，
+      多出的 59044 条 weight_scale_inv 是加载器要多读的。
+      本记录自己的 counting_note 与 R6 写了这件事，跨代比较这一处把它丢了。
+    resolution: corrected
+    changed_to: >-
+      写明两份清单的条目数不同、多出的是什么，并把「零差异」限定到结构轴（层数 / 宽度 / 层集合 / 专家分布 / MTP 构成）
+  - id: R25
+    field: hf
+    severity: missing
+    claim: >-
+      hf 块只有 repo / pipeline_tag / gated，没有 sha 与 last_modified
+    finding: >-
+      其余 8 份 GLM 记录都有这两项并与 facts/*/fetched.json 的 rev 一致。
+      本份的 revision 只出现在 sources[0].locator 的「config.json @ ba32f8c19c87」里 ——
+      那是短 sha，而 skill 的取数顺序第 4 条要求钉 --rev。
+      facts/glm-5.3/repoinfo.json 里有全值。
+    resolution: corrected
+    changed_to: >-
+      补 sha ba32f8c19c8738e2c57c71798c601d477a7bf844 与 last_modified 2026-10-14T12:22:48.000Z
+  - id: R26
+    field: evidence.released
+    severity: miscategorized
+    claim: >-
+      released 2026-10-14 标 official
+    finding: >-
+      这个值不是厂商公告日期，也不是 repoinfo 的 createdAt（2026-08-25）——
+      它等于 repoinfo 的 lastModified（2026-10-14T12:22:48Z），
+      并被 data/tracking.yaml 沿用，而那个文件自称「这份清单是选取结果，
+      不是模型记录本身」。ds-v3 的 R9 已经为同类情形定过处理
+      （「released 是 repoinfo 的 createdAt，不是厂商公告的发布日期」→ 改 derived），
+      本轮 8 份新记录都跟了这条规则，被改的这一份没有。
+    resolution: corrected
+    changed_to: >-
+      evidence 的 released 改 derived（值不变 —— 换哪个日期是另一个问题，这里只订正口径）
+  - id: R27
+    field: params.counting_note
+    severity: imprecise
+    claim: >-
+      「厂商未在 config 或模型卡里声明总参数或激活参数」
+    finding: >-
+      结论成立，但当时没读卡正文。本轮读了（90 行）：确实没有参数量数字、
+      没有训练精度、也没有技术报告链接（同代只有 GLM-5.2 的卡引了
+      arXiv 2602.15763 与 2603.12201），全文搜 kv.?cache / per-token byte /
+      cache size|capacity|memory|footprint 也命中 0。
+      但**前代 GLM-5 的卡第 32 行声明过 744B / 40B**，且那个声明值的口径是不含 MTP 块；
+      本代与 GLM-5.2 的卡都没有再声明。所以本记录没有可填的 params.excludes，
+      这是「厂商没说」而不是「含草稿侧」—— 两件事在 counting_note 里要分开。
+    resolution: corrected
+    changed_to: >-
+      counting_note 写明卡正文已逐行核过、前代声明值的存在与口径，并点明本代没有 excludes 的原因；sources 补卡正文一条
 notes: >-
   GLM 家族的当前旗舰（2026-10-14），model_type 为 glm_moe_dsa：MLA 配
   DeepSeek 式 DSA 稀疏选择。本仓第一份非 DeepSeek 的稀疏注意力记录，

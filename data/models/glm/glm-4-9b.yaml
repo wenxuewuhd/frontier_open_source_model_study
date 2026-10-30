@@ -1,0 +1,565 @@
+# 机械字段来自 config（official）；形状、参数量与子系统拆分来自完整权重清单（derived）；
+# rope 的两处语义（base 乘子、作用维数）来自仓库自带的 modeling_chatglm.py，并由
+# 清单里的 inv_freq [32] 独立印证。
+id: glm-4-9b
+family: glm
+kind: llm
+display_name: GLM-4-9B-Chat
+released: '2024-06-04'
+license: other
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/zai-org/glm-4-9b-chat
+    locator: config.json @ bd8234fe5e0c
+    accessed: '2026-10-30'
+    note: >-
+      BF16 发布，10 分片。权重清单逐分片读头取全，284 个张量，无读失败分片。
+      custom_code 仓：结构定义在仓内的 modeling_chatglm.py，不是 transformers 主干实现
+  - kind: modelcard
+    url: https://huggingface.co/zai-org/glm-4-9b-chat/blob/bd8234fe5e0c09c48637a92abb0c797cb5fa0e73/README.md
+    locator: README.md 第 28–30 行（128K 上下文；另有 1M 上下文的单独模型）
+    accessed: '2026-10-30'
+    note: >-
+      卡正文（7772 字节 / 173 行）。**没有参数量声明**（全文只有一处 "GLM-130B to GLM-4"
+      出现在论文标题里），所以本代唯一可对账的声明值仍是名字里的 9B；
+      也没有训练精度，没有每 token KV 字节（全文搜 kv.?cache / per-token byte /
+      cache size|capacity|memory|footprint 命中 0）。
+      第 30 行「我们还推出了支持 1M 上下文长度（约 200 万中文字符）的模型」
+      是厂商自己把 1M 档当成**另一个模型**，印证了 open_questions 里不收 glm-4-9b-chat-1m 的判断
+  - kind: repo
+    url: https://huggingface.co/zai-org/glm-4-9b-chat/blob/bd8234fe5e0c09c48637a92abb0c797cb5fa0e73/modeling_chatglm.py
+    locator: >-
+      RotaryEmbedding.forward_impl（base = base * rope_ratio）/
+      ChatGLMModel.__init__（rotary_dim = kv_channels，RotaryEmbedding(rotary_dim // 2)）/
+      apply_rotary_pos_emb（rot_dim = rope_cache.shape[-2] * 2，reshape 成 [..., rot_dim//2, 2]）/
+      SelfAttention.__init__（qkv_hidden_size = projection_size + 2 * head_dim * group_num）
+    accessed: '2026-10-30'
+    note: >-
+      rope base 乘子、rotary 作用维数、成对交错、qkv 融合宽度四处取自这份实现，
+      url 钉在 hf.sha 同一个 commit 上
+
+hf:
+  repo: zai-org/glm-4-9b-chat
+  sha: bd8234fe5e0c09c48637a92abb0c797cb5fa0e73
+  last_modified: '2025-03-13T15:48:14.000Z'
+  gated: false
+
+lineage:
+  track: historical
+  successor: glm-4-32b-0414
+  # 家族链首，没有 predecessor。照 ds-v2 的做法，这里写的是「起点带着什么」——
+  # 站点的「逐维度演进」在起点要有东西可读，否则这条线从第二份才开始。
+  changed_from_predecessor:
+    - axis: attention
+      text: >-
+        GQA 2 组（32 query 头 / 2 KV 头 / head_dim 128），QKV 融合成一张
+        query_key_value [4608, 4096] 并带 bias，o_proj 叫 self_attention.dense。
+        没有 MLA、没有稀疏、没有滑窗、没有跨层共享 —— 40 层逐层全量存
+      benefit: >-
+        这是整条 GLM 线的缓存基线：每层 2 × 2 × 128 = 512 元素，
+        每 token 20480 元素。后面三代（GLM-4.5 把 KV 头加到 8、
+        GLM-4.7-Flash 换 MLA、GLM-5 叠 DSA）都是相对这个基线在动。
+        GQA 2 组在 2024 年已经是很激进的压缩（MHA 同配置是 32 组、8192 元素/层），
+        所以这一代的 KV 不是瓶颈，瓶颈在稠密 FFN 的权重带宽
+    - axis: moe
+      text: 没有 MoE，40 层全是稠密 FFN（中间维 13696，gate 与 up 融合成一张 [27392, 4096]）
+      benefit: >-
+        激活参数等于除输入词表以外的全部权重（8,779,194,400），
+        decode 每 token 要搬 16.35 GiB —— MoE 要到 GLM-4.5 才进来，
+        在那之前放大规模就是等比例加重带宽
+    - axis: precision
+      text: BF16 直接发布，config 没有 quantization_config，284 个张量全是 BF16
+      benefit: >-
+        不量化、没有 scale 容器、没有低位打包，所以条目数即张量数、numel 即参数数。
+        这一代是整条线的精度起点：FP8 到 GLM-4.5 才有单独的 FP8 仓，
+        到 GLM-5.3 才变成主仓
+    - axis: decoding
+      text: 没有 MTP 草稿块（config 无 num_nextn_predict_layers，层号止于 39）
+      benefit: >-
+        没有草稿侧成本，也没有「草稿块要不要算进 KV 层数」这个口径问题 ——
+        那两件事从 GLM-4.5 开始，而且在 4.5 / 4.6 / 4.7 / GLM-5 四代里变过两次
+
+params:
+  total: 9399951392.0
+  breakdown:
+    dense_ffn: 6731857920.0
+    attention: 1426247680.0
+    embed: 620756992.0
+    lm_head: 620756992.0
+    norm: 331776.0
+    other: 32.0
+  counting_note: >-
+    按完整权重清单（10 分片 284 条目）逐项求和，与 HF 平台自己从分片头统计的
+    safetensors tally（9,399,951,392）逐位相同。清单 284 个条目全是 BF16：
+    没有量化 scale 容器、没有低位打包，条目数即张量数、numel 即参数数。
+    没有 MTP 草稿块（config 无 num_nextn_predict_layers，层号止于 39），所以没有 excludes。
+    **名字里的 9B 是唯一可对账的声明值（模型卡正文没有参数量数字，已逐行核过），而它对不上**：实测 9.40B 对 9B 是 +4.44%，
+    超出 Gate B 的 2% 容差。扣掉输入词表（620,756,992）后的语言主干是 8.78B，
+    对 9B 是 −2.45%，同样超出 —— 两种口径都不落在容差内，所以这个 9B
+    更可能是档位命名而不是参数量声明。本记录不填 params 之外的声明值，
+    把这件事写在这里。
+    词表与输出层不共享权重（word_embeddings 与 output_layer 各 620,756,992），两项都在 total 里。
+    Gate B 的「参数总量」一项（delta 0.0）因此是**拿实测比实测，不构成核对** ——
+    真正的外部核对是 HF 的 safetensors tally，它不依赖本仓任何一行代码。
+    other 一项是 rotary_pos_emb.inv_freq [32]：非训练缓冲区，被打包进了 safetensors，
+    所以计进了 total —— 32 个元素，不影响任何口径。
+    **这里的 breakdown 与 data/derived/glm-4-9b.json 的 params_by_subsystem 不一致，
+    而且两边的 other 这个键指的不是同一批张量** —— 本记录的 other 只有 inv_freq 一张（32 元素），
+    派生 JSON 的 other 是 2,047,004,704（注意力 + 输入词表 + inv_freq）。原因是：
+    scripts/lib/subsystems.py 的归类正则认不出 chatglm 这一代的张量名
+    （self_attention.query_key_value / self_attention.dense / word_embeddings），
+    把注意力 1,426,247,680 + 输入词表 620,756,992 + inv_freq 32 共 2,047,004,704
+    整块归进了 other 桶。本记录写的是实际子系统归属（逐项手工求和，合计与 tally 逐位相同）；
+    派生 JSON 里的 other 桶等于这三项之和。同一个缺口还让派生的激活参数偏高：
+    输入词表本该排除在带宽口径之外，被算成常驻，total_with_embed 与 total 因此相等
+    且都偏高 620,756,992（+7.07%）
+
+context:
+  max: 131072
+
+arch:
+  layers: 40
+  hidden: 4096
+  vocab: 151552
+  norm: RMSNorm
+  norm_eps: 1.5625e-07
+  activation: SwiGLU（dense_h_to_4h 把 gate 与 up 融合成一张 [27392, 4096]，27392 = 2 × 13696）
+  position: >-
+    RoPE，base 5,000,000 = 10000 × config.rope_ratio 500（乘子语义取自仓内
+    modeling_chatglm.py 的 RotaryEmbedding.forward_impl: `base = base * self.rope_ratio`）。
+    只作用在每头前 64 维、剩下 64 维直通（rotary_dim = kv_channels 128，
+    RotaryEmbedding 取 128 // 2 = 64），等价于后来 GLM-4-0414 显式声明的
+    partial_rotary_factor 0.5 —— 清单里的 rotary_pos_emb.inv_freq [32] 正是 64 // 2，
+    独立印证了这个维数。成对交错旋转（reshape 成 [..., 32, 2]），不是前后半分，
+    GLM-5 一代 config 里的 rope_interleave=true 延续的就是这个约定
+
+  attention:
+    type: GQA
+    num_heads: 32
+    num_kv_heads: 2
+    head_dim: 128
+    head_dim_note: >-
+      head_dim 不是 config 字段，128 来自 kv_channels；config 的 multi_query_group_num=2
+      就是 num_kv_heads。QKV 融合成一张 query_key_value [4608, 4096]：
+      4608 = 32 头 × 128（Q）+ 2 × 128（K）+ 2 × 128（V），与实现里
+      `qkv_hidden_size = projection_size + 2 * head_dim * multi_query_group_num` 逐项对上。
+      Q、K、V 都带 bias（add_qkv_bias=true 而 add_bias_linear=false，所以只有这一处有 bias）；
+      o_proj 在这一代叫 self_attention.dense [4096, 4096]，没有 bias。
+      缓存宽度按 KV 头算：2 × 2 头 × 128 = 512 元素/层/token，不是按 32 个 query 头算
+      （那会得 8192，高估 16 倍）
+    layer_pattern: 40 层同构，每层都产出自己的 KV，无跨层共享、无滑窗、无稀疏
+
+  ffn:
+    type: dense
+    intermediate: 13696
+    layer_pattern: >-
+      40 层全是稠密 FFN，没有 MoE。单层 FFN 168,296,448 参数，是单层注意力
+      35,656,192 的 4.72 倍 —— 权重几乎全在 FFN 上：
+      占总参数 71.6%（6,731,857,920 / 9,399,951,392），占带宽口径 76.7%
+      （分母换成 8,779,194,400，即扣掉输入词表）
+
+precision:
+  weights_release: [BF16]
+  quantization:
+    per_subsystem:
+      attention: BF16
+      dense_ffn: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+    subsystem_method: >-
+      来自完整权重清单（10 分片 284 条目）逐项统计，非抽样：每个条目都带 shape 与 dtype，
+      failed_shards 为空。284 个条目的 dtype 全是 BF16，所以各子系统 BF16 是全量结论，
+      不只是代表值。这一代没有 quantization_config，不存在 scale 张量与量化块
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    caveat: custom_code 仓，需 trust_remote_code；不走 transformers 主干的 GlmForCausalLM 实现
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/zai-org/glm-4-9b-chat
+    visibility: public
+
+bottlenecks:
+  - dimension: weight-bandwidth
+    finding: >-
+      稠密 9.4B、无 MoE，除输入词表以外的权重每 token 全部搬运 ——
+      带宽口径的激活参数是 8,779,194,400（total 9,399,951,392 减输入词表 620,756,992），
+      占总参数 93.4%。**派生 JSON 把这个数报成 9,399,951,392 是偏高的**，
+      因为归类缺口让输入词表被算成常驻（见 params.counting_note）。
+      decode 的瓶颈完全在权重带宽上，而不在 KV 容量：BF16 下每 token 要搬运
+      16.35 GiB 的权重（带宽口径 8,779,194,400 × 2 B；**权重存储是 17.51 GiB，
+      两个口径差输入词表那一项，不要混用**），对 128K 上下文的 KV
+      （40960 B/token、总 5.0 GiB）是绝对主导。
+      这是后面几代改 MoE 的起点动机。
+    quantified: >-
+      权重存储 17.51 GiB（BF16，含输入词表）；带宽口径每 token 16.35 GiB。
+      dense_ffn 占总参数 71.6%（6,731,857,920 / 9,399,951,392）、
+      占带宽口径 76.7%（/ 8,779,194,400）—— 两个分母不同，引用时要带口径
+    visibility: public
+  - dimension: kv-capacity
+    finding: >-
+      GQA 2 组把 KV 压到每层 512 元素，按 query 头数（32）算会高估 16 倍。
+      这一代没有任何跨层共享、滑窗或稀疏结构，40 层逐层全量存，
+      所以 KV 随层数与上下文线性增长，但基数小。
+    quantified: >-
+      2 × num_kv_heads 2 × head_dim 128 = 512 元素/层/token × 40 层 = 20480 元素/token。
+      KV 落盘精度未披露，按 config 的 torch_dtype=bfloat16 兜底（2 B/元素）得
+      40960 B/token、128K 上下文 5.0 GiB —— dtype_fallback 兜底口径，不是实测落盘量
+    visibility: public
+
+infra_signals:
+  - text: >-
+      GLM 家族的注意力起点是常规 GQA（32 query 头 / 2 KV 组、head_dim 128），
+      FFN 全稠密。整条 2024–2026 的演进线（GQA → MLA → MLA+DSA）就从这里开始，
+      算子侧这一代不需要任何非标准支持：融合 QKV + GQA + SwiGLU + RMSNorm。
+      唯一需要注意的是 rope 只作用在每头前 64 维且成对交错 ——
+      按全维或按前后半分实现都会算错位置编码。
+      成对交错这个约定在 GLM-5 一代的 config 里又被显式声明了一次
+      （rope_interleave=true，GLM-5 / 5.1 / 5.2 / 5.3 四份都有）；
+      中间的 GLM-4.5–4.7 与 GLM-4.7-Flash 的 config **没有这个键**，
+      所以本仓只能说两个端点一致，说不了「一直延续」—— 中间几代要读实现才知道。
+    evidence: derived
+    horizon: settled
+    axis: attention
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.head_dim: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  precision: official
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-30'
+  scope:
+    - official
+    - derived
+    - judgement
+  reviewer: 本会话逐字段复算，另派四路独立核查代理分管互不重叠的因子组
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序逐字段对 facts/glm-4-9b 核：config 全部键、
+    完整权重清单（284 条目，逐项 numel / dtype / 层索引）、repoinfo 的 tags / cardData /
+    createdAt / lastModified / sha 与逐 dtype 的 safetensors tally，以及
+    data/derived/glm-4-9b.json 的分项与 KV 公式路。
+    本会话另做了两遍机械扫描：(1) 把记录里**每一个带逗号的数字**与从清单重算的集合比对
+    （张量 numel、逐层分组求和、各子系统求和、derived 的每一项、跨版本差值），未匹配的逐个手算；
+    (2) 同样扫 4–6 位纯数字，核出的口径错已改（留痕见下）。
+    记录里每一个「X 倍」「X%」都逐个重算过分子分母。
+    rope 的三条断言（base = 10000 × rope_ratio 500 = 5e6；rotary 只作用每头前 64 维；
+    成对交错）是直接读仓内 modeling_chatglm.py 的 RotaryEmbedding.forward_impl、
+    ChatGLMModel.__init__ 与 apply_rotary_pos_emb 得到的，不是转述；
+    清单里的 rotary_pos_emb.inv_freq [32] 独立印证了维数（64 // 2）。
+    子系统归类的缺口是直接读 scripts/lib/subsystems.py 的正则确认的。
+    **哪些是实际重跑过的、哪些不是**，按本仓约定分开写明。
+    本会话实际重跑/重算：清单逐项求和得 params.total 与 breakdown，并与 breakdown
+    逐项求和、HF 的 safetensors tally 三方比对（逐 dtype 的元素数也比了）；
+    derive.py 的 reconciliation 与 active_params；缓存账公式路的四个因子
+    （宽度 / 层集合 / 条目覆盖 / 每元素字节）各自落到某个张量形状上；
+    cfg.json 的逐键 diff 与张量名集合的对称差、shape+dtype 字典的逐条相等；
+    dtype 的逐条计数。
+    **未逐项复跑、依据核查代理枚举的**：各子系统桶内的元素占比（99.9x% 这类分母的
+    归类优先级链没有逐张量重判）。
+    **原理上核不了的**（清单只有名字、形状与 dtype，所以不在 reviewed.scope 的覆盖内）：
+    运行期标量（top_k / index_topk / routed_scaling_factor / norm_eps / rope 参数 /
+    scoring_func / topk_method / attention_bias 等）只有 config 一个来源；
+    MTP 块自带的词表副本与主干那份是不是同值；KV 条目是 1:1 计费还是选存；
+    KV 的实际落盘精度。后三项都挂在 open_questions 里。
+    **第二轮（卡正文）**：按新定的来源优先级把九份模型卡 README.md 按 pinned sha 全抓下来
+    逐行读过，并全文搜了 kv.?cache / per-token byte / cache size|capacity|memory|footprint
+    与参数量、训练精度、上下文数字。KV 字节九份全部命中 0；参数量声明在
+    glm-4.5 / glm-5 / glm-4.7-flash / glm-4-32b-0414 四份卡里有、另五份没有。
+    技术报告（arXiv 2602.15763 / 2603.12201 / 2508.06471）与 z.ai 博客**均未读**，
+    所以「厂商从未公布每 token KV 字节」这个结论的作用域只到卡正文，不含报告。
+review:
+  - id: R1
+    field: params.breakdown
+    severity: miscategorized
+    claim: >-
+      breakdown 用实际子系统归属（attention / embed / norm / other），而 other 只有 32 个元素
+    finding: >-
+      本记录的 breakdown 与 data/derived/glm-4-9b.json 的 params_by_subsystem **不一致，
+      而且两边的 other 这个键指的不是同一批张量**：本记录的 other 是 inv_freq 一张（32 元素），
+      派生 JSON 的 other 是 2,047,004,704（注意力 1,426,247,680 + 输入词表 620,756,992
+      + inv_freq 32）。根因是 scripts/lib/subsystems.py 的正则认不出 chatglm 这一代的名字
+      （self_attention 里没有 attn 这个子串；word_embeddings 不匹配 embed 那条）。
+      两个键同名不同义会让读者把两处数字对着看。
+    resolution: corrected
+    changed_to: >-
+      counting_note 写明两边的 other 不是同一批张量，并给出派生桶等于哪三项之和；共享脚本不改，缺口记进 open_questions 与交接报告
+  - id: R2
+    field: bottlenecks
+    severity: wrong
+    claim: >-
+      「稠密 9.4B、无 MoE，每 token 要搬运全部权重 —— 激活参数等于总参数」
+    finding: >-
+      输入词表每 token 只 gather 一行，从来不进带宽口径。带宽口径的激活参数是
+      8,779,194,400（total 9,399,951,392 减 word_embeddings 620,756,992），占总参数 93.4%。
+      派生 JSON 把它报成 9,399,951,392、且 total 与 total_with_embed 相等，
+      正是 R1 那个归类缺口的第二个实害 —— 偏高 620,756,992（+7.07%），而且会渲染到站点上。
+    resolution: corrected
+    changed_to: >-
+      finding 改为带宽口径 8,779,194,400 并点明派生值偏高多少、为什么
+  - id: R3
+    field: evidence.lineage
+    severity: miscategorized
+    claim: >-
+      lineage 标 derived
+    finding: >-
+      lineage 下的 successor 是本仓的收录判断，不是从权重算出来的事实；
+      标 derived 会让它不进 --list-judgements。本仓既有记录（ds-v2、deepseek-v41-flash）
+      一律标 judgement。
+    resolution: corrected
+    changed_to: >-
+      evidence 的 lineage 改为 judgement
+  - id: R4
+    field: arch.position
+    severity: imprecise
+    claim: >-
+      rope base 5,000,000；只作用每头前 64 维；成对交错
+    finding: >-
+      三条都在源码上核过，不是从 config 推的：forward_impl 里 `base = base * self.rope_ratio`
+      → 10000 × 500 = 5,000,000；ChatGLMModel 里 `RotaryEmbedding(rotary_dim // 2, ...)`
+      而 rotary_dim = kv_channels = 128 → n_elem = 64，cache 形状 [seq, 32, 2]
+      使 apply_rotary_pos_emb 的 rot_dim = 32 × 2 = 64，其余 64 维走 x_pass；
+      `xshaped = x.reshape(..., rot_dim // 2, 2)` 是相邻成对而非前后半分。
+      清单里的 inv_freq [32] = 64 // 2，与之一致。
+    resolution: confirmed
+  - id: R5
+    field: bottlenecks
+    severity: wrong
+    claim: >-
+      「BF16 下每 token 17.51 GiB 的权重搬运量」
+    finding: >-
+      17.51 GiB = 9,399,951,392 × 2 B / 2^30 是**权重存储**口径（含输入词表）。
+      带宽口径是 8,779,194,400 × 2 B = 16.35 GiB。
+      这与同一份记录的 params.counting_note 直接矛盾 —— 那里已经写明输入词表
+      本该排除在带宽口径之外。counting_note 把派生 JSON 的缺陷点了出来，
+      bottleneck 又把同一个被污染的数当带宽结论用了一遍。
+      CLAUDE.md 的「三个口径不能混」点名的就是这件事。
+    resolution: corrected
+    changed_to: >-
+      finding 与 quantified 都改成同时给出两个口径并写明分母差哪一项
+  - id: R6
+    field: arch.ffn.layer_pattern
+    severity: imprecise
+    claim: >-
+      「这一代的权重带宽几乎全在 FFN 上（6.73B / 9.40B = 71.6%）」
+    finding: >-
+      71.6% 的分母是总参数 9,399,951,392，是存储口径；带宽口径分母应是
+      8,779,194,400，得 76.7%。同族的 glm-4-32b-0414 记录同一个句式写的是
+      「占总参数 79.5%」，口径标对了 —— 两份记录同一句式一个对一个错。
+    resolution: corrected
+    changed_to: >-
+      两个口径都给出，并写明两个分母不同
+  - id: R7
+    field: infra_signals
+    severity: overreach
+    claim: >-
+      「成对交错……这个约定一直延续到 GLM-5 一代」
+    finding: >-
+      两个端点可验：GLM-5 / 5.1 / 5.2 / 5.3 的 config 都有 rope_interleave=true。
+      但中间几代**根本没有这个键** —— facts/glm-4.5、glm-4.6、glm-4.7、
+      glm-4.7-flash 的 cfg.json 里 rope_interleave 不存在（4.7-flash 还把
+      partial_rotary_factor 改成 1.0）。字段缺失既不证明延续也不证明中断，
+      所以「一直延续」在 facts/ 里只有两个端点、中间是空的。
+      skill 规则 5「结构规律钉代际」点名的就是这类连续性断言。
+    resolution: corrected
+    changed_to: >-
+      改成「两个端点一致，中间几代 config 没有这个键，要读实现才知道」
+  - id: R8
+    field: evidence.infra_signals
+    severity: miscategorized
+    claim: >-
+      infra_signals 标 derived
+    finding: >-
+      该条正文含三类权重清单推不出来的内容：平台判断（「算子侧这一代不需要任何
+      非标准支持」）、跨 2024–2026 的叙事（「整条演进线从这里开始」）、
+      前瞻（「延续到 GLM-5 一代」）。实测后果：--list-judgements 对这份记录
+      原来只列 lineage.* / bottlenecks / notes / open_questions，infra_signals 不在其中。
+      仓内多数记录（含 glm-4.5 / glm-4.7-flash / glm-5.2 / glm-5.3）用的是 judgement。
+    resolution: corrected
+    changed_to: >-
+      evidence 的 infra_signals 改为 judgement
+  - id: R9
+    field: sources
+    severity: imprecise
+    claim: >-
+      modeling_chatglm.py 的 url 指向 main，locator 列了三个函数
+    finding: >-
+      两处问题。(1) url 没钉 rev，而三条结构断言全压在这次读取上；
+      同一份记录的 modelcard 来源是钉了 rev 的（config.json @ bd8234fe5e0c）。
+      (2) locator 漏了 apply_rotary_pos_emb —— 「成对交错（reshape 成 [..., 32, 2]）」
+      的唯一来源是这个模块级函数，不在列出的三处里。
+    resolution: corrected
+    changed_to: >-
+      url 钉到 hf.sha 同一个 commit，locator 补上 apply_rotary_pos_emb 并给出每处支撑哪条断言
+  - id: R10
+    field: open_questions
+    severity: missing
+    claim: >-
+      glm-4-9b-chat-1m 的「config 只差三项」在仓内无据
+    finding: >-
+      facts/ 下当时没有 glm-4-9b-chat-1m 目录，三项差异无法复核。
+      本轮补取了 config（--skip-shapes，sha f8579ac09698）并逐键比对：
+      三项**全部为真**，字段集合与本记录完全相同，差异只有这三项加 _name_or_path。
+      衍生的「缓存宽度是本记录的 2 倍（1024 元素/层/token）」= 2 × 4 × 128 也成立。
+      断言本身没错，缺的是仓内取数。
+    resolution: corrected
+    changed_to: >-
+      补取 config 到 facts/glm-4-9b-chat-1m/，open question 里写明 sha 与「逐键比对」的措辞
+  - id: R11
+    field: notes
+    severity: overreach
+    claim: >-
+      「rope 的 base 乘子与作用维数读的是 modeling_chatglm.py，并由清单里的 inv_freq [32] 印证」
+    finding: >-
+      清单只有名字、形状与 dtype，没有张量数值。inv_freq [32] 能印证的只有
+      rotary_dim / 2 = 32，**印证不了 base = 5,000,000**。而且实现里 inv_freq 是用
+      硬编码 10000 建的、不乘 rope_ratio，实际 rope 用的 theta 是 forward_impl 里
+      按 5e6 重算的 —— 所以它在原理上就印证不了 base。
+      arch.position 本身写对了（「正是 64 // 2，独立印证了这个维数」），notes 把它扩成了两项。
+    resolution: corrected
+    changed_to: >-
+      notes 改成「只能印证作用维数，印证不了 base」，并说明为什么
+  - id: R12
+    field: params.counting_note
+    severity: missing
+    claim: >-
+      counting_note 不提名字里的 9B 这个声明值
+    finding: >-
+      Qwen 一轮的教训四：「不填声明值，闸口就看不见口径问题」。
+      本代唯一可对账的声明值是名字里的 9B：实测 9.40B 对 9B 是 **+4.44%**，
+      超出 Gate B 的 2% 容差；扣掉输入词表后的语言主干 8.78B 对 9B 是 −2.45%，
+      同样超出。两种口径都不落在容差内，所以这个 9B 更像档位命名而不是参数量声明 ——
+      但这件事得写出来，否则下游会以为 9B 与实测对得上。
+    resolution: corrected
+    changed_to: >-
+      counting_note 补上两种口径的偏差与结论
+  - id: R13
+    field: params.counting_note
+    severity: missing
+    claim: >-
+      counting_note 没说 Gate B 的参数总量一项是实测比实测
+    finding: >-
+      标杆 ds-v2 的 counting_note 明写「Gate B 的参数总量一项（delta 0.0）是拿实测比实测，
+      不构成核对；真正的外部核对是 HF 的 safetensors tally」。
+      本记录（以及本轮另外 7 份）都引了 HF tally，但没写这句 ——
+      derived JSON 里「参数总量 delta_pct 0.0 status ok」会被读成交叉验证通过。
+    resolution: corrected
+    changed_to: >-
+      八份 counting_note 统一补上这一句
+  - id: R14
+    field: params.breakdown
+    severity: miscategorized
+    claim: >-
+      breakdown 手写了一套与 scripts/lib/subsystems.py 不同的归类，缺口只写在 counting_note 的 caveat 里
+    finding: >-
+      subsystems.py 的 docstring 第一句就是闸口：「只此一份」——
+      两边用不同归类会让「参数量里的 expert」和「精度表里的 expert」指的不是同一批张量。
+      本记录的 precision.quantization.per_subsystem 里 attention / embed 两个键，
+      subsystems.py 对 chatglm 这一代的张量名**永远产不出来**。
+      而 CLAUDE.md 的「免责声明只免掉它点名的那件事」在这里也成立：
+      counting_note 的 caveat 到不了 data/derived/glm-4-9b.json，那里的
+      active_params.total = total_with_embed = 9,399,951,392、excluded.embed_tokens = 0、
+      params_by_subsystem 只有 4 个桶、arithmetic_intensity 的每 token 权重字节
+      18,799,902,784 全都偏高，而同一份 JSON 自己的 active_params.note 还写着
+      「embed_tokens 只 gather 一行…不计入」—— 它和自己的 excluded 值矛盾。
+      Qwen 一轮的 conv 状态是改脚本解决的，不是在记录里挂 caveat。
+      derive.py 的 reconciliation 也没有 breakdown vs params_by_subsystem 这一项，
+      所以 Gate B 结构上拦不住这种分叉。
+    resolution: open
+    changed_to: >-
+      本轮按任务约定不改共享脚本（另有家族会话在跑）；需要的最小改动（attention 正则加 self_attention|query_key_value、embed 正则加 word_embeddings）写进了交接报告与 open_questions，由主会话统一整合后全仓重跑 derive
+  - id: R15
+    field: lineage.changed_from_predecessor
+    severity: missing
+    claim: >-
+      作为家族链首，lineage 只有 track 与 successor，没有 changed_from_predecessor
+    finding: >-
+      标杆 ds-v2 同样没有 predecessor，却写了 4 条 changed_from_predecessor
+      （相对 MHA / 稠密的起点差异）。站点的「逐维度演进」块读的是这个字段，
+      所以缺了它这条线从第二份记录才开始。
+    resolution: corrected
+    changed_to: >-
+      补 4 条（attention / moe / precision / decoding），写的是「起点带着什么」以及后面哪几代相对它在动
+  - id: R16
+    field: open_questions
+    severity: stale
+    claim: >-
+      「训练精度无一手声明……模型卡正文未读」
+    finding: >-
+      卡正文已读（173 行）：里面没有任何训练精度的说法，也没有参数量数字
+      （全文唯一的「GLM-130B to GLM-4」出现在论文标题里），所以
+      「名字里的 9B 是唯一可对账的声明值」现在是逐行核过的结论而不是默认。
+      另外第 30 行「我们还推出了支持 1M 上下文长度（约 200 万中文字符）的模型」——
+      厂商自己把 1M 档当成**另一个模型**，印证了不收 glm-4-9b-chat-1m 的判断。
+    resolution: corrected
+    changed_to: >-
+      open_question 改成「卡正文已读、里面没有」，sources 补卡正文一条并记下 1M 那句
+notes: >-
+  GLM 家族在本仓的谱系起点，也是 2024 年这一代的开放权重代表（当期的 GLM-4 旗舰只有 API，
+  没有公开权重）。结构是常规 GQA + 稠密 FFN，没有 MoE、没有 MTP、没有量化。
+  层数、宽度、注意力几何、QKV 融合宽度、参数量与逐子系统精度都对照完整权重清单核过；
+  rope 的 base 乘子与作用维数读的是仓内 modeling_chatglm.py；
+  清单里的 inv_freq [32] 只能独立印证**作用维数**（32 = 64 // 2），
+  **印证不了 base = 5,000,000** —— 清单只有名字、形状与 dtype，没有张量数值，
+  而 inv_freq 在实现里是用硬编码 10000 建的、不带 rope_ratio。
+  config 的 apply_query_key_layer_scaling / attention_softmax_in_fp32 这类运行期开关
+  只有 config 与实现两个来源，清单核不了（清单只有名字、形状与 dtype）。
+
+open_questions:
+  - >-
+    KV cache 的实际落盘精度未披露，按 config 的 torch_dtype=bfloat16 兜底，
+    bytes_basis 是 dtype_fallback，不能和别人按落盘格式算出来的理论下限比倍数
+  - >-
+    训练精度无一手声明。config 只有 torch_dtype=bfloat16（落盘/计算 dtype）；
+    **模型卡正文已读（173 行），里面没有任何训练精度的说法**，所以 precision.training 不填
+  - >-
+    同期还有 glm-4-9b-chat-1m（同一天发布，HF sha f8579ac09698，config 已取到
+    facts/glm-4-9b-chat-1m/）：逐键比对只差三项加一个元字段 ——
+    multi_query_group_num 2 → 4、rope_ratio 500 → 10000、seq_length 131072 → 1048576
+    （另有 _name_or_path）。
+    KV 头数翻倍意味着它的缓存宽度是本记录的 2 倍（1024 元素/层/token），
+    不是同一份权重的再标注。本仓按「较小档位只在有结构对照价值时才录」没有收它 ——
+    若后面要讲 GLM 的长上下文路线，它是该补的一份
+  - >-
+    **params.breakdown 用的是手工归类，与 scripts/lib/subsystems.py 不同**（见 R14）：
+    这个脚本的正则认不出 chatglm 这一代的张量名
+    （self_attention.query_key_value / self_attention.dense / word_embeddings），
+    所以 data/derived/glm-4-9b.json 的 params_by_subsystem 只有 4 个桶、
+    激活参数把输入词表算成常驻（偏高 620,756,992，+7.07%）、
+    arithmetic_intensity 的每 token 权重字节也跟着偏高。
+    本轮按任务约定不改共享脚本（另有家族会话在并行跑），
+    需要的最小改动已写进交接报告：attention 正则加 self_attention|query_key_value、
+    embed 正则加 word_embeddings；改完要全仓重跑 derive，
+    并把 counting_note 里那一大段解释缺口的文字删掉
