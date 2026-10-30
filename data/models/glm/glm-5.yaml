@@ -18,6 +18,16 @@ sources:
       另有同期的 GLM-5-FP8 仓（来源是 HF API 的 author=zai-org 模型列表，
       2026-10-30 拉取，createdAt 同为 2026-02-11；**本仓没有取它的数**，
       本仓 repoinfo.json 里也没有任何指向它的字段），未收录
+  - kind: modelcard
+    url: https://huggingface.co/zai-org/GLM-5/blob/c183ef8c61faee82855eca1ed9bb3a9a7ce3b0b2/README.md
+    locator: README.md 第 32 行（参数量与 DSA 声明）、第 66 行（HLE-with-tools 用 202,752 上下文）、第 88 行（技术报告 arXiv 2602.15763）
+    accessed: '2026-10-30'
+    note: >-
+      卡正文（12708 字节 / 147 行）。第 32 行是厂商的参数量声明，同一句对 DSA 只有
+      定性的「largely reducing deployment cost」、没有数字；
+      全文搜 kv.?cache / per-token byte / cache size|capacity|memory|footprint 命中 0，
+      **没有每 token KV 字节**，也没有训练精度。
+      若存在厂商公布的 KV 数字，只可能在技术报告 arXiv 2602.15763 里 —— 本仓未读
 
 hf:
   repo: zai-org/GLM-5
@@ -85,13 +95,20 @@ lineage:
         对 TP 通信有利（更少的层边界同步），对流水并行不利（更少的切分点）。
         权重存储 667.46 GiB → 1.37 TiB
     - axis: context
-      text: 202752（与 GLM-4.7 相同），rope base 仍 1,000,000（移到 rope_parameters 子对象里）
+      text: >-
+        202752（与 GLM-4.7 相同），rope base 仍 1,000,000（移到 rope_parameters 子对象里）。
+        模型卡第 66 行的 HLE-with-tools 评测设置写「a maximum context length of
+        **202,752 tokens**」—— 与 config 的 max_position_embeddings 逐位相同，
+        是这个数的厂商侧印证（本家族里唯一一处卡上给出精确值而非取整的）
       benefit: >-
         上下文没变，而每 token 缓存降到 1/3.43，所以同样 202752 下
         KV 从 71.16 GiB 降到 20.7 GiB（两侧都是 BF16 兜底口径，同一套 basis，可比）
 
 params:
-  total: 753864139008.0
+  # 厂商声明值（模型卡第 32 行）。breakdown 是清单实测，两者口径不同，见 counting_note。
+  total: 744000000000.0
+  excludes:
+    - draft
   breakdown:
     expert: 724775731200.0
     attention: 12871532544.0
@@ -108,10 +125,20 @@ params:
     safetensors tally（753,864,139,008）逐位相同。清单 dtype 只有 BF16（59794）与
     F32（76 个 e_score_correction_bias [256]，共 19,456 元素 —— 主干 75 层各一份加 MTP 块一份），
     没有量化 scale 容器、没有低位打包，条目数即张量数、numel 即参数数。
-    厂商未声明总参数或激活参数，total 是本仓按清单求和的实测值。
-    Gate B 的「参数总量」一项（delta 0.0）因此是**拿实测比实测，不构成核对** ——
-    真正的外部核对是 HF 的 safetensors tally，它不依赖本仓任何一行代码。
-    draft 一项是第 78 层整块（9,952,920,576），按层索引归类；主干是 0–77，total 含草稿侧。
+    **total 是厂商声明值，不是实测值**：模型卡（README.md @ c183ef8c61fa 第 32 行）写
+    「scales from 355B parameters (32B active) to 744B parameters (40B active)」。
+    清单实测 753,864,139,008，比声明高 +1.326%；**扣掉 draft（第 78 层整块
+    9,952,920,576，按层索引归类）后是 743,911,218,432，对声明的 744B 是 −0.012%**，
+    几乎逐位 —— 所以 excludes 填 [draft]，Gate B 这一项从「实测比实测」变成真对账。
+    这个口径在本家族三代上同时成立（glm-4.5 −0.620%、glm-4.7-flash −0.189%），
+    三代档位差 20 倍，所以是规律不是巧合；见 glm-4.5 的 counting_note。
+    **激活参数的声明值是 40B，对应第三套口径**：本仓带宽口径 40,833,146,112 对它是
+    +2.083%、含输入词表的 41,784,728,832 是 +4.462%，
+    而**带宽口径再扣掉 lm_head** 的 39,881,563,392 是 **−0.296%** ——
+    厂商的 active 把输入词表与 lm_head 两头都排除、只算 transformer 主干。
+    本记录不填 active_decode / active_prefill：卡上只说 "active parameters"，没分 prefill/decode。
+    breakdown 十项仍是清单实测（求和 = HF 的 safetensors tally，逐位相同），
+    所以 **breakdown 之和不等于 total**。
     逐因子核过：注意力 165,019,648/层 = q_a 2048×6144 + q_b 16384×2048 + kv_a 576×6144
     + kv_b 28672×512 + o 6144×16384，× 78 主干层 = 12,871,532,544；
     indexer 9,371,648/层 = wk 128×6144 + wq_b 4096×2048 + weights_proj 32×6144，
@@ -338,6 +365,9 @@ evidence:
   hf: official
   lineage: judgement
   params: derived
+  params.total: official
+  params.excludes: judgement
+  params.counting_note: judgement
   context: official
   arch: official
   arch.norm: derived
@@ -405,6 +435,12 @@ reviewed:
     scoring_func / topk_method / attention_bias 等）只有 config 一个来源；
     MTP 块自带的词表副本与主干那份是不是同值；KV 条目是 1:1 计费还是选存；
     KV 的实际落盘精度。后三项都挂在 open_questions 里。
+    **第二轮（卡正文）**：按新定的来源优先级把九份模型卡 README.md 按 pinned sha 全抓下来
+    逐行读过，并全文搜了 kv.?cache / per-token byte / cache size|capacity|memory|footprint
+    与参数量、训练精度、上下文数字。KV 字节九份全部命中 0；参数量声明在
+    glm-4.5 / glm-5 / glm-4.7-flash / glm-4-32b-0414 四份卡里有、另五份没有。
+    技术报告（arXiv 2602.15763 / 2603.12201 / 2508.06471）与 z.ai 博客**均未读**，
+    所以「厂商从未公布每 token KV 字节」这个结论的作用域只到卡正文，不含报告。
 review:
   - id: R1
     field: params.counting_note
@@ -568,6 +604,37 @@ review:
     resolution: corrected
     changed_to: >-
       补上这一句
+  - id: R13
+    field: params
+    severity: wrong
+    claim: >-
+      counting_note 写「厂商未声明总参数或激活参数，total 是本仓按清单求和的实测值」
+    finding: >-
+      本轮按新定的来源优先级（模型卡 / 技术报告 > 厂商参考实现 > 引擎实现）
+      回头去读卡正文时查出来的。原来九份记录的 sources 里每条 locator 都是
+      `config.json @ <sha>`，读的只有 config、repoinfo 与权重清单，卡正文一行没读 ——
+      `glm-4-9b` 的 open_question 甚至明写着「模型卡正文未读」。
+      模型卡 README.md @ c183ef8c61fa **第 32 行**写着
+      「scales from 355B parameters (32B active) to **744B parameters (40B active)**」。
+      扣掉 draft 后 743,911,218,432 对 744B 是 **−0.012%**，几乎逐位 ——
+      本家族三代里吻合最好的一个，也最能说明「声明值不含 MTP 块」这个口径。
+      激活同样：带宽口径再扣 lm_head 的 39,881,563,392 对 40B 是 −0.296%。
+    resolution: corrected
+    changed_to: >-
+      params.total 改 744000000000 + excludes: [draft]，counting_note 重写，sources 补卡正文，evidence 补三项
+  - id: R14
+    field: lineage.changed_from_predecessor
+    severity: missing
+    claim: >-
+      context 轴只写 config 的 202752，没有厂商侧印证
+    finding: >-
+      模型卡第 66 行的 HLE-with-tools 评测设置写「a maximum context length of
+      **202,752 tokens**」—— 与 config 的 max_position_embeddings 逐位相同。
+      这是本家族九份卡里**唯一一处给出精确值而非取整的上下文数字**
+      （4.6 的卡写 128K → 200K，5.2 写 1M，都是取整），所以值得记。
+    resolution: corrected
+    changed_to: >-
+      context 轴补上这条卡侧印证与它的特殊性
 notes: >-
   GLM-5 一代的起点：主干旗舰第一次用 MLA，也第一次叠 DSA（model_type glm_moe_dsa）。
   MLA 几何与新词表沿用支线 GLM-4.7-Flash，DSA 是新的。

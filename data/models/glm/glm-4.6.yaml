@@ -15,6 +15,14 @@ sources:
     note: >-
       BF16 发布，93 分片。权重清单逐分片读头取全，44689 个张量，无读失败分片。
       另有同期的 GLM-4.6-FP8 仓，未收录
+  - kind: modelcard
+    url: https://huggingface.co/zai-org/GLM-4.6/blob/be72194883d968d7923a07e2f61681ea9a2826d1/README.md
+    locator: README.md 第 29 行（上下文 128K → 200K）、第 18 行（技术报告指向 GLM-4.5 的 arXiv 2508.06471）
+    accessed: '2026-10-30'
+    note: >-
+      卡正文（3044 字节 / 59 行，全族最薄的几份之一）。**没有参数量声明**，也没有训练精度，
+      没有每 token KV 字节（全文搜 kv.?cache / per-token byte /
+      cache size|capacity|memory|footprint 命中 0）。本代没有自己的技术报告
 
 hf:
   repo: zai-org/GLM-4.6
@@ -29,7 +37,11 @@ lineage:
   successor: glm-4.7
   changed_from_predecessor:
     - axis: context
-      text: 131072 → 202752（config max_position_embeddings），rope base 仍是 1,000,000
+      text: >-
+        131072 → 202752（config max_position_embeddings），rope base 仍是 1,000,000。
+        厂商侧有对应说法：模型卡第 29 行「The context window has been expanded
+        from 128K to 200K tokens」—— 128K / 200K 是 131072 / 202752 的取整
+        （202752 / 1024 = 198，口语里叫 200K）
       benefit: >-
         1.55 倍上下文，没有任何省缓存的结构改造，所以缓存总量同比例涨：
         KV 每 token 不变（主干 188416 元素 / 376832 B，BF16 兜底口径），
@@ -198,6 +210,7 @@ evidence:
   hf: official
   lineage: judgement
   params: derived
+  params.counting_note: judgement
   context: official
   arch: official
   arch.norm: derived
@@ -259,6 +272,12 @@ reviewed:
     scoring_func / topk_method / attention_bias 等）只有 config 一个来源；
     MTP 块自带的词表副本与主干那份是不是同值；KV 条目是 1:1 计费还是选存；
     KV 的实际落盘精度。后三项都挂在 open_questions 里。
+    **第二轮（卡正文）**：按新定的来源优先级把九份模型卡 README.md 按 pinned sha 全抓下来
+    逐行读过，并全文搜了 kv.?cache / per-token byte / cache size|capacity|memory|footprint
+    与参数量、训练精度、上下文数字。KV 字节九份全部命中 0；参数量声明在
+    glm-4.5 / glm-5 / glm-4.7-flash / glm-4-32b-0414 四份卡里有、另五份没有。
+    技术报告（arXiv 2602.15763 / 2603.12201 / 2508.06471）与 z.ai 博客**均未读**，
+    所以「厂商从未公布每 token KV 字节」这个结论的作用域只到卡正文，不含报告。
 review:
   - id: R1
     field: hf.sha
@@ -350,6 +369,22 @@ review:
     resolution: corrected
     changed_to: >-
       补上这一句
+  - id: R9
+    field: lineage.changed_from_predecessor
+    severity: missing
+    claim: >-
+      context 轴只写 config 的 131072 → 202752，没有厂商侧说法
+    finding: >-
+      模型卡 README.md @ be72194883d9 **第 29 行**写着「The context window has been
+      **expanded from 128K to 200K tokens**, enabling the model to handle more complex
+      agentic tasks」。128K / 200K 是 131072 / 202752 的取整（202752 / 1024 = 198）。
+      这同时部分回答了那条 open question：「expanded」与能力提升的措辞倾向于不止改一个上限，
+      但卡上没说做了什么，所以那条问题收窄而不是关闭。
+      本代卡里**没有**参数量声明（59 行，全族最薄的几份之一），所以 counting_note 的
+      「厂商未声明」成立 —— 现在是逐行核过的。
+    resolution: corrected
+    changed_to: >-
+      context 轴补卡侧说法，open question 收窄，sources 补卡正文一条
 notes: >-
   相对 GLM-4.5 只动了两件事：上下文 131072 → 202752，以及 MTP 块不再自带词表副本与输出头。
   两件都是逐张量比对出来的（44691 → 44689，差的那两张有名有姓），不是从模型卡抄的。
@@ -372,7 +407,9 @@ open_questions:
     还是两份各对应一处）清单定不了 —— shared_head.head 对应输出侧、embed_tokens 对应输入侧
     是按名字推的，要钉死得读实现
   - >-
-    上下文从 131072 到 202752 是怎么来的（继续训练、还是只改 config 的上限）
-    没有一手来源。rope 参数一项没动，所以不是靠放大 base 外推
+    上下文从 131072 到 202752 是怎么来的（继续训练、还是只改 config 的上限）仍无一手来源。
+    模型卡第 29 行只说「expanded from 128K to 200K tokens, enabling the model to handle
+    more complex agentic tasks」——「expanded」与能力提升的措辞倾向于不止改一个上限，
+    但它没说做了什么。rope 参数一项没动，所以不是靠放大 base 外推
   - >-
     MoE 的打分函数仍无一手来源（见 glm-4.5 的同一条）

@@ -1,7 +1,7 @@
 {
  "id": "glm-4.5",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T05:51:51+00:00",
+ "generated_at": "2026-10-30T06:59:56+00:00",
  "inputs": {
   "facts_dir": "facts/glm-4.5",
   "config_present": true,
@@ -162,10 +162,15 @@
   },
   {
    "item": "参数总量",
-   "YAML 声明": 358337791296.0,
-   "shapes 实测": 358337791296.0,
-   "delta_pct": 0.0,
+   "YAML 声明": 355000000000.0,
+   "shapes 实测(扣除 draft)": 352797829024.0,
+   "delta_pct": -0.62,
    "status": "ok"
+  },
+  {
+   "item": "口径说明",
+   "status": "ok",
+   "why": "声明值不含 draft；含在内的实测总量为 358.3B"
   },
   {
    "item": "外部参数量对账",

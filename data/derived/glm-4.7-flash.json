@@ -1,7 +1,7 @@
 {
  "id": "glm-4.7-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T05:51:53+00:00",
+ "generated_at": "2026-10-30T06:59:57+00:00",
  "inputs": {
   "facts_dir": "facts/glm-4.7-flash",
   "config_present": true,
@@ -160,10 +160,15 @@
   },
   {
    "item": "参数总量",
-   "YAML 声明": 31221488576.0,
-   "shapes 实测": 31221488576.0,
-   "delta_pct": 0.0,
+   "YAML 声明": 30000000000.0,
+   "shapes 实测(扣除 draft)": 29943393920.0,
+   "delta_pct": -0.19,
    "status": "ok"
+  },
+  {
+   "item": "口径说明",
+   "status": "ok",
+   "why": "声明值不含 draft；含在内的实测总量为 31.2B"
   },
   {
    "item": "外部参数量对账",

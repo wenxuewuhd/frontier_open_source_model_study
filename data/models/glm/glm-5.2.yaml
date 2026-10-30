@@ -17,6 +17,15 @@ sources:
     note: >-
       BF16 发布，282 分片。权重清单逐分片读头取全，59585 个张量，无读失败分片。
       另有同期的 GLM-5.2-FP8 仓，未收录 —— 下一代 GLM-5.3 把 FP8 做成了主仓
+  - kind: modelcard
+    url: https://huggingface.co/zai-org/GLM-5.2/blob/cf457fa734ab149ffef225f80893eb38c6ff5cdc/README.md
+    locator: README.md 第 36 行（IndexShare 与 per-token FLOPs 2.9×）、第 33–34 行（solid 1M-token context）、第 19 行（GLM-5 技术报告 arXiv 2602.15763）
+    accessed: '2026-10-30'
+    note: >-
+      卡正文（10908 字节 / 108 行）。**没有参数量声明**（卡把参数量的事推给 GLM-5 技术报告），
+      也没有训练精度，**没有每 token KV 字节**（全文搜 kv.?cache / per-token byte /
+      cache size|capacity|memory|footprint 命中 0）。
+      第 36 行唯一沾边的数字是 per-token **FLOPs** 2.9×，不是缓存口径，见 open_questions
 
 hf:
   repo: zai-org/GLM-5.2
@@ -162,7 +171,12 @@ arch:
         前三层的例外疑与 index_skip_topk_offset=3 有关，见 open_questions）。
         MTP 块（L78）另有完整一套。
         **这套层间复用是本代新加的** —— GLM-5 / GLM-5.1 是每层一套 indexer、
-        每层各算一次 topk，config 里连 index_topk_freq / indexer_types 这两个键都没有
+        每层各算一次 topk，config 里连 index_topk_freq / indexer_types 这两个键都没有。
+        厂商侧有对应说法：模型卡第 36 行「We propose IndexShare, which **reuses the same
+        indexer across every four sparse attention layers**」—— 与本仓从 config
+        indexer_types 和清单 indexer.wk 层集合两路推出的机制一致，是第三路独立印证。
+        但注意卡上说的是「every four」，而实测层集合是 [0,1,2,6,10,…,74]、
+        间隔 1,1,4,4,…，**前三层的例外卡上没提** —— 按卡上这句字面推仍会得到 20 层
       index_n_heads: 32
       index_head_dim: 128
       index_topk: 2048
@@ -360,6 +374,7 @@ evidence:
   hf: official
   lineage: judgement
   params: derived
+  params.counting_note: judgement
   context: official
   arch: official
   arch.norm: derived
@@ -428,6 +443,12 @@ reviewed:
     scoring_func / topk_method / attention_bias 等）只有 config 一个来源；
     MTP 块自带的词表副本与主干那份是不是同值；KV 条目是 1:1 计费还是选存；
     KV 的实际落盘精度。后三项都挂在 open_questions 里。
+    **第二轮（卡正文）**：按新定的来源优先级把九份模型卡 README.md 按 pinned sha 全抓下来
+    逐行读过，并全文搜了 kv.?cache / per-token byte / cache size|capacity|memory|footprint
+    与参数量、训练精度、上下文数字。KV 字节九份全部命中 0；参数量声明在
+    glm-4.5 / glm-5 / glm-4.7-flash / glm-4-32b-0414 四份卡里有、另五份没有。
+    技术报告（arXiv 2602.15763 / 2603.12201 / 2508.06471）与 z.ai 博客**均未读**，
+    所以「厂商从未公布每 token KV 字节」这个结论的作用域只到卡正文，不含报告。
 review:
   - id: R1
     field: bottlenecks
@@ -583,6 +604,38 @@ review:
     resolution: corrected
     changed_to: >-
       补上这一句
+  - id: R13
+    field: arch.attention.sparse.mechanism
+    severity: imprecise
+    claim: >-
+      mechanism 只有 config indexer_types 与清单 indexer.wk 两路证据，标 judgement
+    finding: >-
+      模型卡 README.md @ cf457fa734ab **第 36 行**有厂商自己的说法：
+      「We propose IndexShare, which **reuses the same indexer across every four sparse
+      attention layers**」—— 与本仓两路推出的机制一致，是第三路独立印证，
+      而且给出了论文名（arXiv 2603.12201）。
+      但卡上说的是「every four」，而实测层集合是 [0,1,2,6,10,…,74]、间隔 1,1,4,4,…，
+      **前三层的例外卡上没提** —— 按卡上这句字面推仍会得到 20 层（R3 那个坑照样踩）。
+      所以这条印证机制、不印证层集合。
+    resolution: corrected
+    changed_to: >-
+      mechanism 补上卡侧原话与「every four 不含前三层例外」的限定
+  - id: R14
+    field: open_questions
+    severity: missing
+    claim: >-
+      没有记下卡里那个 2.9× 的 FLOPs 数字，也没有记技术报告指针
+    finding: >-
+      模型卡第 36 行唯一沾边缓存的数字是「reducing per-token **FLOPs** by 2.9× at a
+      1M context length」—— 它**不是**缓存口径，不能当 KV 的外部锚：
+      本仓算的 index K 元素 9984 → 2688 是 3.71×、KV 元素总数 54912 → 47616 是 1.133×，
+      与 2.9× 是三个不同的量。卡上也没点名分母是哪一代。
+      按「不同口径之间不算倍数」，它只能进 open_question。
+      另记下两个指针：厂商若公布过每 token KV 字节，只可能在 arXiv 2602.15763
+      （GLM-5 技术报告）或 2603.12201（IndexShare）里，两份本仓都没读。
+    resolution: corrected
+    changed_to: >-
+      补一条 open question 记下 2.9× 的口径、为什么不能当锚、以及两个技术报告指针；sources 补卡正文一条
 notes: >-
   GLM-5 一代的第二次结构改动，也是这条线上「省缓存」的第三根轴：
   indexer 从每层一套收到 21 层一套，其余 57 层复用上游的 topk 选择。
@@ -602,6 +655,13 @@ notes: >-
   routed_scaling_factor / norm_eps 这类运行期标量只有 config 一个来源。
 
 open_questions:
+  - >-
+    模型卡第 36 行给的是「per-token **FLOPs** 降 2.9×（1M 上下文）」，不是缓存口径，
+    所以它**不能**当 KV 的外部锚：本仓算出来的 index K 元素 9984 → 2688 是 3.71×、
+    KV 元素总数 54912 → 47616 是 1.133×，与 2.9× 是三个不同的量，按本仓规矩不能互相代入。
+    而且卡上没点名分母是哪一代（按内容应是 GLM-5 / 5.1 的逐层 indexer）。
+    厂商若公布过每 token KV 字节，只可能在 arXiv 2602.15763（GLM-5 技术报告）
+    或 2603.12201（IndexShare）里 —— 两份本仓都没读
   - >-
     **arch.attention.head_dim 的语义在本仓两个族系里不一致，这是跨族系的口径问题。**
     schema 对 v_head_dim 的描述把「MLA 一代的 head_dim（nope+rope）只管 QK」写死了，

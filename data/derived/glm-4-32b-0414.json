@@ -1,7 +1,7 @@
 {
  "id": "glm-4-32b-0414",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T05:51:51+00:00",
+ "generated_at": "2026-10-30T06:59:55+00:00",
  "inputs": {
   "facts_dir": "facts/glm-4-32b-0414",
   "config_present": true,
@@ -131,9 +131,9 @@
   },
   {
    "item": "参数总量",
-   "YAML 声明": 32566081536.0,
+   "YAML 声明": 32000000000.0,
    "shapes 实测": 32566081536.0,
-   "delta_pct": 0.0,
+   "delta_pct": 1.77,
    "status": "ok"
   },
   {

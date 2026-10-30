@@ -1,7 +1,7 @@
 {
  "id": "glm-4-9b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T05:51:51+00:00",
+ "generated_at": "2026-10-30T06:59:55+00:00",
  "inputs": {
   "facts_dir": "facts/glm-4-9b",
   "config_present": true,

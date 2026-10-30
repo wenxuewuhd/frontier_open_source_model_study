@@ -17,6 +17,17 @@ sources:
     note: >-
       BF16 发布，10 分片。权重清单逐分片读头取全，284 个张量，无读失败分片。
       custom_code 仓：结构定义在仓内的 modeling_chatglm.py，不是 transformers 主干实现
+  - kind: modelcard
+    url: https://huggingface.co/zai-org/glm-4-9b-chat/blob/bd8234fe5e0c09c48637a92abb0c797cb5fa0e73/README.md
+    locator: README.md 第 28–30 行（128K 上下文；另有 1M 上下文的单独模型）
+    accessed: '2026-10-30'
+    note: >-
+      卡正文（7772 字节 / 173 行）。**没有参数量声明**（全文只有一处 "GLM-130B to GLM-4"
+      出现在论文标题里），所以本代唯一可对账的声明值仍是名字里的 9B；
+      也没有训练精度，没有每 token KV 字节（全文搜 kv.?cache / per-token byte /
+      cache size|capacity|memory|footprint 命中 0）。
+      第 30 行「我们还推出了支持 1M 上下文长度（约 200 万中文字符）的模型」
+      是厂商自己把 1M 档当成**另一个模型**，印证了 open_questions 里不收 glm-4-9b-chat-1m 的判断
   - kind: repo
     url: https://huggingface.co/zai-org/glm-4-9b-chat/blob/bd8234fe5e0c09c48637a92abb0c797cb5fa0e73/modeling_chatglm.py
     locator: >-
@@ -84,7 +95,7 @@ params:
     safetensors tally（9,399,951,392）逐位相同。清单 284 个条目全是 BF16：
     没有量化 scale 容器、没有低位打包，条目数即张量数、numel 即参数数。
     没有 MTP 草稿块（config 无 num_nextn_predict_layers，层号止于 39），所以没有 excludes。
-    **名字里的 9B 是唯一可对账的声明值，而它对不上**：实测 9.40B 对 9B 是 +4.44%，
+    **名字里的 9B 是唯一可对账的声明值（模型卡正文没有参数量数字，已逐行核过），而它对不上**：实测 9.40B 对 9B 是 +4.44%，
     超出 Gate B 的 2% 容差。扣掉输入词表（620,756,992）后的语言主干是 8.78B，
     对 9B 是 −2.45%，同样超出 —— 两种口径都不落在容差内，所以这个 9B
     更可能是档位命名而不是参数量声明。本记录不填 params 之外的声明值，
@@ -283,6 +294,12 @@ reviewed:
     scoring_func / topk_method / attention_bias 等）只有 config 一个来源；
     MTP 块自带的词表副本与主干那份是不是同值；KV 条目是 1:1 计费还是选存；
     KV 的实际落盘精度。后三项都挂在 open_questions 里。
+    **第二轮（卡正文）**：按新定的来源优先级把九份模型卡 README.md 按 pinned sha 全抓下来
+    逐行读过，并全文搜了 kv.?cache / per-token byte / cache size|capacity|memory|footprint
+    与参数量、训练精度、上下文数字。KV 字节九份全部命中 0；参数量声明在
+    glm-4.5 / glm-5 / glm-4.7-flash / glm-4-32b-0414 四份卡里有、另五份没有。
+    技术报告（arXiv 2602.15763 / 2603.12201 / 2508.06471）与 z.ai 博客**均未读**，
+    所以「厂商从未公布每 token KV 字节」这个结论的作用域只到卡正文，不含报告。
 review:
   - id: R1
     field: params.breakdown
@@ -495,6 +512,20 @@ review:
     resolution: corrected
     changed_to: >-
       补 4 条（attention / moe / precision / decoding），写的是「起点带着什么」以及后面哪几代相对它在动
+  - id: R16
+    field: open_questions
+    severity: stale
+    claim: >-
+      「训练精度无一手声明……模型卡正文未读」
+    finding: >-
+      卡正文已读（173 行）：里面没有任何训练精度的说法，也没有参数量数字
+      （全文唯一的「GLM-130B to GLM-4」出现在论文标题里），所以
+      「名字里的 9B 是唯一可对账的声明值」现在是逐行核过的结论而不是默认。
+      另外第 30 行「我们还推出了支持 1M 上下文长度（约 200 万中文字符）的模型」——
+      厂商自己把 1M 档当成**另一个模型**，印证了不收 glm-4-9b-chat-1m 的判断。
+    resolution: corrected
+    changed_to: >-
+      open_question 改成「卡正文已读、里面没有」，sources 补卡正文一条并记下 1M 那句
 notes: >-
   GLM 家族在本仓的谱系起点，也是 2024 年这一代的开放权重代表（当期的 GLM-4 旗舰只有 API，
   没有公开权重）。结构是常规 GQA + 稠密 FFN，没有 MoE、没有 MTP、没有量化。
@@ -511,8 +542,8 @@ open_questions:
     KV cache 的实际落盘精度未披露，按 config 的 torch_dtype=bfloat16 兜底，
     bytes_basis 是 dtype_fallback，不能和别人按落盘格式算出来的理论下限比倍数
   - >-
-    训练精度无一手声明。config 只有 torch_dtype=bfloat16（落盘/计算 dtype），
-    模型卡正文未读，所以 precision.training 不填
+    训练精度无一手声明。config 只有 torch_dtype=bfloat16（落盘/计算 dtype）；
+    **模型卡正文已读（173 行），里面没有任何训练精度的说法**，所以 precision.training 不填
   - >-
     同期还有 glm-4-9b-chat-1m（同一天发布，HF sha f8579ac09698，config 已取到
     facts/glm-4-9b-chat-1m/）：逐键比对只差三项加一个元字段 ——

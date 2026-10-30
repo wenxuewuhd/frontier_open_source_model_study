@@ -14,6 +14,18 @@ sources:
     note: >-
       FP8 发布（tags 带 fp8），141 分片。权重清单逐分片读头取全，
       118629 个张量，无读失败分片
+  - kind: modelcard
+    url: https://huggingface.co/zai-org/GLM-5.3/blob/ba32f8c19c8738e2c57c71798c601d477a7bf844/README.md
+    locator: README.md 全文（90 行）
+    accessed: '2026-10-30'
+    note: >-
+      卡正文（14163 字节 / 90 行）。**没有参数量声明、没有训练精度、没有技术报告链接**
+      （同代里只有 GLM-5.2 的卡引了 arXiv 2602.15763 与 2603.12201），
+      也**没有每 token KV 字节**（全文搜 kv.?cache / per-token byte /
+      cache size|capacity|memory|footprint 命中 0）。
+      所以 counting_note 里「厂商未在 config 或模型卡里声明总参数或激活参数」这句
+      现在是逐行核过的 —— 本代确实没有，不是没查。
+      注意前代 GLM-5 的卡（第 32 行）声明了 744B / 40B，GLM-5.2 与本代都没有再声明
 
 hf:
   repo: zai-org/GLM-5.3
@@ -90,8 +102,12 @@ params:
     按完整权重清单（141 分片 118629 条目）逐项统计。118629 是 safetensors 条目数，
     其中 59044 条是 weight_scale_inv（FP8 的 per-block scale 容器）—— 不计入参数、
     只计入权重存储；真权重张量 59585 条。厂商未在 config 或模型卡里声明总参数或
-    激活参数，total 是本仓按清单求和的实测值，不是声明值；它与 HF 平台自己从分片头
+    激活参数（**模型卡正文已逐行核过，90 行里没有参数量数字**），
+    total 是本仓按清单求和的实测值，不是声明值；它与 HF 平台自己从分片头
     统计的 safetensors tally（753,329,940,480，同样排 scale）逐 dtype 逐位相同。
+    前代 GLM-5 的卡声明过 744B / 40B，且那个声明值的口径是「不含 MTP 块」
+    （见 glm-5 的 counting_note）；本代与 GLM-5.2 的卡都没有再声明，
+    所以本记录没有可填的 params.excludes —— 这是「厂商没说」，不是「含草稿侧」。
     全清单 dtype 只有 F8_E4M3 / BF16 / F32 三种，无 INT8/UINT8 打包容器，
     numel 即参数数，不需还原。
     total 与 breakdown 取 6 位有效数字，所以 breakdown 十项求和（753,330,181,660）
@@ -751,6 +767,22 @@ review:
     resolution: corrected
     changed_to: >-
       evidence 的 released 改 derived（值不变 —— 换哪个日期是另一个问题，这里只订正口径）
+  - id: R27
+    field: params.counting_note
+    severity: imprecise
+    claim: >-
+      「厂商未在 config 或模型卡里声明总参数或激活参数」
+    finding: >-
+      结论成立，但当时没读卡正文。本轮读了（90 行）：确实没有参数量数字、
+      没有训练精度、也没有技术报告链接（同代只有 GLM-5.2 的卡引了
+      arXiv 2602.15763 与 2603.12201），全文搜 kv.?cache / per-token byte /
+      cache size|capacity|memory|footprint 也命中 0。
+      但**前代 GLM-5 的卡第 32 行声明过 744B / 40B**，且那个声明值的口径是不含 MTP 块；
+      本代与 GLM-5.2 的卡都没有再声明。所以本记录没有可填的 params.excludes，
+      这是「厂商没说」而不是「含草稿侧」—— 两件事在 counting_note 里要分开。
+    resolution: corrected
+    changed_to: >-
+      counting_note 写明卡正文已逐行核过、前代声明值的存在与口径，并点明本代没有 excludes 的原因；sources 补卡正文一条
 notes: >-
   GLM 家族的当前旗舰（2026-10-14），model_type 为 glm_moe_dsa：MLA 配
   DeepSeek 式 DSA 稀疏选择。本仓第一份非 DeepSeek 的稀疏注意力记录，
