@@ -58,6 +58,15 @@
 - 逐记录把每个空格子判一遍，判不出来就报错；判成「未录」的攒成一份清单
   （`--list-gaps`）—— 那是调研进度，该有人看见还剩哪些没查
 
+还有一条管「第二份标签表」：代码里不许把 `bytes_basis` 的取值自己映射成中文。
+**按结构找，不按词找** —— 只认标签表实际会长的两种样子（当对象键用、拿它做比较再给中文）。
+按词找会把散文全部误伤（页面上的口径说明会写 `` `theoretical_floor` 是…理论下限 ``）；
+按形状找（认 `const <NAME> = {`）又漏掉写成三元的那种，而 `LayerMap` 里正是三元、
+且只盖两档，`vendor_declared` 落进 else 被标成「记录没给落盘精度」—— **不是漏标签，是标错**。
+真·basis 行为（`const floor = basis === 'theoretical_floor'`、只给 `theoretical_floor`
+挂 Evidence 标记）没有中文标签，照常放过。这条现在报 warning：站点侧还没有读注册表的
+入口，那几份拷贝暂时是唯一来源；入口落地后收紧成 error。
+
 **渲染侧不在这道闸里。** 站点怎么画这三态有它自己的归属；在这里顺带查会变成两道闸
 管同一件事，而两道闸迟早会各自漂 —— `bytes_basis` 的标签表就是这么变成三份各自不全的
 拷贝的（`kv_table.py` 的 `BASIS_DOC`、`data.ts` 的 `KV_BASIS_LABEL`、
@@ -66,7 +75,7 @@
 
 ## 回归用例
 
-`tests/absence_regression.py`，19 条，三次误读各有负例与正例：
+`tests/absence_regression.py`，26 条，三次误读各有负例与正例：
 
 ```
 .venv/bin/python tests/absence_regression.py -v
