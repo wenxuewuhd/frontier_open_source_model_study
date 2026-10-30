@@ -205,6 +205,28 @@ HF 逐文件相加、本仓按 `weight_map` 去重。
 kimi-k3 / kimi-k2.5 / kimi-vl-a3b / minimax-m3 / qwen3.5-27b /
 qwen3.5-397b-a17b / qwen3.8-27b / qwen3.8-flash-next / step-3 / step-5-preview）。
 
+## 一个踩到的坑：`.gitignore` 的 `facts/` 挡不住符号链接
+
+worktree 里没有 `.venv` 和 `facts/`（都在 gitignore 里、不随分支走），
+我按任务说明把它们从主 checkout 链过来 —— 用的是**符号链接**。
+结果第一次 `git add -A` 就把这两个链接**提交进去了**，
+而且一路带了 16 个提交才被发现。
+
+根因：`.gitignore` 里写的是 `facts/` 和 `.venv/`，**带尾斜杠只匹配目录**，
+而符号链接在 git 眼里不是目录，是一个 `120000` 的 blob。
+提交进去的内容是指向我本地主 checkout 的**绝对路径**，对别人完全无效。
+
+已用 `git filter-branch --index-filter` 从全部 17 个提交里清掉，
+清后核对：全部提交里 `.venv` / `facts` 条目总数 = 0，
+改动范围正好是预期的 27 个文件；12 份 derive 与 validate 重跑结论不变
+（derived JSON 除时间戳外零差异）。
+本地用 `.git/info/exclude` 挡住（不动共享的 `.gitignore`）。
+
+**建议**：`.gitignore` 里把这两行改成不带尾斜杠的 `facts` 与 `.venv`，
+或者各加一行无斜杠的。这样每个用 worktree 的会话都不会再踩 ——
+我没动 `.gitignore`，它不在本轮的改动范围里。
+拷贝而不是链接也能绕开，但 `facts/` 有好几个 GB。
+
 ## 建议主会话接着做什么
 
 按价值排序：
