@@ -1,7 +1,7 @@
 {
  "id": "step-3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T07:17:42+00:00",
+ "generated_at": "2026-10-30T09:03:24+00:00",
  "inputs": {
   "facts_dir": "facts/step-3",
   "config_present": true,
