@@ -1,0 +1,445 @@
+# 机械字段来自 config（official）；形状、参数量、子系统拆分与层内 norm 布局来自完整权重清单（derived）。
+id: glm-4-32b-0414
+family: glm
+kind: llm
+display_name: GLM-4-32B-0414
+released: '2025-04-07'
+license: mit
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/zai-org/GLM-4-32B-0414
+    locator: config.json @ 077b5c2f5c43
+    accessed: '2026-10-30'
+    note: >-
+      BF16 发布，14 分片。权重清单逐分片读头取全，613 个张量，无读失败分片。
+      与 glm-4-9b 的 custom_code 不同，这一代走 transformers 主干的 Glm4ForCausalLM
+
+hf:
+  repo: zai-org/GLM-4-32B-0414
+  sha: 077b5c2f5c43bd3239fd605a0600229e8facbd4a
+  last_modified: '2025-05-01T15:42:37.000Z'
+  pipeline_tag: text-generation
+  gated: false
+
+lineage:
+  track: main
+  predecessor: glm-4-9b
+  successor: glm-4.5
+  changed_from_predecessor:
+    - axis: scale
+      text: >-
+        9.4B → 32.6B：层数 40 → 61、hidden 4096 → 6144、query 头 32 → 48、
+        稠密 FFN 中间维 13696 → 23040。KV 头数仍是 2，head_dim 仍是 128 —— 放大的是
+        query 侧与 FFN，不是缓存侧
+      benefit: >-
+        KV 每层仍是 2 × 2 × 128 = 512 元素，只因层数从 40 涨到 61 而增加 52.5%
+        （20480 → 31232 元素/token）；而权重从 17.51 GiB 涨到 60.66 GiB，3.46 倍。
+        decode 的权重带宽压力涨得远比 KV 快，这是这一档仍然全稠密的直接后果
+    - axis: attention
+      text: >-
+        融合 QKV 拆成独立的 q_proj / k_proj / v_proj，并去掉 QKV 的 bias
+        （config attention_bias=false，而 glm-4-9b 是 add_qkv_bias=true）。
+        partial rotary 从「实现里隐含的 128 // 2」变成 config 显式声明的
+        partial_rotary_factor=0.5，rope base 从 5e6（10000 × rope_ratio 500）回到 10000
+      benefit: >-
+        拆开之后 TP 切分与权重重排不再需要先按 [Q|K|V] 段切一刀，但一次 GEMM 变三次 ——
+        要靠引擎侧自己再融合回去才能拿回原来的访存效率。rope 语义从「读实现才知道」
+        变成「config 写明」，这一项是纯粹的可移植性收益
+    - axis: training
+      text: >-
+        每层从 2 处 RMSNorm 变成 4 处：新增 post_self_attn_layernorm 与
+        post_mlp_layernorm，即 sandwich norm（注意力与 FFN 的输出各再归一化一次）
+      benefit: >-
+        训练稳定性的改造，推理侧的代价是每层多两次 RMSNorm —— 纯 Vector 负载、
+        无法与相邻 GEMM 融合成一次读写，在 Cube/Vector 配比上把天平往 Vector 推。
+        参数量代价可以忽略（norm 合计 1,505,280，占 0.0046%）。
+        这是 0414 这一代独有的 —— 但独有的是**位置**不是数量：
+        GLM-4.5 的残差流 norm 回到每层 2 处，另加注意力内的 q_norm / k_norm 两处
+        （各 [128]，沿 head_dim），层内 norm 张量数仍是 4（主干 92 层共 368 张，
+        比本代的 244 张更多）。差别在于 QK-Norm 作用在每头 QK 上、
+        可以和 QKV 投影的 epilogue 一起做，而 sandwich norm 的两处夹在残差加法之间、
+        两头都融合不了
+    - axis: context
+      text: >-
+        131072 → 32768。两侧的字段名不同：glm-4-9b 的 131072 来自 config.seq_length
+        （那一代没有 max_position_embeddings 这个键），本代是 config.max_position_embeddings。
+        rope base 5e6 → 10000
+      benefit: >-
+        上下文反而缩短了 4 倍。放在演进线上看，这一代把预算花在参数规模与训练稳定性上，
+        长上下文在 GLM-4.5 之后才重新拉回来（131072 → 202752 → 1048576）
+    - axis: precision
+      text: 仍是 BF16 直接发布，config 无 quantization_config
+      benefit: 部署最简单，但 60.66 GiB 的权重带宽按 BF16 全额付
+
+params:
+  total: 32566081536.0
+  breakdown:
+    dense_ffn: 25905070080.0
+    attention: 4797235200.0
+    embed: 931135488.0
+    lm_head: 931135488.0
+    norm: 1505280.0
+  counting_note: >-
+    按完整权重清单（14 分片 613 条目）逐项求和，与 HF 平台自己从分片头统计的
+    safetensors tally（32,566,081,536）逐位相同。613 个条目全是 BF16：
+    没有 scale 容器、没有低位打包，条目数即张量数、numel 即参数数。
+    没有 MTP 草稿块（config 无 num_nextn_predict_layers，层号止于 60），所以没有 excludes。
+    词表与输出层不共享（tie_word_embeddings=false，各 931,135,488）。
+    名字里的 32B 是唯一可对账的声明值：实测 32.57B 对 32B 是 **+1.77%**，
+    在 Gate B 的 2% 容差内 —— 侥幸过关，不是对账成立。
+    Gate B 的「参数总量」一项（delta 0.0）因此是**拿实测比实测，不构成核对** ——
+    真正的外部核对是 HF 的 safetensors tally，它不依赖本仓任何一行代码。
+    逐因子核过：注意力 78,643,200/层 = q 6144×6144 + k 256×6144 + v 256×6144 + o 6144×6144，
+    × 61 层 = 4,797,235,200；FFN 424,673,280/层 = gate_up 46080×6144 + down 6144×23040，
+    × 61 = 25,905,070,080；norm 4 × 6144 × 61 + 最终 6144 = 1,505,280
+
+context:
+  max: 32768
+
+arch:
+  layers: 61
+  hidden: 6144
+  vocab: 151552
+  norm: RMSNorm（每层 4 处：input / post_self_attn / post_attention / post_mlp，即 sandwich norm）
+  norm_eps: 1.0e-05
+  activation: SwiGLU（hidden_act silu；gate 与 up 融合成一张 gate_up_proj [46080, 6144]，46080 = 2 × 23040）
+  position: RoPE theta 10000，partial_rotary_factor 0.5（只作用在每头前 64 维）
+
+  attention:
+    type: GQA
+    num_heads: 48
+    num_kv_heads: 2
+    head_dim: 128
+    head_dim_note: >-
+      q_proj [6144, 6144] = 48 头 × 128，k_proj / v_proj [256, 6144] = 2 头 × 128，
+      o_proj [6144, 6144]。三个投影各自独立，没有融合的 query_key_value，也都没有 bias。
+      缓存宽度按 KV 头算：2 × 2 头 × 128 = 512 元素/层/token；按 query 头数 48 折算会得
+      12288，高估 24 倍。本代没有 QK-Norm（config 无 use_qk_norm，清单里也没有
+      q_norm / k_norm 张量）—— 那是 GLM-4.5 才加的
+    layer_pattern: 61 层同构，每层都产出自己的 KV，无跨层共享、无滑窗、无稀疏
+
+  ffn:
+    type: dense
+    intermediate: 23040
+    layer_pattern: >-
+      61 层全是稠密 FFN，没有 MoE。单层 FFN 424,673,280 参数，是单层注意力
+      78,643,200 的 5.40 倍（glm-4-9b 是 4.72 倍）—— 权重带宽进一步向 FFN 倾斜，
+      dense_ffn 占总参数 79.5%
+
+precision:
+  weights_release: [BF16]
+  quantization:
+    per_subsystem:
+      attention: BF16
+      dense_ffn: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+    subsystem_method: >-
+      来自完整权重清单（14 分片 613 条目）逐项统计，非抽样：每个条目都带 shape 与 dtype，
+      failed_shards 为空。613 个条目的 dtype 全是 BF16，所以各子系统 BF16 是全量结论。
+      这一代没有 quantization_config，不存在 scale 张量与量化块
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    caveat: 走主干 Glm4ForCausalLM，不需要 trust_remote_code（与 glm-4-9b 一代不同）
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/zai-org/GLM-4-32B-0414
+    visibility: public
+
+bottlenecks:
+  - dimension: weight-bandwidth
+    finding: >-
+      仍是稠密模型，除输入词表以外的权重每 token 全部搬运（带宽口径
+      每 token 58.92 GiB = 31,634,946,048 × 2 B；权重存储 60.66 GiB 是另一个口径）。
+      相对 glm-4-9b，权重存储涨 3.46 倍而 KV **每 token 的元素数**只涨 1.53 倍 ——
+      稠密路线下放大规模几乎只在加重带宽压力。
+      注意这两个倍数都是「同一口径两代相比」，不是容量总量：各自最大上下文下的
+      KV 总量反而是降的（9b @131072 5.0 GiB → 本代 @32768 1.91 GiB），
+      因为本代把上下文缩了 4 倍。
+      这是 GLM-4.5 转 MoE 的直接动机：同样的 decode 带宽预算下，
+      MoE 让 32.9B 的激活参数撑起 358B 的总容量。
+    quantified: >-
+      权重存储 60.66 GiB（BF16），dense_ffn 占 79.5%
+      （25,905,070,080 / 32,566,081,536）；带宽口径的激活参数 31,634,946,048
+      （= total 减输入词表 931,135,488），dense 模型下其余权重每 token 全部常驻
+    visibility: public
+  - dimension: cube-vector-balance
+    finding: >-
+      sandwich norm 让每层的残差流 RMSNorm 从 2 处变成 4 处。RMSNorm 是纯 Vector 负载，
+      而新增的两处（post_self_attn / post_mlp）夹在残差加法之间，
+      既不能和前一个 GEMM 的 epilogue 融合、也不能和后一个的 prologue 融合。
+      按「每层 2 次 norm」排的算子图会漏掉一半。
+    quantified: >-
+      61 层 × 4 处 = 244 张层内 RMSNorm 权重，是 glm-4-9b 的 80 张的 3.05 倍；
+      参数量代价只有 1,505,280（0.0046%）。
+      **这个倍数只在「层内 norm 张量数」这根尺上成立**：GLM-4.5 的层内 norm 也是
+      每层 4 张（input / post_attention 加注意力内的 q_norm / k_norm），
+      主干 92 层共 368 张，比本代**更多**。本代独有的不是 norm 的数量，
+      而是那两处的**位置** —— 见 finding
+    visibility: public
+
+infra_signals:
+  - text: >-
+      这一代是 GLM 稠密路线的终点，也是「结构改造花在训练稳定性上」的一个样本：
+      sandwich norm（4 处 norm/层）与去掉 QKV bias 都不改变容量账，只改算子图与 Vector 负载。
+      而且它只活了一代 —— GLM-4.5 回到 2 处 norm、改用 QK-Norm。
+      按这一代排的 norm 算子图不能直接套到 GLM-4.5 上。
+    evidence: derived
+    horizon: settled
+    axis: training
+  - text: >-
+      GLM-Z1-32B-0414（2025-04-08，推理增强版）相对本记录**零结构差异**：
+      config 逐字段相同、613 个张量名逐个相同、HF 的 safetensors tally
+      也是同一个值（32,566,081,536）。已经支持 GLM-4-32B-0414 的平台，
+      支持 GLM-Z1 不需要任何算子工作 —— 跟踪新版本时先比张量名集合，
+      相同就不必重走算子评估。
+    evidence: derived
+    horizon: settled
+    axis: decoding
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: official
+  arch.attention.type: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  precision: official
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-30'
+  scope:
+    - official
+    - derived
+    - judgement
+  reviewer: 本会话逐字段复算，另派四路独立核查代理分管互不重叠的因子组
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序逐字段对 facts/glm-4-32b-0414 核：config 全部键、
+    完整权重清单（613 条目，逐项 numel / dtype / 层索引）、repoinfo 的 tags / cardData /
+    createdAt / lastModified / sha 与逐 dtype 的 safetensors tally，以及
+    data/derived/glm-4-32b-0414.json 的分项与 KV 公式路。
+    本会话另做了两遍机械扫描：(1) 把记录里**每一个带逗号的数字**与从清单重算的集合比对
+    （张量 numel、逐层分组求和、各子系统求和、derived 的每一项、跨版本差值），未匹配的逐个手算；
+    (2) 同样扫 4–6 位纯数字，核出的口径错已改（留痕见下）。
+    记录里每一个「X 倍」「X%」都逐个重算过分子分母。
+    GLM-Z1-32B-0414 的「零结构差异」是本会话独立重做的：config 逐键比对差异为空、
+    613 个张量名集合逐个相同（facts/glm-z1-32b-0414/names.json）、HF 的 safetensors tally
+    同为 32,566,081,536。
+    **哪些是实际重跑过的、哪些不是**，按本仓约定分开写明。
+    本会话实际重跑/重算：清单逐项求和得 params.total 与 breakdown，并与 breakdown
+    逐项求和、HF 的 safetensors tally 三方比对（逐 dtype 的元素数也比了）；
+    derive.py 的 reconciliation 与 active_params；缓存账公式路的四个因子
+    （宽度 / 层集合 / 条目覆盖 / 每元素字节）各自落到某个张量形状上；
+    cfg.json 的逐键 diff 与张量名集合的对称差、shape+dtype 字典的逐条相等；
+    dtype 的逐条计数。
+    **未逐项复跑、依据核查代理枚举的**：各子系统桶内的元素占比（99.9x% 这类分母的
+    归类优先级链没有逐张量重判）。
+    **原理上核不了的**（清单只有名字、形状与 dtype，所以不在 reviewed.scope 的覆盖内）：
+    运行期标量（top_k / index_topk / routed_scaling_factor / norm_eps / rope 参数 /
+    scoring_func / topk_method / attention_bias 等）只有 config 一个来源；
+    MTP 块自带的词表副本与主干那份是不是同值；KV 条目是 1:1 计费还是选存；
+    KV 的实际落盘精度。后三项都挂在 open_questions 里。
+review:
+  - id: R1
+    field: bottlenecks
+    severity: wrong
+    claim: >-
+      「激活参数等于总参数（dense）」
+    finding: >-
+      输入词表每 token 只 gather 一行，不进带宽口径。derive.py 报的带宽口径激活参数是
+      31,634,946,048 = total 32,566,081,536 − embed 931,135,488，与总参数差 2.86%。
+      本仓在 Qwen 一轮已经把「官方激活参数」与「带宽相关的激活参数」分开报过，
+      这里把两个口径写成相等是同一类错。
+    resolution: corrected
+    changed_to: >-
+      quantified 改为带宽口径 31,634,946,048 并写明扣的是哪一项
+  - id: R2
+    field: evidence.lineage
+    severity: miscategorized
+    claim: >-
+      lineage 标 derived
+    finding: >-
+      同 glm-4-9b 的 R3：changed_from_predecessor 的 benefit 是推论，标 derived 会绕过 Gate C。
+    resolution: corrected
+    changed_to: >-
+      evidence 的 lineage 改为 judgement
+  - id: R3
+    field: infra_signals
+    severity: imprecise
+    claim: >-
+      GLM-Z1-32B-0414 相对本记录零结构差异
+    finding: >-
+      独立重做三组比对，三条判据全中：config 逐键差异为空（不只是关键字段）、
+      613 个张量名逐个相同、tally 同为 32,566,081,536。
+      这是本仓「能力跃迁 ≠ infra 工作量」的第三个实例（前两个是 DeepSeek R1、MiniMax M1）。
+    resolution: confirmed
+  - id: R4
+    field: bottlenecks
+    severity: imprecise
+    claim: >-
+      「仍是稠密模型，每 token 搬运全部权重」，quantified 给「权重存储 60.66 GiB」
+    finding: >-
+      60.66 GiB 作为存储口径正确、quantified 也标了「权重存储」，
+      但 finding 的「每 token 搬运全部权重」把它读成了逐 token 搬运量。
+      带宽口径是 31,634,946,048 × 2 B = 58.92 GiB（也正是 derived 的
+      arithmetic_intensity.decode_weight_bytes_per_token）。比 glm-4-9b 的 R5 轻
+      （那条直接把存储数写成了搬运量），但同一个病。
+    resolution: corrected
+    changed_to: >-
+      finding 里两个口径都给出并写明差的是输入词表
+  - id: R5
+    field: bottlenecks
+    severity: imprecise
+    claim: >-
+      「权重涨 3.46 倍而 KV 只涨 1.53 倍」
+    finding: >-
+      数值都对（元素/token 31232/20480 = 1.525；存储 60.66/17.51 = 3.465），
+      但这一处没写口径，而同一份记录的 lineage 里写明了是元素/token。
+      少了这个限定会误导：按各自最大上下文算，KV 总量反而是**降的**
+      （9b @131072 5.0 GiB → 本代 @32768 1.91 GiB，0.38 倍），因为本代把上下文缩了 4 倍。
+    resolution: corrected
+    changed_to: >-
+      补「KV 每 token 的元素数」这个限定，并补上「各自最大上下文下总量反而降」
+  - id: R6
+    field: bottlenecks
+    severity: miscategorized
+    claim: >-
+      「61 层 × 4 处 = 244 次 RMSNorm，比 glm-4-9b 的 80 次多 3.05 倍」；infra_signals 与 lineage 写「GLM-4.5 又回到每层 2 处」
+    finding: >-
+      两个问题。(1) 口径混用：GLM-4.5 的层内 norm 也是每层 4 张
+      （input / post_attention 加注意力内的 q_norm / k_norm，各 93 份），
+      主干 92 层共 368 张，**比本代的 244 张更多**。「回到每层 2 处」只在
+      「残差流 norm 处数」这根尺上成立，而记录拿它下的结论
+      （「按这一代排的 norm 算子图不能直接套到 GLM-4.5 上」）靠的是次数那根尺。
+      本代真正独有的是那两处的**位置**（夹在残差加法之间、两头都融合不了），
+      不是数量。(2) 「多 3.05 倍」严格读是 80 × 4.05；244 / 80 = 3.05 应写「是 3.05 倍」。
+    resolution: corrected
+    changed_to: >-
+      三处（bottleneck / infra_signal / lineage）统一改成「位置不同而非数量不同」，给出 GLM-4.5 的 368 张，并把「多 3.05 倍」改成「是 3.05 倍」
+  - id: R7
+    field: lineage.changed_from_predecessor
+    severity: imprecise
+    claim: >-
+      context 轴写「131072 → 32768（config max_position_embeddings）」
+    finding: >-
+      32768 侧对；131072 侧的字段归属不对 —— facts/glm-4-9b/cfg.json **没有**
+      max_position_embeddings 这个键，131072 来自 seq_length。
+      括号里的字段名只对一侧成立，而跨代比较时字段名就是口径。
+    resolution: corrected
+    changed_to: >-
+      写明两侧字段名不同（seq_length vs max_position_embeddings）
+  - id: R8
+    field: evidence
+    severity: miscategorized
+    claim: >-
+      arch.position 标 derived；infra_signals 标 derived
+    finding: >-
+      arch.position 的三项（rope_theta 10000、partial_rotary_factor 0.5、
+      64 = 0.5 × head_dim 128）全部来自 config，权重清单里没有任何张量能印证
+      （这一代没有 inv_freq 落盘，非层张量只有 lm_head / embed_tokens / model.norm 三张）。
+      而同一份记录的 notes 自己写着「rope 与 partial_rotary_factor 这类运行期标量
+      只有 config 一个来源」—— 标签与自述矛盾。
+      infra_signals 则相反：第一条含「稠密路线的终点」「只活了一代」
+      「算子图不能直接套到 GLM-4.5 上」这类跨代前瞻，标 derived 会绕过 Gate C。
+    resolution: corrected
+    changed_to: >-
+      arch.position 改 official，infra_signals 改 judgement
+  - id: R9
+    field: open_questions
+    severity: missing
+    claim: >-
+      GLM-4-9B-0414 的「40 层 / hidden 4096 / attention_bias=true」在仓内无据
+    finding: >-
+      facts/ 下当时没有这个目录。本轮补取了 config（--skip-shapes，sha 645b8482494e），
+      三项全部为真，另核出 32 query 头 / 2 KV 头 / head_dim 128 / 中间维 13696 /
+      partial_rotary_factor 0.5 / max_position_embeddings 32768 ——
+      与本记录的差别确实只有档位，结构轴没有新东西，不录的判断成立。
+    resolution: corrected
+    changed_to: >-
+      补取 config 到 facts/glm-4-9b-0414/，open question 写明 sha 与完整规格
+  - id: R10
+    field: params.counting_note
+    severity: missing
+    claim: >-
+      counting_note 不提名字里的 32B 这个声明值
+    finding: >-
+      唯一可对账的声明值是名字里的 32B：实测 32.57B 对 32B 是 **+1.77%**，
+      落在 Gate B 的 2% 容差内 —— 但那是侥幸过关，不是对账成立。
+      同 glm-4-9b 的 R12（那一份超出容差）。
+    resolution: corrected
+    changed_to: >-
+      counting_note 补上这个偏差并点明是侥幸在容差内
+  - id: R11
+    field: params.counting_note
+    severity: missing
+    claim: >-
+      counting_note 没说 Gate B 的参数总量一项是实测比实测
+    finding: >-
+      同 glm-4-9b 的 R13，照 ds-v2 的写法补。
+    resolution: corrected
+    changed_to: >-
+      补上这一句
+  - id: R12
+    field: lineage.track
+    severity: miscategorized
+    claim: >-
+      track 标 historical
+    finding: >-
+      DeepSeek 线的做法是：只有链首 ds-v2 标 historical，其余主线节点
+      （ds-v3 … ds-v4-flash-vision-exp，同样已被取代）全部标 main。
+      本轮 GLM 一开始把 GLM-5 之前的 5 份都标成 historical，同一个机器可读枚举
+      在两个族系里的切分点就不同了。
+    resolution: corrected
+    changed_to: >-
+      按 DeepSeek 先例统一：链首 glm-4-9b 保持 historical，其余主线（本份与 4.5 / 4.6 / 4.7 / 5 / 5.2）改 main，支线 glm-4.7-flash 保持 side
+notes: >-
+  GLM-4 的 0414 一代，当期最大的 GLM 开放权重（32.6B 稠密）。结构仍是 GQA + 稠密 FFN，
+  没有 MoE、没有 MTP、没有量化，但两处改动值得记：每层 4 处 norm 的 sandwich norm
+  （只在这一代出现），以及 QKV 从融合单张拆成三张独立投影。
+  层数、宽度、注意力几何、每层 norm 数量、参数量与逐子系统精度都对照完整权重清单核过；
+  rope 与 partial_rotary_factor 这类运行期标量只有 config 一个来源。
+  许可从 glm-4-9b 的 license:other（glm-4 自有条款）换成 mit，这条一直到 GLM-5.2 都是 mit，
+  GLM-5.3 才又回到 other。
+
+open_questions:
+  - >-
+    KV cache 的实际落盘精度未披露，按 config 的 torch_dtype=bfloat16 兜底，
+    bytes_basis 是 dtype_fallback
+  - 训练精度无一手声明，config 只有 torch_dtype=bfloat16，所以 precision.training 不填
+  - >-
+    同代还有 GLM-4-9B-0414（config 已取到 facts/glm-4-9b-0414/，sha 645b8482494e：
+    40 层 / hidden 4096 / 32 query 头 / 2 KV 头 / head_dim 128 / 中间维 13696 /
+    attention_bias=true / partial_rotary_factor 0.5 / max_position_embeddings 32768）与
+    GLM-Z1-9B-0414、GLM-Z1-Rumination-32B-0414 等。9B-0414 相对本记录只是档位缩小，
+    结构轴没有新东西，故未收；Rumination 版未取数
+  - >-
+    sandwich norm 为什么在下一代被去掉（换成 QK-Norm）没有一手来源，
+    两者都指向训练稳定性但作用位置完全不同，要钉死得读技术报告
