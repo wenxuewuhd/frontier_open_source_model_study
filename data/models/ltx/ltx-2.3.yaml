@@ -1,0 +1,901 @@
+id: ltx-2.3
+family: ltx
+kind: video-gen
+display_name: LTX-2.3 (22B distilled)
+released: '2026-03-04'
+license: ltx-2-community-license
+visibility: public
+
+# **录的是 `ltx-2.3-22b-distilled`**（8 步、CFG=1），不是 dev 档。两条理由：
+#
+# (a) **采样口径只有蒸馏档有一手来源。** 这份卡上没有任何运行配方
+#     （diffusers 支持写的是 "coming soon"），唯一的采样数字是 checkpoint 表里
+#     蒸馏档那一行「8 steps, CFG=1」。录 dev 的话 sampling 整块都只能靠
+#     厂商参考实现（第三档来源），而 schema 要求 generation.sampling.cfg 必填。
+# (b) **结构那一半与选哪档无关，这是验过的，不是假设。** dev 与 distilled 两个
+#     单文件包逐张量比对：**5,947 个名字完全相同、形状与 dtype 零处不同、
+#     内嵌 config 逐字节相同**。所以选择只决定 sampling 的口径，不动任何结构数字。
+#
+# 由此，**本记录的 8 步与前代 ltx-2 的 40 步不是代际差**：两代都发了
+# 「全量 dev + 8 步蒸馏」两档，变的是卡把哪一档摆在前面。见 lineage 与 R2。
+#
+# 另有两条这一族的取数事实，与 tracking.yaml 的 note 不同，以实测为准：
+#
+# 1. **「仓里没有 config」只对文件系统成立。** 顶层与组件目录确实一份 config.json
+#    都没有，但**完整的 config 在 safetensors 头的 `__metadata__.config` 里**
+#    （transformer / vae / scheduler / audio_vae / vocoder 五块，另有
+#    `model_version: "2.3.0"` 与 license 全文）。所以 Gate B 的双路对账是有的，
+#    只是 `fetch_hf.py` 会丢掉 `__metadata__`，facts/ltx-2.3/cfg.json 因此是空的
+#    —— 那是取数脚本的覆盖面问题，不是「这个仓没有 config」。
+#    本记录的 config 侧依据就是这个内嵌 config，已上报脚本缺口。
+# 2. **取数要 `--include`。** 顶层 8 个 .safetensors 是 8 个不同的模型，没有 index.json；
+#    而 dev 与 distilled 形状完全相同，连 dtype 冲突都报不出来，
+#    所以拦住它的是「没有 index 而顶层多文件」那道防线，不是冲突检测。
+#
+# 口径沿用 wan2.2-ti2v-5b 的三条（params 只算 DiT、不建 arch 块、没有 KV cache 这笔账）。
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/Lightricks/LTX-2.3
+    locator: README.md §Model Checkpoints 与 §General tips @ c1521179de48
+    accessed: '2026-10-30'
+    note: >-
+      卡上**没有任何结构数字、也没有运行配方**（"LTX-2.3 support in the Diffusers
+      Python library is coming soon!"）。能用的只有三样：
+      checkpoint 表 8 档（dev「The full model, flexible and trainable in bf16」、
+      distilled 与 distilled-1.1 都写「8 steps, CFG=1」、两个蒸馏 LoRA、
+      spatial-upscaler-x2-1.1、spatial-upscaler-x1.5-1.0、temporal-upscaler-x2）；
+      约束「Width & height settings must be divisible by 32. Frame count must be
+      divisible by 8 + 1.」；以及「The base (dev) model is fully trainable.」。
+      论文仍是 LTX-2 那篇 arXiv 2601.03233，卡自称是 LTX-2 的 "significant update"
+  - kind: modelcard
+    url: https://huggingface.co/Lightricks/LTX-2.3
+    locator: ltx-2.3-22b-distilled.safetensors 的 __metadata__.config 字段 @ c1521179de48
+    accessed: '2026-10-30'
+    note: >-
+      **config 侧的唯一来源，它存在、不是未取。** 文件系统上一份 config.json 都没有，
+      但单文件包的 safetensors 头里有完整 config，分 transformer / vae /
+      scheduler / audio_vae / vocoder 五块，另有 `model_version: "2.3.0"`。
+      结构字段取自这里：transformer 48 层 / 32 heads × 128 / in_channels 128 /
+      cross_attention_dim 4096 / caption_channels 3840 / audio 32 × 64 /
+      audio_cross_attention_dim 2048 / `apply_gated_attention: true` /
+      `use_embeddings_connector: true` / `connector_num_layers: 8` /
+      `connector_num_attention_heads: 32` / `connector_attention_head_dim: 128` /
+      `connector_num_learnable_registers: 128` / `caption_proj_before_connector: true` /
+      `cross_attention_adaln: true` / `rope_type: "split"` /
+      `frequencies_precision: "float64"`；
+      vae `CausalVideoAutoencoder` latent_channels 128 / patch_size 4 /
+      causal_decoder false / encoder_base_channels 128；
+      audio_vae mel_bins 64 / z_channels 8 / sampling_rate 16000 /
+      `downsample_time: false` / duration 5.12 s；
+      vocoder upsample_rates [5,2,2,2,2,2] 另带一段 bwe
+      （input 16000 → output 48000）。
+      **dev 档的内嵌 config 与这份逐字节相同**，所以 config 侧也与选哪档无关
+  - kind: modelcard
+    url: https://huggingface.co/Lightricks/LTX-2.3
+    locator: ltx-2.3-22b-distilled.safetensors 与 -dev.safetensors 两个头的张量清单 @ c1521179de48
+    accessed: '2026-10-30'
+    note: >-
+      params 的来源：单文件包读头取全，**5,947 个张量**（BF16 5,657 + F32 290），
+      清单总量 23,069,505,387、按 dtype 算 46,148,472,534 B，
+      与文件 46,149,344,974 B 差 872,440 B（一个 safetensors 头）。
+      48 个 transformer_blocks **每块参数量完全相同**（386,695,360），逐块验过。
+      **dev 与 distilled 逐张量比对：名字集合相同（各 5,947）、
+      形状与 dtype 零处不同**，所以结构数字与 checkpoint 选择无关
+  - kind: repo
+    url: https://github.com/Lightricks/LTX-2
+    locator: >-
+      packages/ltx-pipelines/src/ltx_pipelines/utils/constants.py 的
+      LTX_2_3_PARAMS / LTX_2_3_HQ_PARAMS / DISTILLED_SIGMA_VALUES /
+      STAGE_2_DISTILLED_SIGMA_VALUES；同包 utils/denoisers.py 的 _guided_denoise；
+      packages/ltx-core/src/ltx_core/model/transformer/model_configurator.py
+    accessed: '2026-10-30'
+    note: >-
+      厂商参考实现（第三档来源）。只用来回答卡不说的事：
+      默认档位（LTX_2_3_PARAMS 继承 LTX_2_PARAMS 的 stage_1 512×768、
+      num_frames 121、frame_rate 24.0，自己改了 num_inference_steps 30
+      与 STG 块 29→28）；蒸馏调度的步数（DISTILLED_SIGMA_VALUES 9 个 sigma
+      = 8 步，与卡的「8 steps」一致；STAGE_2_DISTILLED_SIGMA_VALUES 4 个 = 3 步）；
+      两阶段蒸馏 CLI 默认输出 stage_2 分辨率（1536×1024）。
+      还有一条关键注释，解释了 22B 的增量落在哪：
+      "19B models: projection is in the transformer ... **22B models: projection is
+      in the text encoder**, so no projections are created here."
+      —— 与清单实测一致（见 params.counting_note）
+
+hf:
+  repo: Lightricks/LTX-2.3
+  sha: c1521179de480464f366a98a9d9b2acc4cc097b9
+  last_modified: '2026-10-22T08:57:42.000Z'
+  pipeline_tag: image-to-video
+  gated: false
+
+lineage:
+  track: main
+  predecessor: ltx-2
+  # family 的名义旗舰是 LTX-2.5，仓 gated、卡与 config 都取不到，不录；
+  # 所以这一份是 ltx family 当前实际最新的记录。successor 暂缺
+  changed_from_predecessor:
+    - axis: scale
+      text: >-
+        **主干几乎没动，增量全在 prompt 侧。** 48 块主干 18,531,581,952 →
+        18,561,377,280（+29,795,328，+0.161%），层数 48、hidden 4096、
+        FFN 16384、音频支 2048 逐项不变；而文本连接器 708,940,800 →
+        2,016,166,400（+1,307,225,600，×2.84）、文本嵌入投影 722,534,400 →
+        1,156,061,184（+433,526,784，×1.60）。
+        连接器的涨幅在内嵌 config 里有对应：层数 2 → 8、内维 30×128=3840 →
+        32×128=4096（音频侧 32×64=2048），可学习 register 张量
+        [128,3840] → [128,4096] 实测到
+      benefit: >-
+        文本条件侧加厚、主干不动，意味着代际收益来自更强的 prompt 表示而不是
+        更大的去噪器。对 infra 的含义是：涨出来的 1.74B 跑在**文本 token 上**
+        （每 prompt 一次），不是跑在几万个视频 token 上（每步一次），
+        所以按参数量外推单步成本会高估这一代的增幅
+    - axis: scale
+      text: >-
+        **「19b」与「22b」不是同一个口径。** 前代的 19b 对得上它的 DiT 组件
+        18,876,174,592；本代的 22b 对得上 DiT + 连接器 + 文本投影
+        22,161,065,728，而本代 DiT 只有 18,988,838,144。
+        把前代按本代的口径算是 20,307,649,792（会叫「20b」），
+        把本代按前代的口径算是 18,988,838,144（会叫「19b」）
+      benefit: >-
+        同一个口径下跨代增幅是 +0.60%（DiT）或 +9.1%（DiT+连接器+投影），
+        都不是名字上的 +16%。报任何跨代倍数之前要先说明用的是哪一个
+    - axis: attention
+      text: >-
+        **每个注意力多了一套逐头门控。** 六套注意力（视频自/交叉、音频自/交叉、
+        音→视、视→音）各新增 `to_gate_logits` 权重 [32, d] 与 bias [32]，
+        即 32 个头各一个 gate logit；内嵌 config 的
+        `apply_gated_attention: true` 与 `connector_apply_gated_attention: true`
+        对上，而前代两个字段都是默认的 false、清单里也没有这些张量
+      benefit: >-
+        门控让模型学会按头关掉注意力，但它是**逐 token 动态**的：
+        权重只多 590,016/块（占 0.153%），而推理时多一次 [n, 4096] × [4096, 32]
+        的投影加一次按头缩放。算子侧要的是「注意力输出按头乘一个标量」这个融合点，
+        不是新的大矩阵乘
+    - axis: modality
+      text: >-
+        **prompt 侧的 adaLN 独立出来了，调制表从 6 行变 9 行。**
+        新增 `prompt_adaln_single`（51,396,608）与 `audio_prompt_adaln_single`
+        （13,115,392）两个全局模块，逐块新增 `prompt_scale_shift_table` [2,4096]
+        与 `audio_prompt_scale_shift_table` [2,2048]；
+        而原有的 `scale_shift_table` 从 [6,4096] 扩成 [9,4096]
+        （音频侧 [6,2048] → [9,2048]）
+      benefit: >-
+        参考实现对这一族字段的注释说，`use_prompt_adaln_single=false` 的
+        checkpoint 才能让交叉注意力的 K/V 不依赖时间步、每 prompt 算一次复用。
+        本代的权重里这些模块**存在**，即默认档的 K/V 仍随时间步变 ——
+        「把文本侧 K/V 缓存起来」这条优化在这一代还不成立
+    - axis: scale
+      text: >-
+        **视觉 VAE 反而小了 40.6%**：1,222,480,241 → 726,106,225
+        （编码器 694,098,881 → 318,936,897、解码器 528,380,720 → 407,169,072）。
+        逐张量比对：39 个名字消失、22 个新增、51 个形状变了。
+        最深一级的通道数从 2048 降到 1024（`encoder.conv_out.conv.weight`
+        [129, 2048, 3,3,3] → [129, 1024, 3,3,3]），
+        而下采样级数不变（4 级），所以压缩率仍是 32×32×8
+      benefit: >-
+        同样的压缩率用一半的通道做到，VAE 这一块的编解码成本直接减小 ——
+        而 VAE 跑在全分辨率像素上，是两阶段流水线里要跑三次以上的那一块。
+        代价未知（重建质量没有公开指标）
+    - axis: modality
+      text: >-
+        **音频 VAE 逐字节未变，声码器换了并且输出翻倍。**
+        audio_vae 两代都是 102 个张量、53,248,402 参数、形状与 dtype 零处不同；
+        而 vocoder 从 194 个张量 55,592,802 参数变成 1,227 个张量
+        129,085,032 参数，内嵌 config 里多出一整段 bwe
+        （带宽扩展，input_sampling_rate 16000 → output_sampling_rate 48000），
+        而前代的 vocoder config 写的是 output 24000
+      benefit: >-
+        音频 latent 口径跨代不变（16 kHz mel、8 通道、100 Hz），
+        所以 DiT 侧的音频 token 数口径也不变 —— 这是两代唯一完全不动的组件。
+        变的是最后一段渲染：24 kHz → 48 kHz，多出来的 73M 参数全在声码器侧，
+        每次生成跑一遍
+    - axis: precision
+      text: >-
+        官方量化档从同仓内的文件变成**两个独立仓**：
+        `Lightricks/LTX-2.3-fp8`（dev 与 distilled 各一份）与
+        `Lightricks/LTX-2.3-nvfp4`（只有 dev）。
+        前代的 fp8 / fp4 是主仓里的 `ltx-2-19b-dev-fp8.safetensors` 等文件
+      benefit: >-
+        主仓因此从 314 GB 降到 157 GB，但「本记录实测清单覆盖了哪些精度」
+        这件事变了：fp8 与 nvfp4 两档本轮**没有取数**，
+        见 precision.weights_release_scope 的两个布尔（前代那两档
+        manifest_taken 为真、in_precision_table 为假；本代两个都假）
+
+params:
+  # **total 故意留空**，不是漏填。这个仓只发单文件整包，清单实测的 23,069,505,387
+  # 是「DiT + 连接器 + 文本投影 + 视觉 VAE + 声码器 + 音频 VAE」六样之和，
+  # 而本仓的 params.total 一向只算 DiT（wan2.2-ti2v-5b 定的口径）。
+  # 要在 total 里填 DiT，就得用 params.excludes 声明扣掉了哪几块 ——
+  # 而那个字段的枚举只收 draft / vision / audio / retrieval / embed / expert，
+  # **装不下 vae / connector / text_encoder / vocoder / audio_vae 这几个生成类组件**。
+  # 于是三个候选数都没有一个能填进 total 而口径说得清：
+  #   DiT 18,988,838,144（本仓口径，但 total 旁边的「实测」是 23.07B，差 21.5% 无处解释）
+  #   「22b」22,161,065,728（厂商名字的口径 = 整包扣掉三个自编码器/声码器）
+  #   整包 23,069,505,387（等于实测，但把 VAE 与声码器算进了「模型参数量」）
+  # 留空会被下游看见，填一个口径说不清的数不会 —— 所以留空，
+  # 三个数全写进 counting_note，而**跨代可比的量放 active_decode**（DiT）。
+  # 这是一个 schema 缺口，已上报；补上枚举之后这里应填 18,988,838,144 + excludes。
+  active_decode: 18988838144
+  active_prefill: 18988838144
+  breakdown:
+    video_ffn: 6443433984
+    video_self_attention: 3228698112
+    video_cross_attention: 3228698112
+    audio_ffn: 1611104256
+    a2v_cross_attention: 1214940672
+    v2a_cross_attention: 1211696640
+    audio_self_attention: 809043456
+    audio_cross_attention: 809043456
+    adaln_modulation: 430600192
+    patchify_and_proj_out: 1579264
+  counting_note: >-
+    **total 留空是有意的，三个候选数都在下面。** 这个仓只发单文件整包，
+    清单实测 23,069,505,387 是六个组件之和；本仓的 params.total 一向只算 DiT，
+    而 params.excludes 的枚举装不下 vae / connector / text_encoder / vocoder /
+    audio_vae 这几个生成类组件，所以「填 DiT 并声明扣了什么」这条路走不通。
+    填一个口径说不清的数比留空糟，所以留空。
+
+    **active_decode = DiT = 18,988,838,144**（单文件包里 `model.diffusion_model.`
+    前缀下除两个 embeddings connector 以外的全部张量），这是每一步都要过的那一份，
+    也是跨代可比的那个量（前代 18,876,174,592，+0.60%）。
+    无 scale 容器、无打包容器，numel 即参数数。
+
+    分桶口径：八个注意力/FFN 桶都是「单块 × 48」—— 48 个 transformer_blocks
+    **每块参数量完全相同**（386,695,360），逐块验过。
+    adaln_modulation 含 8 个全局 adaLN 模块（adaln_single 168,865,792、
+    av_ca_video_scale_shift 84,959,232、prompt_adaln_single 51,396,608、
+    audio_adaln_single 42,489,856、av_ca_a2v_gate 34,615,296、
+    av_ca_audio_scale_shift 21,508,096、audio_prompt_adaln_single 13,115,392、
+    av_ca_v2a_gate 8,919,040 = 425,869,312）、顶层两张表 12,288、
+    以及逐块调制表 4,718,592。
+
+    **「22b」不是这个数。** 单文件包按前缀分成六块：
+    DiT 18,988,838,144 + 文本连接器 2,016,166,400（视频 1,612,546,304 +
+    音频 403,620,096）+ 文本嵌入投影 1,156,061,184 + 视觉 VAE 726,106,225 +
+    声码器 129,085,032 + 音频 VAE 53,248,402 = 23,069,505,387。
+    前三块之和 22,161,065,728 —— 这才是「22b」，即**整包扣掉三个自编码器/声码器**。
+    按同一条规则算前代是 20,307,649,792（会叫「20b」），而前代的「19b」
+    对得上它的 DiT 18,876,174,592。所以 19→22 这个 +16% 里有一半是口径变化。
+
+    **跨代要比的是 active_decode**（两代都是 DiT，口径相同）：
+    18,876,174,592 → 18,988,838,144，+0.60%。更干净的一层是 48 块主干本身：
+    18,531,581,952 → 18,561,377,280，+0.161%，而这 +29,795,328 **逐参数对得上**：
+    每块 +620,736 = 六套 `to_gate_logits`（[32,4096]+[32] 三套、
+    [32,2048]+[32] 三套）590,016 + 两张 prompt 调制表（[2,4096]+[2,2048]）12,288
+    + 原有两张调制表从 6 行扩到 9 行（3×4096 + 3×2048）18,432；
+    620,736 × 48 = 29,795,328。**没有剩余项**。
+
+    **不含文本编码器，而这一代根本没发它。** 内嵌 config 的
+    `caption_channels` 3840 与前代一致，即仍是 Gemma-3-12B；
+    但这个仓里一个文本编码器文件都没有，要从前代的仓或上游另取 ——
+    见 generation.text_encoders.shipped_with_weights。
+
+generation:
+  backbone:
+    stream_design: single
+    layers: 48
+    double_blocks: 0
+    single_blocks: 48
+    hidden: 4096
+    heads: 32
+    head_dim: 128
+    ffn: 16384
+    text_conditioning: cross_attn
+    patch_size: [1, 1, 1]
+    position: 3D RoPE（rope_type "split"，float64 频率，max_pos [20, 2048, 2048]）
+    note: >-
+      与前代**逐项相同**：48 层、32×128、FFN 16384、音频支 2048、patch (1,1,1)。
+      内嵌 config 与清单两路一致（config 的 num_layers 48 /
+      num_attention_heads 32 / attention_head_dim 128 对上
+      transformer_blocks.0–47 与 `attn1.to_q.weight` [4096,4096]；
+      `patchify_proj.weight` [4096,128] 对上 patch 不展开）。
+
+      本代新增的是每套注意力的**逐头门控**：`to_gate_logits` [32, d] + [32]
+      六套（视频自/交叉 4096、音频自/交叉 2048、音→视 4096、视→音 2048），
+      对应 config 的 `apply_gated_attention: true`。前代这两处都不存在。
+
+      音频与视频仍是两条各自的序列、六套注意力，不是拼进一条 ——
+      所以 text_conditioning 记 cross_attn，序列长度不含文本 token。
+      视频侧仍是 MHA（k 与 v 都 4096 宽，32 KV 头 = 32 Q 头），没有 GQA
+
+  vae:
+    spatial_compression: 32
+    temporal_compression: 8
+    latent_channels: 128
+    causal: true
+    params: 726106225
+    decoder_arch: conv3d
+    name: LTX-2.3 CausalVideoAutoencoder（与 2.0 代同族但不同权重）
+    note: >-
+      **不是前代那个 VAE。** 逐张量比对：170 个张量对前代 187 个，
+      39 个名字消失、22 个新增、51 个形状变了，参数量 1,222,480,241 →
+      726,106,225（−40.6%）。最深一级通道数 2048 → 1024
+      （`encoder.conv_out.conv.weight` [129, 2048, 3,3,3] → [129, 1024, 3,3,3]）。
+      所以 Gate A 留的那个问题（2.3 的 VAE 是否与 2.0 一致）答案是**否**。
+
+      **压缩率仍是 32×32×8**，但这一代得算出来而不是抄到：内嵌 config 没有
+      spatial/temporal_compression_ratio 两个字段，只有块表。
+      encoder_blocks 里四个压缩块是 compress_space_res / compress_time_res /
+      compress_all_res / compress_all_res，空间维被 ×2 三次 = 8、
+      时间维被 ×2 三次 = 8，再乘 `patch_size` 4（只作用于空间）→ 空间 32、时间 8。
+      这条推法先在前代上验过：前代 config 同时给了块表与两个 ratio，
+      按同样的读法得到 32 与 8，与声明值一致 —— 所以这里用的是一条被校准过的读法，
+      不是猜。块表里的 `multiplier` 是**通道倍数不是压缩倍数**：
+      按通道倍数读，这一代的通道梯是 128→256→512→1024（最后一个
+      compress_all_res 的 multiplier 是 1，不涨通道），而前代涨到 2048 ——
+      与实测的 1024 / 2048 对上，这就是这个读法的证据。
+
+      latent_channels 128 两路一致（config 的 `latent_channels` 128；
+      清单 `encoder.conv_out` [129,…]，129 = 128 + 1 个 log-var 通道，
+      `decoder.conv_in` [1024, 128, …]）。
+      输入输出 48 = 3 × 4 × 4 实测到（`encoder.conv_in` [128, 48, …]），
+      即 patch_size 4 的 pixel-unshuffle。
+
+      **causal 填 true 说的是编码器**：config 的 `causal_decoder: false`，
+      编码器侧没有对应的开关字段但 121 = 8n+1 的帧数约束只在因果编码下成立，
+      且前代 config 明写 encoder_causal true、decoder_causal false。
+      121 帧 → (121−1)/8+1 = 16 latent 帧，整除
+
+  audio:
+    in_channels: 128
+    vae: LTX-2 audio VAE（与前代逐字节相同）
+    vae_params: 53248402
+    sample_rate_in: 16000
+    sample_rate_out: 48000
+    latent_hz: 100
+    channels: 2
+    vocoder: LTX-2.3 vocoder + BWE（129,085,032 参数，1,227 个张量）
+    note: >-
+      **音频 VAE 是两代之间唯一完全没动的组件**：102 个张量、53,248,402 参数，
+      名字、形状、dtype 零处不同。内嵌 config 也一致
+      （mel_bins 64、z_channels 8、sampling_rate 16000、ch_mult [1,2,4]、
+      `causality_axis: "height"`、`downsample_time: false`）。
+
+      latent_hz 100 = 16000 / hop_length 160，而 `downsample_time: false`
+      明确说时间轴不压 —— 这一代的 config 把前代只能推算的那一步写出来了。
+      旁证：config 的音频片长 `duration: 5.12` s × 100 Hz = 512 帧，
+      是整数的 2 次幂。mel 轴被 ch_mult 压 4 倍（64 → 16），
+      16 × 8 个 latent 通道 = 128 = DiT 的音频入口通道数。
+
+      **输出采样率翻倍：24 kHz → 48 kHz。** 声码器这一代多了一整段 bwe
+      （带宽扩展：`input_sampling_rate` 16000、`output_sampling_rate` 48000、
+      自己的 upsample_rates [6,5,2,2,2]），主 vocoder 段的 upsample_rates
+      也从前代的 [6,5,2,2,2] 变成 [5,2,2,2,2,2]。
+      参数量 55,592,802 → 129,085,032，张量数 194 → 1,227。
+      **三个采样率是三个不同的数**：VAE 收 16 kHz、主声码器一段、bwe 出 48 kHz
+
+  text_encoders:
+    - role: primary
+      name: Gemma-3-12B（与前代同一个，本仓未随发布）
+      hidden: 3840
+      shipped_with_weights: false
+      ref_model_id: ltx-2
+      note: >-
+        **这一代不发文本编码器。** 整个仓 10 个文件里只有 8 个 safetensors
+        （全是 DiT 侧的档位与上采样器）、README 和一张图 —— 没有 text_encoder/、
+        没有 tokenizer。部署前要从前代的仓（`Lightricks/LTX-2` 的
+        text_encoder/，12,187,325,040 参数、F32 落盘 48.7 GB）或上游另取。
+
+        仍是同一个编码器，依据是内嵌 config 的 `caption_channels` 3840
+        —— 与前代的 Gemma-3-12B hidden 3840 一致，而清单里
+        `text_embedding_projection.video_aggregate_embed.weight` 形状
+        [4096, 188160] 且 188,160 = 49 × 3,840，49 = Gemma 的 48 层加嵌入层，
+        即**仍取全部 49 层的加权聚合**。
+
+        **变的是聚合投影本身**：前代一个 `aggregate_embed` [3840, 188160]
+        无 bias（722,534,400）；本代拆成两个带 bias 的
+        `video_aggregate_embed` [4096, 188160] 与
+        `audio_aggregate_embed` [2048, 188160]（合计 1,156,061,184）——
+        直接投到视频宽 4096 与音频宽 2048，而前代是先投到 3840
+        再由 DiT 里的 `caption_projection` / `audio_caption_projection`
+        （32,514,048 + 12,062,720）转宽。本代 DiT 里那两个模块**不存在了**，
+        与参考实现的注释「22B models: projection is in the text encoder」一致。
+        schema 的 hidden_layer_taken 装不下「全部层」，所以留空
+
+  sampling:
+    steps: 8
+    cfg:
+      scale: 1.0
+      distilled: true
+      embedded: false
+      forwards_per_step: 1
+      note: >-
+        CFG 蒸馏档，卡上写「8 steps, CFG=1」。CFG=1 意味着参考实现
+        `_guided_denoise` 的 `do_unconditional_generation()` 判据不成立，
+        即不跑无条件那一路，每步 1 次前向
+    step_distilled:
+      available: true
+      steps: 8
+      checkpoint: ltx-2.3-22b-distilled
+      note: >-
+        本记录录的就是这一档，所以 sampling 与 step_distilled 指的是同一个
+        checkpoint。另有 `-distilled-1.1`（同样 8 步 CFG=1，卡称
+        "A different aesthetic experience and improved audio"）与两个
+        `distilled-lora-384`，把蒸馏做成可挂在 dev 上的 LoRA。
+        **dev 档的默认步数是 30**（参考实现 LTX_2_3_PARAMS，
+        第三档来源；卡上没有），HQ 预设 15 步
+    scheduler: flow matching（RectifiedFlowScheduler，sampler "LinearQuadratic"；蒸馏档走固定 sigma 表）
+    note: >-
+      **8 步来自卡、也对得上参考实现**：`DISTILLED_SIGMA_VALUES` 有 9 个 sigma
+      [1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0]
+      → 8 个区间 = 8 步。所以这一项两路一致。
+
+      **但这 8 步不能和前代的 40 步比。** 两代都发了「全量 dev + 8 步蒸馏」
+      两档：前代的卡把 dev 的两阶段配方写成示例（40 步 + 3 步），
+      本代的卡没有任何配方、只在 checkpoint 表里给蒸馏档的 8 步。
+      变的是卡摆哪一档在前面，不是模型的步数需求。
+      同口径比较：dev 档前代 40 步、本代 30 步（后者取自参考实现）；
+      蒸馏档两代都是 8 步 CFG=1。
+
+      **非蒸馏路径每步不是 2 次前向而是 4 次。** 参考实现
+      `_guided_denoise` 按 cond / uncond / ptb / mod 四路收集 passes，
+      判据是恒真 / cfg_scale ≠ 1 / stg_scale ≠ 0 / modality_scale ≠ 1，
+      而 LTX_2_3_PARAMS 给的是 cfg 3.0（音频 7.0）、stg 1.0、modality 3.0
+      —— 后三条全部成立。HQ 预设把 stg 置 0，降到 3 次。
+      本记录录的是蒸馏档，CFG=1 让 uncond 那一路消失；
+      另两路在蒸馏调度下是否也关掉，参考实现没读到那一层，见 open_questions
+
+  pipeline_stages:
+    - name: stage-1 低分辨率去噪（蒸馏档）
+      model: same-backbone
+      steps: 8
+      cfg_scale: 1.0
+      forwards_per_step: 1
+      resolution: 768×512，121 帧 @24 fps
+      open_source: true
+      note: 步数两路一致（卡「8 steps」、DISTILLED_SIGMA_VALUES 9 个 sigma）
+    - name: latent 空间上采样 ×2
+      model: ltx-2.3-spatial-upscaler-x2-1.1（995,743,560 B）
+      resolution: latent 域 ×2 空间
+      open_source: true
+      note: >-
+        不是去噪步，没有步数与 CFG，不计入端到端前向数。
+        本代另发了 ×1.5 的空间上采样器（1,090,125,794 B，**比 ×2 的还大**）
+        与 ×2 的时间上采样器（261,944,000 B）
+    - name: stage-2 高分辨率精修（蒸馏调度）
+      model: same-backbone
+      steps: 3
+      cfg_scale: 1.0
+      forwards_per_step: 1
+      resolution: 1536×1024，121 帧 @24 fps
+      open_source: true
+      note: >-
+        步数取自参考实现的 `STAGE_2_DISTILLED_SIGMA_VALUES`（4 个 sigma = 3 步），
+        第三档来源，卡上没有。两阶段蒸馏 CLI 的默认输出尺寸就是 stage_2
+        （= stage_1 × 2）。**这一段 token 数是 stage 1 的 4 倍**，
+        而 derive 的端到端按同一个单步 FLOPs 估，所以低估了这一段
+
+  buckets:
+    - width: 768
+      height: 512
+      frames: 121
+      fps: 24
+      duration_s: 5.0416667
+      default: true
+      note: >-
+        参考实现 LTX_2_3_PARAMS 继承 LTX_2_PARAMS 的 stage_1 512×768 /
+        num_frames 121 / frame_rate 24.0（本代只改了步数与 STG 块号）。
+        与前代同档，所以两代的 token 数完全可比。
+        768/32 = 24、512/32 = 16、(121−1)/8+1 = 16，三轴都整除
+    - width: 1536
+      height: 1024
+      frames: 121
+      fps: 24
+      duration_s: 5.0416667
+      note: 两阶段流水线的最终输出档，也是蒸馏 CLI 的默认尺寸。token 数是默认档的 4 倍
+    - width: 960
+      height: 544
+      frames: 121
+      fps: 24
+      duration_s: 5.0416667
+      note: >-
+        参考实现的 HQ 预设档（LTX_2_3_HQ_PARAMS：stage_1 1920/2 × 1088/2、
+        15 步、STG 关）。960/32 = 30、544/32 = 17，都整除；
+        这一档是 16:9 而默认档是 3:2
+
+  constraints:
+    width_divisor: 32
+    height_divisor: 32
+    frame_formula: 8n+1
+    note: >-
+      与前代相同，卡上原话「Width & height settings must be divisible by 32.
+      Frame count must be divisible by 8 + 1.」。
+      除数 32 全部来自 VAE（空间压缩 32），DiT patch 是 1 不贡献。
+      不合规时卡给的办法是按 −1 padding、生成后裁回
+
+  checkpoint_variants:
+    - name: ltx-2.3-22b-distilled
+      role: step-distilled
+      bytes: 46149345038
+      resident: true
+      note: >-
+        本记录录的就是这一档。单文件包，里面是 DiT + 连接器 + 文本投影 +
+        视觉 VAE + 声码器 + 音频 VAE 六样（5,947 张量，清单总量 23,069,505,387）；
+        **不含文本编码器**（这一代根本没发）、不含上采样器
+    - name: ltx-2.3-22b-dev
+      role: base
+      bytes: 46149344974
+      resident: false
+      note: >-
+        全量可训练档。与 distilled **逐张量同形同 dtype、内嵌 config 逐字节相同**，
+        只有权重值不同 —— 所以本记录的全部结构数字对这一档同样成立，
+        差别只在采样口径（dev 的默认步数 30 取自参考实现，卡上没有）
+    - name: ltx-2.3-22b-distilled-1.1
+      role: step-distilled
+      bytes: 46149345334
+      resident: false
+      note: 同样 8 步 CFG=1，卡称换了审美取向并改善了音频
+    - name: ltx-2.3-22b-distilled-lora-384
+      role: step-distilled-lora
+      bytes: 7605507256
+      resident: false
+    - name: ltx-2.3-22b-distilled-lora-384-1.1
+      role: step-distilled-lora
+      bytes: 7605507256
+      resident: false
+    - name: ltx-2.3-spatial-upscaler-x2-1.1
+      role: sr
+      bytes: 995743560
+      resident: false
+    - name: ltx-2.3-spatial-upscaler-x1.5-1.0
+      role: sr
+      bytes: 1090125794
+      resident: false
+      note: 倍数更小而权重更大（×1.5 的 1.09 GB > ×2 的 1.00 GB）
+    - name: ltx-2.3-temporal-upscaler-x2-1.0
+      role: sr
+      bytes: 261944000
+      resident: false
+    - name: Lightricks/LTX-2.3-fp8（独立仓）
+      role: base-quantized
+      bytes: 58677315228
+      resident: false
+      note: >-
+        dev 29,145,431,166 B + distilled 29,531,884,062 B。
+        **独立仓，本轮没取数**，所以精度覆盖面没有实测依据
+    - name: Lightricks/LTX-2.3-nvfp4（独立仓）
+      role: base-quantized
+      bytes: 21701367310
+      resident: false
+      note: 只有 dev 一档。独立仓，本轮没取数
+
+precision:
+  weights_release: [BF16, FP32, FP8_E4M3, NVFP4]
+  weights_release_scope:
+    BF16:
+      manifest_taken: true
+      in_precision_table: true
+      repo: Lightricks/LTX-2.3
+      note: >-
+        dev / distilled / distilled-1.1 三个全量档。清单里 5,657 个张量是 BF16
+        （23,064,774,507 参数），占整包的 99.98%
+    FP32:
+      manifest_taken: true
+      in_precision_table: true
+      repo: Lightricks/LTX-2.3
+      note: >-
+        290 个 `scale_shift_table` 系调制表（4,730,880 参数，0.02%）。
+        前代是 194 个 / 3,256,320 —— 涨的是本代新增的 prompt 调制表
+        与 6 行扩成 9 行那部分，不是精度策略变了
+    FP8_E4M3:
+      manifest_taken: false
+      in_precision_table: false
+      repo: Lightricks/LTX-2.3-fp8
+      note: >-
+        **独立仓，本轮连清单都没取** —— 两个布尔都是假，和前代那两档
+        （头读过、没进表）不是同一种空。 前代的 fp8 是主仓内的文件、实测到「只量化 DiT、
+        覆盖 DiT 参数的 85.9%」；本代搬到独立仓后这件事没有实测依据。
+        文件大小 dev 29,145,431,166 B 比 BF16 档的 46,149,344,974 B 小 36.8%，
+        量级上与前代的 fp8（小 37.4%）接近，但**这只是文件大小的旁证，
+        不能当覆盖面的结论**
+    NVFP4:
+      manifest_taken: false
+      in_precision_table: false
+      repo: Lightricks/LTX-2.3-nvfp4
+      note: >-
+        **独立仓，本轮连清单都没取**，只有 dev 一档。
+        文件 21,701,367,310 B，比 BF16 档小 53.0%
+  inference_default: BF16
+
+bottlenecks:
+  - dimension: compute
+    finding: >-
+      代际增量跑在**文本 token 上**，不在视频 token 上。涨出来的 1.74B
+      （连接器 +1.31B、文本投影 +0.43B）处理的是几十到几百个文本 token、
+      每 prompt 一次；而每步要过的 48 块主干只涨了 0.161%
+    quantified: >-
+      主干 18,531,581,952 → 18,561,377,280（+29,795,328，+0.161%，逐参数对得上）；
+      连接器 708,940,800 → 2,016,166,400；文本投影 722,534,400 → 1,156,061,184。
+      默认档 768×512×121 帧的视频 token 是 16×16×24 = 6,144，
+      音频 token 约 504（100 Hz × 5.04 s）—— 文本侧的 token 数比这两个都小一两个量级
+    fix: >-
+      按参数量外推单步成本会把这一代算高 9%，实际只高 0.6%。
+      做容量规划要先按「每 prompt 一次」和「每步一次」分开两桶，
+      再各自乘自己的次数
+    visibility: public
+  - dimension: compute
+    finding: >-
+      逐头门控给每套注意力加了一次 [n, d] × [d, 32] 的投影与一次按头缩放。
+      参数量上微不足道，但它是六套注意力各一次，而且插在注意力输出之后 ——
+      是个融合点而不是新的大矩阵乘
+    quantified: >-
+      每块 +590,016 参数（占该块的 0.153%），即 48 块共 28,320,768；
+      六套分别是视频自/交叉 [32,4096]、音频自/交叉 [32,2048]、
+      音→视 [32,4096]、视→音 [32,2048]，各带 [32] 的 bias
+    fix: >-
+      算子侧要的是「注意力输出 × 逐头标量」的融合（gate = sigmoid/softmax 后
+      按头广播乘）。不融合的话 48 层 × 6 套 = 288 次小 kernel 调用，
+      每次的计算量都不够摊开启动开销
+    visibility: public
+  - dimension: host-io
+    finding: >-
+      这一代**不发文本编码器**，但仍需要它。一次部署要凑：本仓的 46.15 GB
+      单文件包 + 前代仓里的 Gemma-3-12B 48.75 GB（F32）+ 上采样器 ——
+      **跨仓依赖，而前代那个仓是 157 GB 之外的另一个 314 GB**
+    quantified: >-
+      本仓 10 个文件、usedStorage 157,633,264,097 B；
+      文本编码器要从 `Lightricks/LTX-2` 的 text_encoder/ 取
+      （48,749,441,672 B 的 model-* 一套，或 51,612,415,096 B 含连接器的那一套
+      —— 但本代的连接器在单文件包里，所以取前者）
+    fix: >-
+      取哪一套打包要先想清楚：前代那个仓把 Gemma 放了两份命名，
+      其中一份捆着**前代的**连接器与聚合投影，而本代这两样已经在自己的包里、
+      而且形状不同（投影 [3840,188160] → [4096,188160] / [2048,188160]）。
+      拿错那一套会加载一套对不上的投影
+    visibility: public
+
+infra_signals:
+  - text: >-
+      代际差分必须按组件报，不能只报一个总参数量。这一代的名字涨了 16%、
+      整包涨了 6.6%、每步要过的主干只涨了 0.161% —— 三个数都对，
+      但只有第三个决定单步成本。把它们压成一个「参数量」字段，
+      页面上就会显示成「主干变大了」，而事实相反
+    evidence: derived
+    horizon: now
+  - text: >-
+      生成类的权重账要按「跑几次」分桶，不是按大小排序。
+      文本连接器 2.02B + 投影 1.16B 每 prompt 跑一次，DiT 18.99B 每步跑一次，
+      VAE 0.73B 每次生成跑两三遍，声码器 0.13B 跑一遍。
+      同一份 23.07B 的清单里，四类的调用频率差两个量级
+    evidence: derived
+    horizon: now
+  - text: >-
+      「仓里没有 config」这个判断要分清是文件系统上没有、还是真的没有。
+      这一份 10 个文件里一份 config.json 都没有，但完整 config 在
+      safetensors 头的 `__metadata__` 里，连 `model_version` 都有 ——
+      厂商自己的加载器就是这么认代际的（`detect_model_version` 读这个字段
+      来选 30 步还是 40 步的默认值）。按目录判存在性会把「换了位置」读成「不存在」
+    evidence: derived
+    horizon: now
+
+evidence:
+  id: official
+  family: official
+  kind: judgement
+  display_name: judgement
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  lineage.changed_from_predecessor: derived
+  params: derived
+  params.counting_note: derived
+  generation: official
+  generation.backbone.note: derived
+  generation.vae.spatial_compression: derived
+  generation.vae.temporal_compression: derived
+  generation.vae.params: derived
+  generation.vae.causal: judgement
+  generation.vae.note: derived
+  generation.audio.latent_hz: derived
+  generation.audio.vae_params: derived
+  generation.audio.note: derived
+  generation.text_encoders: derived
+  generation.sampling: official
+  generation.sampling.note: derived
+  generation.sampling.scheduler: official
+  generation.sampling.step_distilled.note: derived
+  generation.pipeline_stages: derived
+  generation.buckets: derived
+  generation.constraints: official
+  generation.checkpoint_variants: official
+  precision: derived
+  precision.weights_release_scope: derived
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-30'
+  scope: [official, derived, judgement]
+  method: >-
+    **config 侧存在，但不在文件系统上。** tracking.yaml 的 note 说这一份
+    「整个仓没有任何 config，Gate B 只剩清单一路」——
+    前半句对（10 个文件里没有 config.json），后半句不对：
+    完整 config 在 `__metadata__.config` 里（transformer / vae / scheduler /
+    audio_vae / vocoder 五块）。所以 Gate B 的双路对账是齐的，
+    只是 `fetch_hf.py` 丢掉 `__metadata__`，facts/ltx-2.3/cfg.json 因此是空的，
+    derive 的「层数」一项显示为 skip 而不是 ok。已上报取数脚本的这个缺口。
+
+    Gate B 三路：内嵌 config × 权重清单（5,947 张量）× 厂商参考实现。
+    结构字段逐项对读：num_layers 48 对 transformer_blocks.0–47；
+    num_attention_heads 32 × attention_head_dim 128 = 4096 对
+    `attn1.to_q.weight` [4096,4096]；audio 32 × 64 = 2048 对
+    `audio_attn1.to_q.weight` [2048,2048]；
+    `apply_gated_attention: true` 对清单里的 `to_gate_logits`；
+    `connector_num_layers: 8` 对 `video_embeddings_connector.transformer_1d_blocks.0–7`；
+    `connector_num_attention_heads: 32 × 128` 对
+    `video_embeddings_connector.learnable_registers` [128, 4096]
+    （前代是 30×128 = 3840，实测 [128, 3840]）；
+    `caption_proj_before_connector: true` 对 DiT 里
+    `caption_projection` / `audio_caption_projection` 两个模块的**消失**，
+    也对参考实现那句「22B models: projection is in the text encoder」；
+    vae `latent_channels` 128 对 `encoder.conv_out` [129,…]；
+    audio_vae `downsample_time: false` 对 latent_hz 100 的推算。
+
+    字节对账：清单按 dtype 算 46,148,472,534 B，文件 46,149,344,974 B，
+    差 872,440 B（一个 safetensors 头，5,947 个张量的头大小量级吻合）。
+
+    **checkpoint 等价性**：dev 与 distilled 两个头各读一次，
+    5,947 个名字完全相同、形状与 dtype 零处不同、内嵌 config 逐字节相同。
+    这是「选哪档不影响结构数字」这个说法的依据，不是假设。
+
+    **跨代差分逐参数验**（本记录最值得报的一项）：
+    48 块主干 +29,795,328，拆成每块 +620,736，再拆成
+    六套 to_gate_logits 590,016 + 两张 prompt 调制表 12,288 +
+    原有调制表 6 行扩 9 行 18,432 —— 三项相加正好 620,736，**没有剩余项**。
+    另外逐组件比对了 VAE（−496,374,016，形状变了 51 处）、
+    音频 VAE（逐字节相同）、声码器（+73,492,230，张量数 194 → 1,227）。
+
+    外部锚：**这个仓没有** —— repoinfo.json 里没有 safetensors tally
+    （HF 只对有 index.json 的仓统计）。所以参数量这一侧只有本仓一路，
+    唯一的外部约束是文件大小与清单字节的对账。
+    前代有逐位相同的 tally，可以反过来校准本仓的归类口径没问题。
+
+    Gate C：判断类字段 17 处，逐条在 evidence 里标了 derived 或 judgement。
+
+review:
+  - id: R1
+    field: '-'
+    severity: miscategorized
+    claim: 「整个仓没有任何 config，Gate B 只剩清单一路」（tracking.yaml 的 note）
+    finding: >-
+      文件系统上确实没有 config.json，但单文件包的 safetensors 头里有完整 config
+      —— transformer / vae / scheduler / audio_vae / vocoder 五块，
+      外加 `model_version: "2.3.0"` 和 license 全文。
+      厂商自己的加载器就是从这里读的（`LTXModelConfigurator.from_metadata`
+      取 `metadata["config"]`，`detect_model_version` 取 `model_version`
+      来决定默认步数是 30 还是 40）。
+      所以这是「config 换了位置」而不是「config 不存在」，
+      而本仓的三态契约里这两种空不一样
+    resolution: corrected
+    changed_to: >-
+      记录按双路写：config 侧用内嵌 config，清单侧用 5,947 张量，
+      sources 里给了定位。tracking.yaml 的 note 与 fetch_hf.py 丢弃
+      `__metadata__` 这两件事都已上报 —— 它们是共享文件，本记录不改
+  - id: R2
+    field: generation.sampling.steps
+    severity: imprecise
+    claim: 「LTX-2 要 40 步，LTX-2.3 只要 8 步，代际省了 5 倍」
+    finding: >-
+      不成立。两代都发了「全量 dev + 8 步 CFG=1 蒸馏」两档：
+      前代的 `ltx-2-19b-distilled` 卡上同样写「8 steps, CFG=1」。
+      变的是模型卡把哪一档写成示例 —— 前代给了 dev 的两阶段配方（40 + 3 步），
+      本代没有任何配方。同口径比较：蒸馏档两代都是 8 步；
+      dev 档前代 40 步、本代 30 步（后者取自参考实现 LTX_2_3_PARAMS）
+    resolution: corrected
+    changed_to: >-
+      sampling 填蒸馏档的 8 步并在 note 里写明这不是代际差；
+      dev 档的 30 步写进 step_distilled.note；
+      lineage 的 changed_from_predecessor 不列这一条（它不是代际变化）
+  - id: R3
+    field: generation.vae
+    severity: unsupported
+    claim: 2.3 的 VAE 与 2.0 的相同（Gate A 留的未确认项）
+    finding: >-
+      **不相同。** 逐张量比对：170 vs 187 个张量，39 个名字消失、22 个新增、
+      51 个形状变了，参数量 1,222,480,241 → 726,106,225（−40.6%），
+      最深一级通道数 2048 → 1024。
+      相同的是**口径**：latent 128 通道、patch 4、压缩 32×32×8、
+      编码器因果解码器非因果 —— 所以 latent token 数的算法跨代不变，
+      但 VAE 本身的计算量小了
+    resolution: corrected
+    changed_to: >-
+      generation.vae 按本代实测填，name 写明「与 2.0 代同族但不同权重」，
+      差分进 lineage.changed_from_predecessor。
+      顺带确认了音频 VAE 是**逐字节相同**的那一个
+  - id: R4
+    field: generation.vae.spatial_compression
+    severity: unsupported
+    claim: 32×32×8 可以直接从本代 config 读到
+    finding: >-
+      读不到。前代 vae/config.json 明写
+      `spatial_compression_ratio: 32` / `temporal_compression_ratio: 8`，
+      本代的内嵌 vae config **没有这两个字段**，只有 encoder_blocks /
+      decoder_blocks 的块表。所以本代的 32 与 8 是算出来的：
+      四个压缩块里空间维被 ×2 三次、时间维被 ×2 三次，再乘 patch_size 4（仅空间）。
+      这条读法先在前代上校准过（前代同时给了块表与两个 ratio，按同一读法得到
+      32 与 8，与声明值一致），而且块表里 `multiplier` 是通道倍数的读法
+      也被实测顶住了（按它算本代通道梯到 1024、前代到 2048，与清单一致）
+    resolution: confirmed
+    changed_to: >-
+      两个字段标 derived 而不是 official，推导过程与校准依据写进 vae.note。
+      `causal` 标 judgement：本代 config 只有 `causal_decoder: false`，
+      编码器因果是从前代的 encoder_causal true 与 8n+1 的帧数约束推的
+  - id: R5
+    field: params.total
+    severity: imprecise
+    claim: 「19B → 22B，主干涨了 3B」
+    finding: >-
+      两个名字不是同一个口径，而且主干几乎没涨。
+      本代 22b = DiT + 连接器 + 文本投影 22,161,065,728；
+      前代 19b = 它的 DiT 18,876,174,592（= HF 自己的 tally，逐位相同）。
+      本代 DiT 18,988,838,144、只比前代高 0.60%；
+      48 块主干只高 0.161%，而这 +29,795,328 逐参数都对得上。
+      真正涨的是连接器（×2.84）与文本投影（×1.60），两者都跑在文本 token 上
+    resolution: corrected
+    changed_to: >-
+      跨代可比的量放 params.active_decode（两代都是 DiT）。
+      本记录的 params.total **留空**：清单是整包，而本仓的 total 只算 DiT，
+      excludes 的枚举又装不下生成类组件，三个候选数没有一个能填进去而口径说得清
+      （见 params 块的注释）。「22b」的构成与三个候选数全写进 counting_note，
+      差分进 lineage.changed_from_predecessor 与 infra_signals
+
+notes: >-
+  **这个仓为什么必须用 `--include`，以及拦住它的是哪道防线。**
+
+  顶层 8 个 .safetensors 是 8 个不同的模型（dev / distilled / distilled-1.1 /
+  两个蒸馏 LoRA / 两个空间上采样器 / 一个时间上采样器），**没有任何 index.json**。
+  而 dev 与 distilled 的形状和 dtype 完全相同 —— 所以「同名张量形状或 dtype 不同」
+  那道冲突检测在这里**一条都报不出来**，合并出来的会是一个不存在的模型，
+  而每个数看着都合理。真正拦住它的是另一道：「没有 index.json 而顶层有多个
+  .safetensors，拒绝猜」。这两道防线守的不是同一件事，前代 LTX-2 撞的是冲突检测
+  （distilled 与 distilled-fp8 同名不同 dtype，tracking.yaml 的 note 记的是 7,132 个名字；
+  本轮没有重跑这一次撞车，两次取数都直接带了 --include），本代撞的是选分片。
+
+  **仓的字节账**：8 个 safetensors 合计 156,006,863,212 B，加 README 与一张图
+  约 156.0 GB；HF 的 usedStorage 报 157,633,264,097 B。
+  三个 46.15 GB 的全量档（138,448,035,346 B）占 88.7%。前代主仓是 314 GB，差别主要在两处：
+  前代把文本编码器放了两份打包（100 GB），本代根本不发文本编码器；
+  前代的 fp8 / fp4 在主仓内，本代搬到两个独立仓。
+
+  **「22b」这个名字的构成**（本记录最值得记住的一行）：
+  整包 23,069,505,387 扣掉视觉 VAE 726,106,225、声码器 129,085,032、
+  音频 VAE 53,248,402，得 22,161,065,728 —— 即「DiT + 连接器 + 文本投影」。
+  按同一条规则算前代得 20,307,649,792，而前代叫「19b」（= 它的 DiT）。
+  两代的名字用了两套规则。
+
+open_questions:
+  - >-
+    蒸馏档每步到底跑几次前向，只验到了一半。CFG=1 让参考实现的 uncond
+    那一路消失（`do_unconditional_generation()` 判据不成立），
+    但 STG（`stg_scale ≠ 0`）与跨模态隔离（`modality_scale ≠ 1`）两路
+    在蒸馏调度下是否也关掉，没有读到构造 guider 的那一层代码。
+    非蒸馏默认档是 4 路全开（LTX_2_3_PARAMS 的 3.0 / 1.0 / 3.0），这一条验过了。
+    若蒸馏档也开着后两路，端到端前向数是 8 × 3 而不是 8 × 1，
+    而 schema 的 forwards_per_step 只收 1 和 2 —— 这是另一个已上报的缺口
+  - >-
+    连接器（2,016,166,400）与文本投影（1,156,061,184）是每步跑还是每 prompt
+    跑一次，从清单看不出来。连接器块里只有自注意力、没有时间步输入，
+    看着像每 prompt 一次；但本代新增的 `prompt_adaln_single` 说明 prompt 侧
+    确实有时间步调制，而参考实现的注释又说只有
+    `use_prompt_adaln_single=false` 的 checkpoint 才能把交叉注意力 K/V
+    算一次复用。这 3.17B 算不算进每步激活没定，所以 params.active_decode
+    只填了 DiT。这直接决定单步成本是不是要高 17%
+  - >-
+    fp8 与 nvfp4 两档搬到独立仓后**没有取数**，所以「量化覆盖了哪些张量、
+    块大小多少」在这一代没有实测依据。前代同样的两档实测到
+    「只量化 DiT、覆盖 DiT 参数的 85.9%、nvfp4 块 16 带 E4M3 scale」，
+    但那是前代的事实，不能传播过来 —— 结构规律要钉代际
+  - >-
+    训练精度无一手来源。三个全量档落盘 BF16（调制表 F32）是实测，
+    但那说的是发布格式不是训练格式
+  - >-
+    视觉 VAE 小了 40.6% 换来什么代价不知道：卡上没有任何重建质量指标，
+    论文仍是 LTX-2 那篇、不覆盖 2.3 代。所以「同样压缩率、一半通道」
+    这件事只记结构不记收益
+  - >-
+    本代的 VAE 与 `sana-video-2.0-5b` 的「复用 LTX-2.3 VAE」是不是同一套，
+    没有核对。那一份的权重是单个 .pth、清单取不到，所以这件事目前两侧都验不了
