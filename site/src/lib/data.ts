@@ -496,10 +496,16 @@ function bytesAreRewrittenElements(m: Model): boolean {
  * 缩写不是装饰：浅色模式下 BF16 / FP32 对页面底色不足 3:1，颜色单独不够用。
  */
 export const DTYPE_CELL: Record<string, { short: string; cls: string }> = {
+  // 四种 4 bit 共用一个色槽（位宽相同），**但缩写必须各不相同** —— 它们不是一回事：
+  // NVFP4 每 16 元素一个 E4M3 scale，MXFP4 每 32 元素一个 E8M0 scale，
+  // INT4 是定点、scale 另给。色相同就意味着这一格的区分**全靠字母**，不能偷懒写成 4。
+  // 真正的判据是「块 + scale」这个签名，不是名字 —— 本仓里 deepseek 的 expert 记作
+  // FP4、kimi-k3 的记作 MXFP4，而两者的签名都是 [1,32] + E8M0。所以表格还要并排
+  // 出块与 scale 列，光看这一格不足以断定是哪一种。
   FP4: { short: '4', cls: 'dt-fp4' },
-  MXFP4: { short: '4', cls: 'dt-fp4' },
-  NVFP4: { short: '4', cls: 'dt-fp4' },
-  INT4: { short: '4', cls: 'dt-fp4' },
+  MXFP4: { short: 'MX', cls: 'dt-fp4' },
+  NVFP4: { short: 'NV', cls: 'dt-fp4' },
+  INT4: { short: 'I4', cls: 'dt-fp4' },
   FP8_E4M3: { short: '8', cls: 'dt-fp8' },
   BF16: { short: 'B', cls: 'dt-bf16' },
   FP32: { short: '32', cls: 'dt-fp32' },

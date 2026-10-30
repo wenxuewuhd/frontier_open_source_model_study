@@ -8,9 +8,17 @@
  * 混在一张表里，读者分不清「这个模型是 FP8 的」说的是它的专家落盘是 FP8，
  * 还是厂商另发了一个 FP8 仓。所以子系统做主表，发布形态做其中一列。
  *
- * **本页不出 KV 缓存精度，也不出训练精度**，理由见页脚那段 —— 前者 48 份里只有 2 份
- * 有一手声明、其余是按模型 dtype 兜底的占位值，摆出来等于假装知道；后者一份都没有。
- * 空列不画，但要写明为什么不画，否则「没这一列」会被读成「这件事不重要」。
+ * **KV 缓存精度单成一列。** 初稿把它整列砍了，理由是「只有 2 份有一手声明」——
+ * 那个数是错的：我数的是 `precision.kv_cache` 这个标量字段，而真内容在
+ * `kv_cache_components` 里，逐分量带 dtype / block / scale_dtype，有 6 份。
+ * 其余按 derive 的 `bytes_basis` 如实标成兜底，**不留空也不假装**。
+ *
+ * **4 bit 的几种必须分开。** NVFP4 与 MXFP4 在 dtype 字段上可能都写作 FP4，
+ * 区分它们的是**签名**：块 16 + E4M3 scale 是 NVFP4 式，块 32 + E8M0 是 OCP MXFP4。
+ * 所以这一列并排出 dtype 与「块 / scale」，不靠名字断定 —— 本仓里 deepseek 的 expert
+ * 记作 FP4、kimi-k3 的记作 MXFP4，而两者签名相同（[1,32] + E8M0）。
+ *
+ * 训练精度仍然不出：一份都没有，理由见页脚。
  *
  * 每一格的三态按**结构**判，不按字段名猜：
  *   derived 的 params_by_subsystem 里有这块权重，且 per_subsystem 录了 → 报精度
@@ -22,7 +30,7 @@ import Evidence from '../components/Evidence.astro';
 import Prose from '../components/Prose.astro';
 import {
   families, allModels, url, fmtInt, SUBSYSTEMS, DTYPE_CELL, dtypeCell,
-  changesFor, evidenceFor, type Model,
+  changesFor, evidenceFor, KV_BASIS_LABEL, type Model,
 } from '../lib/data';
 import '../styles/dtype.css';
 
@@ -116,6 +124,36 @@ function blocks(m: Model): { sub: string; block?: string; scale?: string }[] {
   }));
 }
 
+/**
+ * KV 缓存精度。两种来源，**绝不混为一谈**：
+ *   记录的 `precision.kv_cache_components` —— 逐分量的一手声明（dtype / 块 / scale）
+ *   derive 的 `kv_cache.bytes_basis`        —— 没有声明时字节是按什么口径算出来的
+ * 后者里 `dtype_fallback` 是**按模型权重 dtype 兜底的占位值**，不是查到的事实。
+ * 一列里同时出现这两种东西，必须让读者一眼分得出哪行是声明、哪行是兜底。
+ */
+function kvRows(m: Model): { comp: string; sig: string; declared: boolean }[] {
+  const comps = prec(m).kv_cache_components ?? {};
+  const out: { comp: string; sig: string; declared: boolean }[] = [];
+  for (const [k, v] of Object.entries(comps)) {
+    if (k === 'source' || !v || typeof v !== 'object') continue;
+    const c: any = v;
+    // 签名而不是名字：块与 scale 才区分得开 NVFP4（16 + E4M3）与 MXFP4（32 + E8M0）
+    const bits = [c.dtype, c.block ? `块 ${c.block}` : '', c.scale_dtype ? `scale ${c.scale_dtype}` : '']
+      .filter(Boolean);
+    out.push({ comp: k, sig: bits.join(' · '), declared: true });
+  }
+  if (out.length) return out;
+  const basis = (m.derived as any)?.kv_cache?.bytes_basis;
+  if (basis) return [{ comp: '', sig: KV_BASIS_LABEL[basis] ?? basis, declared: false }];
+  return [];
+}
+
+const KV_COMP_LABEL: Record<string, string> = {
+  global_kv: '全局 KV',
+  indexer: 'index K',
+  local_window: '滑窗',
+};
+
 const precChanges = (m: Model) => changesFor(m).filter((c) => c.field.axis === 'precision');
 const precStory = (m: Model) =>
   (m.lineage?.changed_from_predecessor ?? []).filter((c: any) => c.axis === 'precision');
@@ -163,7 +201,14 @@ const subsNever = stat.filter(([, s]) => s.b4 === 0 && s.b8 === 0).sort((a, b) =
 const subsUp = stat.filter(([, s]) => s.f32 > 0).sort((a, b) => b[1].f32 - a[1].f32);
 
 /* 页脚那两句「为什么没有这一列」也从数据数，免得将来补了数据而说明还停在旧状态 */
-const kvDeclared = all.filter((m) => prec(m).kv_cache).length;
+/* 初稿这里数的是 `precision.kv_cache`（一个标量，只有 2 份有），据此把整列砍了。
+   真内容在 kv_cache_components 里 —— 逐分量带 dtype / 块 / scale。**数错了字段，
+   结论就整列反了。** */
+const kvDeclared = all.filter((m) => prec(m).kv_cache_components).length;
+const fallbackN = all.filter(
+  (m) => !prec(m).kv_cache_components
+    && (m.derived as any)?.kv_cache?.bytes_basis === 'dtype_fallback',
+).length;
 const trainDeclared = all.filter((m) => prec(m).training).length;
 const shortName = (m: Model, label: string) =>
   m.display_name.replace(new RegExp(`^${label}[-_ ]?`, 'i'), '') || m.display_name;
@@ -231,6 +276,7 @@ const shortName = (m: Model, label: string) =>
               {f.cols.map((k) => <th class="sub" title={k}>{SUB_LABEL[k] ?? k}</th>)}
               <th>发布形态</th>
               <th>量化块 / scale</th>
+              <th>KV 缓存</th>
               <th>依据</th>
             </tr>
           </thead>
@@ -240,6 +286,7 @@ const shortName = (m: Model, label: string) =>
               const rel = releases(m);
               const blk = blocks(m);
               const method = prec(m).quantization?.subsystem_method;
+              const kv = kvRows(m);
               const chg = precChanges(m);
               const story = precStory(m);
               return (
@@ -291,6 +338,15 @@ const shortName = (m: Model, label: string) =>
                         </div>
                       )) : <span class="absent unsurveyed">未录</span>}
                     </td>
+                    <td class="small">
+                      {kv.length ? kv.map((r) => (
+                        <div class={r.declared ? 'kvd' : 'kvf'}>
+                          {r.comp && <span class="muted">{KV_COMP_LABEL[r.comp] ?? r.comp} </span>}
+                          <code>{r.sig}</code>
+                          {!r.declared && <span class="muted"> · 非声明</span>}
+                        </div>
+                      )) : <span class="absent unsurveyed">未录</span>}
+                    </td>
                     <td class="small muted">
                       {method ? <Prose text={method} /> : <span class="absent unsurveyed">未录</span>}
                       <Evidence tag={evidenceFor('precision.quantization.per_subsystem', m.evidence)} />
@@ -299,7 +355,7 @@ const shortName = (m: Model, label: string) =>
                   {(chg.length > 0 || story.length > 0) && (
                     <tr class={`detail ${side ?? ''}`}>
                       <td class={side}></td>
-                      <td colspan={f.cols.length + 3}>
+                      <td colspan={f.cols.length + 4}>
                         {chg.length > 0 && (
                           <div class="chgs">
                             <span class="muted">字段变化</span><Evidence tag="derived" />
@@ -337,17 +393,25 @@ const shortName = (m: Model, label: string) =>
   ))}
 
   <div class="note">
-    <p><strong>本页刻意没有两列，说明在这里 —— 空列不画，但不画不等于不重要。</strong></p>
-    <p class="small">
-      <strong>KV 缓存精度</strong>：{all.length} 份里只有 {kvDeclared} 份有厂商一手声明。
-      其余都是按模型权重 dtype 兜底的占位值，摆成一列会让人当成查过的事实。
-      它在<a href={url('/attention/')}>注意力演进</a>页带 <code>basis</code> 标签出现，
-      那里每个数都标明了是实测、声明还是兜底。
+    <p>
+      <strong>KV 缓存那一列：{all.length} 份里只有 {kvDeclared} 份有逐分量的一手声明。</strong>
+      那 {kvDeclared} 份印的是 dtype 与「块 / scale」签名；其余 {fallbackN} 份印的是
+      <code>{KV_BASIS_LABEL['dtype_fallback']}</code> —— 那是<b>按模型权重 dtype 兜底算出来的占位值，
+      不是查到的落盘格式</b>，所以标了「非声明」。字节口径与跨代比值在
+      <a href={url('/attention/')}>注意力演进</a>页，那里每个数都带 <code>basis</code>。
     </p>
     <p class="small">
-      <strong>训练精度</strong>：{trainDeclared} 份有。厂商公布的 <code>torch_dtype</code>
-      说的是发布权重的格式，不是训练时用的数值格式，两者不能互相代替 ——
-      所以这一列现在是空的，而不是填上 BF16。
+      <strong>4 bit 认签名不认名字。</strong> NVFP4 与 MXFP4 在 <code>dtype</code> 字段上
+      可能都写作 <code>FP4</code>，分开它们的是<b>块与 scale</b>：块 16 + <code>E4M3</code>
+      是 NVFP4 式，块 32 + <code>E8M0</code> 是 OCP MXFP4。所以格子里的字母只是提示，
+      判断要看并排的「量化块 / scale」列 —— 本仓里 DeepSeek 的路由专家记作 <code>FP4</code>、
+      Kimi-K3 的记作 <code>MXFP4</code>，而两者签名相同（<code>[1,32]</code> + E8M0）。
+    </p>
+    <p class="small">
+      <strong>训练精度这一列没有</strong>：{trainDeclared} 份有。厂商公布的
+      <code>torch_dtype</code> 说的是发布权重的格式，不是训练时用的数值格式，
+      两者不能互相代替 —— 所以这一列是空的，而不是填上 BF16。空列不画，
+      但不画不等于不重要。
     </p>
   </div>
 </Base>
@@ -402,6 +466,11 @@ const shortName = (m: Model, label: string) =>
   .chg .to { color: var(--ink); font-weight: 600; }
   .story { font-size: 13px; margin: 6px 0; }
   .benefit { padding-left: 10px; border-left: 2px solid var(--line); margin-top: 2px; }
+
+  /* 声明与兜底必须一眼分得开：兜底那行整体压暗，并在文字上写明「非声明」——
+     只靠颜色区分不够，这一格的内容本身就是「这个数可不可信」 */
+  .kvd { white-space: nowrap; }
+  .kvf { white-space: nowrap; color: var(--ink-3); font-style: italic; }
 
   .rel { font-size: 12.5px; white-space: nowrap; }
   .rel .ok { color: var(--accent); font-size: 11px; margin-left: 4px; }
