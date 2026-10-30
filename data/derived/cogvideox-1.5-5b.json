@@ -1,9 +1,9 @@
 {
  "id": "cogvideox-1.5-5b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T17:21:30+00:00",
+ "generated_at": "2026-10-30T17:28:37+00:00",
  "inputs": {
-  "facts_dir": "facts/cogvideox-1.5-5b",
+  "facts_dir": "/Users/yuan/Work/frontier-llm-tracking/frontier_open_source_model_study/facts/cogvideox-1.5-5b",
   "config_present": false,
   "shapes_present": true,
   "model_yaml": "data/models/cogvideo/cogvideox-1.5-5b.yaml",
