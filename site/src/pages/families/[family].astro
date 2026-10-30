@@ -13,10 +13,12 @@
  */
 import Base from '../../layouts/Base.astro';
 import Evidence from '../../components/Evidence.astro';
+import Cell from '../../components/Cell.astro';
 import {
   familyModels, axisMatrix, changeMatrix, allModels, url, fmtSci,
   TRACKED_FIELDS, SUBSYSTEM_FIELD_PREFIX, FAMILY_LABEL, FAMILY_ORDER,
   HORIZON_LABEL, reviewStatus,
+  rowIsInformative,
 } from '../../lib/data';
 
 export function getStaticPaths() {
@@ -36,8 +38,10 @@ const short = (m: any) =>
 
 const specFields = TRACKED_FIELDS.filter((f) => f.group === 'spec');
 const precFields = TRACKED_FIELDS.filter((f) => f.group === 'precision');
+// 判「这一行要不要出现」走 rowIsInformative，不是「有没有值」——
+// 「查了但没有」是信息，整行藏掉就把结论一起藏了（见 data.ts 里的说明）
 const visible = (fs: typeof TRACKED_FIELDS) =>
-  fs.filter((f) => models.some((m) => f.get(m) !== undefined));
+  fs.filter((f) => rowIsInformative(f, models));
 const visiblePrec = visible(precFields);
 /** 分组行插在第一条实测行之前，把 config 声明和实测分开 */
 const firstMeasured = visiblePrec.findIndex((f) => f.key.startsWith(SUBSYSTEM_FIELD_PREFIX));
@@ -180,10 +184,9 @@ const sideCls = (m: any) => (m.lineage?.track === 'side' ? 'side' : undefined);
         {visible(specFields).map((f) => (
           <tr>
             <td>{f.label}</td>
-            {models.map((m) => {
-              const v = f.get(m);
-              return <td class={sideCls(m)}>{v === undefined ? <span class="dash">—</span> : v}</td>;
-            })}
+            {models.map((m) => (
+              <td class={sideCls(m)}><Cell field={f} model={m} /></td>
+            ))}
           </tr>
         ))}
         <tr>
@@ -258,14 +261,9 @@ const sideCls = (m: any) => (m.lineage?.track === 'side' ? 'side' : undefined);
             )}
             <tr>
               <td>{f.label.replace('（实测）', '')}</td>
-              {models.map((m) => {
-                const v = f.get(m);
-                return (
-                  <td class={sideCls(m)}>
-                    {v === undefined ? <span class="dash">—</span> : v}
-                  </td>
-                );
-              })}
+              {models.map((m) => (
+                <td class={sideCls(m)}><Cell field={f} model={m} /></td>
+              ))}
             </tr>
           </>
         ))}

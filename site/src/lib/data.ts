@@ -13,6 +13,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
+import { absence, columnSpec, isAbsent, withUnit, type Absent } from './columns';
+
+export { absence, isAbsent } from './columns';
+export type { Absent, AbsenceState } from './columns';
 
 /**
  * 统一的 YAML 读取。
@@ -359,6 +363,52 @@ export interface TrackedField {
 const dtype = (v: unknown) => (typeof v === 'string' ? v.toUpperCase() : undefined);
 
 /**
+ * 渲染一个格子：有值就带上单位，没值就说出是三态里的哪一种。
+ *
+ * **页面一律走这个函数（或 <Cell>），不要直接调 f.get()。**
+ * 直接调的话缺值就又变回一个什么都不说的 `—`，而那个符号同时背着三种含义：
+ * 没查 / 不适用 / 查了但没有。第三态是信息，前两态是缺口 ——
+ * 45 份记录的 KV 精度空着，真相是「厂商没公布」，那是一条结论。
+ */
+export function cell(f: TrackedField, m: Model): string | number | Absent {
+  const v = f.get(m);
+  if (v === undefined || v === null || v === '') return absence(f.key, m, m.derived);
+  return typeof v === 'number' ? v : withUnit(f.key, v);
+}
+
+/** 这一列在这份记录上有没有值。只用来判整行出不出，见 rowIsInformative。 */
+export function hasValue(f: TrackedField, m: Model): boolean {
+  const v = f.get(m);
+  return v !== undefined && v !== null && v !== '';
+}
+
+/**
+ * 这一行要不要出现在对照表里。
+ *
+ * 光看「有没有值」会把一条结论整行藏掉：45 份记录的 `precision.kv_cache` 是空的，
+ * 而那个空不是「没查」—— 是**厂商没公布，所以字节那一列只能按权重 dtype 兜底**。
+ * 按有没有值判，这一行在没有任何一版填过的家族页上整行消失，连带把那条结论也消失了。
+ * 藏起来比渲染成 `—` 还糟：`—` 至少还在那儿。
+ *
+ * 所以：有值要出，**「查了但没有」也要出** —— 那一态是信息。
+ * 全是「未录」或「不适用」才藏：那种行确实什么都没说。
+ */
+export function rowIsInformative(f: TrackedField, models: Model[]): boolean {
+  return models.some(
+    (m) => hasValue(f, m) || absence(f.key, m, m.derived).state === 'confirmed_absent',
+  );
+}
+
+/** 实测列测自哪个仓（scope=measured 的列才有），渲染器用它说明覆盖面。 */
+export function measuredScope(key: string, m: Model): string | undefined {
+  const spec = columnSpec(key);
+  if (spec?.scope !== 'measured' || !spec.scope_from) return undefined;
+  let cur: any = m;
+  for (const part of spec.scope_from.split('.')) cur = cur?.[part];
+  return typeof cur === 'string' ? cur : undefined;
+}
+
+/**
  * KV 缓存精度的显示值 —— 把「取不到」拆成两种说法。
  *
  * 以前取不到就渲染 `—`，而那一个符号同时背着「厂商没公布」和「这一代不建 KV」。
@@ -380,12 +430,10 @@ const dtype = (v: unknown) => (typeof v === 'string' ? v.toUpperCase() : undefin
 export function kvCachePrecision(m: Model): { text: string; declared: boolean } {
   const v = dtype(m.precision?.kv_cache);
   if (v) return { text: v, declared: true };
-  const kv = m.derived?.kv_cache;
-  const accounted = kv?.status && kv.status !== 'unknown';
-  if (accounted && !kv!.per_token_bytes && !kv!.per_sequence_bytes) {
-    return { text: '不适用', declared: false };
-  }
-  return { text: '未公布', declared: false };
+  // 判据不写第二份：走 data/schema/columns.json 的 kv_dtype 规则，
+  // Python 侧的闸口读的是同一份。回归用例钉住了两边判出来一样
+  // （45 份「未公布」、0 份「不适用」），分叉会被拦住
+  return { text: absence('kv_dtype', m, m.derived).label, declared: false };
 }
 
 // derive.py 能出五个 basis，这里要五个都有。少一个的后果不是「少一个标签」：

@@ -172,6 +172,15 @@ const here = Astro.url.pathname.replace(/\/$/, '');
       }
       .dot { color: var(--accent); font-weight: 700; }
       .dash { color: var(--ink-3); }
+      /* 缺值的三态要在表上分得开。此前三者都渲染成 `—`：
+         「没查」「不适用」「查了但没有」里，第三态是信息、前两态是缺口，
+         同形就等于把信息和缺口混为一谈。虚下划线提示有 title 可看 */
+      .absent { font-size: 12px; border-bottom: 1px dotted var(--line); cursor: help; }
+      .absent.unsurveyed { color: var(--ink-3); font-style: italic; }
+      .absent.not_applicable { color: var(--ink-3); }
+      .absent.confirmed_absent { color: var(--ink-2); }
+      /* 单位贴在数字上，但不抢数字的视觉重量 */
+      .unit { font-size: 11px; color: var(--ink-3); margin-left: 2px; }
       /* 主线与支线在表头上要分得开：支线是同代的平行版本或权重刷新 */
       th.side, td.side { background: color-mix(in oklab, var(--warn-bg) 45%, var(--surface)); }
       .track-mark { font-size: 10px; color: var(--ink-3); vertical-align: super; margin-left: 2px; }
