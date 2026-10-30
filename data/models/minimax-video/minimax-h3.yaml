@@ -168,6 +168,19 @@ generation:
     ffn: 14336
     refiner_layers: 2
     text_conditioning: in_sequence
+    param_scaling:
+      per_sample: 13055204736
+      per_video_token: 20067788160
+      note: >-
+        **AdaLN 调制是逐样本的，它占主干 39.41%。** 形状上就能断定：
+        `adaln_proj.linear` 是 [96768, **2688**] 而 hidden 是 5376 ——
+        入口宽度不等于 token 宽度，不可能在吃 token 流；2688 正是
+        `time_embedder.linear_2` 的出口（[2688, 5376]）。
+        按「每个参数过每个 token」算，单步 FLOPs 高 22.0%、
+        注意力占比被压成 54.2%（真值 66.2%）。
+        文本 token 拼在同一条序列里（text_conditioning: in_sequence），
+        所以没有单独的 per_text_token 桶，文本那部分并在 per_video_token 里；
+        而记录没给文本长度，序列长度本来就是下界
     patch_size: [1, 2, 2]
     position: 3D MM-RoPE (t, h, w)，rope_freq_dim 16、rope_theta 10000
     note: >-

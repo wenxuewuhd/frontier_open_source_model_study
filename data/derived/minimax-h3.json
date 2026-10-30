@@ -1,13 +1,20 @@
 {
  "id": "minimax-h3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T16:08:19+00:00",
+ "generated_at": "2026-10-30T16:34:24+00:00",
  "inputs": {
   "facts_dir": "facts/minimax-h3",
   "config_present": false,
   "shapes_present": true,
   "model_yaml": "data/models/minimax-video/minimax-h3.yaml",
   "ep_size": 1
+ },
+ "gate_b": {
+  "config": false,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 1,
+  "why": "仓里没有任何 config（顶层与组件目录都没有）。结构字段只有清单一路，config 侧的交叉核对整条跳过"
  },
  "from_shapes": {
   "available": true,
@@ -147,14 +154,16 @@
   "sequence_tokens": 72981.0,
   "sequence_tokens_is_lower_bound": true,
   "flops_per_step": {
-   "linear": 4834698289085952.0,
+   "linear": 2929160605819392.0,
    "linear_terms": {
-    "formula": "2 × 激活参数 × 序列 token 数",
+    "formula": "2 × (每视频 token 参数 × token 数 + 每样本参数 × 1)",
     "factors": {
-     "active_params": 33122992896,
-     "source": "params.active_decode（记录声明）",
+     "per_video_token": 20067788160,
+     "per_sample": 13055204736,
+     "per_text_token": 0,
      "tokens": 72981.0
-    }
+    },
+    "note": "AdaLN 这类吃条件向量的参数每次前向只过一遍，不随 token 数增长"
    },
    "attention": 5726758583347200.0,
    "attention_terms": {
@@ -166,8 +175,8 @@
     },
     "note": "稠密全注意力口径。块稀疏（SSTA）或线性注意力要另按其形态折算，本函数不替你折 —— 折算比例是记录里的事实，不是公式里的常数"
    },
-   "total": 1.0561456872433152e+16,
-   "attention_share": 0.5422318769576974
+   "total": 8655919189166592.0,
+   "attention_share": 0.6616002827885207
   },
   "excluded": [
    "文本编码一次（编码器参数量在 generation.text_encoders，本函数不计）",
