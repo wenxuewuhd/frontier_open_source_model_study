@@ -44,6 +44,22 @@ sources:
       类型写成「Causal Language Model **with Vision Encoder**」。
       **卡里没有训练精度声明，也没有提 A_log / norm 的 F32**（那件事只有 dtype 看得见）
 
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3.5-27B-GPTQ-Int4
+    locator: 'config.json @ 8f0c09f227ae · quantization_config'
+    accessed: '2026-10-30'
+    note: >-
+      同代的官方 INT4 发布仓，本轮补取了它的 config 与元数据（没取清单）。
+      quantization_config：**quant_method gptq、bits 4、group_size 128、sym true、
+      desc_act false**，另有 damp_percent / static_groups / true_sequential / dynamic 四键，
+      **modules_to_not_convert 为空**。
+      HF 的逐 dtype tally 说明了它实际量化了哪一块：I32 **17,112,760,320**
+      —— 与本记录主干稠密 FFN 的参数量**逐位相同**（草稿块的 FFN 不在内，
+      含草稿块应是 17,380,147,200）；其余 10,668,659,184 仍是 BF16，F32 那 8,448 个也还在。
+      所以 **GPTQ-Int4 只覆盖主干稠密 FFN**，注意力、视觉塔、草稿块与两份词表都没量化。
+      usedStorage 51.76 → **28.17 GiB（1.84 倍）**，只有 1.84 倍是因为降到 4 bit 的
+      只占参数量的 61.6%
+
 hf:
   repo: Qwen/Qwen3.5-27B
   sha: fc05daec18b0a3ae0f7dd1a44d19b5a0c2a09d26
@@ -281,9 +297,14 @@ precision:
       只占 2304 / 7,239,766,528**，报 BF16 是带宽主体的精度 ——
       A_log 的 F32 单独写在 lineage 的 precision 条与 open_questions 里。
       本仓没有量化块（无 quantization_config），所以 per_subsystem_block 不填。
-      weights_release 的 FP8_E4M3 与 INT4 来自同代的 Qwen3.5-27B-FP8 与
-      Qwen3.5-27B-GPTQ-Int4 两个仓的存在（HF 名单，2026-03-03），
-      **本仓没有取它们的清单**，所以只记发布形态、不记量化配置
+      weights_release 的 FP8_E4M3 与 INT4 来自同代的 Qwen3.5-27B-FP8（2026-02-25）与
+      Qwen3.5-27B-GPTQ-Int4（2026-03-03）两个仓。
+      **本轮补取了 Int4 仓的 config（见 sources[2]）**：GPTQ、bits 4、group_size 128、
+      sym、desc_act false，而它的逐 dtype tally 说明**只量化了主干稠密 FFN**
+      （I32 17,112,760,320 与本记录的 dense_ffn 逐位相同），注意力 / 视觉塔 / 草稿块 /
+      词表仍 BF16。FP8 仓的 config 没取（同代旗舰那份取了，见 qwen3.8-2.4t-a95b 的
+      sources —— 那一代 FP8 只量化路由专家，本档是稠密 FFN 档，不能照搬）。
+      两个仓都没取清单，所以本记录不填 per_subsystem_block 之类的实测量化块
 
 platforms:
   - engine: transformers
@@ -418,8 +439,10 @@ open_questions:
     输出门的函数形式本代无声明（config 没有 output_gate_type），
     3.6 起声明为 swish；本档是否同为 swish 没有来源
   - >-
-    同代的 FP8 与 GPTQ-Int4 发布（Qwen3.5-27B-FP8 / -GPTQ-Int4）本仓没有取清单，
-    weights_release 只记发布形态，量化配置（块大小、哪些子系统量化）未知
+    同代 FP8 仓（Qwen3.5-27B-FP8）的 config 与清单都没取。
+    Int4 仓的 config 本轮取了（哪一块被量化已由 tally 定下），**但清单没取**，
+    所以实测量化块（权重形状 ÷ 同名 scale 形状）仍未知 ——
+    GPTQ 的 group_size 128 是声明值，不是实测
   - >-
     训练精度没有一手来源：config 的 dtype: bfloat16 说的是发布权重，
     而**模型卡正文本轮已读**（README.md @ fc05daec18b0），Model Overview 只列结构与规模，
@@ -529,10 +552,9 @@ review:
       草稿只写 [BF16]
     finding: >-
       同代 HF 名单里有 Qwen3.5-27B-FP8（2026-02-25）与 Qwen3.5-27B-GPTQ-Int4
-      （2026-03-03）两个仓 —— **Qwen 线第一次有 INT4 的官方发布**
-      （前面各代只有社区 AWQ/GPTQ 或 FP8）。发布形态属于「量化发布形态」这条轴，
-      该记。但本仓没有取这两个仓的清单，所以只记形态、不记量化配置，
-      并留 open question。evidence 标 judgement（依据是名单的存在，不是清单）
+      （2026-03-03）两个仓。发布形态属于「量化发布形态」这条轴，该记。
+      evidence 标 judgement（依据是名单的存在，不是清单）。
+      **注意：当时顺手写的「Qwen 线第一次有 INT4 的官方发布」是错的，已删**（见 R8）
     resolution: corrected
     changed_to: >-
       weights_release 改为 [BF16, FP8_E4M3, INT4]（标 judgement），
@@ -559,3 +581,27 @@ review:
       新增 sources 的 modelcard 条目；linear_state.mechanism 写上厂商名；
       counting_note 补「视觉塔那一项有厂商分法旁证」；
       补 context.train_native 与 extension_method；vocab 旁注「Padded」
+  - id: R8
+    field: precision.weights_release
+    severity: wrong
+    claim: >-
+      「Qwen3.5-27B-GPTQ-Int4 是 **Qwen 线第一次有 INT4 的官方发布**
+      （前面各代只有社区 AWQ/GPTQ 或 FP8）」
+    finding: >-
+      **两头都错。** 把本轮拉到的 Qwen org 全名单（469 个仓）按发布形态归类：
+      官方 GPTQ-Int4 从 **Qwen1.5 就有**（最早 Qwen1.5-0.5B-Chat-GPTQ-Int4，
+      2024-02-04，共 37 个仓），AWQ 同样从 Qwen1.5 起（最早 2024-02-03，共 40 个），
+      更早还有 **Qwen-7B/72B-Chat-Int4 / Int8（2023-08 ~ 2023-11，9 个仓）**；
+      FP8 才是后来的，从 **Qwen3（2025-04-28）** 起全档位铺开（共 40 个）。
+      所以 INT4 不是「第一次」，也不是「社区的」—— 它们都在 Qwen org 名下。
+      本档真正的新鲜处只是「这一代的 Int4 仓覆盖到了 397B / 122B / 35B / 27B 四档」，
+      而那不值得写成「第一次」。
+      根因：写这句时只看了同代名单那几行，**没有回到已经拉到本地的 org 全名单去数** ——
+      一条「第一次 / 零例外」类断言，手边就有全量数据却没查
+    resolution: corrected
+    changed_to: >-
+      删掉那句断言，subsystem_method 改为列 FP8 与 Int4 两个仓的发布时间；
+      另补取 Int4 仓的 config（sources[2]）：GPTQ / bits 4 / group_size 128 / sym /
+      desc_act false，且逐 dtype tally 说明**只量化主干稠密 FFN**
+      （I32 17,112,760,320 与本记录 dense_ffn 逐位相同），其余仍 BF16；
+      open question 收窄为「清单没取，所以实测量化块仍未知」
