@@ -246,6 +246,50 @@ def _():
     assert got == want, f"实际报的是 {got}，应当是 {want}"
 
 
+def release_warnings(doc) -> list:
+    w = []
+    validate.check_release_vs_measured(
+        doc, doc.get("id", "?"), os.path.join(ROOT, "data", "derived"), w)
+    return w
+
+
+@case("三·正例：交代过在哪个仓之后，那一份就不再报")
+def _():
+    # 迁移要能一份一份来：每迁一份，它的告警当场消失，不必等 47 份全迁完
+    d = copy.deepcopy(RECS["qwen3.8-2.4t-a95b"])
+    assert release_warnings(d), "迁移前应当报"
+    d.setdefault("precision", {})["weights_release_scope"] = {
+        "BF16": {"measured": True},
+        "FP8_E4M3": {"measured": False, "repo": "Qwen/Qwen3.8-2.4T-A95B-FP8"},
+    }
+    assert not release_warnings(d), "交代过之后不该再报"
+
+
+@case("三·负例：只交代一半，剩下那半照旧报")
+def _():
+    d = copy.deepcopy(RECS["qwen3.5-27b"])
+    before = release_warnings(d)
+    assert before and "FP8_E4M3" in before[0] and "INT4" in before[0], \
+        f"迁移前应当两种都报：{before}"
+    d.setdefault("precision", {})["weights_release_scope"] = {
+        "FP8_E4M3": {"measured": False, "repo": "Qwen/Qwen3.5-27B-FP8"},
+    }
+    after = release_warnings(d)
+    assert after, "还有一种没交代，应当继续报"
+    assert "INT4" in after[0] and "FP8_E4M3" not in after[0], \
+        f"应当只报剩下的 INT4：{after}"
+
+
+@case("三·正例：measured: true 不能当成交代 —— 那是在说谎")
+def _():
+    # 声明了、实测清单里没有、却标 measured: true：这是自相矛盾，不该被放行
+    d = copy.deepcopy(RECS["qwen3.8-2.4t-a95b"])
+    d.setdefault("precision", {})["weights_release_scope"] = {
+        "FP8_E4M3": {"measured": True},
+    }
+    assert release_warnings(d), "标 measured: true 却查无实据，必须继续报"
+
+
 @case("三·正例：四份「逻辑精度 vs 容器」不被误报")
 def _():
     # FP4 装 INT8、8 个 INT4 一个 I32、MXFP4 一字节两个 —— 这是正确记法。
