@@ -207,7 +207,10 @@
             },
             "num_heads": { "type": "integer" },
             "num_kv_heads": { "type": "integer" },
-            "head_dim": { "type": "integer" },
+            "head_dim": {
+              "type": "integer",
+              "description": "QK 的每头全宽。MLA 一代写 qk_nope_head_dim + qk_rope_head_dim 之和（ds-v3：128+64=192；GLM-5 一代：192+64=256），不是其中任何一段。**不要照抄 config 的 head_dim 键**：各家含义不同，GLM 自己在 glm-5 填 64、glm-5.2 填 192，而两代的 qk_nope/qk_rope 完全相同。V 的宽度另见 v_head_dim"
+            },
             "v_head_dim": {
               "type": "integer",
               "description": "V 的每头维度。MLA 一代的 head_dim（nope+rope）只管 QK，V 另有宽度；o_proj 的入口宽度由它决定，用 head_dim 去推会高 50%"
@@ -216,8 +219,14 @@
               "type": "string",
               "description": "head_dim 的适用范围。QK 与 V 维度不同时必须写明，否则下游会拿一个数去推两条路径"
             },
-            "qk_rope_head_dim": { "type": "integer" },
-            "qk_nope_head_dim": { "type": "integer" },
+            "qk_rope_head_dim": {
+              "type": "integer",
+              "description": "QK 里带旋转位置编码的那一段，每头。它与 qk_nope_head_dim 之和才是 head_dim"
+            },
+            "qk_nope_head_dim": {
+              "type": "integer",
+              "description": "QK 里不带位置编码的那一段，每头。单独填这一段到 head_dim 是本仓踩过的错（GLM 四份），两个族系的 head_dim 会变成两个量"
+            },
             "kv_lora_rank": { "type": "integer" },
             "q_lora_rank": { "type": "integer" },
             "o_lora_rank": { "type": "integer" },
