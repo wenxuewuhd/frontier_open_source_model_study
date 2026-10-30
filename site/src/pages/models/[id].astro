@@ -6,6 +6,7 @@ import LayerMap from '../../components/LayerMap.astro';
 import {
   allModels, modelById, url, fmtCount, fmtBytes, fmtInt, fmtSci, FAMILY_LABEL,
   reviewStatus, SEVERITY_LABEL, RESOLUTION_LABEL, HORIZON_LABEL, SUBSYSTEMS,
+  kvCachePrecision,
 } from '../../lib/data';
 
 const SUBSYSTEM_LABEL: Record<string, string> = Object.fromEntries(
@@ -22,6 +23,7 @@ const ev = m.evidence;
 const d = m.derived ?? null;
 const s = d?.from_shapes;
 const kv = d?.kv_cache;
+const kvPrec = kvCachePrecision(m);
 // 字节口径跟着数走：下限、兜底、声明精度是三种数，页面上丢了标签读者会直接当部署预算
 const KV_BASIS: Record<string, string> = {
   theoretical_floor: '理论下限',
@@ -380,7 +382,14 @@ const rv = reviewStatus(m);
       rows={[
         { label: '训练精度', value: m.precision?.training, path: 'precision.training' },
         { label: '发布权重精度', value: m.precision?.weights_release, path: 'precision.weights_release' },
-        { label: 'KV cache', value: m.precision?.kv_cache, path: 'precision.kv_cache' },
+        // 没有厂商口径时这一行以前整条消失，读者看不出本仓查过没有。
+        // 合成的说法（未公布 / 不适用）不挂 path —— 证据徽标是给记录里的事实用的，
+        // 这一格是本仓的说明，挂上去会变成「厂商官方披露：未公布」
+        {
+          label: 'KV cache',
+          value: kvPrec.text,
+          path: kvPrec.declared ? 'precision.kv_cache' : undefined,
+        },
         { label: '量化方法', value: q.method, path: 'precision.quantization' },
         { label: '激活量化', value: q.activation_scheme, path: 'precision.quantization' },
         { label: 'block 大小', value: q.weight_block_size, path: 'precision.quantization', mono: true },

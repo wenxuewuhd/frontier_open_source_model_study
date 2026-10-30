@@ -203,6 +203,13 @@ const sideCls = (m: any) => (m.lineage?.track === 'side' ? 'side' : undefined);
     <code>scale 格式</code>留着是因为它和实测<strong>不一致</strong>，而那个不一致正是要说的事。
   </p>
   <p class="small muted">
+    「KV 缓存精度」这一行没有 <code>—</code>：<strong>未公布</strong>是厂商没给落盘精度
+    （本仓绝大多数记录是这一类，字节那一行因此另有来源，哪一种看它括号里的基准），
+    <strong>不适用</strong>是这一版根本不落 KV、没有这笔账。
+    两者以前渲染成同一个符号，而「按兜底值规划容量」和「不用规划」是两个结论。
+    其余各行的 <code>—</code> 仍是「该版本没有这一项」。
+  </p>
+  <p class="small muted">
     下半部分是逐子系统的<strong>实测</strong>值，由 <code>scripts/fetch_dtypes.py</code>
     直接读权重头得出，不回填 config 声明值。三项一起列（权重精度 / scale 精度 / 量化块），
     因为反量化必须同时知道这三件事。<strong>量化块尤其不能信 config</strong> ——

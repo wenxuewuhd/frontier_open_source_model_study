@@ -349,6 +349,36 @@ export interface TrackedField {
 
 const dtype = (v: unknown) => (typeof v === 'string' ? v.toUpperCase() : undefined);
 
+/**
+ * KV 缓存精度的显示值 —— 把「取不到」拆成两种说法。
+ *
+ * 以前取不到就渲染 `—`，而那一个符号同时背着「厂商没公布」和「这一代不建 KV」。
+ * 对 infra 决策这是两个结论：前者说明字节那一列是本仓按模型 dtype 兜底填的占位值，
+ * 真实落盘精度可能更省，容量规划要留余量；后者说明根本没有这笔账要规划。
+ *
+ * 判据只认记录里已经有的东西，不从别处推：
+ *   记录里有值                                        → 照报
+ *   没值，且缓存账已经算过、每 token 与每序列字节都是零 → 不适用（没有 KV 要落盘）
+ *   其余（含没 derive、status unknown）                → 未公布
+ *
+ * 「没 derive」归到「未公布」而不是单列一类，是因为这一格说的是**厂商公布了什么**，
+ * 而不是本仓算到了哪一步 —— 调研进度由字节那一列的 basis 和 derive 状态承担。
+ *
+ * 当前 47 份里 45 份走「未公布」、0 份走「不适用」：五个家族逐份查过模型卡与技术报告，
+ * DeepSeek 之外没有任何厂商公布过 KV 落盘精度。「不适用」这一支现在是空的，
+ * 留着是因为判据得先立住 —— 真出现一份不建 KV 的记录时，它不能和那 45 份共用一个符号。
+ */
+export function kvCachePrecision(m: Model): { text: string; declared: boolean } {
+  const v = dtype(m.precision?.kv_cache);
+  if (v) return { text: v, declared: true };
+  const kv = m.derived?.kv_cache;
+  const accounted = kv?.status && kv.status !== 'unknown';
+  if (accounted && !kv!.per_token_bytes && !kv!.per_sequence_bytes) {
+    return { text: '不适用', declared: false };
+  }
+  return { text: '未公布', declared: false };
+}
+
 export const KV_BASIS_LABEL: Record<string, string> = {
   theoretical_floor: '理论下限',
   dtype_fallback: '精度兜底',
@@ -443,8 +473,12 @@ export const TRACKED_FIELDS: TrackedField[] = [
     get: (m) => m.precision?.quantization?.scale_format },
   { key: 'act_scheme', label: '激活量化', axis: 'precision', group: 'precision',
     get: (m) => m.precision?.quantization?.activation_scheme },
+  // 永远有值：缺口径时报「未公布」或「不适用」，不留 `—`（判据见 kvCachePrecision）。
+  // 值刻意只有这两种说法，不带「按 dtype 兜底 / 厂商只公布字节」这类后缀 ——
+  // 带了的话，兜底的前代与厂商公布的后代会比出一条 from → to，
+  // 而那是本仓查到了什么的差别，不是模型的差别。兜底来源看同表的「KV 字节 / token」
   { key: 'kv_dtype', label: 'KV 缓存精度', axis: 'precision', group: 'precision',
-    get: (m) => dtype(m.precision?.kv_cache) },
+    get: (m) => kvCachePrecision(m).text },
   // 字节随精度假设变，口径写在数字旁边；口径不同的两版不进变化矩阵 —— 结构变化看上面的元素行
   { key: 'kv_bytes', label: 'KV 字节 / token', axis: 'precision', group: 'precision',
     diff: 'same-basis',
