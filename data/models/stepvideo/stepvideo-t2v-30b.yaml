@@ -1,0 +1,634 @@
+id: stepvideo-t2v-30b
+family: stepvideo
+kind: video-gen
+display_name: Step-Video-T2V
+released: '2025-02-14'
+license: mit
+visibility: public
+
+# 视频线第五份记录（wan2.2-ti2v-5b / minimax-h3 / ltx-2 / ltx-2.3 / hunyuanvideo-1.5 之后），
+# 口径沿用 wan2.2-ti2v-5b：params.total 只算 DiT；不建 arch 块；没有 KV cache 这笔账。
+#
+# 这一份的三个看点：压缩率在已录的五份里最激进（16×16 空间 / 8× 时间 / 64 latent 通道）、
+# AdaLN-Single（调制只占 0.91%，与同线新一代的三分之一成鲜明对照）、
+# 以及**模型卡上有实测性能**（峰值显存与端到端秒数，4 卡）。
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/stepfun-ai/stepvideo-t2v
+    locator: README.md §1 Introduction / §2.1 Video-VAE / §2.2 DiT w/ 3D Full Attention / §4.1 Requirements @ 7a2b639ca268
+    accessed: '2026-10-31'
+    note: >-
+      官方口径来源。卡上直接给出的：30B 参数、最长 204 帧；
+      Video-VAE「achieving 16x16 spatial and 8x temporal compression ratios」；
+      DiT「48 层，每层 48 个注意力头，每头 128 维」，用 AdaLN-Single 注入时间步条件、
+      自注意力里加 QK-Norm、3D RoPE；双语双文本编码器；最后一阶段做了 Video-DPO。
+      §4.1 给了**实测性能表**（峰值显存与 50 步耗时，4 卡），见 R4
+  - kind: paper
+    url: https://arxiv.org/abs/2502.10248
+    locator: 卡上给的技术报告链接
+    accessed: '2026-10-31'
+    note: >-
+      **本轮没有读。** 结构与采样取自模型卡、厂商实现与权重清单三路。
+      按本仓来源优先级技术报告在模型卡之上，报告里若有冲突的数要以它为准 ——
+      尤其是 VAE 的分块设计（见 R2，那是本记录最反直觉的一处）、
+      DPO 配方、以及 §4.1 那张性能表的硬件型号（卡上只说「four GPUs」没说型号）
+  - kind: repo
+    url: https://github.com/stepfun-ai/Step-Video-T2V/blob/main/stepvideo/vae/vae.py
+    locator: AutoencoderKL 的 __init__ / encode / decode / mix，以及 VideoEncoder.conv_patchify @ main
+    accessed: '2026-10-31'
+    note: >-
+      **latent 口径的一手依据，而且推翻了「8× 时间压缩」的直觉读法。**
+      `self.frame_len = 17` / `self.latent_len = 3 if version == 2 else 5`；
+      `encode()` 把输入按 **17 帧**切块、每块独立编码成 **3 个 latent 帧**后拼接；
+      `decode()` 反过来按 3 个 latent 帧一块解回 17 帧，再用 `mix()` 以
+      0.6/0.4 的权重把块边界两帧混一下。**没有 token_drop、没有重叠**。
+      所以 `T = (F / 17) × 3`，而端到端的帧数∶token 比是 **17/3 = 5.667**，不是 8。
+      8× 是**块内**的比：17 帧因果编码 → 1 + 16/8 = 3，正好整除（见 R2）。
+
+      同一份文件还定死了两版 VAE 的差别：`version == 2` 时 `base_group_norm.spatial = True`，
+      编码器多一个 `conv_patchify`、解码器多一个 `conv_unpatchify`（`factor=2`），
+      且 `channels = 4 * z_channels * 2**3`
+  - kind: repo
+    url: https://github.com/stepfun-ai/Step-Video-T2V/blob/main/stepvideo/config.py
+    locator: add_denoise_schedule_args / add_inference_args 的默认值 @ main
+    accessed: '2026-10-31'
+    note: >-
+      采样口径取自这里（厂商参考实现，第三档来源）：
+      `--infer_steps` 50、`--cfg_scale` **9.0**、`--time_shift` 7.0、
+      `--num_frames` 204、`--height` 544、`--width` 992。
+      卡上这几项一个都没写。另有 `--vae_url` / `--caption_url` 两个参数 ——
+      VAE 与文本编码器是**独立服务**，不与 DiT 同进程（见 notes）
+  - kind: modelcard
+    url: https://huggingface.co/stepfun-ai/stepvideo-t2v
+    locator: transformer 6 分片 + step_llm 9 分片 + vae 两个单文件的头 @ 7a2b639ca268
+    accessed: '2026-10-31'
+    note: >-
+      权重清单逐文件读头取全。transformer 785 张量 / 29,342,478,400 参数，
+      **与 HF 自己的 safetensors tally 逐位相同**（29,342,478,400 BF16）——
+      那个 tally 不依赖本仓代码，是外部锚。
+      step_llm 289 张量 / 19,579,600,896 参数（BF16）。
+      vae 目录下**两个文件**：`vae.safetensors` 258 张量 / 258,828,195 参数、
+      `vae_v2.safetensors` 262 张量 / 498,818,819 参数，都是 F32。
+      两者 258 个同名张量里有 4 个形状不同 —— 见 R1
+
+hf:
+  repo: stepfun-ai/stepvideo-t2v
+  sha: 7a2b639ca2685350e87a4df7e4026285309f7fb6
+  last_modified: '2025-02-19T07:41:30.000Z'
+  pipeline_tag: text-to-video
+  gated: false
+
+lineage:
+  track: main
+  # stepvideo family 目前只有这一份。同厂的语言模型族系是 stepfun（Step-5-Preview 那条线），
+  # 两者没有共用组件：这一份的文本编码器 Step-LLM 是自家的，但不是 Step-3/Step-5 那一代，
+  # 仓里也没有它的族谱信息。
+  # 另有 stepvideo-t2v-turbo（步数蒸馏档）与 stepvideo-ti2v（i2v 变体），
+  # 按视频线 policy 都不单开记录。
+
+params:
+  total: 29342478400
+  # 稠密主干，每一步对全部 token 过全部权重，没有路由、没有跨步复用
+  active_decode: 29342478400
+  active_prefill: 29342478400
+  breakdown:
+    ffn: 14495514624
+    self_attention: 7247769600
+    cross_attention: 7247769600
+    adaln_modulation: 267644928
+    text_proj: 75509760
+    clip_proj: 6297600
+    norm: 1179648
+    patch_embed: 792640
+  counting_note: >-
+    **只含 DiT 主干**，按完整权重清单（6 分片 785 张量）逐项统计。
+    全 BF16，无 scale 容器、无打包容器：29,342,478,400 × 2 B = 58,684,956,800 B。
+    **与 HF 自己的 safetensors tally 逐位相同**，那是不依赖本仓代码的外部锚。
+    卡称「30B」，实测 29.34B。
+
+    **三块不在这个数里，但都在同一个仓里**（与 wan / hunyuanvideo-1.5 不同，
+    那两家的编码器要去别处取）：
+    文本编码器 Step-LLM 19,579,600,896 参数 / 39,159,201,792 B（BF16，9 分片 289 张量）、
+    HunyuanCLIP（`pytorch_model.bin`，pickle，读不了清单，文件 3.94 GB）、
+    视觉 VAE 498,818,819 参数 / 1,995,275,276 B（`vae_v2.safetensors`，全 F32）。
+    一次推理四块都要在，**但它们跑在三个独立进程里**（见 notes）。
+
+    分桶口径：`self_attention` 是 `attn1`（`wqkv [18432,6144]` = 3×6144 融合、
+    `wo [6144,6144]`、两个 [128] 的 QK-norm）；`cross_attention` 是 `attn2`
+    （`wq` + `wkv [12288,6144]` = 2×6144 + `wo`）；
+    `ffn` 是 `[24576,6144]` + `[6144,24576]`，24576 = 4×6144，**非门控**；
+    `adaln_modulation` 含全局的 `adaln_single.linear [36864,6144]`（36864 = 6×6144）、
+    时间步嵌入，以及每层一个 `[6, 6144]` 的 `scale_shift_table`。
+
+generation:
+  backbone:
+    stream_design: single
+    layers: 48
+    double_blocks: 0
+    single_blocks: 48
+    hidden: 6144
+    heads: 48
+    head_dim: 128
+    ffn: 24576
+    text_conditioning: cross_attn
+    patch_size: [1, 1, 1]
+    position: 3D RoPE
+    param_scaling:
+      per_sample: 267644928
+      per_video_token: 25367967808
+      per_text_token: 3705686016
+      note: >-
+        三桶相加 29,341,298,752，加上 `norm` 的 1,179,648 等于实测总量 29,342,478,400。
+
+        **`per_sample` 在这一份只占 0.91%**，因为它用的是 **AdaLN-Single**：
+        全局一个 `adaln_single.linear [36864, 6144]` 加每层一个 `[6, 6144]` 的
+        `scale_shift_table`，而不是每层一套 `[6×hidden, hidden]` 的投影。
+        对照同线：hunyuanvideo-1.5 的 AdaLN 占 32.71%、minimax-h3 占 39.41%。
+        **这是 2025-02 与 2025-11 / 2026-07 之间最大的一处结构代价变化**，
+        三份记录钉住各自的代际看就是一条线。
+
+        `per_text_token` 是交叉注意力的 KV 侧（`attn2.wkv`，48 × 2×6144²）
+        加 `caption_projection` 与 `clip_projection` —— 它们只过 512 个文本 token
+        （参考实现的 `text_len` 512）。`attn2` 的 `wq` 与 `wo` 过视频 token，
+        所以 `cross_attention` 这个子系统桶是**跨两个标度桶**的，两种切法正交。
+
+        注意这一份是**单流但带独立交叉注意力**：文本不在主序列里，
+        所以 `per_text_token` 用的是它本来的语义，而不是 schema 描述里说的
+        「单流就并进 per_video_token」那种情形。
+        **推导会提示「没给文本 token 数、线性项是下界」—— 那个提示是对的，
+        但漏掉的量是 2 × 3,705,686,016 × 512 = 3.79e12，占单步 1.064e16 的 0.04%**，
+        不影响任何结论。没地方声明 m（见 R6）
+    note: >-
+      **单流 + 独立交叉注意力**，与 wan 同构、与 hunyuanvideo-1.5 的双流相反。
+      卡称「DiT w/ 3D Full Attention」，48 层 × 48 头 × 128 维与 config 和清单三处一致。
+
+      **`patch_size` 是 (1,1,1)** —— VAE 已经压到 16×16，DiT 不再 patchify。
+      `pos_embed.proj` 的形状 [6144, 64, 1, 1] 同时坐实了两件事：
+      latent 是 **64 通道**、空间 patch 是 **1×1**。
+
+      **交叉注意力与自注意力的参数逐字节相同**（各 7,247,769,600，各占 24.70%），
+      但自注意力跑在 75,888 个视频 token 上、交叉注意力的 KV 只有 512 个文本 token，
+      **148:1**。这和 wan2.2-ti2v-5b 是同一个形态（那边 53:1），这一份更极端
+
+  vae:
+    spatial_compression: 16
+    temporal_compression: 8
+    latent_channels: 64
+    causal: true
+    decoder_arch: conv3d
+    params: 498818819
+    name: Step-Video Deep-Compression Video-VAE（v2）
+    note: >-
+      **压缩率在已录的五份里最激进**（截至 2026-10-31，视频线已录 5 份 / 已选 12 份候选）：16×16 空间 / 8× 时间 / 64 latent 通道。
+      `params` 填的是 `vae_v2.safetensors`（498,818,819，262 张量全 F32）——
+      仓里还有一个 `vae.safetensors`（258,828,195），**那是 16 通道的另一版，
+      不是这个模型用的**，见 R1。
+
+      **但 8× 是块内的比，不是端到端的比。** 厂商实现把输入按 **17 帧**切块、
+      每块独立编码成 **3 个 latent 帧**（`frame_len 17` / `latent_len 3`），
+      没有 token_drop 也没有重叠，解码时再按 3→17 解回去并用 `mix()` 混一下块边界。
+      所以端到端 `T = (F/17) × 3`，帧数∶token 比是 **5.667**。
+      8× 来自块内：17 帧因果编码 = 1 + 16/8 = 3，正好整除 —— 两个数都对，是两个口径。
+      默认档 204 帧 = 12 块 → **36 个 latent 帧**，已填进 `buckets[].latent_frames`（见 R2）
+
+  text_encoders:
+    - role: primary
+      name: Step-LLM（自家双语 LLM，仓内 `step_llm/`）
+      params: 19579600896
+      hidden: 6144
+      shipped_with_weights: true
+      gated: false
+      release_dtype: BF16
+      substitutable: false
+      note: >-
+        **随仓发布**，9 分片 289 张量全 BF16，实测 19,579,600,896 参数。
+        config 实测：`Step1Model`，48 层 / hidden 6144 / 48 头 /
+        `num_attention_groups` 8（GQA）/ `ffn_hidden_size` 16896 /
+        `max_position_embeddings` 16384 / vocab 65536。
+        hidden 6144 与 DiT 的 `caption_channels[0]` 一致，也与
+        `caption_projection.linear_1.weight [6144, 6144]` 对得上。
+        **它是 DiT 的 2/3 大**（19.58B vs 29.34B），而每次生成只跑一遍
+    - role: pooled
+      name: HunyuanCLIP（仓内 `hunyuan_clip/`）
+      hidden: 1024
+      shipped_with_weights: true
+      gated: false
+      substitutable: false
+      note: >-
+        第二路文本编码器，双语。hidden 1024 是**权重实测**：
+        DiT 的 `clip_projection.weight` 形状 [6144, 1024]，
+        与 config 的 `caption_channels[1]` 一致。
+        **params 填不了**：权重是 `hunyuan_clip/clip_text_encoder/pytorch_model.bin`，
+        pickle 不是 safetensors，读头拿不到清单；文件 3.94 GB，
+        但 dtype 未声明，连「字节 ÷ 每元素字节」这条退路也没有 ——
+        和 wan2.2-ti2v-5b 的 VAE 是同一种空
+
+  sampling:
+    steps: 50
+    cfg:
+      scale: 9.0
+      distilled: false
+      embedded: false
+      forwards_per_step: 2
+    scheduler: FlowMatchDiscreteScheduler（euler）
+    shift: 7.0
+    step_distilled:
+      available: true
+      checkpoint: stepfun-ai/stepvideo-t2v-turbo
+      note: >-
+        官方另发了 `stepvideo-t2v-turbo`（Inference Step Distillation），
+        是**另一个仓**不是本仓的子目录，步数卡上没写。
+        按视频线 policy 它不单开记录
+    note: >-
+      **端到端是 50 步 × 2 次前向 = 100 次 29.34B 主干前向。**
+      CFG 9.0 是候选里最高的（wan 5.0、hunyuanvideo-1.5 6.0）。
+      步数、CFG、shift、帧数、分辨率五项**模型卡一个都没写**，
+      全部取自厂商参考实现 `stepvideo/config.py` 的 argparse 默认值
+
+  buckets:
+    - width: 992
+      height: 544
+      frames: 204
+      latent_frames: 36
+      fps: 25
+      duration_s: 8.16
+      default: true
+      note: >-
+        参考实现的默认值（`--width 992 --height 544 --num_frames 204`）。
+        **`latent_frames` 是声明的不是公式算的**：204 / 17 = 12 块整，
+        每块 3 个 latent 帧 → 36。按 `(F−1)/8+1` 会得 26.375，差 36%（见 R2）。
+        992/16 = 62、544/16 = 34，都整除 → latent 36 × 34 × 62 = **75,888 token**。
+        **fps 没有一手来源**：卡与参考实现都没写，25 是按卡上
+        「204 帧」与常见口径填的占位 —— 见 open_questions
+    - width: 992
+      height: 544
+      frames: 136
+      latent_frames: 24
+      fps: 25
+      duration_s: 5.44
+      note: >-
+        卡的 §4.1 性能表里的第二档。136 / 17 = 8 块整 → 24 个 latent 帧。
+        latent 24 × 34 × 62 = 50,592 token
+
+  constraints:
+    width_divisor: 16
+    height_divisor: 16
+    frame_formula: 17n
+    note: >-
+      除数 16 = VAE 空间压缩 16 × DiT patch 1。
+      **帧数必须是 17 的整数倍**（不是 4n+1、也不是 17n+5）：
+      `encode()` 直接 `x.split(17, dim=1)`，不补齐、不丢弃，
+      余数那一块会少于 17 帧而编码器按 17 帧设计。
+      卡与参考实现用的 204 与 136 都是 17 的整数倍（12 块与 8 块）。
+      **视频线至此四种帧数约束**：wan / hunyuanvideo-1.5 的 4n+1、
+      minimax-h3 的 17n+5、这一份的 17n ——
+      每一种都是各自分块规则的外在表现
+
+  checkpoint_variants:
+    - name: transformer
+      role: base
+      bytes: 58684956800
+      resident: true
+    - name: step_llm
+      role: text-encoder
+      bytes: 39159201792
+      resident: true
+      note: 跑在独立进程里（`--caption_url`），与 DiT 不同卡也行
+    - name: hunyuan_clip
+      role: text-encoder
+      bytes: 3942000000
+      resident: true
+      note: 文件大小约数（pickle，读不了清单）。同样走 `--caption_url` 那个服务
+    - name: vae_v2.safetensors
+      role: vae
+      bytes: 1995275276
+      resident: true
+      note: 64 latent 通道，是这个模型用的那一版。跑在独立进程里（`--vae_url`）
+    - name: vae.safetensors
+      role: vae
+      bytes: 1035312780
+      resident: false
+      note: >-
+        **16 latent 通道的另一版，不是这个模型用的**。258 个张量名与 v2 相同，
+        其中 4 个形状不同；v2 另有 4 个 patchify/unpatchify 张量。见 R1
+
+precision:
+  weights_release: [BF16, FP32]
+  weights_release_scope:
+    BF16:
+      manifest_taken: true
+      in_precision_table: true
+      repo: stepfun-ai/stepvideo-t2v
+      note: >-
+        DiT 的 785 张量与 Step-LLM 的 289 张量**全部** BF16，无一例外。
+        这和 wan 全系、hunyuanvideo-1.5 的全 F32 相反 ——
+        **已录五份里第一份主干以 BF16 发布的**（截至 2026-10-31，视频线已录 5 份 / 已选 12 份候选）；wan 全系与 hunyuanvideo-1.5 都是 F32
+    FP32:
+      manifest_taken: true
+      in_precision_table: false
+      repo: stepfun-ai/stepvideo-t2v
+      note: >-
+        两个 VAE 文件（`vae/vae.safetensors` 与 `vae/vae_v2.safetensors`）的
+        258 / 262 张量**全部** F32，逐条读头实测过。
+        **但它们不在本仓的 `shapes.json` 里**：取数用 `--include 'transformer/*'`
+        收窄了，因为那两个文件有 258 个同名张量、合并会撞名并产出一个不存在的 VAE（R1）。
+        所以 `in_precision_table: false` —— 精度表里只有 DiT 的 BF16，
+        这一行说的是同一个仓里另外两个文件，是实测不是声明。
+        与 h3、hunyuanvideo-1.5 的 VAE 同样是 F32
+  inference_default: BF16
+
+bottlenecks:
+  - dimension: compute
+    finding: >-
+      交叉注意力与自注意力的参数**逐字节相同**，但前者的 KV 只有 512 个文本 token、
+      后者跑在 75,888 个视频 token 上 —— **148:1**
+    quantified: >-
+      各 7,247,769,600 参数（各占主干 24.70%）。
+      默认档 992×544×204 帧 → latent 36×34×62 = 75,888 token，`text_len` 512。
+      单步自注意力 4×48×6144×75,888² = 6.794e15，
+      交叉注意力那一项只有 4.58e13，差 148 倍
+    fix: >-
+      稀疏化与 kernel 工作全压在 `attn1`；`attn2` 走常规实现即可。
+      与 wan2.2-ti2v-5b 同一类结论（那边 53:1），这一份更极端
+    visibility: public
+  - dimension: compute
+    finding: >-
+      **AdaLN 只占 0.91%，是同线新一代的三十分之一** ——
+      这一份用 AdaLN-Single（全局一套投影 + 每层一个 6×hidden 的表），
+      而 hunyuanvideo-1.5 与 minimax-h3 用的是每层一整套调制投影
+    quantified: >-
+      `adaln_modulation` 267,644,928 / 29,342,478,400 = **0.91%**；
+      对照 hunyuanvideo-1.5 32.71%、minimax-h3 39.41%、wan2.2-ti2v-5b 1.35%。
+      按发布时间排：2025-02 的这一份与 2025-07 的 wan 都在 1% 上下，
+      2025-11 的 hunyuanvideo-1.5 与 2026-07 的 h3 都在三分之一上下
+    fix: >-
+      这不是一个要修的瓶颈，是一条**代际判据**：
+      看到「参数量」时先问调制占多少 —— 新一代里它不参与 token 计算，
+      按参数量估算力会偏高 1.6–3 倍（见各记录的 `param_scaling`）
+    visibility: public
+  - dimension: host-io
+    finding: >-
+      四块权重分跑在**三个进程**里（DiT、VAE 服务、文本编码器服务），
+      这在已录的五份里是唯一一个（截至 2026-10-31，视频线已录 5 份 / 已选 12 份候选）
+    quantified: >-
+      DiT 58,684,956,800 B + Step-LLM 39,159,201,792 B + HunyuanCLIP 约 3.94 GB
+      + VAE 1,995,275,276 B ≈ 103.8 GB。
+      参考实现用 `--vae_url` / `--caption_url` 指向两个独立服务
+    fix: >-
+      拆服务本身就是解法：文本编码器与 VAE 每次生成各跑一遍、DiT 要跑 100 遍，
+      三者错峰。代价是跨进程传 latent 与 embedding 的带宽与延迟，
+      卡上没有给这部分的数
+  - dimension: compute
+    finding: >-
+      模型卡给了实测的峰值显存与端到端耗时，**但没写 GPU 型号**，
+      所以算不出利用率，也不能跨硬件比
+    quantified: >-
+      卡 §4.1：544×992×204f 峰值 **77.64 GB**、50 步 flash-attn **743 s** /
+      不开 **1232 s**；544×992×136f 峰值 72.48 GB、408 s / 605 s。
+      测试用 **4 卡**，卡上只说「recommend 80GB」。
+      按 743 s / 100 次前向 = 7.43 s 每次前向，而本记录推出的单步是 1.069e16 FLOPs ——
+      要换成利用率还差 GPU 型号这个因子
+    fix: 读技术报告 arXiv 2502.10248 补硬件型号；在那之前这组数只能当量级参照
+    visibility: public
+
+infra_signals:
+  - text: >-
+      **AdaLN 的代价是一条清晰的代际线。** 按发布时间排：2025-02 的 Step-Video
+      与 2025-07 的 Wan2.2 都用 AdaLN-Single、调制占 1% 上下；
+      2025-11 的 HunyuanVideo-1.5 与 2026-07 的 MiniMax-H3 改用逐层调制投影，
+      占到三分之一。这一块不参与 token 计算，所以它的膨胀**只增显存与权重搬运、
+      不增算力** —— 按参数量排产能的人会在新一代上系统性高估
+    evidence: derived
+  - text: >-
+      **「时间压缩 8×」在这一份上端到端只有 5.667。** VAE 按 17 帧一块、
+      每块 3 个 latent 帧，块内 8× 整除（1 + 16/8 = 3），但块与块之间不共享上下文，
+      每块都要重付一次因果编码的「+1」。视频线五份记录里，
+      三份声明值与端到端值不等（这一份差 29%、h3 差 16%、wan 与 hunyuanvideo-1.5 差 2.4%），
+      **五份里没有一份相等**（截至 2026-10-31）。
+      规划 token 数必须拿端到端比值，而它只在厂商的 VAE 实现里
+    evidence: derived
+  - text: >-
+      这一份把 VAE 与文本编码器拆成独立服务（`--vae_url` / `--caption_url`），
+      在已录的五份里是唯一一个（截至 2026-10-31，视频线已录 5 份 / 已选 12 份候选）。生成类的组件在时间上天然错峰 ——
+      文本编码一次、DiT 一百次、VAE decode 一次 ——
+      所以「一次部署要多少显存」这个问法本身在生成类上就不如
+      「每个组件各要多少、能不能分开放」有用
+    evidence: judgement
+
+evidence:
+  id: official
+  family: judgement
+  kind: judgement
+  display_name: official
+  released: official
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  generation: official
+  generation.backbone.param_scaling: derived
+  generation.backbone.note: derived
+  generation.vae.params: derived
+  generation.vae.note: derived
+  generation.text_encoders: derived
+  generation.sampling: judgement
+  generation.buckets: judgement
+  generation.constraints: derived
+  generation.checkpoint_variants: derived
+  precision: derived
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: derived
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-31'
+  method: >-
+    Gate B 三路：组件 config（4 份）、权重清单（transformer 6 分片 + step_llm 9 分片
+    + 两个 VAE 单文件，逐文件读头）、厂商参考实现（`stepvideo/vae/vae.py` 的
+    分块编解码、`stepvideo/config.py` 的 argparse 默认值）。
+    结构字段三路一致：48 层 / 48 头 / head_dim 128 在卡、config 与清单三处相同；
+    `wqkv [18432,6144]` = 3×6144、`attn2.wkv [12288,6144]` = 2×6144、
+    `ff [24576,6144]` = 4×6144 都与 hidden 对得上；
+    `pos_embed.proj [6144, 64, 1, 1]` 同时坐实 latent 64 通道与 patch 1×1，
+    与 config 的 `in_channels: 64` 和 `patch_size: 1` 一致。
+    外部对账：实测 29,342,478,400 与 **HF 自己的 safetensors tally 逐位相同**。
+    专门验了两件：两个 VAE 文件哪一个在用（R1）、「8× 时间压缩」是不是端到端比值（R2）。
+    Gate C：判断类字段 8 处，逐条在 evidence 里标了 judgement。
+
+review:
+  - id: R1
+    field: generation.vae.params
+    severity: wrong
+    claim: VAE 的参数量就是 `vae/` 目录下那个文件的量
+    finding: >-
+      **目录下有两个文件，而且选错会同时错参数量与 latent 通道数。**
+      `vae.safetensors` 258 张量 / 258,828,195 参数，
+      `vae_v2.safetensors` 262 张量 / 498,818,819 参数，都是 F32。
+      258 个张量名完全相同，其中 **4 个形状不同**：
+      `encoder.conv_out.conv.weight` 在 v1 是 [32, 512, 3,3,3]、v2 是 [128, 2048, 3,3,3]；
+      `decoder.conv_in.conv.weight` 在 v1 是 [512, 16, 3,3,3]、v2 是 [2048, 64, 3,3,3]。
+      32 = 2×16、128 = 2×64（均值与对数方差各一半），**所以 v1 是 16 通道、v2 是 64 通道**。
+      v2 另有 4 个 v1 没有的张量：`encoder.conv_patchify` 与 `decoder.conv_unpatchify`。
+
+      **DiT 的 `in_channels` 是 64**，而且 `pos_embed.proj` 的形状是 [6144, 64, 1, 1]，
+      所以这个模型用的是 **v2**。厂商实现里 `version == 2` 这一支同时开
+      `conv_patchify` 与 `base_group_norm.spatial = True`，与 v2 的张量集自洽
+    resolution: corrected
+    changed_to: >-
+      `generation.vae.params` 填 v2 的 498,818,819，name 标明「（v2）」；
+      v1 进 `checkpoint_variants` 并标 `resident: false` 与原因。
+      **这是「同名不同形」这类陷阱在视频线上的第二个实例**
+      （第一个是 minimax-h3 的两套并列布局）
+  - id: R2
+    field: generation.buckets
+    severity: wrong
+    claim: 时间压缩 8×，所以 204 帧的 latent 帧数是 (204−1)/8+1 ≈ 26
+    finding: >-
+      **端到端不是 8×，是 5.667；204 帧的 latent 帧数是 36，不是 26。**
+      厂商实现 `stepvideo/vae/vae.py` 里 `self.frame_len = 17`、
+      `self.latent_len = 3 if version == 2 else 5`；
+      `encode()` 是 `x.split(17, dim=1)` 后每块独立编码，
+      `decode()` 是 `z.split(3, dim=1)` 后每块解回 17 帧再 `mix()` 混块边界。
+      **没有 token_drop、没有重叠**，所以 `T = (F/17) × 3`。
+
+      8× 是**块内**的比：17 帧因果编码 = 1 + 16/8 = 3，正好整除。
+      两个数都对，是两个口径 —— 与 minimax-h3 完全同一个形态
+      （那边 17 帧 → 5 个 token 再整段丢 3，端到端 3.375 而声明 4）。
+      **差距这一份更大：29% vs 16%**，因为块内比值越大，每块重付的「+1」占比越高。
+
+      按 `(F−1)/8+1` 算会得 26.375（非整数，推导会报警告），真值 36 —— **低 36%**
+    resolution: corrected
+    changed_to: >-
+      `buckets[].latent_frames` 直接声明 36（与 136 帧档的 24），
+      `latent_frames_source` 因此是 `declared`；
+      `vae.temporal_compression` 仍填 **8**（那是块内比，config 与卡的一手事实），
+      不为了迁就端到端比值去改；`constraints.frame_formula` 填 **17n**
+  - id: R3
+    field: generation.sampling
+    severity: unsupported
+    claim: 步数 50、CFG 9.0、shift 7.0、204 帧、544×992 有官方依据
+    finding: >-
+      **模型卡这五项一个都没写**，全部取自厂商参考实现
+      `stepvideo/config.py` 的 argparse 默认值，是来源优先级的第三档。
+      但这一份的参考实现在**结构字段上与权重清单逐项对上了**
+      （48 层、48 头、head_dim 128、latent 64 通道、patch 1），
+      而且 204 与 136 这两个帧数与卡 §4.1 性能表里的两行完全一致 ——
+      所以它至少不是凭空写的
+    resolution: confirmed
+    changed_to: >-
+      保留，`evidence` 里 `generation.sampling` 与 `generation.buckets` 标
+      `judgement` 而不是 `official`，并在 sampling.note 写明「卡上一个都没写」
+  - id: R4
+    field: '-'
+    severity: missing
+    claim: 模型卡 §4.1 的实测性能可以进 `performance[]`
+    finding: >-
+      **又一次装不下 —— 这是第二个实例**（第一个是 hunyuanvideo-1.5 的 R7）。
+      这组数据按本仓标准是够格的：`source.type: official`、
+      给了峰值显存（77.64 / 72.48 GB）、端到端秒数（743 / 1232 / 408 / 605 s）、
+      步数（50）、分辨率与帧数、卡数（4）、以及开不开 flash-attn 这个对照。
+
+      但 `performance[]` 的字段全是自回归形状（`throughput_tok_s` / `ttft_ms` /
+      `tpot_ms` / `input_len` / `output_len`），**没有一个能装「端到端秒数」
+      或「峰值显存」**。硬塞是范畴错误。
+
+      而且这一组比 hunyuanvideo-1.5 那组多一个缺口：**卡上没写 GPU 型号**，
+      只说「four GPUs」「recommend 80GB」。所以即便字段有了，
+      `hardware` 那一栏也填不出来
+    resolution: open
+    changed_to: >-
+      数据放在 `bottlenecks.quantified` 里带出处。
+      两个实例一起支持 hunyuanvideo-1.5 R7 里提的那组字段
+      （`seconds_per_step` / `seconds_end_to_end` / `steps` / `frames` /
+      `resolution` + `baseline` 子块），**再加一个 `peak_memory_bytes`**。
+      已报主会话
+  - id: R6
+    field: generation.backbone.param_scaling
+    severity: missing
+    claim: 填了 `per_text_token` 就能把文本那一路的线性 FLOPs 算进去
+    finding: >-
+      算不进去 —— **schema 没有地方声明文本 token 数 m**。
+      `param_scaling.per_text_token` 有了，但 `backbone` 与 `buckets` 下
+      都没有对应的 `text_tokens` 字段，所以 `gen_workload()` 只能跳过这一项并
+      标「线性项是下界」。提示本身是对的。
+
+      这一份上漏掉的量可以手算：2 × 3,705,686,016 × 512 = **3.79e12**，
+      占单步 1.064e16 的 **0.04%** —— 可忽略。
+      但对 hunyuanvideo-1.5 那种双流模型不可忽略：它的 `per_text_token`
+      是 2,871,435,648，文本 token 数若按 byT5 的 256 加 MLLM 的若干算，
+      量级会到 1e15，占单步的百分之几
+    resolution: open
+    changed_to: >-
+      建议 `backbone` 加一个 `text_tokens`（或放进 `buckets[]`，因为长 prompt
+      档位可能不同）。这一份填 512（参考实现的 `text_len`）。
+      `data/schema/` 是共享文件，本记录没碰。已报主会话
+  - id: R5
+    field: generation.text_encoders
+    severity: missing
+    claim: 两个文本编码器的参数量都能填
+    finding: >-
+      只填得出一个。Step-LLM 在 safetensors 里，实测 19,579,600,896；
+      HunyuanCLIP 是 `pytorch_model.bin`（pickle），读头拿不到清单，
+      文件 3.94 GB 但 dtype 未声明，连「字节 ÷ 每元素字节」这条退路也没有。
+      hidden 1024 倒是能实测 —— DiT 的 `clip_projection.weight` 是 [6144, 1024]
+    resolution: open
+    changed_to: HunyuanCLIP 的 params 留空并在 note 写明是哪一种空
+
+notes: >-
+  **字节对账。** transformer 58,684,956,800 + step_llm 39,159,201,792
+  + vae_v2 1,995,275,276 + vae 1,035,312,780 + hunyuan_clip 约 3.94 GB
+  + 三个 `.so` 与 tokenizer ≈ 104.8 GB，而 HF 的 usedStorage 是
+  183,146,397,106 B（183.1 GB），**约为 1.75 倍**。
+  视频线至此四种 usedStorage 行为：这一份偏高 75%（未查原因，可能是旧修订版）、
+  minimax-h3 偏高 146%（两套并列布局）、wan2.2-ti2v-5b 多算一份 DiT（旧修订版）、
+  hunyuanvideo-1.5 准确。**它始终不能当「当前修订版权重总字节」直接用。**
+
+  **部署形态在已录的五份里是唯一的一种**（截至 2026-10-31，视频线已录 5 份 / 已选 12 份候选）。 `model_index.json` 只列 scheduler 与 transformer，
+  VAE 与文本编码器不在 pipeline 里，而是由参考实现用 `--vae_url` / `--caption_url`
+  指向**两个独立服务**。所以「一次部署要多少显存」在这一份上没有单一答案 ——
+  DiT 58.7 GB、文本编码器约 43 GB、VAE 2.0 GB，三者可以放在不同卡甚至不同机器上。
+
+  **五份记录的时间压缩率对照**（声明值 → 端到端值）：
+  这一份 8 → 5.667（17 帧一块、每块 3 个 latent 帧，差 29%）；
+  minimax-h3 4 → 3.375（17 帧一块、每块 5 个再整段丢 3，差 16%）；
+  wan2.2-ti2v-5b 与 hunyuanvideo-1.5 都是 4 → 3.903（整段因果、首帧单独编码，差 2.4%）。
+  **五份里没有一份相等**（截至 2026-10-31）。分块的两份差得多，
+  因为每块都要重付一次因果编码的「+1」。
+
+  **取数提醒。** 这个仓没有顶层 config.json，4 份组件 config。
+  `vae/` 下**两个 safetensors 有 258 个同名张量**，合并取数会撞名并产出一个
+  不存在的 VAE —— 用 `--include 'transformer/*'` 收窄，VAE 单独量（见 R1）。
+
+open_questions:
+  - >-
+    **技术报告 arXiv 2502.10248 没读。** 按来源优先级它在模型卡之上，
+    报告里若有冲突要以它为准。最该核的三处：VAE 的 17 帧分块设计
+    （本记录最反直觉的一处，R2）、§4.1 性能表的**硬件型号**（卡上只说「four GPUs」，
+    没型号就算不出利用率，也不能跨硬件比）、以及 Video-DPO 的配方
+  - >-
+    **fps 没有一手来源。** 卡与参考实现都没写，`buckets[].fps` 填的 25 是占位，
+    `duration_s` 因此也是推算（204/25 = 8.16 秒）。
+    这一项不影响 token 数与 FLOPs（那两个只依赖帧数），但会影响「每秒视频多少算力」
+    这类派生指标，引用前要先确认
+  - >-
+    `generation.text_encoders` 里 HunyuanCLIP 的参数量填不了（R5）：
+    `pytorch_model.bin` 是 pickle，读头拿不到清单，dtype 也未声明。
+    它影响「文本编码器一共多大」这个账
+  - >-
+    `generation.backbone.param_scaling` 的 `per_text_token` 进不了推导（R6）：
+    schema 没有声明文本 token 数的地方。这一份影响 0.04%，可忽略；
+    双流模型上不可忽略
+  - >-
+    `stepvideo-t2v-turbo` 的蒸馏步数不知道 —— 它是另一个仓，卡上没写步数。
+    按 policy 不单开记录，但 `sampling.step_distilled.steps` 因此留空
+  - >-
+    usedStorage 183.1 GB 比逐文件相加高 75%，**原因没查**。
+    wan 那份查出来是旧修订版的 LFS 对象，这一份没去核仓的提交历史
+  - >-
+    训练精度无一手来源。发布权重 DiT 与 Step-LLM 全 BF16、两个 VAE 全 F32 是实测，
+    但那说的是落盘格式不是训练格式
+  - >-
+    跨进程那三段（DiT ↔ VAE 服务 ↔ 文本编码器服务）传的是 latent 与 embedding，
+    带宽与延迟卡上没给。对「拆服务到底划不划算」这个判断，现在只有定性
