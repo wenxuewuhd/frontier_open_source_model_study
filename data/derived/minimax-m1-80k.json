@@ -1,7 +1,7 @@
 {
  "id": "minimax-m1-80k",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T05:40:30+00:00",
+ "generated_at": "2026-10-30T12:08:51+00:00",
  "inputs": {
   "facts_dir": "facts/minimax-m1-80k",
   "config_present": true,
@@ -15,6 +15,15 @@
   "tensor_count": 8243,
   "params_total": 456089655296.0,
   "params_by_subsystem": {
+   "embed": 1229193216.0,
+   "router": 15728640.0,
+   "expert": 434865438720.0,
+   "norm": 1562624.0,
+   "attention": 18748538880.0,
+   "lm_head": 1229193216.0
+  },
+  "params_total_container": 456089655296.0,
+  "params_container_by_subsystem": {
    "embed": 1229193216.0,
    "router": 15728640.0,
    "expert": 434865438720.0,

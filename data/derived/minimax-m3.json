@@ -1,13 +1,13 @@
 {
  "id": "minimax-m3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T11:06:25+00:00",
+ "generated_at": "2026-10-30T12:08:53+00:00",
  "inputs": {
   "facts_dir": "facts/minimax-m3",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/minimax/minimax-m3.yaml",
-  "ep_size": 1
+  "ep_size": 4
  },
  "from_shapes": {
   "available": true,
@@ -15,6 +15,19 @@
   "tensor_count": 23416,
   "params_total": 427040140160.0,
   "params_by_subsystem": {
+   "router": 44833920.0,
+   "norm": 773376.0,
+   "dense_ffn": 679477248.0,
+   "attention": 6417285120.0,
+   "expert": 413122166784.0,
+   "shared_expert": 3227516928.0,
+   "indexer": 224133120.0,
+   "lm_head": 1229193216.0,
+   "embed": 1229193216.0,
+   "vision": 865567232.0
+  },
+  "params_total_container": 427040140160.0,
+  "params_container_by_subsystem": {
    "router": 44833920.0,
    "norm": 773376.0,
    "dense_ffn": 679477248.0,
@@ -134,7 +147,7 @@
  },
  "ep_communication": {
   "status": "ok",
-  "ep_size": 1,
+  "ep_size": 4,
   "moe_layers": 57,
   "bytes_per_token": 5603328,
   "bytes_per_layer": 98304,
