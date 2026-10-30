@@ -1,0 +1,286 @@
+---
+/**
+ * Kimi-K3 · KDA + MLA 混合的生产侧与消费侧。
+ *
+ * 分带为什么不照 DeepSeek 那张：K3 的两路**产销关系根本不同**，硬凑成
+ * 「生产侧三带 + 消费侧两带」会把最要紧的事盖掉。
+ *   - 69 层 KDA 存的是**每序列固定**的递归状态，没有「可选的 KV 条目」这个概念，
+ *     读和写是同一份张量（原地更新）；
+ *   - 24 层 MLA 才是传统的**随上下文累积**的 latent 条目，读的时候再解压。
+ * 所以图 1 按「两路各存什么」分带（外加一条层交替带，让 3:1 与末两层连续 MLA
+ * 在图上看得见），图 2 按「两路各怎么读」分带。
+ *
+ * 两路的量**不在同一个刻度上**：MLA 给每 token 字节、KDA 给每序列字节，
+ * 图上分列两处、不并排比较，这是本仓 docs/kv-cache-accounting.md 的口径要求。
+ *
+ * 数据来源：本记录的 arch.attention / precision，与
+ * facts/kimi-k3/shapes.json（497,220 条完整清单）。层集合、每个形状与 dtype
+ * 都是从清单穷举出来的；kernel 分支与门控写法来自厂商参考实现
+ * modeling_kimi_linear.py（二手，按新来源优先级低于模型卡，图上已标明）。
+ * 缓存精度厂商未披露，两路都是 BF16 兜底，图上写明了 basis。
+ */
+---
+
+<figure class="attn-fig">
+  <div class="figbox">
+    <svg class="dia" viewBox="0 0 940 372" role="img"
+         aria-label="Kimi-K3 生产侧：93 层按 3 KDA 比 1 MLA 交替、末两层连续 MLA；69 个 KDA 层写入每序列固定的递归状态，24 个 MLA 层累积 576 维 latent 条目，两者刻度不同">
+      <defs>
+        <marker id="k3-pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead"/></marker>
+        <marker id="k3-pb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead-t"/></marker>
+      </defs>
+
+      <text x="18" y="18" class="lbl-s">① 93 层怎么交替 · 3 KDA : 1 MLA，末两层连续 MLA</text>
+
+      <rect x="18" y="32" width="34" height="22" rx="2" class="box"/>
+      <text x="35" y="47" class="lbl-s" text-anchor="middle">K</text>
+      <text x="35" y="68" class="lbl-x" text-anchor="middle">L0</text>
+      <rect x="56" y="32" width="34" height="22" rx="2" class="box"/>
+      <text x="73" y="47" class="lbl-s" text-anchor="middle">K</text>
+      <text x="73" y="68" class="lbl-x" text-anchor="middle">L1</text>
+      <rect x="94" y="32" width="34" height="22" rx="2" class="box"/>
+      <text x="111" y="47" class="lbl-s" text-anchor="middle">K</text>
+      <text x="111" y="68" class="lbl-x" text-anchor="middle">L2</text>
+      <rect x="132" y="32" width="34" height="22" rx="2" class="box-t"/>
+      <text x="149" y="47" class="lbl-t" text-anchor="middle">M</text>
+      <text x="149" y="68" class="lbl-x" text-anchor="middle">L3</text>
+      <rect x="170" y="32" width="34" height="22" rx="2" class="box"/>
+      <text x="187" y="47" class="lbl-s" text-anchor="middle">K</text>
+      <text x="187" y="68" class="lbl-x" text-anchor="middle">L4</text>
+      <rect x="208" y="32" width="34" height="22" rx="2" class="box"/>
+      <text x="225" y="47" class="lbl-s" text-anchor="middle">K</text>
+      <text x="225" y="68" class="lbl-x" text-anchor="middle">L5</text>
+      <rect x="246" y="32" width="34" height="22" rx="2" class="box"/>
+      <text x="263" y="47" class="lbl-s" text-anchor="middle">K</text>
+      <text x="263" y="68" class="lbl-x" text-anchor="middle">L6</text>
+      <rect x="284" y="32" width="34" height="22" rx="2" class="box-t"/>
+      <text x="301" y="47" class="lbl-t" text-anchor="middle">M</text>
+      <text x="301" y="68" class="lbl-x" text-anchor="middle">L7</text>
+
+      <text x="336" y="48" class="lbl-s" text-anchor="middle">⋯</text>
+
+      <rect x="356" y="32" width="34" height="22" rx="2" class="box"/>
+      <text x="373" y="47" class="lbl-s" text-anchor="middle">K</text>
+      <text x="373" y="68" class="lbl-x" text-anchor="middle">L88</text>
+      <rect x="394" y="32" width="34" height="22" rx="2" class="box"/>
+      <text x="411" y="47" class="lbl-s" text-anchor="middle">K</text>
+      <text x="411" y="68" class="lbl-x" text-anchor="middle">L89</text>
+      <rect x="432" y="32" width="34" height="22" rx="2" class="box"/>
+      <text x="449" y="47" class="lbl-s" text-anchor="middle">K</text>
+      <text x="449" y="68" class="lbl-x" text-anchor="middle">L90</text>
+      <rect x="470" y="32" width="34" height="22" rx="2" class="box-t"/>
+      <text x="487" y="47" class="lbl-t" text-anchor="middle">M</text>
+      <text x="487" y="68" class="lbl-x" text-anchor="middle">L91</text>
+      <rect x="508" y="32" width="34" height="22" rx="2" class="box-t"/>
+      <text x="525" y="47" class="lbl-t" text-anchor="middle">M</text>
+      <text x="525" y="68" class="lbl-x" text-anchor="middle">L92</text>
+
+      <text x="560" y="40" class="lbl-s">K = KDA · 69 层（无 KV 条目）</text>
+      <text x="560" y="55" class="lbl-t">M = MLA · 24 层（产 KV 条目）</text>
+      <text x="560" y="70" class="lbl-x">层集合取自清单：kv_a_proj_with_mqa 恰在 24 层、</text>
+      <text x="560" y="82" class="lbl-x">q_conv1d 恰在其余 69 层，无交、并集 93</text>
+
+      <line x1="18" y1="94" x2="922" y2="94" class="arr-d"/>
+
+      <text x="18" y="114" class="lbl-s">② KDA 层（69 层）· 写入的是每序列固定的递归状态</text>
+
+      <rect x="18" y="132" width="52" height="46" rx="3" class="box"/>
+      <text x="44" y="160" class="lbl" text-anchor="middle">x</text>
+      <path d="M70 155 L88 155" class="arr" marker-end="url(#k3-pa)"/>
+      <rect x="92" y="132" width="150" height="46" rx="3" class="box"/>
+      <text x="167" y="152" class="lbl" text-anchor="middle">q / k / v_proj ×3</text>
+      <text x="167" y="169" class="lbl-s" text-anchor="middle">[12288, 7168] = 96×128</text>
+      <path d="M242 155 L260 155" class="arr" marker-end="url(#k3-pa)"/>
+      <rect x="264" y="132" width="152" height="46" rx="3" class="box"/>
+      <text x="340" y="152" class="lbl" text-anchor="middle">depthwise conv1d ×3</text>
+      <text x="340" y="169" class="lbl-s" text-anchor="middle">[12288,1,4] F32 · SiLU</text>
+      <path d="M416 155 L434 155" class="arr" marker-end="url(#k3-pa)"/>
+      <rect x="438" y="132" width="146" height="46" rx="3" class="box-o"/>
+      <text x="511" y="152" class="lbl" text-anchor="middle">chunk_kda 更新</text>
+      <text x="511" y="169" class="lbl-o" text-anchor="middle">逐通道衰减 + β 写入</text>
+      <path d="M584 155 L602 155" class="arr-t" marker-end="url(#k3-pb)"/>
+      <rect x="606" y="122" width="208" height="66" rx="3" class="box-t"/>
+      <text x="710" y="142" class="lbl-t" text-anchor="middle">递归状态 · 每序列固定</text>
+      <text x="710" y="159" class="lbl-s" text-anchor="middle">[96,128,128] = 1,572,864</text>
+      <text x="710" y="175" class="lbl-s" text-anchor="middle">+ conv 3×4×12288 = 147,456</text>
+      <text x="822" y="146" class="lbl-x">× 69 层 =</text>
+      <text x="822" y="160" class="lbl-x">226.41 MiB/序列</text>
+      <text x="822" y="174" class="lbl-x">basis: 兜底 BF16</text>
+
+      <rect x="92" y="200" width="132" height="38" rx="3" class="box"/>
+      <text x="158" y="217" class="lbl-s" text-anchor="middle">f_a_proj [128,7168]</text>
+      <text x="158" y="231" class="lbl-x" text-anchor="middle">低秩第一段</text>
+      <path d="M224 219 L234 219" class="arr" marker-end="url(#k3-pa)"/>
+      <rect x="238" y="200" width="136" height="38" rx="3" class="box"/>
+      <text x="306" y="217" class="lbl-s" text-anchor="middle">f_b_proj [12288,128]</text>
+      <text x="306" y="231" class="lbl-x" text-anchor="middle">→ 门 g，96×128</text>
+      <path d="M374 219 L384 219" class="arr" marker-end="url(#k3-pa)"/>
+      <rect x="388" y="200" width="146" height="38" rx="3" class="box-o"/>
+      <text x="461" y="217" class="lbl-s" text-anchor="middle">A_log [128] F32</text>
+      <text x="461" y="231" class="lbl-x" text-anchor="middle">dt_bias [12288] F32</text>
+      <path d="M461 200 L461 182" class="arr" marker-end="url(#k3-pa)"/>
+      <rect x="548" y="200" width="132" height="38" rx="3" class="box"/>
+      <text x="614" y="217" class="lbl-s" text-anchor="middle">b_proj [96, 7168]</text>
+      <text x="614" y="231" class="lbl-x" text-anchor="middle">β 逐头一个标量</text>
+      <path d="M614 200 L614 190 L560 190 L560 182" class="arr" marker-end="url(#k3-pa)"/>
+      <text x="692" y="217" class="lbl-x">A_log 首维 128 = head_dim：</text>
+      <text x="692" y="231" class="lbl-x">衰减逐通道、在 96 头间广播</text>
+
+      <line x1="18" y1="252" x2="922" y2="252" class="arr-d"/>
+
+      <text x="18" y="272" class="lbl-s">③ MLA 层（24 层）· 写入的是随上下文累积的 latent 条目</text>
+
+      <rect x="18" y="292" width="52" height="46" rx="3" class="box"/>
+      <text x="44" y="320" class="lbl" text-anchor="middle">x</text>
+      <path d="M70 315 L88 315" class="arr" marker-end="url(#k3-pa)"/>
+      <rect x="92" y="292" width="156" height="46" rx="3" class="box"/>
+      <text x="170" y="312" class="lbl" text-anchor="middle">kv_a_proj_with_mqa</text>
+      <text x="170" y="329" class="lbl-s" text-anchor="middle">[576, 7168]</text>
+      <path d="M248 306 L266 296" class="arr" marker-end="url(#k3-pa)"/>
+      <path d="M248 324 L266 334" class="arr" marker-end="url(#k3-pa)"/>
+      <rect x="270" y="280" width="150" height="30" rx="3" class="box"/>
+      <text x="345" y="300" class="lbl-s" text-anchor="middle">kv_a_layernorm · 512</text>
+      <rect x="270" y="320" width="150" height="30" rx="3" class="box"/>
+      <text x="345" y="340" class="lbl-s" text-anchor="middle">k_rot 64 · 不旋转</text>
+      <path d="M420 296 L436 306" class="arr-t" marker-end="url(#k3-pb)"/>
+      <path d="M420 334 L436 324" class="arr-t" marker-end="url(#k3-pb)"/>
+      <rect x="440" y="288" width="204" height="54" rx="3" class="box-t"/>
+      <text x="542" y="306" class="lbl-t" text-anchor="middle">latent KV cache</text>
+      <text x="542" y="322" class="lbl-s" text-anchor="middle">576/层 × 24 层</text>
+      <text x="542" y="338" class="lbl-s" text-anchor="middle">= 13,824 元素/token</text>
+      <text x="654" y="300" class="lbl-x">basis: 兜底 BF16 → 27,648 B/token</text>
+      <text x="654" y="314" class="lbl-x">1M 上下文：27.0 GiB（随长度涨）</text>
+      <text x="654" y="328" class="lbl-x">加上 ② 的 0.22 GiB（不随长度涨）</text>
+      <text x="654" y="342" class="lbl-x">合计 27.22 GiB</text>
+
+      <text x="18" y="364" class="lbl-x">全模型 NoPE：config 里没有 rope_theta / rope_scaling，k_rot 的 64 维原样拼接、不旋转；1M 是训练长度，部署期没有外推旋钮</text>
+    </svg>
+  </div>
+  <figcaption>
+    <b>图 1 · 生产侧：两路存的不是同一种东西，也不在同一个刻度上。</b>
+    69 个 KDA 层写的是<b>每序列固定</b>的递归状态（<code>[96,128,128]</code> 加三份
+    conv 状态，69 层合计 226.41 MiB/序列，与上下文长度无关）；24 个 MLA 层写的是
+    <b>随 token 累积</b>的 576 维 latent 条目（13,824 元素/token）。
+    把两个数相加或相除都是范畴错误 —— 只有折到同一个上下文长度上才能合计，
+    1M 时是 27.0 GiB 加 0.22 GiB。两路的字节都按模型 dtype 兜底，厂商未披露缓存精度。
+  </figcaption>
+</figure>
+
+<figure class="attn-fig">
+  <div class="figbox">
+    <svg class="dia" viewBox="0 0 940 354" role="img"
+         aria-label="Kimi-K3 消费侧：KDA 层对同一份递归状态原地读写、读量与上下文无关；MLA 层从 576 维 latent 条目解压出 96 头 K 与 V，k_rot 在各头间共享，走无位置编码的 softmax">
+      <defs>
+        <marker id="k3-qa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead"/></marker>
+        <marker id="k3-qb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead-t"/></marker>
+      </defs>
+
+      <text x="18" y="18" class="lbl-s">④ KDA 的读（69 层）· 读写同一份状态，不积条目</text>
+
+      <rect x="18" y="38" width="152" height="56" rx="3" class="box-t"/>
+      <text x="94" y="58" class="lbl-t" text-anchor="middle">递归状态</text>
+      <text x="94" y="74" class="lbl-s" text-anchor="middle">[96,128,128] + conv</text>
+      <text x="94" y="89" class="lbl-x" text-anchor="middle">1,720,320 元素/层</text>
+
+      <path d="M170 56 L196 56" class="arr-t" marker-end="url(#k3-qb)"/>
+      <text x="183" y="48" class="lbl-t" text-anchor="middle">读</text>
+      <path d="M196 80 L170 80" class="arr-t" marker-end="url(#k3-qb)"/>
+      <text x="183" y="106" class="lbl-t" text-anchor="middle">写回</text>
+
+      <rect x="200" y="34" width="166" height="64" rx="3" class="box"/>
+      <text x="283" y="56" class="lbl" text-anchor="middle">fused_recurrent_kda</text>
+      <text x="283" y="72" class="lbl-s" text-anchor="middle">decode（q_len = 1）</text>
+      <text x="283" y="88" class="lbl-x" text-anchor="middle">prefill 走 chunk_kda</text>
+
+      <rect x="18" y="116" width="152" height="40" rx="3" class="box"/>
+      <text x="94" y="133" class="lbl-s" text-anchor="middle">当前 token 的 q/k/v</text>
+      <text x="94" y="147" class="lbl-x" text-anchor="middle">conv 状态同样原地滚动</text>
+      <path d="M170 130 L194 104" class="arr" marker-end="url(#k3-qa)"/>
+
+      <path d="M366 66 L386 66" class="arr" marker-end="url(#k3-qa)"/>
+      <rect x="390" y="34" width="150" height="64" rx="3" class="box"/>
+      <text x="465" y="56" class="lbl" text-anchor="middle">o_norm 门控</text>
+      <text x="465" y="72" class="lbl-s" text-anchor="middle">[128] F32</text>
+      <text x="465" y="88" class="lbl-x" text-anchor="middle">FusedRMSNormGated</text>
+      <rect x="390" y="116" width="150" height="40" rx="3" class="box"/>
+      <text x="465" y="133" class="lbl-s" text-anchor="middle">g_proj [12288,7168]</text>
+      <text x="465" y="147" class="lbl-x" text-anchor="middle">满秩门 · 93/93 层都有</text>
+      <path d="M465 116 L465 102" class="arr" marker-end="url(#k3-qa)"/>
+
+      <path d="M540 66 L560 66" class="arr" marker-end="url(#k3-qa)"/>
+      <rect x="564" y="34" width="136" height="64" rx="3" class="box"/>
+      <text x="632" y="60" class="lbl" text-anchor="middle">o_proj</text>
+      <text x="632" y="78" class="lbl-s" text-anchor="middle">[7168, 12288]</text>
+
+      <text x="716" y="52" class="lbl-x">每层读写恒 1,720,320 元素，</text>
+      <text x="716" y="66" class="lbl-x">与上下文长度无关 —— 长序列下</text>
+      <text x="716" y="80" class="lbl-x">这一路不涨，涨的是 ⑤</text>
+
+      <line x1="18" y1="170" x2="922" y2="170" class="arr-d"/>
+
+      <text x="18" y="190" class="lbl-s">⑤ MLA 的读（24 层）· 解压发生在读的时候</text>
+
+      <rect x="18" y="206" width="152" height="56" rx="3" class="box-t"/>
+      <text x="94" y="226" class="lbl-t" text-anchor="middle">latent cache</text>
+      <text x="94" y="242" class="lbl-s" text-anchor="middle">L 个位置 × 576</text>
+      <text x="94" y="257" class="lbl-x" text-anchor="middle">= latent 512 + k_rot 64</text>
+
+      <path d="M170 228 L190 228" class="arr-t" marker-end="url(#k3-qb)"/>
+      <rect x="194" y="206" width="156" height="56" rx="3" class="box-o"/>
+      <text x="272" y="226" class="lbl" text-anchor="middle">kv_b_proj 解压</text>
+      <text x="272" y="242" class="lbl-s" text-anchor="middle">[24576, 512]</text>
+      <text x="272" y="257" class="lbl-x" text-anchor="middle">= 96 × (128 + 128)</text>
+
+      <path d="M350 222 L368 210" class="arr" marker-end="url(#k3-qa)"/>
+      <path d="M350 244 L368 254" class="arr" marker-end="url(#k3-qa)"/>
+      <rect x="372" y="194" width="140" height="32" rx="3" class="box"/>
+      <text x="442" y="214" class="lbl-s" text-anchor="middle">K-nope 96×128</text>
+      <rect x="372" y="238" width="140" height="32" rx="3" class="box"/>
+      <text x="442" y="258" class="lbl-s" text-anchor="middle">V 96×128</text>
+
+      <path d="M94 262 L94 290 L368 290" class="arr-t" marker-end="url(#k3-qb)"/>
+      <rect x="372" y="272" width="140" height="38" rx="3" class="box"/>
+      <text x="442" y="288" class="lbl-s" text-anchor="middle">k_rot 64 · 不旋转</text>
+      <text x="442" y="302" class="lbl-x" text-anchor="middle">96 头共用一份</text>
+
+      <path d="M512 206 L552 216" class="arr" marker-end="url(#k3-qa)"/>
+      <path d="M512 252 L552 234" class="arr" marker-end="url(#k3-qa)"/>
+      <path d="M512 290 L552 250" class="arr" marker-end="url(#k3-qa)"/>
+      <rect x="556" y="196" width="142" height="62" rx="3" class="box-t"/>
+      <text x="627" y="216" class="lbl-t" text-anchor="middle">attn · 无位置编码</text>
+      <text x="627" y="232" class="lbl-s" text-anchor="middle">QK 192 = 128 + 64</text>
+      <text x="627" y="248" class="lbl-x" text-anchor="middle">V 侧每头 128</text>
+
+      <rect x="194" y="302" width="156" height="38" rx="3" class="box"/>
+      <text x="272" y="318" class="lbl-s" text-anchor="middle">q_a → q_b [18432,1536]</text>
+      <text x="272" y="332" class="lbl-x" text-anchor="middle">q 96×192 · 两段式降维</text>
+      <path d="M350 321 L548 321 L548 262" class="arr" marker-end="url(#k3-qa)"/>
+
+      <path d="M698 226 L712 226" class="arr" marker-end="url(#k3-qa)"/>
+      <rect x="716" y="206" width="94" height="40" rx="3" class="box"/>
+      <text x="763" y="224" class="lbl-s" text-anchor="middle">输出门</text>
+      <text x="763" y="238" class="lbl-x" text-anchor="middle">sigmoid</text>
+      <path d="M810 226 L824 226" class="arr" marker-end="url(#k3-qa)"/>
+      <rect x="828" y="206" width="94" height="40" rx="3" class="box"/>
+      <text x="875" y="224" class="lbl-s" text-anchor="middle">o_proj</text>
+      <text x="875" y="238" class="lbl-x" text-anchor="middle">[7168,12288]</text>
+      <text x="716" y="262" class="lbl-x">门与 ④ 同形 g_proj [12288,7168]</text>
+      <text x="716" y="276" class="lbl-x">MLA 侧过 sigmoid，KDA 侧进 o_norm</text>
+
+      <text x="18" y="350" class="lbl-x">厂商参考实现的 KimiDynamicCache 存的是解压后的 K（96×192）与 V（96×128）= 30,720 元素/层 —— 照它规划容量会高 53.3 倍；按 latent 存才是 576/层（参考实现的选择，不是落盘格式）</text>
+    </svg>
+  </div>
+  <figcaption>
+    <b>图 2 · 消费侧：解压发生在读的时候，不在存的时候。</b>
+    MLA 这一路缓存里只有 576 维 latent（<code>kv_a_layernorm</code> 的 512 加不旋转的
+    <code>k_rot</code> 64），读的时候才由 <code>kv_b_proj</code> 展开成 96 头的 K-nope 与 V，
+    <code>k_rot</code> 在 96 头间共用一份。KDA 这一路没有「读哪些条目」可选 ——
+    它对同一份状态原地读写，每层恒 1,720,320 个元素，与上下文长度无关。
+    注意厂商参考实现把展开后的 K/V 直接存进缓存（30,720 元素/层），
+    照它规划容量会高 <b>53.3 倍</b>；那是参考实现的选择，不是落盘格式。
+  </figcaption>
+</figure>
