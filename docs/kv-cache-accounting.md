@@ -20,6 +20,7 @@
 
 ## basis：字节数是怎么来的
 
+<!-- kv-basis-values | 由 scripts/kv_table.py 生成，勿手改 -->
 `bytes_basis` 标明这一列字节是哪种来源，五个值：
 
 | basis | 含义 |
@@ -29,6 +30,7 @@
 | `declared_dtype` | 记录给了 `precision.kv_cache`，字节按这个**声明的**缓存精度算。有厂商口径，但不是逐分量的精确计数 |
 | `dtype_fallback` | 记录没给缓存精度，按模型权重 dtype 兜底。是个占位值，不是测量值 |
 | `mixed` | 各分量 basis 不同，合计没有单一口径 |
+<!-- kv-basis-values 生成区结束 -->
 
 `vendor_declared` 是后加的一个值，补的是这样一个缺口：本仓算不出全部分量时，以前只能退到
 `dtype_fallback`，而厂商公布的数**比兜底值可信** —— 兜底值是本仓假设出来的，公布值是外部的。

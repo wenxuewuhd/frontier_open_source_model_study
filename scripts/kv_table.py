@@ -5,8 +5,14 @@
 从 data/tracking.yaml（追踪名册）与 data/derived/*.json（derive.py 的产物）生成
 两个标记区：
 
-  kv-basis   —— 同一族系跨代的元素/字节/basis 对照，用来说明不同 basis 不能算倍数
-  kv-roster  —— 六个族系旗舰的缓存账形状，待录的留空
+  kv-basis-values —— bytes_basis 的取值表（定义段）
+  kv-basis        —— 同一族系跨代的元素/字节/basis 对照，用来说明不同 basis 不能算倍数
+  kv-roster       —— 六个族系旗舰的缓存账形状，待录的留空
+
+取值表以前是手写的，于是漂了：正文写「三个值」，表里四行，而 derive.py 能出五个。
+--check 当时照样报「最新」—— 它只比生成区，而定义段不在生成区里。闸口放过自己要管的事，
+比没有闸口更糟。现在取值表也由本脚本生成，并且另外拿 data/derived 里实际出现的值对一遍：
+出现了而表里没有的，报问题并返回非零。
 
 缺字段一律印「未记」或「—」，不印 0：缺值和「真的是零」是两件事，而 0 会被当成测量值。
 
@@ -40,6 +46,32 @@ COMPONENT_LABEL = {
 
 MARK = "<!-- {} | 由 scripts/kv_table.py 生成，勿手改 -->"
 END = "<!-- {} 生成区结束 -->"
+
+# bytes_basis 的全部取值，按**证据强度**从强到弱排，不是字母序也不是出现频率 ——
+# 表的用处就是让人一眼看出哪一行的字节更可信。改 derive.py 里的 basis 时这里要跟着改，
+# 漏了的话下面的 check_basis_coverage 会在它第一次出现在记录里时拦住。
+#
+# `declared_dtype` 当前没有任何一份记录在用（有 precision.kv_cache 的两份都已经逐分量
+# 算到了 theoretical_floor），但 derive.py 走得到那一支，所以它在表里。
+# 「没有记录在用」和「不存在这个取值」是两件事。
+BASIS_DOC = [
+    ("theoretical_floor",
+     "精确计数的**理论下限**：元素 × 落盘格式（含 scale），**不含分页、环页、对齐粒度**。"
+     "实际部署在它之上"),
+    ("vendor_declared",
+     "字节直接取厂商公布的每 token 数，本仓没有逐分量算出来。"
+     "**只在公布值的 `covers` 是 `per_token` 时才会落到这个值**；"
+     "本仓每个分量都有公布格式时，公布值改作对账用，basis 仍是 `theoretical_floor`"),
+    ("declared_dtype",
+     "记录给了 `precision.kv_cache`，字节按这个**声明的**缓存精度算。"
+     "有厂商口径，但不是逐分量的精确计数"),
+    ("dtype_fallback",
+     "记录没给缓存精度，按模型权重 dtype 兜底。是个占位值，不是测量值"),
+    ("mixed",
+     "各分量 basis 不同，合计没有单一口径"),
+]
+
+_COUNT_CN = {1: "一", 2: "两", 3: "三", 4: "四", 5: "五", 6: "六", 7: "七", 8: "八"}
 
 
 def load_records() -> dict:
@@ -97,6 +129,58 @@ def shape(kv: dict) -> str:
     return " + ".join(COMPONENT_LABEL.get(k, f"`{k}`") for k in comps)
 
 
+def seen_bases() -> dict:
+    """data/derived 里实际出现过的 bytes_basis -> 第一次见到它的文件名。
+
+    整棵树递归找，不只看顶层：分量各自带 basis，extract_layers.py 的逐层产物也带。
+    顶层对了而某个分量用了没登记的值，一样会在页面上渲染成没有标注的数。
+    """
+    out = {}
+
+    def walk(node, where):
+        if isinstance(node, dict):
+            v = node.get("bytes_basis")
+            if isinstance(v, str):
+                out.setdefault(v, where)
+            for x in node.values():
+                walk(x, where)
+        elif isinstance(node, list):
+            for x in node:
+                walk(x, where)
+
+    for p in sorted(glob.glob(os.path.join(ROOT, "data", "derived", "*.json"))):
+        try:
+            walk(json.load(open(p)), os.path.basename(p))
+        except (ValueError, OSError):
+            # 读不动的 derived 不是这个闸口要管的事，derive.py / validate.py 会报
+            continue
+    return out
+
+
+def check_basis_coverage(problems: list) -> None:
+    """记录里出现了、取值表里没有的 basis -> 报问题。
+
+    这是取值表唯一能自动验的那一半：表里多一个取值（derive.py 走得到但还没有记录用过）
+    看不出来，而表里少一个会让那一列字节在页面上没有口径标注，正是出过的事故。
+    """
+    known = {k for k, _ in BASIS_DOC}
+    for v, where in sorted(seen_bases().items()):
+        if v not in known:
+            problems.append(f"data/derived/{where} 用了 bytes_basis `{v}`，"
+                            "而 BASIS_DOC 里没有这一行 —— 补进 BASIS_DOC（并想一想"
+                            " site/src/lib/data.ts 的 KV_BASIS_LABEL 要不要一起补）")
+
+
+def table_basis_values(records: dict, problems: list) -> list:
+    """定义段的取值表。手写它漂过一次：正文写三个、表里四行、代码能出五个。"""
+    check_basis_coverage(problems)
+    n = _COUNT_CN.get(len(BASIS_DOC), str(len(BASIS_DOC)))
+    rows = [f"`bytes_basis` 标明这一列字节是哪种来源，{n}个值：", "",
+            "| basis | 含义 |", "|---|---|"]
+    rows += [f"| `{k}` | {desc} |" for k, desc in BASIS_DOC]
+    return rows
+
+
 def table_basis(records: dict, problems: list) -> list:
     rows = ["| 版本 | 元素/token | 字节/token | basis |", "|---|---|---|---|"]
     for mid in BASIS_ROWS:
@@ -144,7 +228,9 @@ def table_roster(records: dict, problems: list) -> list:
     return rows
 
 
-BLOCKS = {"kv-basis": table_basis, "kv-roster": table_roster}
+BLOCKS = {"kv-basis-values": table_basis_values,
+          "kv-basis": table_basis,
+          "kv-roster": table_roster}
 
 
 def render(text: str, records: dict) -> tuple:
