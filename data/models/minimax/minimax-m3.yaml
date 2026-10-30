@@ -86,10 +86,14 @@ arch:
     sparse:
       mechanism: >-
         MiniMax Sparse Attention（MSA）：每个稀疏层有自己的 indexer，index K 逐 token
-        存入缓存，打分后按 128 个 token 一块做 max-pool，每个 index 头独立选 topk 16 块，
-        另加查询所在块之前的 1 个局部块（sparse_local_block 1，sparse_init_block 0）。
+        存入缓存，打分后按 128 个 token 一块做 max-pool，每个 index 头独立取 topk 16 块。
+        查询**自己所在**的那一块被强制保留（sparse_local_block 1：参考实现把它的块分数
+        置 +inf 后参与 topk，**占用 16 个名额里的 1 个**，不是额外加），所以每 index 头
+        每步读 16 块 = 2048 个 token。config 的 sparse_init_block=0，参考实现也没有 sink
+        块概念。选中的块索引左对齐、右侧用 -1 补齐，局部块的强制保留顺带保证了不重复。
         选的是「读哪些块」，主 K/V 全量保留 —— transformers 参考实现里 KV 照常
         update、index K 由 MiniMaxM3VLSparseCacheLayer.update_index 逐 token 拼接
+      index_topk: 2048
       index_n_heads: 4
       index_head_dim: 128
       index_kv_dim: 128
@@ -129,7 +133,11 @@ arch:
     balance: e_score_correction_bias（无辅助损失式偏置，config use_routing_bias）
     storage_note: >-
       逐专家独立张量（block_sparse_moe.experts.N.w1/w2/w3），不是堆叠的 3 维权重。
-      共享专家中间维 3072，与路由专家同宽
+      共享专家中间维 3072，与路由专家同宽。
+      128 这个数在权重清单里独立成立：`.experts.` 张量 21888 条 = 57 层 × 128 × 3，
+      L3–L59 每层的专家下标集合都恰为 {0..127}，零例外（全量穷举）。derive.py 的对账
+      把这一项报成「skip / config 缺失」，是因为它找 n_routed_experts / num_experts，
+      而 MiniMax 写的是 num_local_experts —— Gate B 的「0 处不一致」不含专家数这一项
 
   decoding:
     mtp_layers: 0
@@ -191,28 +199,53 @@ bottlenecks:
     finding: >-
       MSA 省的是读，不是存：60 层全部存完整 GQA KV，57 个稀疏层另存一份 index K。
       和 GLM-5.3 是同一条路线（每层都存、topk 选读），与 DeepSeek V4.1 的「少数层产出
-      KV」相反。缓存随层数与上下文线性增长
+      KV」相反。缓存随层数与上下文线性增长。
+      模型卡称 MSA 降低 attention 的 compute 与 memory footprint —— 从权重与参考实现看，
+      降的是 compute、读带宽与注意力中间态，KV **容量**一点没降
     quantified: >-
       逐因子：GQA 每层 2（K、V）× 4 KV 头 × 128 = 1024 元素（k_proj / v_proj 输出 512，
       写缓存前的 k_norm 是逐头 [128]，宽度不变），× 60 层 = 61440；index K 每层 128
       （index_k_proj 输出 128、index_k_norm [128]）× 57 层 = 7296；合计 68736 元素/token。
-      条目数按 1:1 逐 token 计，依据是参考实现的 update / update_index 逐 token 拼接，
-      块 max-pool 只在打分时做。无 MTP 块，没有主干口径与开草稿口径之分。
-      落盘精度未披露，按 config torch_dtype=bfloat16 兜底（2 B/元素）得 137472 B/token、
-      1M 上下文 134.25 GiB —— dtype_fallback 口径，不是实测
+      两类在各自的全部层里都只有这一种 shape（kv_widths.json uniform=true，60/60 与 57/57
+      全读，不是抽查）。条目数按 1:1 逐 token 计，依据是参考实现的 update / update_index
+      逐 token 拼接，块 max-pool 只在打分时做。无 MTP 块，没有主干口径与开草稿口径之分。
+      落盘精度无一手声明，按 config torch_dtype=bfloat16 兜底（2 B/元素）得 137472 B/token、
+      1M 上下文 134.25 GiB —— dtype_fallback 口径，是**上界**不是实测，见 open_questions。
+      口径边界：full attention 那一项的 512 由 fetch_kv_widths 逐层实测，与 config 的
+      num_kv_heads × head_dim 巧合相等；derive.py 的该分量只走 config 公式、不读
+      kv_widths.json，所以 Gate B 的「0 处不一致」没有覆盖占 89.4% 的这一项
+    visibility: public
+  - dimension: kv-bandwidth
+    finding: >-
+      选块省的是**主 KV 的读**，省不掉 indexer 自己的全量打分：参考实现每层每步都拿
+      当前 query 跟整段 index K 历史做一次全长 matmul（update_index 返回全历史，
+      matmul 之后才 amax 成块分数），这一项是 O(S) 每层每步。省读的上限由 indexer 全扫
+      与 3 个全量 GQA 层决定，不由 topk 块数决定
+    quantified: >-
+      1M 上下文、单序列、BF16 两侧同口径，一个 decode step 的注意力侧读量逐项：
+      index K 全量扫描 57 层 × 1048576 × 128 × 2 B = 14.25 GiB；L0–L2 三个全量 GQA 层
+      读完整 KV = 6.00 GiB；57 个稀疏层真正选中的主 KV（每 index 头 16 块 × 128 token）
+      = 228 MiB；合计约 20.47 GiB。对比全量 GQA 的 120.0 GiB 只省 **5.86 倍**，
+      其中 indexer 扫描占 69.6%，是选中主 KV 的 64 倍。
+      按参考实现的算法推导、非实测；换 FP8 落盘两侧等比例缩小，倍数不变
     visibility: public
   - dimension: operator-gap
     finding: >-
       index K 只有 1 个头、index Q 4 个头，每个 index 头独立选块（参考实现输出
       [B, H_idx, S_q, topk]），选块结果再映射到 4 个 KV 组上。按「每层一份选择、
-      所有头共用」写的块稀疏核对不上这个形状
+      所有头共用」写的块稀疏核对不上这个形状。
+      核契约：块索引左对齐、-1 右填充，局部块的强制保留顺带保证了去重 —— 核按有效项数
+      顺序读，索引重复会被重复计数
     visibility: public
 
 infra_signals:
   - text: >-
       本代（M3）的「1M 上下文」与 DeepSeek V4.1 是两种做法：M3 全层全量存 KV、
       靠选块省读带宽，单序列 1M 时 BF16 兜底下约 134 GiB 的 KV；
-      容量规划不能按「稀疏注意力 = 少存」去推
+      容量规划不能按「稀疏注意力 = 少存」去推。
+      省读这一侧也有上限：选块把 1M 下的注意力读量从约 120 GiB/step 压到约 20 GiB/step
+      （5.9 倍），但其中七成是 indexer 的全量扫描 —— 上限由 indexer 与 3 个全量层决定，
+      不由 topk 块数决定
     evidence: judgement
     horizon: now
     axis: attention
@@ -247,6 +280,7 @@ evidence:
   arch.attention.kv_sharing.layer_coverage: derived
   arch.ffn.type: derived
   arch.ffn.layer_pattern: derived
+  arch.moe.routed_experts: derived
   arch.moe.first_k_dense: derived
   arch.moe.routing: derived
   arch.moe.balance: derived
@@ -265,6 +299,179 @@ evidence:
   notes: judgement
   open_questions: judgement
 
+reviewed:
+  date: '2026-10-30'
+  scope: [official, derived, judgement]
+  reviewer: 一个独立核查代理 + 本会话复算
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序，对判断类字段与全部 7 条 open_questions
+    逐条过。代理穷举了 shapes.json 全部 23416 条（非抽样）核层覆盖、条目宽度与专家分布，
+    并读了 transformers 的参考实现与厂商 kernel 仓 MiniMax-AI/MSA 的 README。
+    本会话独立复核的是：MSA 局部块的语义（直接读 modeling_minimax_m3_vl.py 的
+    574-584 行，确认 local=arange(1) → 查询自己所在块、scatter_(+inf) 后参与 topk，
+    即挤占 16 个名额之一）、configuration 的 legacy 映射表只收 5 个键（sparse_init_block /
+    sparse_score_type / sparse_disable_index_value 都不读）、以及 derive.py 的
+    full_attention 分量只走 config 公式不读 kv_widths.json。
+    其余计数（21888 条专家张量的逐层下标枚举、1M 下的读量逐项、激活参数四种扣法）
+    依据的是代理在完整清单上的枚举，未逐项重跑。
+    Gate B：derive.py --id minimax-m3 --model ... 0 处不一致，外部 safetensors tally
+    逐位相同；但专家数那一项是 skip（键名不匹配），不在「0 处不一致」覆盖内
+
+review:
+  - id: R1
+    field: arch.attention.sparse.mechanism
+    severity: wrong
+    claim: 「每个 index 头独立选 topk 16 块，另加查询所在块之前的 1 个局部块」
+    finding: >-
+      「另加」与「之前的」两处都错。modeling_minimax_m3_vl.py:574-578：
+      local_blocks=1 时 local=arange(1)=[0]，local_idx=(q_block−0).clamp(min=0)，
+      即**查询自己所在**的那一块；:578 把它的块分数 scatter_ 成 +inf 之后，
+      :583-584 才做 topk(min(topk_blocks, num_key_blocks)) —— 局部块是**挤进** 16 个名额，
+      不是额外加。所以每 index 头每步读 16 块 = 2048 token，不是 17 块 2176。
+      记录跟的是类 docstring（:485-486 写的是 "plus"），而 docstring 与其下方代码不一致
+      —— skill 的「注释不是证据」。另：config 的 sparse_init_block 在 transformers 的
+      legacy 映射表里根本不被读取
+    resolution: corrected
+    changed_to: >-
+      按源码重写 mechanism，点明局部块是查询自己所在那块、占用 16 个名额之一；
+      并补 index_topk: 2048（GLM-5.3 同字段也是 2048，补上才能直接比）
+  - id: R2
+    field: bottlenecks
+    severity: missing
+    claim: bottlenecks 与 infra_signals 都说「省读」，却一个读量数字都没有
+    finding: >-
+      indexer 每步要拿当前 query 跟整段 index K 历史做全长 matmul（:556 update_index
+      返回全历史，:562 全长 matmul，:570 才 amax），这一项 O(S) 每层每步，没被选块省掉。
+      1M / BF16 / 单序列，一个 decode step：index K 扫描 14.25 GiB、L0–L2 三个全量层
+      6.00 GiB、57 个稀疏层选中的主 KV 仅 228 MiB，合计约 20.47 GiB；对比全量 GQA 的
+      120.0 GiB 只省 5.86 倍，其中 indexer 扫描占 69.6%，是选中主 KV 的 64 倍
+    resolution: corrected
+    changed_to: >-
+      新增一条 dimension: kv-bandwidth 的 bottleneck 写上这组逐项数字（标明按参考实现
+      算法推导、非实测），并在 infra_signals[0] 补「省读的上限由 indexer 全扫与 3 个
+      全量层决定，不由 topk 块数决定」
+  - id: R3
+    field: open_questions
+    severity: wrong
+    claim: 「部署侧若按块压缩存 index K（块 max-pool 后只存每块一份），index K 一项会降到 1/128」
+    finding: >-
+      这个假设与打分的定义冲突，不是「未读所以不知道」。块分数是先算完每个 key 的点积
+      再在块内取 max（:562 先 matmul、:568-570 才 amax；cfg 的 sparse_score_type="max"
+      说的也是这个）。max_i(q·k_i) 不是任何「池化后单条 k」与 q 的点积，所以在 query
+      未知之前无法把一块 128 条 index K 压成一条还保持同样打分 —— 那样就是换算法。
+      厂商 kernel 仓 MSA 的 proxy pass 收的是 proxy_k_pages + page_size=128，是**分页**不是压缩
+    resolution: corrected
+    changed_to: 删掉「按块压缩 → 1/128」半句，改写成「分页 ≠ 压缩、条目数 1:1」，并把问题指向真正未定的精度
+  - id: R4
+    field: open_questions
+    severity: imprecise
+    claim: 「KV 落盘精度未披露，137472 B/token 是 BF16 兜底口径」
+    finding: >-
+      「未披露」说重了。厂商部署 kernel 仓 MiniMax-AI/MSA（模型卡点名链接）的 README
+      列了 paged FP8 decode wrapper、NVFP4 K/V（仅 sparse prefill）、FP4 block-score
+      indexer，benchmark 矩阵写明 fp8 与 bf16 覆盖 dense/paged/sparse。也就是说 BF16 的
+      2 B/元素是**上界**而非估计：同样 68736 元素/token，FP8 口径约 68736 B/token、1M 约 67.1 GiB
+    resolution: corrected
+    changed_to: >-
+      改写成「上界 + FP8 路线下的数 + 来源是 README 措辞（二手，未读 kernel、未实测）」，
+      basis 维持 dtype_fallback，本条继续开着
+  - id: R5
+    field: open_questions
+    severity: unsupported
+    claim: 「sparse_disable_index_value 语义不明，参考实现里没找到用处」
+    finding: >-
+      「没找到用处」对，但「语义不明」可以收紧。四条证据指向同一件事：transformers 的
+      legacy 映射表只收 5 个键、不含它且 modeling 全文零引用（行为写死）；indexer 只有
+      q/k 投影与 norm、**没有 v_proj**；其 docstring 明说上游 checkpoint 在每个稀疏层
+      关掉了 index-value 通路；权重清单 23416 条里 index_v* 零命中；厂商 kernel 的
+      proxy pass 也只出 maxscore。逐层取值与 sparse_attention_freq 逐位相同，无额外信息
+    resolution: corrected
+    changed_to: >-
+      改写成「语义已定到『该层 indexer 只做选择、没有 index-V 通路』，不引入第三类缓存、
+      不增加激活参数；仍未钉死的只是键名与行为的对应」。不整条删
+  - id: R6
+    field: arch.moe.routed_experts
+    severity: missing
+    claim: >-
+      routed_experts 128 继承 arch: official 前缀，而 Gate B 对这一项是 skip
+    finding: >-
+      专家数不是没法对账，是 derive.py 找错了键名：它找 n_routed_experts / num_experts，
+      MiniMax 的 text_config 里叫 num_local_experts: 128。权重侧独立成立且零例外：
+      `.experts.` 张量 21888 条 = 57 层 × 128 × 3，L3–L59 每层的专家下标集合都恰为 {0..127}
+    resolution: confirmed
+    changed_to: >-
+      数值不改；在 storage_note 里写明权重侧的独立依据与「Gate B 不含这一项」，
+      并给 arch.moe.routed_experts 单列 derived（原先被 arch: official 前缀吃掉，
+      按 CLAUDE.md 属于绕过 Gate C 的那一类）
+  - id: R7
+    field: bottlenecks
+    severity: imprecise
+    claim: 「60 层全部存完整 GQA KV，57 个稀疏层另存一份 index K」，68736 元素/token
+    finding: >-
+      四个因子逐个独立核过，全部成立：(1) k_proj/v_proj 各 60 条层号连续，
+      index_k_proj 57 条且缺的恰是 L0–L2；(2) k_proj/v_proj 在全部 60 层**只有
+      [512,6144] 一种 shape**，index_k_proj 在 57 层只有 [128,6144]（kv_widths.json
+      uniform=true，全读非抽样）；(3) 条目 1:1 来自 update/update_index 的逐 token 拼接；
+      (4) BF16 兜底 2 B/元素。68736 元素 / 137472 B / 134.25 GiB 逐位复算一致。
+      一个口径提醒：num_kv_heads×head_dim = 4×128 = 512 恰等于 k_proj 输出维是这代
+      GQA 的巧合，不是通则
+    resolution: confirmed
+    changed_to: 数值不改，quantified 里把「全读非抽查」写明（原措辞读起来像抽查）
+  - id: R8
+    field: bottlenecks
+    severity: missing
+    claim: 「每 index 头独立选块，按『每层一份选择』写的核对不上这个形状」
+    finding: >-
+      成立且比记录写的更强：index K 单头（k_proj 输出 128、view 成 1 头，权重
+      index_k_proj [128,6144] 对全部 57 层成立），index Q 4 头（[512,6144]），
+      scores 保留 H_idx 轴、amax 只在块内 128 个 key 上做，各头独立 topk、无跨头规约
+    resolution: confirmed
+    changed_to: 原值成立；finding 末尾补上核契约（左对齐、-1 右填充、局部块保留顺带去重）
+  - id: R9
+    field: bottlenecks
+    severity: imprecise
+    claim: 把「derive.py 0 处不一致」当作这份缓存账被两路独立算过
+    finding: >-
+      对 index K 那一半成立，对占 89.4% 的主 KV 那一半不成立：derive.py 的
+      full_attention 分量只走 `2 × num_kv_heads × head_dim`（取自 YAML 或 config），
+      **从不读 facts/<id>/kv_widths.json**。本例两者恰好都等于 512，但 derive 并不会在
+      config 与实测宽度冲突时报错 —— 真正钉死它的是 fetch_kv_widths 与本轮穷举
+    resolution: deferred
+    changed_to: >-
+      在 quantified 里点明这条口径边界。derive.py 让 full_attention 在 kv_widths.json
+      存在时走实测宽度并对账，是仓库级改进项，本期不处理
+  - id: R10
+    field: open_questions
+    severity: imprecise
+    claim: 「若差值是未发布的 MTP，它比一层主干 MoE 层（约 7.4B）小得多；也可能只是取整」
+    finding: >-
+      7.4B 核过成立（每 MoE 层 ≈ 7.416B）。但「若差值是 MTP」可以直接排掉：config 声明的是
+      num_mtp_modules 7（不是 1），7 个约 52B、1 个约 7.4B，都比 0.96B 大一到两个数量级。
+      记录把两个可能性并列，权重给偏了
+    resolution: corrected
+    changed_to: 把「取整」提为主解释，MTP 作为被排除项
+  - id: R11
+    field: open_questions
+    severity: imprecise
+    claim: 「带宽口径 24.7B、可比官方口径 26.0B，扣掉 lm_head 与输入词表约 23.5B」
+    finding: >-
+      算术成立且逐项核过（24,733,280,640 / 25,962,473,856 / 23,504,087,424），
+      但「扣掉 lm_head 与输入词表」的基准含糊：带宽口径本就不含输入词表，按字面扣两张
+      会得 22.3B。23.50B 等价于 26.0B 口径减去两张 200064×6144 词表矩阵
+    resolution: corrected
+    changed_to: 三个数都写整数并写明各自含/不含什么，并点明 23.50 本身也不等于 23
+  - id: R12
+    field: released
+    severity: imprecise
+    claim: released 取仓的 lastModified 2026-10-26，createdAt 与 arXiv 编号都更早
+    finding: >-
+      repoinfo.json 核过：createdAt 2026-06-02、lastModified 2026-10-26、tags 含
+      arxiv:2606.13392；仓里没有更强的发布日线索（siblings 无 release note）。
+      记录的处理方式（取 lastModified、把分歧写进 open_questions、引 Kimi-K3 的反例）
+      与仓内其它记录一致
+    resolution: confirmed
+    changed_to: 原值成立，不改
+
 notes: >-
   MiniMax 家族的旗舰，model_type minimax_m3_vl，原生多模态。本仓第一份 MiniMax 记录，
   也是第三种「稀疏注意力」：GQA 主干 + 块级选读（MSA），与 GLM-5.3 的 DSA 同属
@@ -276,23 +483,36 @@ notes: >-
 
 open_questions:
   - >-
-    KV 落盘精度未披露，137472 B/token 是 BF16 兜底口径，不能与 DeepSeek V4.1 的理论下限
-    （890 B/token）比倍数。跨族系比结构用元素口径（68736 元素/token）
+    KV 落盘精度无一手声明，137472 B/token 是按 config torch_dtype=bfloat16 的兜底
+    （dtype_fallback），是**上界**：厂商自己的部署 kernel 仓（MiniMax-AI/MSA，模型卡点名链接）
+    README 里列了 paged FP8 decode wrapper、NVFP4 K/V（仅 sparse prefill）与 FP4
+    block-score indexer，若 decode 按 FP8 走则约 68736 B/token、1M 约 67.1 GiB。
+    这是 README 措辞，未读 kernel 源码也未实测，basis 维持 dtype_fallback，本条继续开着。
+    不能与 DeepSeek V4.1 的理论下限（890 B/token）比倍数；跨族系比结构用元素口径
+    （68736 元素/token）
   - >-
-    缓存形状取自 transformers 参考实现，不是厂商部署 kernel（MiniMax topk_sparse / MSA 仓）。
-    部署侧若按块压缩存 index K（块 max-pool 后只存每块一份），index K 一项会降到 1/128 ——
-    参考实现没这么做，部署实现未读
+    缓存形状取自 transformers 参考实现，不是厂商部署 kernel。**块粒度不会改变条目数**：
+    块分数是对 per-key 点积取 max（sparse_score_type=max，参考实现 amax over block），
+    max 不可预先池化成单条 K —— 要那么做就是换算法（变成 compressed-key 分支），输出会变；
+    厂商 kernel 仓 MSA 的 proxy pass 也是 page_size=128 的**分页**而非压缩。
+    真正未定的是 index K 的落盘精度，见上一条
   - >-
-    config 的 sparse_disable_index_value（逐层 0/1，与稀疏层位置相同）语义不明，
-    参考实现里没找到用处
+    config 的 sparse_disable_index_value 与 sparse_attention_freq 逐位相同（L0–L2 为 0、
+    L3–L59 为 1），逐层这一维不带额外信息。语义可从三处旁证定到「该层 indexer 只做选择、
+    没有 index-V 通路」：参考实现的 indexer 只有 q/k 投影与 norm（没有 v_proj）、其 docstring
+    明说上游 checkpoint 在每个稀疏层关掉了 index-value 通路、权重清单里 index_v* 零命中
+    （23416 条穷举），厂商 kernel 的 proxy pass 也只出 maxscore。
+    所以它不引入第三类缓存、不增加激活参数。仍未钉死的只是这个**键名**没有任何公开实现
+    读取（transformers 的 legacy 映射表只收 5 个键，不含它），叫法与行为的对应是推断
   - >-
-    厂商「~23B activated」的口径未说明。本仓带宽口径 24.7B（含 lm_head）、
-    可比官方口径 26.0B（再含输入词表），两者都比 23B 高；扣掉 lm_head 与输入词表
-    两张词表矩阵约 23.5B，最接近 —— 这是推测，不是读到的
+    厂商「~23B activated」口径未说明。本仓两套口径都更高：带宽口径 24,733,280,640
+    （24.73B，含 lm_head、不含输入词表）、可比官方口径 25,962,473,856（25.96B，再含
+    输入词表）。两张 200064×6144 词表矩阵都不计时为 23,504,087,424（23.50B），是三者里
+    最接近 23B 的 —— 但 23.50 本身也不等于 23，这是推测，不是读到的
   - >-
-    厂商「~428B」比实测 427.04B 高约 0.96B（0.23%），口径没有一手说明。
-    若差值是未发布的 MTP，它比一层主干 MoE 层（实测约 7.4B：专家 413.12B / 57 层
-    加注意力与共享专家）小得多，不是「再一层 transformer」；也可能只是取整
+    厂商「~428B」比实测 427.04B 高约 0.96B（0.23%），口径没有一手说明。差值不太可能是
+    未发布的 MTP：config 声明 7 个 MTP 模块，按一层主干 MoE 层实测 7.42B 估，7 个约 52B、
+    1 个约 7.4B，都比 0.96B 大一到两个数量级。最可能只是把 427.04 取整到 428
   - >-
     训练精度无一手声明（config 只有 torch_dtype bfloat16），precision.training 不填
   - >-

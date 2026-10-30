@@ -61,6 +61,10 @@ params:
 
 context:
   max: 1048576
+  extension_method: >-
+    无。全模型 NoPE（MLA 层 assert use_nope、rotary_emb 置 None，q_rot/k_rot 原样拼接不旋转），
+    cfg.json 里没有 rope_theta、没有 rope_scaling、没有任何位置编码超参 —— 1M 是原生训练长度，
+    部署期**没有 YaRN / NTK 这类外推旋钮**
 
 arch:
   layers: 93
@@ -127,8 +131,12 @@ arch:
         通道数取自清单：69/69 层 q_conv1d / k_conv1d / v_conv1d 都是 [12288, 1, 4]，
         合计 36864 = 2×96×128 + 96×128，与 derive.py 的 qkv 通道数公式逐位相等。
         与 Qwen3.8 不同，K3 的 key 与 value 头数相同（96:96），状态按哪个头数展开不影响容量。
-        但 A_log 是 [128]（69 层一致），与 96 头对不上 —— b_proj [96, 7168]、
-        f_b_proj / dt_bias 的 12288 = 96×128 都指向 96 头，A_log 的第一维另有含义，未核
+        A_log [128] 的第一维是 **head_dim**（= linear_attn_config.head_dim 128），不是头数：
+        同为 128 的还有 o_norm [128]（FusedRMSNormGated(head_dim)）与 f_a_proj [128, 7168]；
+        头数走 b_proj [96, 7168]，逐 (头, 通道) 的量走 dt_bias / f_b_proj 的 12288 = 96×128。
+        即衰减标度逐通道、在 96 头间广播 —— 与 Qwen3.8 的 A_log [48]（= value 头数、逐头标量）
+        不是一回事，**不能照 Qwen3.8 那条「A_log 首维 = 状态头数」的推断读 K3**。
+        另注：厂商参考实现把 A_log 声明为 [num_heads] = [96]，与落盘的 [128] 冲突，按权重为准
 
   ffn:
     type: moe
@@ -157,15 +165,21 @@ arch:
       6144 = 2 × 3072）
 
   residual:
-    type: AttnRes（Block Attention Residuals）
+    type: AttnRes（Attention Residuals，厂商命名；块大小由 attn_res_block_size=12 给出）
     coef_proj: >-
       每层 self_attention_res_proj 与 mlp_res_proj 各一个 [1, 7168]，另有模型级
       output_attn_res_proj [1, 7168]；对应的 *_res_norm [7168] 是 RMSNorm
     note: >-
-      attn_res_block_size 12：每 12 层把当前累加结果存成一个块表示，之后每个子层用
-      res_proj 打分、在已存块表示上做加权组合来代替单纯残差相加。块表示只在同一 token 的
-      层与层之间传递，不跨 token —— 参考实现里 block_residual 是 forward 内的局部变量，
-      不进 KimiDynamicCache，所以它不占 KV 容量，只是 decode 时每 token 最多 8 份 7168 维的激活
+      attn_res_block_size 12：在 L0/12/24/…/84 这 8 层，进层时把当前残差累加值存成一个块表示，
+      并把残差累加器清零重开；此后每个子层（attn 前、MLP 前，以及模型末尾一次 output_attn_res）
+      都把「已存块表示 + 当前累加值」一起过 RMS 归一、用 res_norm.weight × res_proj.weight 打一个
+      标量分、softmax 后对**未归一**的原向量做加权平均，结果作为该子层 layernorm 的**输入**；
+      残差相加本身在块内照常进行（prefix_sum = prefix_sum + hidden_states）。
+      所以 AttnRes 替代的是**块边界上的累加**，不是残差相加本身 —— 照「加权组合代替残差相加」
+      实现会改掉主干数据流。
+      块表示只在同一 token 的层间传递，不跨 token，不进 KimiDynamicCache，不占 KV 容量；
+      但它要跨全部 93 层保活：decode 每 token 最多 8 × 7168（BF16 114.7 KiB），
+      prefill 按 chunk 长度线性放大（4096 token 的 chunk 满载 448 MiB）
 
   decoding:
     mtp_layers: 0
@@ -214,14 +228,20 @@ precision:
       strategy group 一致。scale 容器 dtype 是 U8；按 MX 规范它是 E8M0 指数，但那是格式声明
       （config format mxfp4、scale_dtype torch.uint8），形状与 dtype 区分不了
     subsystem_method: >-
-      代表精度由 fetch_dtypes.py 抽样（读 96 个分片里的 10 个）得出；scale 精度与量化块是对完整
-      清单手工量的 —— fetch_dtypes.py 的 scale 正则不认 weight_scale 这个叶名，抽样结果里专家的
-      scale 一栏是空的（lib/dtypes.py 的 is_scale_tensor 认，所以参数量不受影响）。
+      per_subsystem 的每一格都对**完整清单穷举**过（497,220 条，逐条带 dtype），不是抽样：
+      专家 247,296 对 weight_packed / weight_scale 全是 U8 无例外，其余子系统除下列 FP32 七类外全 BF16。
+      facts/kimi-k3/subsystem_dtypes.json 是早一轮的抽样产物（10/96 分片），结论与全量一致，
+      但它不是这张表的依据。fetch_dtypes.py 的 scale 正则不认 weight_scale 这个叶名，抽样结果里
+      专家的 scale 一栏是空的（lib/dtypes.py 的 is_scale_tensor 认，所以参数量不受影响）。
       量化只覆盖路由专家：config 的 ignore 列表排除了 self_attn / shared_experts / mlp / lm_head /
       vision_tower / mm_projector，清单上也只有专家带 weight_packed。
       FP32 只有 7 类，共 11,122,432 元素：e_score_correction_bias（92 × 896）、KDA 的 A_log、
       dt_bias、o_norm 与 q/k/v_conv1d（69 层），合计与 HF tally 的 F32 一项逐位相同。
-      模型卡称 MXFP4 权重是从 SFT 起做量化感知训练得到的（「quantization-aware training」）
+      模型卡称 MXFP4 权重是从 SFT 起做量化感知训练得到的（「quantization-aware training」）。
+      厂商同一句话还声明**激活走 MXFP8**（规格表 Quantization 行原文「MXFP4 weights /
+      MXFP8 activations」，动机写的是 broad hardware compatibility），但落盘里没有任何激活 scale
+      （quantization_config 的 input_activations 与 kv_cache_scheme 都是 null）—— 是纯声明，
+      未落到权重，见 open_questions
   qat: true
 
 platforms:
@@ -253,9 +273,12 @@ bottlenecks:
       + k_rot 64），× 24 层 = 13824 元素/token，BF16 兜底 27648 B/token、1M 上下文 27.0 GiB。
       per-sequence：每 KDA 层矩阵状态 96 × 128 × 128 = 1,572,864 元素，加 conv 状态
       4 × 36864 = 147,456 元素，合计 1,720,320，× 69 层，BF16 兜底 226.41 MiB/序列。
-      两边精度都是 dtype_fallback（config dtype bfloat16）；fla 的递归状态常以 FP32 保存，
-      若如此矩阵状态那一项翻倍（见 open_questions）。参考实现的解压缓存是每层
-      96×192 + 96×128 = 30720 元素，30720 / 576 = 53.3 倍
+      两个分量都是 dtype_fallback（config dtype bfloat16）。若按 fla 惯例整个状态走 FP32，
+      每序列 226.41 → 452.81 MiB；若只有矩阵状态 FP32、conv 随输入 BF16，则 433.41 MiB。
+      旁证偏向 FP32：KDA 的 A_log / dt_bias / o_norm / q,k,v_conv1d 在落盘里全是 F32
+      （69 层 × 6 类 = 414 张）。同仓 qwen3.8-27b 两项都按 FP32 计，两份记录要比先对齐这一条。
+      conv 项的窗长按 conv_kernel_dim 4 全窗计，是上界；实现若只存 k−1 个位置少 4.85 MiB。
+      参考实现的解压缓存是每层 96×192 + 96×128 = 30720 元素，30720 / 576 = 53.3 倍
     visibility: public
   - dimension: operator-gap
     finding: >-
@@ -267,8 +290,24 @@ bottlenecks:
   - dimension: ep-comm
     finding: >-
       latent MoE 让 dispatch / combine 发生在 3584 维而不是 7168 维上（down_proj 在路由之前、
-      up_proj 在合并之后），all-to-all 载荷减半。derive.py 的 ep_communication 按 hidden
-      7168 算，是这个模型的上界
+      up_proj 在合并之后），all-to-all 载荷减半
+    quantified: >-
+      正确载荷 2（dispatch + combine）× top_k 16 × 3584 × 2 B × 92 层 = 21,102,592 B/token；
+      derive.py 的 ep_communication 按 hidden 7168 算得 42,205,184，恰好高一倍 —— 它不识别
+      routed_expert_hidden_size。若厂商声明的 MXFP8 激活成立，再减半到 10,551,296
+    visibility: public
+  - dimension: weight-bandwidth
+    finding: >-
+      只量化路由专家 ⇒ decode 的权重带宽由 **BF16 的非专家部分**主导，不是由专家主导。
+      全量 2.78T 里 97.9% 是 MXFP4 专家（含 U8 scale 约 0.531 B/参数），但每 token 激活的
+      104.19B 里只有 46.7% 是专家，其余全是 BF16（2 B/参数）
+    quantified: >-
+      按子系统逐项折算（weight_bytes_by_subsystem × 各自的激活比例）得 136,990,303,232 B/token；
+      其中注意力一项 72.4 GB/token，比全部激活专家（25.8 GB/token）还大。
+      **derive.py 的 decode_weight_bytes_per_token 对本模型低估 2.34 倍**：它按
+      `weight_bytes_total × (激活参数 / 总参数)` 等比例折算，隐含「每参数字节数处处相同」，
+      对混合精度模型不成立；站点渲染的「算术强度 3.56 FLOP/B」是它的产物，正确值约 1.52。
+      这是仓库级公式问题，不是本记录的数据问题
     visibility: public
 
 infra_signals:
@@ -285,6 +324,20 @@ infra_signals:
     evidence: judgement
     horizon: now
     axis: attention
+  - text: >-
+      权重 MXFP4 + 激活 MXFP8 是同一套 QAT 的两半。只按权重 4-bit 规划会漏掉激活侧的
+      逐 32 元素 E8M0 量化/反量化路径，也会把 EP all-to-all 的载荷算成两倍 ——
+      但激活那一半目前只有模型卡声明，落盘无任何 scale
+    evidence: judgement
+    horizon: now
+    axis: precision
+  - text: >-
+      KDA + NoPE-MLA 的组合下不存在 RoPE 外推路径：config 里没有 rope_theta / rope_scaling，
+      1M 只能是原生训练长度。与 DeepSeek 系靠 YaRN 扩上下文不是同一种工程形态 ——
+      要更长上下文没有部署期旋钮可拧
+    evidence: judgement
+    horizon: now
+    axis: context
 
 evidence:
   id: official
@@ -334,26 +387,243 @@ evidence:
   notes: judgement
   open_questions: judgement
 
+reviewed:
+  date: '2026-10-30'
+  scope: [official, derived, judgement]
+  reviewer: 一个独立核查代理 + 本会话复算
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序，对判断类字段与全部 5 条 open_questions 逐条过。
+    代理穷举了 shapes.json 全部 497,220 条（非抽样）核层集合、子系统 dtype 与参数分项，
+    并读了厂商参考实现 modeling_kimi_linear.py / configuration_kimi_k3.py 与模型卡。
+    本会话独立复核的是：专家打包的 ×2 因子（w1 scale 列数 112×32=3584、w2 96×32=3072
+    两个方向各自闭合，且 routed_expert_up_proj [7168,3584] 证实专家输入维是 latent 3584
+    而非 hidden 7168）、Gate B 的外部参数量对账（derive.py --model 带上后 0 处不一致、
+    与 HF tally 逐位相同）、以及 derive.py:758-767 的算术强度折算公式确为按参数数等比例。
+    其余计数（493 层逐张量形状、AttnRes 的行号与数据流、1M 读量与状态容量的三种情形）
+    依据的是代理在完整清单与参考实现上的枚举，未逐项重跑
+
+review:
+  - id: R1
+    field: bottlenecks
+    severity: missing
+    claim: 没有 weight-bandwidth 这一维；站点渲染的「算术强度（decode）3.56 FLOP/B」来自 derive.py
+    finding: >-
+      这个数低估 2.34 倍，根因是 scripts/derive.py:758-767 把每 token 搬运字节写成
+      `weight_bytes_total × (激活参数 / 总参数)` —— 隐含「每参数字节数在激活侧与全量侧相同」。
+      K3 恰是这个假设最不成立的模型：全量 2.78T 里 97.9% 是 MXFP4 专家（含 U8 scale
+      约 0.531 B/参数），而每 token 搬运的 104.19B 里只有 46.7% 是专家，其余是 BF16（2 B/参数）。
+      按子系统逐项折算得 136,990,303,232 B/token，derive 给的是 58,499,040,049。
+      正确的算术强度约 1.52 FLOP/B。另外注意力一项（72.4 GB/token）比全部激活专家
+      （25.8 GB/token）还大 —— 这个形状被旧数掩盖了
+    resolution: corrected
+    changed_to: >-
+      新增一条 dimension: weight-bandwidth 的 bottleneck，写逐项折算与正确值，并点明
+      derive.py 的比例折算对混合精度模型不成立。derive.py 本身的修法（按
+      weight_bytes_by_subsystem 逐项折算、只有专家乘 top_k/experts）是仓库级改动，本期不做
+  - id: R2
+    field: arch.residual.note
+    severity: wrong
+    claim: 「每 12 层把当前累加结果存成一个块表示，之后每个子层用 res_proj 打分、在已存块表示上做加权组合来代替单纯残差相加」
+    finding: >-
+      「不占 KV 容量」「不跨 token」「最多 8 份」三件事核过都成立，但机制描述错在三处，
+      而这三处正是实现者会做错的地方：(a) 加权组合**不替代**残差相加 —— prefix_sum 仍按
+      常规 pre-norm 逐子层累加，被替代的是**块边界上的累加**（layer_idx % 12 == 0 时存块、
+      累加器清零重开）；(b) 加权结果喂的是该子层 layernorm 的**输入**，不是残差流本身；
+      (c) softmax 的候选里**包含当前 prefix_sum**，不只是已存块。另外漏了 prefill 代价：
+      block_residual 要跨 93 层保活，4096 token 的 chunk 满载 448 MiB
+    resolution: corrected
+    changed_to: 按参考实现的数据流重写，点明「替代的是块边界累加而非残差相加」，并补 decode/prefill 两种激活占用
+  - id: R3
+    field: arch.attention.linear_state.state_layout_note
+    severity: missing
+    claim: 「A_log 是 [128] 而注意力是 96 头，第一维的含义未核」
+    finding: >-
+      可以定下来：128 就是 linear_attn_config.head_dim，不是任何一种头数。69/69 层逐张量
+      （全量非抽样）：A_log [128]、o_norm [128]（FusedRMSNormGated(head_dim)）、
+      f_a_proj [128, 7168]；头数走 b_proj [96, 7168]，逐 (头, 通道) 的量走 dt_bias [12288]
+      与 f_b_proj [12288, 128]（12288 = 96×128）。即衰减标度逐通道、在 96 头间广播。
+      **这条必须写下来**：qwen3.8-27b 的记录用「A_log 首维 = 状态头数」来推它的状态头数，
+      把那条规则套到 K3 会把每序列状态放大 1.33 倍。
+      另：厂商参考实现把 A_log 声明为 [num_heads]=[96]，与落盘的 [128] 冲突，按权重为准
+    resolution: corrected
+    changed_to: state_layout_note 写明 128 = head_dim、头数走 b_proj、并点名不能照 Qwen3.8 那条规则读；对应 open_question 删除
+  - id: R4
+    field: precision.quantization
+    severity: missing
+    claim: 只写了「MXFP4 权重 + 从 SFT 起 QAT」，通篇没有激活精度
+    finding: >-
+      漏了厂商同一句话的后半截，而后半截才有硬件含义：模型卡规格表 Quantization 行原文是
+      「MXFP4 weights / MXFP8 activations (quantization-aware training)」，动机写的是
+      broad hardware compatibility。落盘侧确实看不到它（quantization_config 的
+      input_activations 与 kv_cache_scheme 都是 null，清单里没有激活 scale），
+      所以它是纯声明 —— 但「没写」会让人按 BF16 激活规划 EP 载荷与量化路径
+    resolution: corrected
+    changed_to: >-
+      precision.quantization 里补「厂商声明激活走 MXFP8、但落盘无任何激活 scale」；
+      infra_signals 补一条 axis: precision；open_questions 补一条「engine 侧是否真按 MXFP8 跑未核」
+  - id: R5
+    field: open_questions
+    severity: imprecise
+    claim: 「激活参数实测 104.19B（带宽口径，含 lm_head）、105.36B（再含输入词表），厂商 104B」
+    finding: >-
+      三个口径的差没说全，漏掉的恰好是这份记录作为 VLM 最该说的那一项：带宽口径
+      104.19B **不含视觉塔的 0.45B**。而且 105.36B 取整是 105B，对不上厂商的 104B，
+      所以厂商大概率也是带宽口径。站点把 total_with_embed 标成「可比官方口径」，对这一行是反的
+    resolution: corrected
+    changed_to: 三个口径差写全（lm_head / 输入词表 / 视觉塔），并点明站点标签对本行是反的
+  - id: R6
+    field: bottlenecks
+    severity: imprecise
+    claim: 「fla 的递归状态常以 FP32 保存，若如此矩阵状态那一项翻倍」
+    finding: >-
+      乘式本身全对（见 R13），但口径写法会让下游读歪：把 FP32 的作用范围切在矩阵/conv 之间，
+      而同仓 qwen3.8-27b 填的是 state_dtype: FP32 且 **conv 状态也按 FP32 计**。
+      同一族机制在两份记录里对 conv 的处理不一致。三种情形：全 BF16 226.41 MiB、
+      仅矩阵 FP32 433.41 MiB、全 FP32 452.81 MiB
+    resolution: corrected
+    changed_to: 三种情形的数都给出，点明与 qwen3.8-27b 比之前要先对齐 conv 的处理，并说明 conv 窗长按全窗 4 计是上界
+  - id: R7
+    field: bottlenecks
+    severity: imprecise
+    claim: 「derive.py 的 ep_communication 按 hidden 7168 算，是这个模型的上界」
+    finding: >-
+      机制核实无误（gate 在 7168 上打分 → routed_expert_down_proj 降到 3584 → 才进 dispatch），
+      所以载荷确实是 3584。但「是上界」太软，把一个能算准的数留成了定性描述：
+      正确载荷 2 × 16 × 3584 × 2 B × 92 = 21,102,592 B/token，derive 的 42,205,184 恰好高一倍
+    resolution: corrected
+    changed_to: quantified 里直接给数，并注明 MXFP8 激活若成立再减半
+  - id: R8
+    field: precision.quantization.subsystem_method
+    severity: imprecise
+    claim: 「代表精度由 fetch_dtypes.py 抽样（读 96 个分片里的 10 个）得出」
+    finding: >-
+      证据被说少了。这份记录有全量 shapes.json、每条都带 dtype，不需要抽样就能穷举：
+      497,220 条全量普查，专家 247,296 对 weight_packed/weight_scale 全 U8 无例外，
+      其余子系统除 FP32 七类外全 BF16。按 skill 规则 4「覆盖面不等于占比」，
+      把全量结论写成抽样结论是反向的自我削弱
+    resolution: corrected
+    changed_to: 改成「对完整清单 497,220 条穷举，subsystem_dtypes.json 是早一轮的抽样产物、结论一致但不是依据」
+  - id: R9
+    field: arch.residual.type
+    severity: overreach
+    claim: type 写作「AttnRes（Block Attention Residuals）」
+    finding: >-
+      厂商没有这个展开：模型卡两处都写 "Attention Residuals (AttnRes)"，config 里只有
+      attn_res_block_size 这个键，"Block" 是记录自己加的。小事，但 type 这一栏会被族谱与
+      页面原样引用，自造术语传出去后无法追回来源
+    resolution: corrected
+    changed_to: AttnRes（Attention Residuals，厂商命名；块大小由 attn_res_block_size=12 给出）
+  - id: R10
+    field: released
+    severity: imprecise
+    claim: released 取 lastModified 2026-09-02，notes 里说明了 createdAt 不是发布日
+    finding: >-
+      三个事实都核过（createdAt 2026-06-13、lastModified 2026-09-02、模型卡多处
+      "as of July 23, 2026"），排除 createdAt 的推理成立。但 lastModified 只是最后一次改动，
+      同样只是个界：真实发布日落在 2026-07-23 与 2026-09-02 之间，无一手公告可钉。
+      记录把一个区间端点写成了日期，notes 里没说这是界
+    resolution: corrected
+    changed_to: 日期不改（本仓惯例），notes 里补上「lastModified 只是最后改动时间，真实发布日落在该区间内」
+  - id: R11
+    field: params.counting_note
+    severity: imprecise
+    claim: 专家参数量按每字节两个 FP4 还原（×2）
+    finding: >-
+      ×2 有五条互相独立的证据，全部成立：w1 weight_scale [3072,112] × group_size 32 = 3584
+      = 2×1792；w2 另一方向同样闭合（96×32 = 3072 = 2×1536）；量纲闭合
+      （routed_expert_down_proj [3584,7168] → 专家输入 3584 → routed_expert_up_proj [7168,3584]）；
+      HF 的 U8 tally 2,722,740,830,208 等于**还原后**的数（packed+scale 的 1,446,456,066,048 对不上）；
+      全量 497,220 条重数复现 2,779,931,837,184 逐位相同
+    resolution: confirmed
+    changed_to: 原值成立，不改
+  - id: R12
+    field: arch.attention.layer_pattern
+    severity: imprecise
+    claim: 69 KDA + 24 MLA，config 的层列表是 1 起计
+    finding: >-
+      全量清单穷举（不是 kv_widths 那次 24/96 分片的定向抓取）：93 层只有 3 种张量签名，
+      有 kv_a_proj_with_mqa 的恰 24 层 = [3,7,…,87,91,92]，有 q_conv1d 的恰 69 层，
+      两集合无交、并集 93，与 config 的 full_attn_layers 做 x−1 转换后逐元素相同。
+      1 起计有一手证据：configuration_kimi_k3.py 的 is_kda_layer 写的是 (layer_idx + 1) in kda_layers
+    resolution: confirmed
+    changed_to: 原值成立，不改
+  - id: R13
+    field: bottlenecks
+    severity: imprecise
+    claim: per-token 13824 元素（24 层 × 576）、per-sequence 1,720,320 元素 × 69 层
+    finding: >-
+      按 skill 的 7 问逐因子核过：两类缓存分开记且口径明写；产出张量是
+      kv_a_proj_with_mqa 的输出维 576（不是头数乘积 96×192，后者高 32 倍）；
+      24/24 层都是 [576, 7168]；MLA 每 token 一条、KDA 每序列一份，没有混计；
+      两边都是 dtype_fallback 并写明了
+    resolution: confirmed
+    changed_to: 原值成立，不改（口径补充见 R6）
+  - id: R14
+    field: params.counting_note
+    severity: imprecise
+    claim: latent 投影归入 dense_ffn，理由是让激活参数按常驻计
+    finding: >-
+      逐张量求和：routed_expert_{down,up}_proj 合计 4,726,980,608 = 92×2×7168×3584 逐位相同；
+      L0 的 mlp 三件合计 726,663,168；两者之和正是 derive 的 dense_ffn 5,453,643,776。
+      理由也成立：归 expert 会被 active_params 按 16/896 折成 84.4M，少算 4.64B（约激活的 4.5%）。
+      counting_note 已自己写了代价
+    resolution: confirmed
+    changed_to: 原值成立，不改
+  - id: R15
+    field: arch.vision.params
+    severity: imprecise
+    claim: vision 447,358,976，模型卡称 401M
+    finding: >-
+      vision_tower.* 求和 401,214,464、mm_projector.* 求和 46,144,512，合计与 breakdown 一致，
+      模型卡的 401M 对的正是前者。视觉规格（27 blocks、hidden 1024、wqkv [4608,1024]）也核过。
+      附带观察：清单里没有任何时间维权重，模型卡正文说能理解视频而规格表 Modality 只写
+      Text/Image —— 视频应当靠 merge_type sd2_tpool 的无参时间池化
+    resolution: confirmed
+    changed_to: 原值成立，不改
+  - id: R16
+    field: context.extension_method
+    severity: missing
+    claim: >-
+      context 只有 max: 1048576，没有外推方式
+    finding: >-
+      机制核实无误（MLA 层 assert use_nope、rotary_emb 置 None，q_rot/k_rot 原样拼接不旋转），
+      但推论没写出来：cfg.json 里没有 rope_theta、没有 rope_scaling、没有任何位置编码超参。
+      这意味着 1M 是训出来的，部署期**没有 YaRN / NTK 这类外推旋钮** —— 与 DeepSeek 系
+      靠 YaRN 扩上下文不是同一种工程形态
+    resolution: corrected
+    changed_to: >-
+      context 下补 extension_method（标 derived），infra_signals 补一条 axis: context
+
 notes: >-
   Kimi 家族的旗舰，model_type kimi_k3（语言主干 kimi_linear），原生多模态。本仓第一份 Kimi 记录，
   也是第一份「三样新结构叠在一起」的旗舰：KDA 线性注意力与 MLA 3:1 混合、AttnRes 残差、
   latent MoE。层数、层集合、宽度、专家分布、量化块与 FP32 分布对照完整权重清单核过；
   top_k、situ 的 β、routed_scaling_factor 这类运行期标量只有 config 一个来源。
   released 取 tracking.yaml 的 2026-09-02（= 仓的 lastModified）；仓的 createdAt 是
-  2026-06-13，但模型卡引用了「as of July 23, 2026」的评测，所以 createdAt 不是发布日
+  2026-06-13，但模型卡引用了「as of July 23, 2026」的评测，所以 createdAt 不是发布日。
+  注意 lastModified 只是**最后一次改动**，不是发布日：真实发布日落在 2026-07-23
+  （模型卡引用的评测截止日）与 2026-09-02 之间，无一手公告可钉
 
 open_questions:
   - >-
-    KV 与递归状态的落盘精度都未披露，两个分量都按 config dtype bfloat16 兜底。fla 的递归状态
-    通常以 FP32 保存（本仓 Qwen3.8 的 linear_state 就是 FP32），若 K3 亦然，每序列状态的
-    矩阵项翻倍 —— 没读 fla kernel，不填 state_dtype
+    KV 与递归状态的落盘精度都未披露，两个分量都按 config dtype bfloat16 兜底。
+    旁证偏向 FP32：KDA 的 A_log / dt_bias / o_norm / q,k,v_conv1d 在清单里全是 F32
+    （69 层 × 6 类 = 414 张），本仓 Qwen3.8 的 linear_state 也按 FP32 计（矩阵与 conv 两项都是）。
+    若 K3 亦然，每序列 226.41 → 452.81 MiB；只有矩阵状态 FP32 则 433.41 MiB。
+    没读 fla kernel，不填 state_dtype
   - >-
-    A_log 是 [128] 而注意力是 96 头，第一维的含义未核（b_proj、dt_bias、f_b_proj 都按 96 头）
-  - >-
-    激活参数实测 104.19B（带宽口径，含 lm_head）、105.36B（再含输入词表），厂商 104B。
-    带宽口径恰好取整到 104B，但厂商口径没写，不确定它扣没扣输入词表
+    激活参数实测 104.19B（带宽口径：含 lm_head、不含输入词表、**不含视觉塔 0.45B**）、
+    105.36B（再含输入词表，取整 105B，对不上厂商值）。厂商声明 104B，大概率也是带宽口径，
+    但没写，仍留疑。注意站点把 total_with_embed 标成「可比官方口径」，对这一行是反的
   - >-
     MLA 层的「rope」64 维不旋转（NoPE），它是否还需要和 latent 分开存、能否并进 latent
-    压缩，参考实现定不了，要看部署 kernel
+    压缩，参考实现定不了，要看部署 kernel。既然是 NoPE，这 64 维本质上只是一段不解压的
+    MQA 共享 key，理论上可并进 kv_b_proj 的吸收路径
   - >-
-    训练精度无一手声明（模型卡只说 SFT 起做 MXFP4 QAT），precision.training 不填
+    预训练数值格式无一手声明，precision.training 不填。模型卡的「quantization-aware training
+    from the SFT stage onward, MXFP4 weights with MXFP8 activations」说的是 SFT 之后的
+    量化感知训练，不能当成预训练精度
+  - >-
+    厂商声明的 MXFP8 激活在落盘里没有任何证据（quantization_config 的 input_activations
+    与 kv_cache_scheme 都是 null，清单里没有激活 scale 张量）。engine 侧是否真按 MXFP8 跑、
+    EP 载荷是否因此再减半，未核

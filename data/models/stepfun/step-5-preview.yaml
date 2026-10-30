@@ -46,18 +46,23 @@ params:
     router: 126908672.0
     norm: 810752.0
   counting_note: >-
-    按完整权重清单（index 引用的 26 个分片 + 2 个 index 外副本，按名去重 2704 条目）逐项统计。
+    按 index 的 weight_map 全量清单（26 个分片、2704 个条目，逐分片读头取全）逐项统计。
+    仓里另有 2 个 index 未引用的副本文件（vit.safetensors、model-mtp3-00001.safetensors），
+    其 677 个张量名全部已在 weight_map 里且逐条同形同 dtype，不贡献新条目。
     2704 是 safetensors 条目数，其中 255 条是 weight_scale_inv（FP32，路由专家 FP8 的
     per-block scale）—— 不计入参数、只计入权重存储；真权重张量 2449 条。无打包容器，numel 即参数数。
     total 是本仓按清单求和的**实测值**，含视觉塔与投影（1.98B）和 3 个 MTP 层（2.52B）。
     厂商声明值是模型卡原文「600B total parameters」「27B active parameters」：实测全量比 600B 高 0.50%，
     扣掉 MTP 层后 600.46B（+0.08%），口径没写。
-    **外部对账对不上**：HF 的 safetensors tally 是 604,339,504,832，比本仓多 1,366,577,536。
-    逐 dtype 看，F8_E4M3 逐位相同，差在 BF16（+1,366,556,672）与 F32（+20,864），scale 不在其中。
-    index 外那份 model-mtp3-00001（10 个张量，BF16 1,123,024,896、F32 24,576）若被 HF 重复计入，
-    能解释 BF16 差额的 82%，剩下 BF16 243,531,776 与 F32 −3,712 找不到对应的张量组。
-    本仓的 2704 条与 index 的 weight_map 逐名相同，所以按 index 口径本仓的数是对的；
-    HF 那边的口径没查清，见 open_questions
+    **外部对账的差额已查清，是口径差不是算错**：HF 的 safetensors tally 604,339,504,832 是
+    同样 26 个分片**逐文件相加、不跨文件去重**的参数元素数（逐 dtype 与 repoinfo.json 一致）；
+    本仓 602,972,927,296 是同一批文件**按 weight_map 去重**后的数，两侧都剔除了 weight_scale_inv。
+    差额 1,366,577,536 全部来自 **18 个跨文件重名张量**：model.embed_tokens.weight
+    （model-00001 ∥ model-00024，BF16 527,958,016）与 L92 整个 MTP 块的 17 个张量
+    （model-00024 ∥ model-mtp3-full-00001，BF16 838,598,656 + F32 20,864）。
+    两个 index 外副本不在 HF 的参数 tally 里，只进 usedStorage。
+    去重是唯一对的口径：按 index 加载的引擎只会 load 2704 个张量。
+    derive.py 的外部对账 MISMATCH 对本记录是已知良性的口径差
 
 context:
   max: 1048576
@@ -91,14 +96,22 @@ arch:
       主干 92 层里滑窗与全局 3:1：L3, L7, …, L91 共 23 层是全局层（config layer_types 的
       full_attention），其余 69 层是 sliding_window 512 的滑窗层。23 个全局层全部挂 DSA 稀疏索引器
       （sparse_config.apply_to_layer_types full_attention，清单上 sparse_indexer_* 恰在这 23 层）。
-      3 个 MTP 层（L92–L94）在 layer_types 里都是滑窗层
+      3 个 MTP 层（L92–L94）在 layer_types 里都是滑窗层。
+      作用域：滑窗与全局的投影形状完全相同（95 层一个签名，head_dim 两类都是 192），
+      类型划分只能从 config 的 layer_types 读；权重能独立确认的是「这 23 层挂了索引器」，
+      而 rope_theta 1e7 与 partial_rotary_factors 1/3 的下标集合与之逐一吻合，三者互证
     sparse:
       mechanism: >-
         DSA 式区域选择：索引器每 8 个 token（region_block_size）把 index K 压成一个 256 维摘要 ——
         按 index_z 在 token 轴上逐维 softmax 加权求均值（kernel.py 的 region summary），
         转成 FP8_E4M3 存入缓存（无 scale）；16 个 index 头分成 4 组（num_provider_groups，与 4 个 KV 组对齐），
         每组按摘要打分选 topk 512 个区域，再在选中区域上对全量 K/V 做注意力。只有凑满 8 个 token 的区域才写摘要，
-        尾部 token 留在每序列固定的 pending 缓冲里
+        尾部 token 留在每序列固定的 pending 缓冲里。
+        打分是**加权 ReLU、不是 softmax**：score[q,r] = Σ_h relu(q_qh · k_r) · w_qh，
+        逐头权重 w 由 sparse_indexer_w [16, 4096] 逐 token 产出（带符号，故结果不恒非负），
+        与 DeepSeek lightning indexer 是同一个函数；index_q / index_k 在打分 GEMM 之前
+        先 round 到 E4M3 激活（round_activations_e4m3），参考实现把这一步算作语义而非优化。
+        topk 512 选的是**区域**，即最多 512 × 8 = 4096 个 token
       index_n_heads: 16
       index_head_dim: 256
       index_kv_dim: 256
@@ -151,7 +164,9 @@ arch:
       堆叠存储：每层 moe.gate_proj / up_proj [352, 1536, 4096]、down_proj [352, 4096, 1536]，
       一个张量装一层全部 352 个专家，gate 与 up 分开不融合。名字里没有 experts，
       扩展 subsystems.py 之前这 264 个张量会被归成 dense_ffn。共享专家叫 share_expert（单数），
-      中间维 1536 与路由专家同宽
+      中间维 1536 与路由专家同宽。
+      352 取自 264 个堆叠张量的首维（穷举、0 例外），不取自 config.moe_num_experts ——
+      derive.py 的 config 侧对账因键名不同被 skip，这一项不在 Gate B 的覆盖内
 
   decoding:
     mtp_layers: 3
@@ -186,9 +201,10 @@ precision:
     local_window:
       dtype: BF16
     source: >-
-      读参考实现（二手于部署 kernel）：kernel.py 的 DSALayerCache 里 key / value 用调用方传入的 dtype、
-      summary 硬编码 torch.float8_e4m3fn；model.py 构造 Step5Cache 时传 torch.bfloat16；
-      滑窗层的 DenseLayerCache 同样用这个 dtype
+      读参考实现（二手于部署 kernel）：DSALayerCache / DenseLayerCache 的 key / value 用构造时
+      传入的 dtype，而参考实现里唯一的构造点 model.py 的 allocate_cache **无 dtype 形参、
+      写死 torch.bfloat16**（不是 generate.py 传入，参考实现内不可配置）；
+      区域摘要硬编码 torch.float8_e4m3fn（kernel.py，无 scale）
   quantization:
     method: fp8
     activation_scheme: dynamic
@@ -221,7 +237,12 @@ precision:
       expert 桶按元素数 96.6% 是 FP8，另 3.4% 是 L88–L90 的 BF16 专家 —— 假定「专家整体 FP8」的
       引擎会在这三层解错。FP32 真参数 2,413,120 个（各类 norm、router_bias、indexer 的
       sparse_indexer_w [16, 4096] 与 ssmax_s [64]），另有 34,467,840 个 FP32 scale 元素。
-      indexer 桶里 sparse_indexer_w 是 FP32，其余 q/k/z 是 BF16
+      indexer 桶里 sparse_indexer_w 是 FP32，其余 q/k/z 是 BF16 —— 但这**不是精度异常**：
+      sparse_indexer_w [16, 4096] 的 FP32 是声明时就指定的（nn.Linear dtype=float32），
+      计算前会 round 回激活 dtype，不要当成 FP32 算路；它是加权 ReLU 打分的逐头权重，
+      对应 DeepSeek 的 indexer.weights_proj。ssmax_s [64] 23 层逐字节相同、64 个值全等于
+      0.08495760 ≈ 1/ln(vocab)，是未训练的 SSMax 初值，参考实现不读它（索引打分用 ReLU、无 softmax），
+      shape 按 64 个 query 头 replicate 只为 checkpoint 兼容
 
 platforms:
   - engine: vLLM
@@ -252,7 +273,11 @@ bottlenecks:
       精度按参考实现（K/V 与滑窗 BF16、摘要 FP8_E4M3 无 scale）：
       35328 × 2 + 736 × 1 = 71392 B/token，滑窗 103.5 MiB/序列，1M 上下文约 69.8 GiB ——
       theoretical_floor 口径，不含 page_size 16 的分页粒度，精度是读实现得来的（judgement）。
-      摘要占 per-token 字节的 1.0%，主体是全局层的 K/V
+      摘要占 per-token 字节的 1.0%，主体是全局层的 K/V。
+      **以上是单份逻辑 KV 的下限。**厂商参考实现的生产布局是 TP=8 而 KV 组只有 4：
+      每个 rank 持 1 组、两个 rank 共用同一组，全局 K/V 与滑窗整机 **2×**；
+      区域摘要是单头 MQA、每个 rank 一整份，整机 **8×**。按该布局整机约 147,200 B/token、
+      1M 上下文约 137 GiB。复制不属于分页粒度，不被上面的 theoretical_floor 免责覆盖
     visibility: public
   - dimension: operator-gap
     finding: >-
@@ -334,6 +359,163 @@ evidence:
   notes: judgement
   open_questions: judgement
 
+reviewed:
+  date: '2026-10-30'
+  scope: [official, derived, judgement]
+  reviewer: 一个独立核查代理 + 本会话复算
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序，对判断类字段与全部 5 条 open_questions 逐条过。
+    本会话与代理**各自独立**用 HTTP range 读了全部 28 个 safetensors 文件头（rev 364b3b03）
+    重建两侧 tally，结论一致：HF 的数是 index 引用的 26 个文件逐文件相加、不跨文件去重，
+    本仓按 weight_map 去重，差额恰为 18 个跨文件重名张量，逐 dtype 闭合。
+    代理另外穷举了 shapes.json 全部 2704 条核层集合、条目宽度与专家堆叠首维，
+    并读了厂商随仓参考实现的 kernel.py / model.py（缓存构造、区域摘要、索引打分）。
+    本会话独立复核的是：差额的逐 dtype 分解与 18 个重名张量的清单、两个 index 外副本
+    不在 HF 参数 tally 内、以及 weight_map 与 shapes.json 的 2704 条逐名相同。
+    其余（TP=8 下的复制倍数、ssmax_s 的跨层逐字节比对、打分函数的 kernel 行号）
+    依据的是代理在参考实现上的枚举，未逐项重跑。
+    Gate B：参数总量 YAML 声明 = shapes 实测；外部对账仍报 MISMATCH，但根因已查清为口径差
+
+review:
+  - id: R1
+    field: params.counting_note
+    severity: wrong
+    claim: 「index 外那份 model-mtp3-00001 若被 HF 重复计入能解释 BF16 差额的 82%，剩下的找不到对应张量组」
+    finding: >-
+      差额已完全闭合，而原解释把对的量级配到了错的文件上。HF 的 604,339,504,832 是
+      index 引用的 26 个文件**逐文件相加、不跨文件去重**（逐 dtype 与 repoinfo.json 逐位相同）；
+      本仓 602,972,927,296 是同一批文件按 weight_map 去重。差额 1,366,577,536 恰等于
+      18 个跨文件重名张量：embed_tokens（model-00001 ∥ model-00024，BF16 527,958,016）
+      与 L92 整个 MTP 块 17 个张量（model-00024 ∥ model-mtp3-full-00001，
+      BF16 838,598,656 + F32 20,864）。两个 index 外副本**不在** HF 的参数 tally 里，
+      只进 usedStorage —— 它们的 677 个名字全部已在 weight_map 中
+    resolution: corrected
+    changed_to: counting_note 的「外部对账对不上」整段改写为已查清的口径差；对应 open_question 删除
+  - id: R2
+    field: params.total
+    severity: imprecise
+    claim: 按 index 的 weight_map 去重得 602,972,927,296
+    finding: >-
+      去重是对的，且是唯一对的口径：weight_map 恰 2704 条、shapes.json 恰 2704 条且名字集合
+      set-equal；18 个重名张量的两份副本 shape 与 dtype 完全相同；按 index 加载的引擎只会
+      load 2704 个张量，HF 的 604.34B 不是任何可加载模型的参数量。
+      去重后的字节数与 derive 的 weight_bytes_total 逐位相同
+    resolution: confirmed
+    changed_to: 原值成立，不改数（basis 措辞见 R3）
+  - id: R3
+    field: params.counting_note
+    severity: imprecise
+    claim: basis 写作「index 引用的 26 个分片 + 2 个 index 外副本，按名去重 2704 条目」
+    finding: >-
+      把两个 index 外副本写进 basis 会让人以为它们贡献了覆盖面。实测它们的 677 个名字
+      全部已在 weight_map 里且逐条同形同 dtype，新增名字数为 0；2704 完全由 26 个 index
+      文件去重得出。口径名字写错，下一个人复算时会去读 28 个文件、得到一个不同的数
+    resolution: corrected
+    changed_to: basis 改为「按 index 的 weight_map（26 个分片、2704 条目）」，副本另起一句说明不贡献条目
+  - id: R4
+    field: precision.kv_cache_components.source
+    severity: imprecise
+    claim: 「key / value 用调用方传入的 dtype」
+    finding: >-
+      落点属实且比记录说的更硬：DSALayerCache 与 DenseLayerCache 的 key/value 确实用构造时
+      传入的 dtype，但参考实现里唯一的构造点 allocate_cache **没有 dtype 形参、写死
+      torch.bfloat16**。「调用方」这个措辞暗示了实际不存在的可配置性
+    resolution: corrected
+    changed_to: source 收紧为「参考实现内不可配置，BF16 写死在 allocate_cache」
+  - id: R5
+    field: open_questions
+    severity: wrong
+    claim: 「K/V 按 Step5Cache 传入的 dtype（generate.py 传 torch.bfloat16）」
+    finding: >-
+      来源归错了文件：generate.py 里没有任何 cache dtype，也不调用 allocate_cache。
+      BF16 写死在 model.py 的 allocate_cache 里。结论不变，但这是「来源写错 → 下一轮
+      复核去错地方 → 以为查不到」的起点，正是 skill 规则 9 要防的那类
+    resolution: corrected
+    changed_to: 改写来源为 model.py 的 allocate_cache；其余保持 keep-open
+  - id: R6
+    field: open_questions
+    severity: wrong
+    claim: 「ssmax_s 按 64 个 query 头 —— SSMax 作用在主注意力还是索引打分上，未细读」
+    finding: >-
+      两半都能定下来，而且第二半问错了：(a) sparse_indexer_w 不是精度异常，是索引打分
+      （加权 ReLU）的逐头权重，FP32 是声明时指定、计算前 round 回激活 dtype；
+      (b) ssmax_s 的 23 份副本**逐字节相同**，且每份内 64 个值全等于 0.08495760 ≈ 1/ln(vocab)，
+      是未训练的 SSMax 初值，参考实现根本不读它（索引打分用 ReLU、无 softmax），
+      主注意力用的是 head_dim**-0.5。依据是「跨层与跨头恒定」这个事实（skill 规则 3），
+      不是注释
+    resolution: corrected
+    changed_to: 删掉该 open_question，内容搬进 mechanism（打分函数）与 subsystem_method（两个张量各自的定性）
+  - id: R7
+    field: arch.attention.sparse.mechanism
+    severity: imprecise
+    claim: 已写的区域摘要机制（8 token 一摘要、逐维 softmax 加权均值、FP8 无 scale、topk 512）
+    finding: >-
+      已写的每一句都逐条核过、全部成立（含 kernel 自己 docstring 强调的「逐元素加权均值、
+      不是整条 key 向量的凸组合」）。缺的是两件算子相关的：打分函数本身（加权 ReLU，
+      不是 softmax），以及打分 GEMM 前强制的 E4M3 激活 round
+    resolution: corrected
+    changed_to: mechanism 末尾补打分函数、E4M3 round、以及「topk 512 选的是区域 = 最多 4096 个 token」
+  - id: R8
+    field: bottlenecks
+    severity: missing
+    claim: quantified 的免责只写了「不含 page_size 16 的分页粒度」
+    finding: >-
+      数本身逐因子都对（见 R9），但厂商参考实现自己的并行布局会把它翻倍以上，
+      而现有免责点名的只有分页粒度，按 skill 规则 8 盖不住这件：生产布局 TP=8 而
+      num_attention_groups=4，每 rank 持 1 组、两个 rank 共用同一组 → 全局 K/V 与滑窗整机 2×；
+      区域摘要是单头 MQA、每 rank 一整份 → 整机 8×。按该布局整机约 147,200 B/token、
+      1M 约 137 GiB
+    resolution: corrected
+    changed_to: quantified 保留下限数与 theoretical_floor 标签，追加复制倍数一段并写明它不被该免责覆盖
+  - id: R9
+    field: arch.attention.kv_sharing.measured_per_token
+    severity: imprecise
+    claim: global_kv 35328 + indexer 736 元素/token，滑窗每序列固定
+    finding: >-
+      三个乘式的每一个因子都独立找了来源，全部成立：全局 K/V 条目宽 4 组 × 192 × 2 = 1536、
+      层覆盖 23 层（Step5Cache 只在 is_sparse_layer 建 DSALayerCache，与权重里
+      sparse_indexer_* 的层集合穷举一致）；摘要宽 256、**单头**（indexer_logits 对
+      index_k.shape[1] != 1 直接报错）、8 token 一条 → 32 元素/token/层 × 23 = 736；
+      滑窗按每序列固定计
+    resolution: confirmed
+    changed_to: 原值全部成立，不改
+  - id: R10
+    field: arch.moe.storage_note
+    severity: imprecise
+    claim: 堆叠存储、352 个专家
+    finding: >-
+      352 取自权重而非 config，且是穷举不是抽样：88 个 MoE 层 × gate/up/down = 264 个三维张量，
+      每一个的首维都是 352，0 例外。顺带：derive.py 的「路由专家数」交叉核对报
+      skip（它找 n_routed_experts，这份 config 用 moe_num_experts），所以这一项不在
+      Gate B 的覆盖内
+    resolution: confirmed
+    changed_to: 数值不改，storage_note 补「352 取自 264 个堆叠张量首维（穷举 0 例外）、Gate B 不含这一项」
+  - id: R11
+    field: arch.attention.layer_pattern
+    severity: imprecise
+    claim: 滑窗与全局 3:1，全局层是 L3/L7/…/L91 共 23 层
+    finding: >-
+      层号与层数都对，且有三条互相独立的 config 证据加一条权重证据：layer_types 的
+      full_attention 恰在 [3,7,…,91]；rope_theta 里 1e7 的下标集合与之逐一相同；
+      partial_rotary_factors 里 1/3 的下标集合也逐一相同；权重侧 sparse_indexer_* 恰在这 23 层。
+      缺的是作用域：滑窗与全局的投影形状完全相同，类型划分本身不是权重可观测的
+    resolution: confirmed
+    changed_to: 层集合不改，layer_pattern 末尾补作用域说明（权重只能证「这 23 层挂了索引器」）
+  - id: R12
+    field: arch.attention.kv_sharing.measured_per_token
+    severity: miscategorized
+    claim: 分量键沿用 global_kv / indexer
+    finding: >-
+      这套键在跨族系名册上被渲染成对本模型两处都不成立的标签：kv_table.py 的
+      COMPONENT_LABEL 把 global_kv → 「全局压缩 KV」、indexer → 「index K」，
+      于是 docs/kv-cache-accounting.md 打出「全局压缩 KV + index K + 滑窗局部 KV」。
+      实际上 Step-5 的全局分量是**未压缩**的 GQA K/V，索引分量是 8 token 一个**区域摘要** ——
+      正是本记录 bottlenecks 自己警告过的那种误读
+    resolution: open
+    changed_to: >-
+      新增一条 open_question 说明分量名不可引用（数值可以）。修法在 kv_table.py 或 derive.py
+      的键集合，属仓库级改动，不在本记录内处理
+
 notes: >-
   阶跃星辰家族的旗舰（Preview），model_type step5_vl。本仓第一份 StepFun 记录。
   层数、层集合、宽度、专家堆叠形状、量化覆盖与 FP32 分布对照完整权重清单核过；
@@ -343,19 +525,18 @@ notes: >-
 
 open_questions:
   - >-
-    HF 的 safetensors tally（604,339,504,832）比按 index 去重的清单多 1,366,577,536：
-    F8_E4M3 逐位相同，BF16 +1,366,556,672、F32 +20,864。index 外的 model-mtp3-00001 能解释
-    BF16 1,123,024,896 与 F32 24,576，剩余 BF16 243,531,776 / F32 −3,712 对不上任何张量组。
-    derive.py 的外部参数量对账因此报 MISMATCH；本仓的 2704 条与 weight_map 逐名相同，
-    差额在 HF 侧的统计口径（可能读的是更早的修订或别的文件集），未查清
-  - >-
-    缓存精度取自参考实现：K/V 按 Step5Cache 传入的 dtype（generate.py 传 torch.bfloat16）、
-    摘要硬编码 float8_e4m3fn。vLLM / SGLang 的部署实现可能另用 FP8 KV，未读
+    缓存精度取自厂商参考实现：K/V 与滑窗的 torch.bfloat16 写死在 model.py 的 allocate_cache
+    （参考实现内不可配置），区域摘要硬编码 float8_e4m3fn（无 scale）。
+    vLLM / SGLang 的部署实现可能另用 FP8 KV，未读
   - >-
     厂商「27B active」：本仓带宽口径 26.58B、可比官方口径 27.11B（再含输入词表），后者与 27B 相符，
     但厂商口径没写
   - >-
-    sparse_indexer_w [16, 4096] 是 FP32 而同组 q/k/z 是 BF16，ssmax_s [64] 在参考实现里是 buffer
-    （按 64 个 query 头，不是 16 个 index 头）—— SSMax 作用在主注意力还是索引打分上，未细读
-  - >-
     训练精度无一手声明，precision.training 不填
+  - >-
+    本记录沿用 deepseek-v41-flash 的分量键 global_kv / indexer（derive.py 的 measured_per_token
+    分支只认这三个键），而 kv_table.py 的 COMPONENT_LABEL 把它们渲染成「全局压缩 KV」「index K」——
+    两者对 Step-5 都不成立：全局分量是**未压缩**的 GQA K/V，索引分量是 8 token 一个**区域摘要**。
+    于是 docs/kv-cache-accounting.md 的跨族系名册打出的正是本记录 bottlenecks 警告过的那种误读。
+    需要改 COMPONENT_LABEL（global_kv 改中性「全局 KV」）或给 derive.py 加键（如 region_summary）；
+    在那之前，跨族系名册这一行的**分量名**不可引用（数值可以）
