@@ -368,7 +368,7 @@ const dtype = (v: unknown) => (typeof v === 'string' ? v.toUpperCase() : undefin
  * **页面一律走这个函数（或 <Cell>），不要直接调 f.get()。**
  * 直接调的话缺值就又变回一个什么都不说的 `—`，而那个符号同时背着三种含义：
  * 没查 / 不适用 / 查了但没有。第三态是信息，前两态是缺口 ——
- * 45 份记录的 KV 精度空着，真相是「厂商没公布」，那是一条结论。
+ * 46 份记录的 KV 精度空着，真相是「厂商没公布」，那是一条结论。
  */
 export function cell(f: TrackedField, m: Model): string | number | Absent {
   const v = f.get(m);
@@ -385,7 +385,7 @@ export function hasValue(f: TrackedField, m: Model): boolean {
 /**
  * 这一行要不要出现在对照表里。
  *
- * 光看「有没有值」会把一条结论整行藏掉：45 份记录的 `precision.kv_cache` 是空的，
+ * 光看「有没有值」会把一条结论整行藏掉：46 份记录的 `precision.kv_cache` 是空的，
  * 而那个空不是「没查」—— 是**厂商没公布，所以字节那一列只能按权重 dtype 兜底**。
  * 按有没有值判，这一行在没有任何一版填过的家族页上整行消失，连带把那条结论也消失了。
  * 藏起来比渲染成 `—` 还糟：`—` 至少还在那儿。
@@ -423,16 +423,16 @@ export function measuredScope(key: string, m: Model): string | undefined {
  * 「没 derive」归到「未公布」而不是单列一类，是因为这一格说的是**厂商公布了什么**，
  * 而不是本仓算到了哪一步 —— 调研进度由字节那一列的 basis 和 derive 状态承担。
  *
- * 当前 47 份里 45 份走「未公布」、0 份走「不适用」：五个家族逐份查过模型卡与技术报告，
+ * 当前 48 份里 46 份走「未公布」、0 份走「不适用」：五个家族逐份查过模型卡与技术报告，
  * DeepSeek 之外没有任何厂商公布过 KV 落盘精度。「不适用」这一支现在是空的，
- * 留着是因为判据得先立住 —— 真出现一份不建 KV 的记录时，它不能和那 45 份共用一个符号。
+ * 留着是因为判据得先立住 —— 真出现一份不建 KV 的记录时，它不能和那 46 份共用一个符号。
  */
 export function kvCachePrecision(m: Model): { text: string; declared: boolean } {
   const v = dtype(m.precision?.kv_cache);
   if (v) return { text: v, declared: true };
   // 判据不写第二份：走 data/schema/columns.json 的 kv_dtype 规则，
   // Python 侧的闸口读的是同一份。回归用例钉住了两边判出来一样
-  // （45 份「未公布」、0 份「不适用」），分叉会被拦住
+  // （46 份「未公布」、0 份「不适用」），分叉会被拦住
   return { text: absence('kv_dtype', m, m.derived).label, declared: false };
 }
 

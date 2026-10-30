@@ -1,7 +1,7 @@
 {
  "id": "minimax-m2",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T05:40:31+00:00",
+ "generated_at": "2026-10-30T12:08:53+00:00",
  "inputs": {
   "facts_dir": "facts/minimax-m2",
   "config_present": true,
@@ -15,6 +15,15 @@
   "tensor_count": 96103,
   "params_total": 228689764864.0,
   "params_by_subsystem": {
+   "expert": 224680476672.0,
+   "router": 48774656.0,
+   "norm": 828416.0,
+   "attention": 2730491904.0,
+   "embed": 614596608.0,
+   "lm_head": 614596608.0
+  },
+  "params_total_container": 228689764864.0,
+  "params_container_by_subsystem": {
    "expert": 224680476672.0,
    "router": 48774656.0,
    "norm": 828416.0,

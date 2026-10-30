@@ -338,14 +338,25 @@ const rv = reviewStatus(m);
           <Facts
             evidence={ev}
             rows={[
-              { label: '残差流', value: m.arch?.residual ? `${m.arch.residual.type} ×${m.arch.residual.multiplier}` : undefined, path: 'arch.residual' },
+              { label: '残差流', value: m.arch?.residual
+                  // multiplier 同样是选填的（MiniMax 的固定系数残差、Kimi-K3 的 AttnRes
+                  // 都只有 type），无条件拼会印出字面量 undefined
+                  ? [m.arch.residual.type, m.arch.residual.multiplier]
+                      .filter((x) => x !== undefined && x !== null).join(' ×')
+                  : undefined, path: 'arch.residual' },
               { label: '外置查表', value: ret.mechanism, path: 'arch.retrieval.mechanism' },
               { label: '表所在层', value: ret.layers, path: 'arch.retrieval.layers', mono: true },
               { label: '表行数', value: ret.table_rows?.map(fmtCount), path: 'arch.retrieval.table_rows', mono: true },
               { label: '每 token 查表', value: ret.lookup_bytes_per_token ? fmtBytes(ret.lookup_bytes_per_token) : undefined, path: 'arch.retrieval.lookup_bytes_per_token', mono: true },
               { label: '表放置', value: ret.placement, path: 'arch.retrieval.placement' },
               { label: 'MTP 层', value: m.arch?.decoding?.mtp_layers, path: 'arch.decoding', mono: true },
-              { label: '投机解码', value: m.arch?.decoding?.speculative ? `${m.arch.decoding.speculative.method} ×${m.arch.decoding.speculative.num_tokens}` : undefined, path: 'arch.decoding' },
+              { label: '投机解码', value: m.arch?.decoding?.speculative
+                  // num_tokens 是选填的：MiniMax-M3.1-Flash 的 DSpark 只发了草稿头、
+                  // 没有公布每步草稿 token 数。无条件拼 `×${…}` 会在页面上印出
+                  // 字面量 undefined —— 数据对、构建过，读者看到的仍然是错的
+                  ? [m.arch.decoding.speculative.method, m.arch.decoding.speculative.num_tokens]
+                      .filter((x) => x !== undefined && x !== null).join(' ×')
+                  : undefined, path: 'arch.decoding' },
             ]}
           />
           {m.arch?.residual?.note && <p class="small muted"><Prose text={m.arch.residual.note} /></p>}

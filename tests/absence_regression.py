@@ -6,7 +6,7 @@
 所以这里把三次误读各写成一对用例：
 
   负例  把那次误读的条件重新造出来，断言闸口报错
-  正例  拿真实的 47 份记录，断言闸口不报，而且判出来的结果正是当时被读错的那个真相
+  正例  拿真实的 48 份记录，断言闸口不报，而且判出来的结果正是当时被读错的那个真相
 
 用法:
   .venv/bin/python tests/absence_regression.py          # 全部跑，失败非零退出
@@ -132,7 +132,7 @@ def _():
 # ============================================================ 误读二：三态
 #
 # `—` 一个符号背着三种含义：没查 / 不适用 / 查了但没有。
-# 45 份记录的 precision.kv_cache 是空的，真相是「厂商没公布，字节按权重 dtype
+# 46 份记录的 precision.kv_cache 是空的，真相是「厂商没公布，字节按权重 dtype
 # 兜底」—— 那是一条结论，不是缺口。而页面上它和「还没查」长得一样。
 
 @case("二·负例：一列没有 absent 声明 -> 报错")
@@ -176,10 +176,10 @@ def _():
     assert not errors, f"契约检查报错：{errors}"
 
 
-@case("二·正例：45 份空着的 KV 精度判成「查了但没有」，不是「未录」")
+@case("二·正例：46 份空着的 KV 精度判成「查了但没有」，不是「未录」")
 def _():
     blank = [i for i, d in RECS.items() if not ((d.get("precision") or {}).get("kv_cache"))]
-    assert len(blank) == 45, f"空着的应当是 45 份，实际 {len(blank)}"
+    assert len(blank) == 46, f"空着的应当是 46 份，实际 {len(blank)}"
     for mid in blank:
         a = columns.absence("kv_dtype", RECS[mid], derived(mid))
         assert a["state"] == "confirmed_absent", \
@@ -191,15 +191,15 @@ def _():
 @case("二·正例：契约判出来的和站点侧手写的 kvCachePrecision 一致")
 def _():
     # 站点侧 data.ts 的 kvCachePrecision 是手写的、只管 KV 这一行，注释里写着
-    # 「当前 47 份里 45 份走『未公布』、0 份走『不适用』」。契约要能复现同一个结论 ——
+    # 「当前 48 份里 46 份走『未公布』、0 份走『不适用』」。契约要能复现同一个结论 ——
     # 复现不了就说明两边在说不同的话，而这条线存在的理由就是消灭这种口径不一致。
     seen = collections.Counter()
     for mid, d in RECS.items():
         if (d.get("precision") or {}).get("kv_cache"):
             continue
         seen[columns.absence("kv_dtype", d, derived(mid))["label"]] += 1
-    assert seen == collections.Counter({"未公布": 45}), \
-        f"契约判出来是 {dict(seen)}，站点侧手写的结论是 45 份「未公布」、0 份「不适用」"
+    assert seen == collections.Counter({"未公布": 46}), \
+        f"契约判出来是 {dict(seen)}，站点侧手写的结论是 46 份「未公布」、0 份「不适用」"
 
 
 @case("二·正例：三态都真的用得上 —— 没有一态是摆设")

@@ -76,6 +76,7 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
     bytes_comp = {}
     unknown_dtypes = set()
     packing_applied = {}
+    params_container = {}
     dtype_containers = {}
     packing_suspect = set()
     expert_ids, layer_ids, moe_layers = set(), set(), set()
@@ -125,6 +126,10 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
                 # 参数量会少算整数倍，必须提示而不是默默算小。
                 packing_suspect.add(sub)
             params[sub] = params.get(sub, 0.0) + n * f
+            # 容器口径：numel 原样累计，不乘打包因子。它与本仓的 packing_factor
+            # 无关，所以能在 HF 的 tally 不还原打包时用作对账的另一侧 ——
+            # 但也正因为无关，它**对打包因子本身没有任何约束力**（见 reconcile）
+            params_container[sub] = params_container.get(sub, 0.0) + n
 
         m = _EXPERT_IDX.search(name)
         if m:
@@ -170,6 +175,8 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
         "tensor_count": len(shapes),
         "params_total": sum(params.values()),
         "params_by_subsystem": params,
+        "params_total_container": sum(params_container.values()),
+        "params_container_by_subsystem": params_container,
         "scale_elements": scale_elems,
         "weight_bytes_total": sum(nbytes.values()),
         "weight_bytes_by_subsystem": nbytes,
@@ -812,6 +819,19 @@ def reconcile(cfg_t: dict, shp: dict, declared: dict, external: dict = None,
     它是唯一一条不依赖本仓任何代码的参数量来源 —— 本仓的归类、打包还原和排
     scale 全都错过，而这个 tally 不会跟着错。scale 判据漏了一整代后缀那次
     （params 偏高 0.006%），Gate B 的 2% 容差吞掉了差异，只有它能接住。
+
+    **这道闸锚在哪一侧、因此守不住什么**（skill 规则 11）：各仓的 tally 口径不统一，
+    所以本仓侧要按几种口径各算一遍再比。口径之间的强弱差很大：
+
+      逐位相同 / 含 scale  —— 最强。本仓的归类、打包还原、排 scale 全都被约束住
+      容器数（±excludes） —— 弱。容器数是原始 numel，与本仓的 packing_factor 无关，
+                             于是**打包因子乘几都能对上**：MiniMax-M3.1-Flash 的专家
+                             按 2 倍（真值）、4 倍、8 倍还原，这一项都报 ok。
+                             扣 excludes 的那一档同理，不约束 excludes 列对不对
+
+    落到容器数那两档时，`why` 里会带上这句话，不要把「闸绿了」读成打包也查过了 ——
+    那一侧的依据只能由记录自己给（M3.1-Flash 给了三条：hidden_size 6144、
+    M3 未打包时的同名张量形状、scale 列数 × 16 = 逻辑列数）。
     """
     out = []
 
@@ -876,16 +896,47 @@ def reconcile(cfg_t: dict, shp: dict, declared: dict, external: dict = None,
             if tally:
                 mine = shp["params_total"]
                 scale = shp.get("scale_elements") or 0.0
-                if abs(tally - mine) < 1:
-                    out.append({"item": "外部参数量对账", "status": "ok",
-                                "why": f"与 HF 的 safetensors tally 逐位相同（{tally:,.0f}）"})
-                elif scale and abs(tally - (mine + scale)) < 1:
-                    # 同样是 fp8 发布，有的仓的 tally 含 scale、有的不含
-                    # （ds-v3 不含、ds-v3.2-exp 含）。两种都对得上才算核过
-                    out.append({"item": "外部参数量对账", "status": "ok",
-                                "why": f"与 HF 的 safetensors tally 相同（{tally:,.0f}），"
-                                       f"但那边把 {scale:,.0f} 个 scale 元素算进了参数量；"
-                                       "本仓排 scale，差值恰等于 scale 总数"})
+                # HF 的 tally 在三个口径上各有两种可能，且各仓不一样：
+                #   含不含 scale        ds-v3 不含、ds-v3.2-exp 含
+                #   还不还原低位打包     V4 一代的 FP4-in-INT8 还原了、
+                #                       MiniMax-M3.1-Flash 的 NVFP4-in-U8 没有
+                #   统计哪些分片         通常是全部，但草稿侧若放在**自带索引的子目录**
+                #                       （M3.1-Flash 的 dspark/）就不在 tally 里
+                # 所以这里把本仓侧按这几种口径各算一遍，命中哪种就报哪种。
+                # **这不是放宽判据**：每一种都是逐位比、不给容差，而且必须说得出
+                # 它是哪种口径；全都对不上才是 MISMATCH。
+                by_sub = shp.get("params_by_subsystem") or {}
+                cont_sub = shp.get("params_container_by_subsystem") or {}
+                container = shp.get("params_total_container")
+                excl_names = declared.get("excludes") or []
+                excl_cont = sum(cont_sub.get(k, 0.0) for k in excl_names)
+                excl_txt = "+".join(excl_names)
+                # 容器口径命中时，这道闸就不再约束打包因子了 —— 容器数是原始 numel，
+                # 乘几都一样。必须随结论一起说出来，否则「闸绿了」会被当成打包也查过
+                WEAK = ("。注意：这一档的对账不约束打包因子 —— 容器数是原始 numel，"
+                        "本仓把它还原成几倍都能对上；打包因子的依据要在记录里自己给")
+                # 口径 1（逐位相同）与口径 2（含 scale）保持原有措辞，
+                # 这样既有记录重跑 derive 的产物逐字节不变，diff 里只会出现真正的变化
+                cands = [(mine, None)]
+                if scale:
+                    cands.append((mine + scale,
+                                  f"相同，但那边把 {scale:,.0f} 个 scale 元素算进了参数量；"
+                                  "本仓排 scale，差值恰等于 scale 总数"))
+                if container is not None and abs(container - mine) >= 1:
+                    cands.append((container,
+                                  "相同，但那是容器数 —— 那边没有还原低位打包，本仓还原了；"
+                                  "两边的 scale 口径一致" + WEAK))
+                    if excl_names:
+                        cands.append((container - excl_cont,
+                                      f"相同，但那是容器数、且不含 {excl_txt} —— "
+                                      f"那边既没还原低位打包，也没统计 {excl_txt}"
+                                      "（它在自带索引的子目录里，不在主索引的分片中）" + WEAK))
+                hit = next((c for c in cands if abs(tally - c[0]) < 1), None)
+                if hit:
+                    why = (f"与 HF 的 safetensors tally 逐位相同（{tally:,.0f}）"
+                           if hit[1] is None else
+                           f"与 HF 的 safetensors tally（{tally:,.0f}）{hit[1]}")
+                    out.append({"item": "外部参数量对账", "status": "ok", "why": why})
                 else:
                     # scale 为 0 时不提「加 scale」那个备选 —— 它等于本仓参数量本身，
                     # 印出来是同一个数两遍。而 scale 恰好为 0 本身就是个线索：
