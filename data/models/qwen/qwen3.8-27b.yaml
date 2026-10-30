@@ -22,35 +22,38 @@ hf:
 
 lineage:
   track: side
-  predecessor: qwen3.8-2.4t-a95b
+  predecessor: qwen3.5-27b
+  # 本轮（P1 通义千问历史回溯）把 predecessor 从同代旗舰改成同档位的前代 ——
+  # 稠密 FFN 这一支与 MoE 旗舰那一支是两条链，按时间或按旗舰串会把两条混成一条假链
+  # （见 R12）。与旗舰的差异（dense vs MoE、视觉前端、mRoPE）仍是本档的收录理由，
+  # 已改写进 notes。
   changed_from_predecessor:
-    - axis: moe
+    - axis: precision
       text: >-
-        FFN 由 MoE 换成 dense：主干 64 层与草稿块都是 gate_proj / up_proj / down_proj 三个独立
-        2 维投影（中间维 17408）。旗舰独有的 14 个张量名族 —— 堆叠的 experts.gate_up_proj
-        [512, 4096, 8192] 与 experts.down_proj、router mlp.gate、shared_expert.* 与
-        shared_expert_gate（主干与草稿块各一套）—— 这里一个都没有
+        **这是本档相对前代唯一的权重侧变化**：48 层的 linear_attn.A_log [48]
+        与 linear_attn.norm.weight [128] 由 **F32 回到 BF16**（共 96 个张量、
+        8448 个元素），dt_bias 两代都是 BF16。
+        前代 qwen3.5-27b 的清单是 1103 条 BF16 + 96 条 F32，本档 1199 条全是 BF16；
+        **张量名、形状与条目数逐条相同**，参数量也逐位相同（27,781,427,952）。
+        这一步发生在中间的 **Qwen3.6-27B**：它与本档的 1199 条清单逐条
+        shape + dtype 全同、config 只差 transformers_version，
+        所以 Qwen3.6-27B 不单独立记录
       benefit: >-
-        差的是机制不是规格：dense GEMM 对三维堆叠 grouped GEMM + router + 共享专家，
-        算子集合不同，不是同一套算子换形状。这是收录这一档的主要理由，也是它和本仓删掉的
-        五份 DeepSeek 刷新（config 逐字段相同、张量名集合相同）不是一类的原因
-    - axis: modality
+        线性注意力的递归核不再是混合精度（前代是 F32 衰减参数 + F32 输出 norm
+        配 BF16 激活）。**只有 dtype 看得见** —— 按前代写的核在本档上会读错，
+        反之亦然。权重存储也差 16,896 B（8448 个元素各少 2 字节），
+        两档的 GiB 数在两位小数上相同（51.75 GiB）
+    - axis: training
       text: >-
-        多一整条视觉前端：visual.* 共 21 个张量名族 —— 27 个 ViT 块（qkv / proj / 两层非门控 MLP /
-        两个带 bias 的 norm）、patch_embed（[1152, 3, 2, 16, 16]，3D 卷积）、pos_embed 与 merger，合计 460,730,096 参数。
-        merger 把 2×2 个 patch 拼成 4608（= 1152 × 4）再投到主干 hidden 5120
+        config 侧的差异全部是「把已有的东西显式声明出来」：新增
+        output_gate_type: swish（门本来就在 q_proj 的后一半里）、
+        partial_rotary_factor 提到 text_config 顶层、bos_token_id / pad_token_id /
+        tie_word_embeddings 补齐、language_model_only: false，
+        去掉 mlp_only_layers: []。**没有一项改变结构**
       benefit: >-
-        旗舰是纯文本，视觉塔的算子（带 bias 的 LayerNorm、GELU、3D patch 卷积、patch merge）
-        在这一档才出现
-    - axis: attention
-      text: >-
-        位置编码换成 interleaved mRoPE（mrope_section [11, 11, 10]，旗舰是普通 RoPE）。
-        注意力与线性注意力的张量名族与旗舰完全相同（归一前缀后两档共有 32 族），只换形状：
-        full 层 24 头（旗舰 64），线性层 value 头 48（旗舰 128），key:value 头数比 1:3 对 1:8
-      benefit: >-
-        注意力侧除 mRoPE 外不带来新算子。它在缓存账上的用处是给了第二个 key:value 比：
-        「conv1d 通道数 = in_proj_qkv 输出维」在 1:8 与 1:3 两档同时成立，才能当规律用（R1）
-
+        能力变化来自训练与后训练，算子侧零工作量 —— 已经支持前代的平台，
+        支持本档不需要任何算子改动。和 README 里 DeepSeek R1 对 V3 那条同类。
+        跟踪时先比张量名集合与逐条 shape/dtype，相同就不必重走算子评估
 params:
   total: 27.0e+9
   excludes: [vision, draft]
@@ -242,9 +245,25 @@ evidence:
   open_questions: judgement
 
 notes: >-
-  较小档位，不是家族旗舰（旗舰见 qwen3.8-2.4t-a95b）。收录理由是与旗舰的可核差异，
-  逐条见 lineage.changed_from_predecessor：差的是机制不是规格 —— dense FFN 对堆叠 grouped GEMM
-  + router + 共享专家、整条视觉前端、mRoPE。注意力与线性注意力一侧与旗舰同名同构，只换形状。
+  稠密 FFN 支线的最新一档（旗舰见 qwen3.8-2.4t-a95b），`track: side`。
+  **predecessor 是同档位的前代 qwen3.5-27b，不是同代旗舰** —— 两条支线各自接通，
+  按旗舰串会把稠密与 MoE 混成一条假链（见 R12）。
+  相对前代只有一处权重变化（A_log 与 linear_attn.norm 由 F32 回到 BF16，
+  发生在中间的 Qwen3.6-27B），结构字段与前代完全一致。
+  **与同代旗舰的差异仍是本档的收录理由**，三条都在本仓核过：
+  (1) FFN 由 MoE 换成 dense —— 主干 64 层与草稿块都是 gate_proj / up_proj / down_proj
+  三个独立 2 维投影（中间维 17408），旗舰独有的 14 个张量名族（堆叠的
+  experts.gate_up_proj [512, 4096, 8192] 与 experts.down_proj、router mlp.gate、
+  shared_expert.* 与 shared_expert_gate，主干与草稿块各一套）这里一个都没有；
+  差的是机制不是规格，dense GEMM 对三维堆叠 grouped GEMM + router + 共享专家，
+  算子集合不同。
+  (2) 多一整条视觉前端（visual.* 21 个张量名族、460,730,096 参数），
+  旗舰是纯文本 —— 带 bias 的 LayerNorm、GELU、3D patch 卷积、patch merge
+  这四类算子只在这一档出现。
+  (3) 注意力与线性注意力的张量名族与旗舰完全相同（归一前缀后两档共有 32 族），
+  只换形状：full 层 24 头对 64、线性层 value 头 48 对 128，key:value 头数比
+  1:3 对 1:8 —— 它在缓存账上的用处是给了第二个比值，
+  「conv 通道数 = q + k + v 三段之和」在 1:8 与 1:3 两档同时成立才能当规律用（R1）。
   本记录最初是 P0-D 的 schema 普适性测试用例：与 V4.1 在三个轴上都不同
   （dense FFN、混合线性注意力、视觉融合路径）。
 
@@ -394,3 +413,25 @@ review:
     finding: 本仓只录了 Qwen3.8 的两档，其余档位没有核过
     resolution: corrected
     changed_to: 删掉这句，notes 只说本档与旗舰的关系
+  - id: R12
+    field: lineage.predecessor
+    severity: wrong
+    claim: predecessor 是 qwen3.8-2.4t-a95b（同代旗舰），changed_from_predecessor 三条都在和旗舰比
+    finding: >-
+      P1 的历史回溯把稠密支线补齐之后，本档的前代是 **qwen3.5-27b**
+      （2026-02-24，同档位、同结构）。指向旗舰有两处问题：
+      (1) **把两条支线串成了一条假链** —— 稠密 FFN 与 MoE 旗舰是两条独立演进线，
+      README 的「和 lineage.predecessor 比，不和时间上的前一个比」正是为这件事写的；
+      (2) 三条 changed_from_predecessor 描述的是「本档与旗舰的档位差异」，
+      而站点的「逐维度演进」块读这个字段，于是稠密支线的演进在族谱页上
+      显示成「相对旗舰少了 MoE、多了视觉塔」——读不出这一支自己走过什么。
+      相对真正的前代，本档的权重侧**只有一处变化**：48 层的 A_log 与
+      linear_attn.norm 由 F32 回到 BF16（96 个张量、8448 个元素），
+      其余 1199 条逐条 shape 相同、参数量逐位相同；config 侧的差异全是
+      把已有结构显式声明出来。这一步发生在中间的 Qwen3.6-27B，
+      而 3.6 与本档的清单逐条 shape + dtype 全同，所以 3.6 不单独立记录
+    resolution: corrected
+    changed_to: >-
+      predecessor 改为 qwen3.5-27b，changed_from_predecessor 改写成两条
+      （precision：F32 → BF16，发生在 3.6；training：config 的差异全是显式声明）；
+      与旗舰的三条差异改写进 notes，仍保留为本档的收录理由
