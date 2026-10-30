@@ -1,9 +1,9 @@
 {
  "id": "ltx-2",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T16:04:52+00:00",
+ "generated_at": "2026-10-30T16:09:07+00:00",
  "inputs": {
-  "facts_dir": "/Users/yuan/Work/frontier-llm-tracking/frontier_open_source_model_study/facts/ltx-2",
+  "facts_dir": "facts/ltx-2",
   "config_present": false,
   "shapes_present": true,
   "model_yaml": "data/models/ltx/ltx-2.yaml",

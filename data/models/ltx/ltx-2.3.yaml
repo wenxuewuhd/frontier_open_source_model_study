@@ -199,7 +199,8 @@ lineage:
       benefit: >-
         主仓因此从 314 GB 降到 157 GB，但「本记录实测清单覆盖了哪些精度」
         这件事变了：fp8 与 nvfp4 两档本轮**没有取数**，
-        见 precision.weights_release_scope 的 measured 标记
+        见 precision.weights_release_scope 的两个布尔（前代那两档
+        manifest_taken 为真、in_precision_table 为假；本代两个都假）
 
 params:
   # **total 故意留空**，不是漏填。这个仓只发单文件整包，清单实测的 23,069,505,387
@@ -563,32 +564,37 @@ precision:
   weights_release: [BF16, FP32, FP8_E4M3, NVFP4]
   weights_release_scope:
     BF16:
-      measured: true
+      manifest_taken: true
+      in_precision_table: true
       repo: Lightricks/LTX-2.3
       note: >-
         dev / distilled / distilled-1.1 三个全量档。清单里 5,657 个张量是 BF16
         （23,064,774,507 参数），占整包的 99.98%
     FP32:
-      measured: true
+      manifest_taken: true
+      in_precision_table: true
       repo: Lightricks/LTX-2.3
       note: >-
         290 个 `scale_shift_table` 系调制表（4,730,880 参数，0.02%）。
         前代是 194 个 / 3,256,320 —— 涨的是本代新增的 prompt 调制表
         与 6 行扩成 9 行那部分，不是精度策略变了
     FP8_E4M3:
-      measured: false
+      manifest_taken: false
+      in_precision_table: false
       repo: Lightricks/LTX-2.3-fp8
       note: >-
-        **独立仓，本轮没取数。** 前代的 fp8 是主仓内的文件、实测到「只量化 DiT、
+        **独立仓，本轮连清单都没取** —— 两个布尔都是假，和前代那两档
+        （头读过、没进表）不是同一种空。 前代的 fp8 是主仓内的文件、实测到「只量化 DiT、
         覆盖 DiT 参数的 85.9%」；本代搬到独立仓后这件事没有实测依据。
         文件大小 dev 29,145,431,166 B 比 BF16 档的 46,149,344,974 B 小 36.8%，
         量级上与前代的 fp8（小 37.4%）接近，但**这只是文件大小的旁证，
         不能当覆盖面的结论**
     NVFP4:
-      measured: false
+      manifest_taken: false
+      in_precision_table: false
       repo: Lightricks/LTX-2.3-nvfp4
       note: >-
-        **独立仓，本轮没取数**，只有 dev 一档。
+        **独立仓，本轮连清单都没取**，只有 dev 一档。
         文件 21,701,367,310 B，比 BF16 档小 53.0%
   inference_default: BF16
 

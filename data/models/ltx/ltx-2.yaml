@@ -427,13 +427,15 @@ precision:
   weights_release: [BF16, FP32, FP8_E4M3, NVFP4]
   weights_release_scope:
     BF16:
-      measured: true
+      manifest_taken: true
+      in_precision_table: true
       repo: Lightricks/LTX-2
       note: >-
         dev 与 distilled 的全量档。transformer/ 清单里 3,316 个张量是 BF16
         （18,872,918,272 参数），占 DiT 参数的 99.98%
     FP32:
-      measured: true
+      manifest_taken: true
+      in_precision_table: true
       repo: Lightricks/LTX-2
       note: >-
         两处：一是 BF16 包内的 194 个 `scale_shift_table` 调制表
@@ -442,16 +444,19 @@ precision:
         （config 的 `dtype: "float32"`，index 的 total_size = total_parameters × 4）。
         后者不在 params 里，但它是部署时最大的一块
     FP8_E4M3:
-      measured: false
+      manifest_taken: true
+      in_precision_table: false
       repo: Lightricks/LTX-2
       container: F8_E4M3
       note: >-
-        **measured 标 false 是按这个字段的定义来的**：本记录没跑逐子系统精度实测
-        （precision.quantization.per_subsystem 那一套），facts 里的清单是
-        `transformer/` 的 BF16 档。下面这些数来自对 fp8 文件头的一次**定向取数**，
-        它只回答「量化了什么」这一个问题，不并入清单、不用于参数量。
+        **这一档正是「清单取过、没进精度表」那种**：fp8 文件的 safetensors 头整份
+        读过（张量名、形状、dtype 全有，见下），所以 manifest_taken 为真；
+        但它是一次**定向取数**，没有落成本记录的 shapes.json
+        （facts 里那份是 `transformer/` 的 BF16 档），也没跑
+        precision.quantization.per_subsystem，所以 in_precision_table 为假。
+        定向取数的产物只回答它被瞄准的那个问题，不并入清单、不用于参数量。
 
-        `ltx-2-19b-dev-fp8.safetensors` 定向读头 6,404 张量：F8_E4M3 1,176 个
+        `ltx-2-19b-dev-fp8.safetensors` 读头 6,404 张量：F8_E4M3 1,176 个
         （16,206,790,656 参数）、BF16 2,682 个、F32 2,546 个。
         **只量化 DiT**：1,176 个 F8 张量全部落在 model.diffusion_model. 前缀下，
         VAE / 连接器 / 文本投影 / 声码器 / 音频 VAE 的参数量与 BF16 档逐字相同。
@@ -459,11 +464,12 @@ precision:
         比 BF16 档多出的 2,352 个 F32 张量是 scale。
         文件 27,078,716,018 B，按清单算 27,077,673,866 B，差 1,042,152 B（头）
     NVFP4:
-      measured: false
+      manifest_taken: true
+      in_precision_table: false
       repo: Lightricks/LTX-2
       container: UINT8
       note: >-
-        measured 标 false 的理由同 FP8_E4M3 —— 下面是对 fp4 文件头的定向取数。
+        两个布尔的理由同 FP8_E4M3 —— fp4 文件头整份读过、是定向取数，没进精度表。
         `ltx-2-19b-dev-fp4.safetensors` 读头 7,580 张量。**打包因子与块大小逐项验过**：
         1,176 个 U8 张量共 8,103,395,328 个容器元素，而 fp8 档同样的 1,176 个张量
         是 16,206,790,656 个参数 —— 正好 2 倍，即一字节两个 4 位值；
