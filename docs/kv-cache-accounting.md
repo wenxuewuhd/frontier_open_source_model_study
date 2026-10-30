@@ -20,14 +20,34 @@
 
 ## basis：字节数是怎么来的
 
-`bytes_basis` 标明这一列字节是哪种来源，三个值：
+`bytes_basis` 标明这一列字节是哪种来源，五个值：
 
 | basis | 含义 |
 |---|---|
 | `theoretical_floor` | 精确计数的**理论下限**：元素 × 落盘格式（含 scale），**不含分页、环页、对齐粒度**。实际部署在它之上 |
+| `vendor_declared` | 字节直接取厂商公布的每 token 数，本仓没有逐分量算出来。**只在公布值的 `covers` 是 `per_token` 时才会落到这个值**；本仓每个分量都有公布格式时，公布值改作对账用，basis 仍是 `theoretical_floor` |
+| `declared_dtype` | 记录给了 `precision.kv_cache`，字节按这个**声明的**缓存精度算。有厂商口径，但不是逐分量的精确计数 |
 | `dtype_fallback` | 记录没给缓存精度，按模型权重 dtype 兜底。是个占位值，不是测量值 |
-| `vendor_declared` | 字节取厂商公布的每 token 数（模型卡 / 技术报告）。本仓算不出全部分量时用它，比兜底值可信 |
 | `mixed` | 各分量 basis 不同，合计没有单一口径 |
+
+`vendor_declared` 是后加的一个值，补的是这样一个缺口：本仓算不出全部分量时，以前只能退到
+`dtype_fallback`，而厂商公布的数**比兜底值可信** —— 兜底值是本仓假设出来的，公布值是外部的。
+缓存侧的元素数与落盘格式两侧都由本仓决定，错了只会得到一个自洽的错数；
+公布值是这一侧唯一不依赖本仓代码的外部锚。
+
+引公布值必须同时交代**定位**与**口径**，`arch.attention.kv_sharing.declared_per_token_bytes`
+把这两件事做成了必填字段：
+
+- `tier` —— 来源档次（`tech_report` / `model_card` / `other`）。技术报告带节号 / 表号 / 图号，
+  常能在源内部自校验；模型卡正文是宣传语相邻位置。**厂商参考实现与引擎实现都不是合法来源**，
+  它们回答不了「厂商声称多少」
+- `covers` —— 这个数覆盖缓存的哪一部分（`per_token` / `includes_per_sequence` / `unstated`）
+- `basis` —— 公布时的前提：上下文长度、精度、批大小、含不含 indexer 与压缩器。
+  来源没交代就写明没交代
+
+**`covers != per_token` 的公布值只登记、不采用。** 本仓 47 份里 17 份带「每序列固定」分量，
+它和「随上下文增长」不是一个量，相加是范畴错误 —— 所以 `includes_per_sequence` 与 `unstated`
+进不了 `per_token_bytes`，也就不会把 basis 变成 `vendor_declared`。
 
 ### 落盘精度按什么来源填
 
