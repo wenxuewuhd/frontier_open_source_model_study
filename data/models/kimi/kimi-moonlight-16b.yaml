@@ -1,0 +1,357 @@
+# 手写记录。机械字段来自 config（official），结构与参数分项来自完整权重清单
+# （facts/kimi-moonlight-16b/shapes.json，5344 个张量，27/27 分片无读失败）。
+id: kimi-moonlight-16b
+family: kimi
+kind: llm
+display_name: Moonlight-16B-A3B-Instruct
+released: '2025-02-22'
+license: mit
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/moonshotai/Moonlight-16B-A3B-Instruct
+    locator: config.json / README.md @ 4e735b07a89f
+    accessed: '2026-10-30'
+    note: >-
+      BF16 发布，27 分片、5344 个张量，权重清单逐分片读头取全，无读失败分片。
+      模型卡的 Performance 一节有一张横向对照表（与 Llama3.2-3B / Qwen2.5-3B /
+      DeepSeek-V2-Lite 并列），给「Activated Param 2.24B / Total Params 15.29B」，
+      脚注原文 "The reported parameter counts exclude the embedding parameters"；
+      而卡里的下载表给的是另一套口径的「16B / 3B / 8K」
+  - kind: repo
+    url: https://huggingface.co/moonshotai/Moonlight-16B-A3B-Instruct/blob/4e735b07a89f73647dfab71ab91b840f362ede5b/modeling_deepseek.py
+    locator: DeepseekV3RotaryEmbedding（register_buffer("inv_freq", …, persistent=False)）/ DeepseekV3Attention
+    accessed: '2026-10-30'
+    note: 厂商随仓发布的参考实现（文件名沿用 DeepSeek 的），下载到本地只读、未执行
+  - kind: paper
+    url: https://arxiv.org/abs/2502.16982
+    locator: Muon is Scalable for LLM Training
+    accessed: '2026-10-30'
+    note: 本模型是该文的开源产物（Muon 优化器的规模化验证），架构本身不是这篇的贡献
+  - kind: repo
+    url: https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite/blob/main/config.json
+    locator: config.json（main 分支，2026-10-30 取）
+    accessed: '2026-10-30'
+    note: >-
+      对照用：本记录的「形状集与 DeepSeek-V2-Lite 相同、路由换成 V3 式」这一判断是
+      两份 config 逐字段比出来的，所以把被比的那一份也列为来源
+
+hf:
+  repo: moonshotai/Moonlight-16B-A3B-Instruct
+  sha: 4e735b07a89f73647dfab71ab91b840f362ede5b
+  last_modified: '2026-01-30T04:52:43.000Z'
+  pipeline_tag: text-generation
+  gated: false
+
+lineage:
+  track: historical
+  successor: kimi-k2
+
+params:
+  total: 15960111936.0
+  breakdown:
+    expert: 14394851328.0
+    shared_expert: 449839104.0
+    attention: 371590848.0
+    embed: 335544320.0
+    lm_head: 335544320.0
+    dense_ffn: 69206016.0
+    router: 3409536.0
+    norm: 126464.0
+  counting_note: >-
+    total 与 breakdown 都是本仓按完整清单（5344 个张量）逐项求和的实测值，不是厂商声明值 ——
+    所以 Gate B 的参数总量一项（delta 0.0）是实测比实测；真正的外部核对是 HF 的 safetensors
+    tally，与实测 15,960,111,936 逐位相同。清单全是 BF16：没有量化 scale 容器、没有低位打包，
+    所以 numel 即参数数。**严格说有一类不是权重**：每层一个
+    self_attn.rotary_emb.inv_freq [64]（27 层共 1,728 个元素），参考实现里它是
+    persistent=False、长度按 qk_rope_head_dim/2 = 32 算，与落盘的 64 既不相等也不会被加载。
+    整条 Kimi 线都在存这个 buffer 且长度每版都变（本代 64、Kimi-VL 64、K2 56、
+    K2-0905 与 K2-Thinking 128，没有一个等于 32），两侧 tally 都算了它、不影响对账 ——
+    但「清单全是权重」这句话字面不成立。另外复算 attention 分项时注意
+    kv_a_layernorm [512] 按本仓归类在 norm 而不在 attention（自己按名字算进去会多
+    27 × 512 = 13,824 个元素）。没有 MTP 草稿块（config
+    num_nextn_predict_layers 0，层号止于 26），所以没有 excludes。
+    **厂商的两个声明值都不含两张词表矩阵**，各自独立闭合：15,960,111,936 − embed 335,544,320
+    − lm_head 335,544,320 = 15,289,023,296，对上模型卡的 15.29B；激活侧
+    专家 14,394,851,328 × 6/64 = 1,349,517,312 加常驻 1,229,716,288 得 2,579,233,600，
+    再扣 lm_head 得 2,243,689,280，对上模型卡的 2.24B（脚注「reported parameter counts
+    exclude the embedding parameters」）。名字里的「16B / A3B」则是含词表口径的取整
+    （15.96B / 2.91B）。两套口径差 lm_head 一项，比较时要对齐
+
+context:
+  max: 8192
+  extension_method: >-
+    无。config 没有 rope_scaling，RoPE theta 50000 原生 8K ——
+    本代是全族系上下文最短的一版，长上下文从下一代（Kimi-VL 的 128K）才开始
+
+arch:
+  layers: 27
+  hidden: 2048
+  vocab: 163840
+  norm: RMSNorm
+  norm_eps: 1.0e-05
+  activation: SwiGLU（config hidden_act silu，gate/up/down 三件套）
+  position: RoPE theta 50000，无外推
+
+  attention:
+    type: MLA
+    num_heads: 16
+    num_kv_heads: 16
+    head_dim: 192
+    v_head_dim: 128
+    qk_rope_head_dim: 64
+    qk_nope_head_dim: 128
+    kv_lora_rank: 512
+    head_dim_note: >-
+      num_kv_heads 16 是 query 侧可见的头数，不是缓存宽度：落盘缓存是
+      kv_a_proj_with_mqa [576, 2048] 的输出维 576（latent 512 经 kv_a_layernorm [512]
+      + 解耦 rope 64），按 2 × 16 × 192 = 6144 折算会高估 10.7 倍。
+      head_dim 192 不是 config 字段，是 qk_nope 128 + qk_rope 64，只管 QK 路径；
+      V 的每头维度是 v_head_dim 128，所以 o_proj 入口宽度是 16 × 128 = 2048
+      （实测 [2048, 2048]），按 192 推会得到 3072 —— 高 50%。
+      **本代 Q 侧没有降维**：q_lora_rank 为 null，q_proj 是 [3072, 2048] 的单段投影，
+      27/27 层零例外。q_a_proj / q_b_proj 的两段式从 Kimi-K2 才出现
+    layer_pattern: 27/27 层都是 MLA，没有线性注意力层，也没有滑窗或稀疏选块
+
+  ffn:
+    type: moe
+    layer_pattern: >-
+      L0 稠密（mlp.gate_proj [11264, 2048]），L1–L26 共 26 层 MoE。
+      稠密层的中间维 11264 是单个专家（1408）的 8 倍
+
+  moe:
+    routed_experts: 64
+    shared_experts: 2
+    top_k: 6
+    intermediate: 1408
+    dense_intermediate: 11264
+    first_k_dense: 1
+    expert_groups: 1
+    routing: >-
+      sigmoid 打分、noaux_tc 选路（topk_method），routed_scaling_factor 2.446，
+      norm_topk_prob true。n_group 与 topk_group 都是 1，**分组路由实际未启用** ——
+      与同期 DeepSeek-V3 的 8 组取 4 不同（n_group 8 / topk_group 4 取自同仓
+      facts/ds-v3/cfg.json；ds-v3 的记录里只存了 expert_groups 8 这一半），
+      本代一个 token 的专家可以落在任意设备上
+    balance: >-
+      e_score_correction_bias（每 MoE 层一个 [64]，与 aux_loss_alpha 0.001 / seq_aux 并存）。
+      注意这一版的 bias 张量落盘是 **BF16**，到 Kimi-K2 才改成 FP32
+    storage_note: >-
+      逐专家独立张量（experts.N.{gate,up,down}_proj），不是堆叠的 3 维权重，
+      grouped GEMM 因此吃 2 维权重列表。两个共享专家在清单里合并成一个 MLP
+      （shared_experts.gate_proj [2816, 2048]，2816 = 2 × 1408）
+
+  decoding:
+    mtp_layers: 0
+    mtp_layers_note: config num_nextn_predict_layers 0，清单里也没有任何草稿块
+
+precision:
+  weights_release: [BF16]
+  quantization:
+    per_subsystem:
+      expert: BF16
+      shared_expert: BF16
+      attention: BF16
+      dense_ffn: BF16
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+    subsystem_method: >-
+      对完整清单 5344 条穷举（不是抽样）：**全部 BF16，零例外**，没有一个 scale 容器、
+      没有一个 FP32 张量。所以这一代的「权重精度」只有一个值，量化线从下一代才开始分叉
+
+infra_signals:
+  - text: >-
+      结构不是自研的：**形状集与 DeepSeek-V2-Lite 逐字段相同** —— hidden 2048、27 层、
+      16 头、kv_lora_rank 512、q_lora_rank null、qk_nope 128 / qk_rope 64 / v_head_dim 128、
+      64 专家 top-6、2 共享、专家中间维 1408、first_k_dense 1、n_group 1 全部一致
+      （两份 config 逐字段比过）；换掉的是**路由**（softmax + greedy → sigmoid + noaux_tc，
+      即 V3 式，对应 model_type deepseek_v3 与类名 DeepseekV3ForCausalLM）、
+      词表（102400 → 163840）、稠密层中间维（10944 → 11264）与位置设置
+      （theta 10000 + YaRN → theta 50000、无 scaling、8K）。
+      所以算子侧：已经支持 DeepSeek-V2-Lite 形状的平台跑本代不需要新算子，
+      唯一的增量是 sigmoid + noaux_tc 的打分路径。论文的贡献在优化器（Muon），不在结构
+    evidence: derived
+    horizon: settled
+    axis: training
+  - text: >-
+      MLA 把每层每 token 的缓存压到 576 个元素，27 层合计 15,552 元素/token；
+      但本代上下文只有 8K，满上下文的注意力显存不到 0.25 GiB —— 这一代的瓶颈
+      不在 KV，而在 14.4B 的专家权重带宽（全量 15.96B 里 90.2%）
+    evidence: derived
+    horizon: settled
+    axis: attention
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  context: official
+  context.extension_method: derived
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.head_dim: derived
+  arch.attention.v_head_dim: official
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.routing: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.moe.expert_groups: official
+  arch.decoding.mtp_layers: official
+  arch.decoding.mtp_layers_note: derived
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-30'
+  scope: [official, derived, judgement]
+  reviewer: 本会话逐字段复算 + 一个独立核查代理
+  method: >-
+    按 .claude/skills/model-audit 的顺序对 facts/kimi-moonlight-16b 逐字段核：config 全部键、
+    完整清单 5344 个张量（dtype 计数、层号 0–26、每层投影形状）、repoinfo 的 tags / cardData /
+    createdAt / safetensors tally，以及 data/derived/kimi-moonlight-16b.json 的分项与 KV 公式路。
+    本会话独立复算的乘式：MLA 缓存 576/层 × 27 层 = 15,552 元素/token（kv_a_proj_with_mqa
+    [576, 2048] 的输出维，不是 2 × 16 × 192 = 6144）、o_proj 入口 16 × v_head_dim 128 = 2048
+    （实测 [2048, 2048]）、激活 = 专家 14,394,851,328 × 6/64 + 常驻 1,229,716,288、
+    厂商两个声明值的扣除项、all-to-all 2 × 6 × 2048 × 2 B × 26 层。
+    结构同源判断另取了 DeepSeek-V2-Lite 的 config 做逐字段比对（来源已列入 sources）。
+    另派一个独立核查代理做对抗式复核（它自己写分类正则、不调用 lib/subsystems.py，
+    对 5344 条重算了参数分项、KV 七问、两套厂商口径与全部层集合），
+    它的三条发现见 R5–R7；它报的计数本会话复算过（含 inv_freq 在四个版本上的长度）。
+review:
+  - id: R1
+    field: hf.sha
+    severity: wrong
+    claim: sha 写作 4e735b07a89f0d4b73b0f5bde4c88d6318b66cb1
+    finding: >-
+      这个值是**按 12 位前缀编出来的**，不是真 sha —— 起草时把取数日志里的短 sha 补齐成了
+      40 位。真值在 facts/kimi-moonlight-16b/repoinfo.json 与 fetched.json 里，
+      是 4e735b07a89f73647dfab71ab91b840f362ede5b（两处一致）。
+      同一处错误在 kimi-k2 的 R1 上也发生了一次。编出来的 sha 不影响本仓任何计算，
+      但它让记录**不可复现**：按它去 resolve 会 404，而读者无从判断是哪个版本
+    resolution: corrected
+    changed_to: 取 repoinfo.json 的 sha 原值；另两份新记录逐个核对了 sha 与 fetched.rev 一致
+  - id: R2
+    field: infra_signals
+    severity: overreach
+    claim: 「本代就是 DeepSeek-V3 架构的一次换参复现……已经支持 DeepSeek-V2/V3 的平台支持它不需要新算子」
+    finding: >-
+      方向对、对象错。拿 DeepSeek-V2-Lite 的 config 逐字段比：hidden 2048、27 层、16 头、
+      kv_lora_rank 512、q_lora_rank null、qk_nope 128 / qk_rope 64 / v_head_dim 128、
+      64 专家 top-6、2 共享、专家中间维 1408、first_k_dense 1、n_group 1、aux_loss_alpha 0.001
+      **全部相同**，而 DeepSeek-V3 是 61 层 / hidden 7168 / 256 专家 / q_lora_rank 1536 /
+      n_group 8 / first_k_dense 3 —— 形状集来自 V2-Lite 而不是 V3。
+      真正来自 V3 的是**路由**：softmax + greedy → sigmoid + noaux_tc（也正是 model_type
+      deepseek_v3 与类名 DeepseekV3ForCausalLM 的来源）。
+      旁证：模型卡的对照表把 DSV2-Lite 与本代的参数量都写成 2.24B / 15.29B，
+      两者实际只差稠密层中间维 10944 → 11264（3 × 2048 × 320 = 1,966,080 参数，取整后看不出来）
+    resolution: corrected
+    changed_to: >-
+      infra_signals 第一条改写成「形状集 = V2-Lite、路由 = V3 式」并列出全部相同项与全部不同项，
+      证据口径从 judgement 改成 derived；notes 同步改；sources 增列被比的那份 config
+  - id: R3
+    field: params.counting_note
+    severity: imprecise
+    claim: total 15,960,111,936 是实测值，厂商称 16B / A3B
+    finding: >-
+      原值成立，但漏掉了一件能钉死口径的事：模型卡规格表的 15.29B 与 2.24B
+      **两个数都恰好等于「扣掉 embed 与 lm_head」之后的实测值**，各自独立闭合 ——
+      15,960,111,936 − 335,544,320 × 2 = 15,289,023,296；
+      (14,394,851,328 × 6/64 + 1,229,716,288) − 335,544,320 = 2,243,689,280。
+      脚注原文「reported parameter counts exclude the embedding parameters」说的就是这件事，
+      而「16B / A3B」这两个名字里的数对应的是含词表口径（15.96B / 2.91B）。
+      一份记录里同时有两套口径而不写明，下游跨代比激活参数就会错 —— 而 Kimi-K2 的 32B
+      恰恰是另一套口径（见 kimi-k2 的 counting_note）
+    resolution: corrected
+    changed_to: counting_note 写出两套口径的扣除项与各自的闭合算式，并点明跨代比较前要对齐
+  - id: R4
+    field: params.total
+    severity: imprecise
+    claim: 参数总量与权重存储按完整清单求和
+    finding: >-
+      外部对账成立：HF 的 safetensors tally 与实测 15,960,111,936 **逐位相同**，
+      且 tally 只有一个 dtype（BF16），与清单穷举一致 —— 这一版没有 scale 容器、
+      没有低位打包，两种口径不会分叉。层号 0–26 连续，无缺分片（fetched.json 的 failed_shards 为空）
+    resolution: confirmed
+    changed_to: 原值成立，不改
+
+  - id: R5
+    field: sources
+    severity: imprecise
+    claim: 「模型卡的规格表给 Activated Param 2.24B / Total Params 15.29B」
+    finding: >-
+      出处写串了：这两个数在模型卡 **Performance 一节的横向对照表**里（与 Llama3.2-3B /
+      Qwen2.5-3B / DeepSeek-V2-Lite 并列），脚注是
+      "The reported parameter counts exclude the embedding parameters"；
+      卡里真正的下载/规格表给的是另一套口径的「16B / 3B / 8K」。
+      一份卡里两套口径，指错表会让下游去那张表里找不到这个数
+    resolution: corrected
+    changed_to: sources.note 写明是 Performance 一节的对照表，并把下载表那一套也列出来
+  - id: R6
+    field: params.counting_note
+    severity: missing
+    claim: 「清单全是 BF16 权重张量……条目数即张量数、numel 即参数数」
+    finding: >-
+      字面不成立：每层有一个 self_attn.rotary_emb.inv_freq [64]（27 层共 1,728 个元素），
+      它是 buffer 不是权重，参考实现里 persistent=False、长度按 qk_rope_head_dim/2 = 32 算，
+      与落盘的 64 既不相等也不会被加载。
+      **而且这是整条线的现象**：本代 [64]、Kimi-VL [64]、K2 [56]、K2-0905 与 K2-Thinking [128]，
+      没有一个等于 32 —— 按 skill 规则 3 的反面读，「被测量跟着版本变」说明它不由结构决定。
+      kimi-k2 那份记录单独点了 [56] 这一个数，却没发现源头在本代、也没发现它每版都变
+    resolution: corrected
+    changed_to: >-
+      counting_note 写明这一类不是权重、列出全线五个长度与参考实现应得的 32，
+      并补一条 open question（为什么进 checkpoint、为什么每版变，未查）；
+      同时写明 kv_a_layernorm 按本仓归类在 norm 而不在 attention（独立复算会差 13,824 个元素）
+  - id: R7
+    field: arch.moe.routing
+    severity: unsupported
+    claim: 「与同期 DeepSeek-V3 的 8 组取 4 不同」
+    finding: >-
+      「8 组」在仓里有来源（ds-v3 记录的 expert_groups: 8），但**「取 4」没有** ——
+      topk_group 这个量本仓没有字段，核查代理在 worktree 的 facts/ 里只看到 kimi 的目录，
+      因此报它无来源。本会话到主 checkout 的 facts/ds-v3/cfg.json 里核过：
+      n_group 8 / topk_group 4，值成立；但记录里不写出处，下一个人同样找不到
+    resolution: corrected
+    changed_to: 同一句里补上出处（facts/ds-v3/cfg.json），并点明 ds-v3 的记录只存了 expert_groups 这一半
+
+notes: >-
+  Kimi 家族的开源起点，也是本仓这条线的根：月之暗面公开权重的第一个模型（HF 仓创建
+  2025-02-22）。config 的 model_type 是 deepseek_v3，而**形状集其实是 DeepSeek-V2-Lite 的**
+  （逐字段相同，见 infra_signals 第一条），路由换成了 V3 式的 sigmoid + noaux_tc；
+  自己的东西是 Muon 优化器、163840 的词表与位置设置。
+  模型卡的对照表把 DSV2-Lite 与本代的参数量都写成 2.24B / 15.29B，也印证了这件事
+  （两者只差稠密层中间维 10944 → 11264，约 2M 参数，取整后看不出来）。往后分三支：旗舰线 Kimi-K2 把它放大到 1T（61 层 / hidden 7168 / 384 专家），
+  视觉线 Kimi-VL 在同一主干上挂 MoonViT，而混合注意力线 Kimi-Linear 复用的是本代的
+  「q 侧不降维」MLA 写法而不是 K2 的两段式。
+  released 取 HF 仓的 createdAt（2025-02-22）；lastModified 2026-01-30 只是后来的仓库维护。
+
+open_questions:
+  - >-
+    KV cache 的实际存储精度未披露，derive.py 按模型 dtype（BF16）兜底，
+    bytes_basis 是 dtype_fallback，不能和别家的精确计数比倍数
+  - >-
+    预训练数值格式没有一手声明，precision.training 不填。模型卡与论文讲的是 Muon
+    优化器与权重衰减，**优化器不是数值格式** —— 清单全 BF16 只说明落盘精度
+  - >-
+    每层那个 rotary_emb.inv_freq buffer 为什么会进 checkpoint、长度为什么每版都变
+    （64 / 64 / 56 / 128 / 128，参考实现应得 32）没有查。源头在本代、整条线都带着它；
+    它不被加载，所以只是个账面问题，但「变量变而被测量跟着变」说明它不由结构决定
