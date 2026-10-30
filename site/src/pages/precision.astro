@@ -1,0 +1,420 @@
+---
+/**
+ * 精度演进：各家族逐代的**落盘精度**怎么变。
+ *
+ * 主语是**子系统**，不是发布形态。两者回答的是不同问题：
+ *   子系统   —— 模型内部哪一块被量化了（`precision.quantization.per_subsystem`，48/48 全有）
+ *   发布形态 —— 厂商对外发了哪几种精度（`precision.weights_release`，41/48）
+ * 混在一张表里，读者分不清「这个模型是 FP8 的」说的是它的专家落盘是 FP8，
+ * 还是厂商另发了一个 FP8 仓。所以子系统做主表，发布形态做其中一列。
+ *
+ * **本页不出 KV 缓存精度，也不出训练精度**，理由见页脚那段 —— 前者 48 份里只有 2 份
+ * 有一手声明、其余是按模型 dtype 兜底的占位值，摆出来等于假装知道；后者一份都没有。
+ * 空列不画，但要写明为什么不画，否则「没这一列」会被读成「这件事不重要」。
+ *
+ * 每一格的三态按**结构**判，不按字段名猜：
+ *   derived 的 params_by_subsystem 里有这块权重，且 per_subsystem 录了 → 报精度
+ *   有权重、没录                                                      → 未录（调研进度）
+ *   没有这块权重                                                      → 不适用（这一代没有）
+ */
+import Base from '../layouts/Base.astro';
+import Evidence from '../components/Evidence.astro';
+import Prose from '../components/Prose.astro';
+import {
+  families, allModels, url, fmtInt, SUBSYSTEMS, DTYPE_CELL, dtypeCell,
+  changesFor, evidenceFor, type Model,
+} from '../lib/data';
+import '../styles/dtype.css';
+
+const SUB_LABEL: Record<string, string> = Object.fromEntries(
+  SUBSYSTEMS.map((s) => [s.key, s.label]),
+);
+const SUB_ORDER = SUBSYSTEMS.map((s) => s.key);
+
+const prec = (m: Model) => (m as any).precision ?? {};
+const perSub = (m: Model): Record<string, string> =>
+  prec(m).quantization?.per_subsystem ?? {};
+const byShapes = (m: Model): Record<string, number> =>
+  (m.derived as any)?.from_shapes?.params_by_subsystem ?? {};
+
+type Cell =
+  | { kind: 'dtype'; dtype: string }
+  | { kind: 'unsurveyed' }
+  | { kind: 'not_applicable' };
+
+/** 一个子系统在这一份记录里是什么状态。判据见文件头。 */
+function cellFor(m: Model, key: string): Cell {
+  const d = perSub(m)[key];
+  if (d) return { kind: 'dtype', dtype: String(d) };
+  const params = byShapes(m)[key];
+  if (params && params > 0) return { kind: 'unsurveyed' };
+  return { kind: 'not_applicable' };
+}
+
+/**
+ * 这个家族值得出哪几列：族内任何一代**有过这块权重**的就出。
+ * 不取全部 16 个子系统 —— 稠密族系会多出 expert / router 等一排「不适用」，
+ * 把真正的空格（未录）淹掉。
+ */
+function columnsFor(models: Model[]): string[] {
+  const used = new Set<string>();
+  for (const m of models) {
+    for (const k of Object.keys(perSub(m))) used.add(k);
+    for (const [k, v] of Object.entries(byShapes(m))) if (v > 0) used.add(k);
+  }
+  return SUB_ORDER.filter((k) => used.has(k));
+}
+
+/** 谱系序：和注意力演进页同一条 —— 主干按日期不缩进，支线挂在自己的前代下。 */
+function lineageOrder(models: Model[]): { m: Model; depth: number }[] {
+  const ids = new Set(models.map((m) => m.id));
+  const kids = new Map<string, Model[]>();
+  for (const m of models) {
+    const p = m.lineage?.predecessor;
+    if (p && ids.has(p)) {
+      if (!kids.has(p)) kids.set(p, []);
+      kids.get(p)!.push(m);
+    }
+  }
+  const byDate = (a: Model, b: Model) => (a.released ?? '').localeCompare(b.released ?? '');
+  const isTrunk = (m: Model) => {
+    const p = m.lineage?.predecessor;
+    return m.lineage?.track !== 'side' || !p || !ids.has(p);
+  };
+  const out: { m: Model; depth: number }[] = [];
+  const walk = (m: Model, depth: number) => {
+    out.push({ m, depth });
+    for (const k of (kids.get(m.id) ?? []).slice().sort(byDate)) {
+      if (!isTrunk(k)) walk(k, depth + 1);
+    }
+  };
+  models.filter(isTrunk).slice().sort(byDate).forEach((t) => walk(t, 0));
+  return out;
+}
+
+/** 发布形态：厂商发了哪几档，本仓测没测过。`measured` 来自 weights_release_scope。 */
+function releases(m: Model): { dtype: string; measured?: boolean; note?: string }[] {
+  const list: string[] = prec(m).weights_release ?? [];
+  const scope: Record<string, any> = prec(m).weights_release_scope ?? {};
+  return list.map((d) => ({
+    dtype: String(d),
+    measured: scope[d]?.measured,
+    note: scope[d]?.note,
+  }));
+}
+
+/** 量化块与 scale：只有一部分记录有，没有的照三态走，不留裸 `—`。 */
+function blocks(m: Model): { sub: string; block?: string; scale?: string }[] {
+  const q = prec(m).quantization ?? {};
+  const blk: Record<string, any> = q.per_subsystem_block ?? {};
+  const scl: Record<string, any> = q.per_subsystem_scale ?? {};
+  const keys = [...new Set([...Object.keys(blk), ...Object.keys(scl)])];
+  return SUB_ORDER.filter((k) => keys.includes(k)).map((k) => ({
+    sub: k,
+    block: blk[k] ? `[${[].concat(blk[k]).join(', ')}]` : undefined,
+    scale: scl[k] ? String(scl[k]) : undefined,
+  }));
+}
+
+const precChanges = (m: Model) => changesFor(m).filter((c) => c.field.axis === 'precision');
+const precStory = (m: Model) =>
+  (m.lineage?.changed_from_predecessor ?? []).filter((c: any) => c.axis === 'precision');
+
+const fams = families().map((f) => ({
+  ...f,
+  cols: columnsFor(f.models),
+  rows: lineageOrder(f.models),
+}));
+
+/* ---- 页首结论：每个数都从记录算，一句话都不写死 ----
+ *
+ * 初稿这里写的是「量化只集中在路由专家」，一跑数据就自相矛盾 —— 低于 16 bit 的
+ * 子系统有七个，注意力也在其中。**数据不支持的话不要写成结论。**
+ * 现在分三档算，每一档都是穷举出来的，不是挑出来的：
+ *   4 bit 出现在哪些子系统（而不是「主要出现在」）
+ *   哪些子系统跨全部记录从没低于 16 bit
+ *   哪些子系统反而被提到了 FP32
+ */
+const all = allModels();
+const LOW4 = new Set(['FP4', 'MXFP4', 'NVFP4', 'INT4']);
+const LOW8 = new Set(['FP8_E4M3']);
+const tally: Record<string, number> = {};
+/** 每个子系统：总格数 / 4bit 格数 / 8bit 格数 / FP32 格数 */
+const perSubStat = new Map<string, { n: number; b4: number; b8: number; f32: number }>();
+let cells = 0;
+for (const m of all) {
+  for (const [k, v] of Object.entries(perSub(m))) {
+    const d = String(v);
+    tally[d] = (tally[d] ?? 0) + 1;
+    cells += 1;
+    const st = perSubStat.get(k) ?? { n: 0, b4: 0, b8: 0, f32: 0 };
+    st.n += 1;
+    if (LOW4.has(d)) st.b4 += 1;
+    if (LOW8.has(d)) st.b8 += 1;
+    if (d === 'FP32') st.f32 += 1;
+    perSubStat.set(k, st);
+  }
+}
+const tallyRows = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+const stat = [...perSubStat.entries()];
+const subs4 = stat.filter(([, s]) => s.b4 > 0).sort((a, b) => b[1].b4 - a[1].b4);
+const subs8only = stat.filter(([, s]) => s.b4 === 0 && s.b8 > 0).sort((a, b) => b[1].b8 - a[1].b8);
+const subsNever = stat.filter(([, s]) => s.b4 === 0 && s.b8 === 0).sort((a, b) => b[1].n - a[1].n);
+const subsUp = stat.filter(([, s]) => s.f32 > 0).sort((a, b) => b[1].f32 - a[1].f32);
+
+/* 页脚那两句「为什么没有这一列」也从数据数，免得将来补了数据而说明还停在旧状态 */
+const kvDeclared = all.filter((m) => prec(m).kv_cache).length;
+const trainDeclared = all.filter((m) => prec(m).training).length;
+const shortName = (m: Model, label: string) =>
+  m.display_name.replace(new RegExp(`^${label}[-_ ]?`, 'i'), '') || m.display_name;
+---
+
+<Base
+  title="精度演进"
+  lead="各家族逐代的落盘精度：模型内部哪一块被量化了、厂商发了哪几种形态、量化块与 scale 是什么。每一格都来自记录，页面不推导。"
+>
+  <p class="small muted">
+    口径：本页说的是<strong>权重的落盘精度</strong> —— 权重在仓库里以什么格式存着。
+    它不是训练精度，也不是计算精度（同一份 FP8 权重可以反量化成 BF16 再算）。
+    逻辑精度与容器也是两件事：MXFP4 装在 UINT8 里，清单上看到的是容器，
+    这里报的是<strong>逻辑精度</strong>。
+  </p>
+
+  <div class="callout">
+    <p>
+      <strong>量化不是均匀施加的，它沿着「参数量大、且对数值误差不敏感」这条线走。</strong>
+      全仓 {all.length} 份记录共 {fmtInt(cells)} 格逐子系统精度，分三档看得很清楚：
+    </p>
+    <p>
+      <b>4 bit 只出现在 {subs4.length} 个子系统上</b>：
+      {subs4.map(([k, s], i) => (
+        <>{i > 0 && '、'}<b>{SUB_LABEL[k] ?? k}</b>（{s.b4}/{s.n}）</>
+      ))}，别处一次都没有。
+      FP8 铺得广一些，另外还到了
+      {subs8only.map(([k, s], i) => (
+        <>{i > 0 && '、'}{SUB_LABEL[k] ?? k}（{s.b8}/{s.n}）</>
+      ))}。
+    </p>
+    <p>
+      <b>这 {subsNever.length} 个子系统跨全部记录从没低于 16 bit</b>：
+      {subsNever.map(([k, s], i) => (
+        <>{i > 0 && '、'}{SUB_LABEL[k] ?? k}（{s.n} 格）</>
+      ))}。
+      而且<b>反方向也存在</b> —— {subsUp.map(([k, s], i) => (
+        <>{i > 0 && '、'}{SUB_LABEL[k] ?? k} {s.f32}/{s.n}</>
+      ))} 是 FP32，比模型主体还高一档。
+      小而对误差敏感的那几块不但没被压，反而被提上去了。
+    </p>
+    <p class="small muted tally">
+      精度格子合计：{tallyRows.map(([d, n]) => (
+        <span class="tal"><i class={`sw ${dtypeCell(d).cls}`}>{dtypeCell(d).short}</i>{d}<b>{n}</b></span>
+      ))}
+    </p>
+  </div>
+
+  <div class="lg small">
+    {Object.keys(DTYPE_CELL).map((d) => (
+      <span><i class={`sw ${dtypeCell(d).cls}`}>{dtypeCell(d).short}</i>{d}</span>
+    ))}
+    <span><i class="sw abs">·</i>不适用（这一代没有这块权重）</span>
+    <span><i class="sw uns">?</i>未录（有权重，精度还没查）</span>
+  </div>
+
+  {fams.map((f) => (
+    <section>
+      <h2><a href={url(`/families/${f.key}/`)}>{f.label}</a> 逐代</h2>
+      <div class="scroll-x">
+        <table class="prec">
+          <thead>
+            <tr>
+              <th>版本</th>
+              {f.cols.map((k) => <th class="sub" title={k}>{SUB_LABEL[k] ?? k}</th>)}
+              <th>发布形态</th>
+              <th>量化块 / scale</th>
+              <th>依据</th>
+            </tr>
+          </thead>
+          <tbody>
+            {f.rows.map(({ m, depth }) => {
+              const side = m.lineage?.track === 'side' ? 'side' : undefined;
+              const rel = releases(m);
+              const blk = blocks(m);
+              const method = prec(m).quantization?.subsystem_method;
+              const chg = precChanges(m);
+              const story = precStory(m);
+              return (
+                <>
+                  <tr class={side}>
+                    <td class={side} style={depth ? `padding-left:${10 + depth * 16}px` : undefined}>
+                      <a href={url(`/models/${m.id}/`)}>{shortName(m, f.label)}</a>
+                      {side && <span class="track-mark" title="支线">支</span>}
+                      <div class="small muted">{m.released}</div>
+                    </td>
+                    {f.cols.map((k) => {
+                      const c = cellFor(m, k);
+                      if (c.kind === 'dtype') {
+                        const cell = dtypeCell(c.dtype);
+                        return (
+                          <td class="sub">
+                            <i class={`sw ${cell.cls}`} title={`${SUB_LABEL[k] ?? k}：${c.dtype}`}>
+                              {cell.short}
+                            </i>
+                          </td>
+                        );
+                      }
+                      return (
+                        <td class="sub">
+                          <i
+                            class={`sw ${c.kind === 'unsurveyed' ? 'uns' : 'abs'}`}
+                            title={`${SUB_LABEL[k] ?? k}：${c.kind === 'unsurveyed'
+                              ? '有权重，精度还没查（调研进度，不是模型事实）'
+                              : '这一代没有这块权重'}`}
+                          >{c.kind === 'unsurveyed' ? '?' : '·'}</i>
+                        </td>
+                      );
+                    })}
+                    <td>
+                      {rel.length ? rel.map((r) => (
+                        <div class="rel">
+                          <code>{r.dtype}</code>
+                          {r.measured === true && <span class="ok" title="本仓取过它的清单">实测</span>}
+                          {r.measured === false && <span class="muted" title="厂商发了，本仓没取清单">未取</span>}
+                        </div>
+                      )) : <span class="absent unsurveyed">未录</span>}
+                    </td>
+                    <td>
+                      {blk.length ? blk.map((b) => (
+                        <div class="small">
+                          {SUB_LABEL[b.sub] ?? b.sub}
+                          {b.block && <> <code>{b.block}</code></>}
+                          {b.scale && <> · scale <code>{b.scale}</code></>}
+                        </div>
+                      )) : <span class="absent unsurveyed">未录</span>}
+                    </td>
+                    <td class="small muted">
+                      {method ? <Prose text={method} /> : <span class="absent unsurveyed">未录</span>}
+                      <Evidence tag={evidenceFor('precision.quantization.per_subsystem', m.evidence)} />
+                    </td>
+                  </tr>
+                  {(chg.length > 0 || story.length > 0) && (
+                    <tr class={`detail ${side ?? ''}`}>
+                      <td class={side}></td>
+                      <td colspan={f.cols.length + 3}>
+                        {chg.length > 0 && (
+                          <div class="chgs">
+                            <span class="muted">字段变化</span><Evidence tag="derived" />
+                            {chg.map((c) => (
+                              <span class="chg">
+                                {c.field.label}：<span class="from"><Prose text={String(c.from ?? '无')} /></span>
+                                {' → '}<span class="to"><Prose text={String(c.to ?? '取消')} /></span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {story.length > 0 && (
+                          <details>
+                            <summary class="muted">改了什么 · 为什么（{story.length} 条，来自 lineage）</summary>
+                            {story.map((e: any) => (
+                              <div class="story">
+                                <Prose text={e.text} /><Evidence tag="derived" />
+                                {e.benefit && (
+                                  <div class="benefit"><span class="muted">收益 ·</span> <Prose text={e.benefit} /><Evidence tag="judgement" /></div>
+                                )}
+                              </div>
+                            ))}
+                          </details>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  ))}
+
+  <div class="note">
+    <p><strong>本页刻意没有两列，说明在这里 —— 空列不画，但不画不等于不重要。</strong></p>
+    <p class="small">
+      <strong>KV 缓存精度</strong>：{all.length} 份里只有 {kvDeclared} 份有厂商一手声明。
+      其余都是按模型权重 dtype 兜底的占位值，摆成一列会让人当成查过的事实。
+      它在<a href={url('/attention/')}>注意力演进</a>页带 <code>basis</code> 标签出现，
+      那里每个数都标明了是实测、声明还是兜底。
+    </p>
+    <p class="small">
+      <strong>训练精度</strong>：{trainDeclared} 份有。厂商公布的 <code>torch_dtype</code>
+      说的是发布权重的格式，不是训练时用的数值格式，两者不能互相代替 ——
+      所以这一列现在是空的，而不是填上 BF16。
+    </p>
+  </div>
+</Base>
+
+<style>
+  .callout {
+    border: 1px solid var(--line);
+    background: var(--surface);
+    border-radius: 4px;
+    padding: 12px 14px;
+    margin: 14px 0 10px;
+  }
+  .callout p { margin: 0; }
+  .callout p + p { margin-top: 8px; }
+
+  .tally { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+  .tal { display: inline-flex; align-items: center; gap: 5px; }
+  .tal b { font-family: var(--mono); font-weight: 600; color: var(--ink-2); }
+
+  .lg { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 6px 0 18px; color: var(--ink-2); }
+  .lg span { display: inline-flex; align-items: center; gap: 5px; }
+
+  .sw {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 3px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-style: normal;
+    color: var(--dt-ink);
+    flex: none;
+  }
+  /* 两种空格子都不上色，靠边框区分「不适用」与「未录」—— 它们不是精度，
+     给它们配色会让读者在图例里找一档并不存在的精度 */
+  .sw.abs { background: none; border: 1px solid var(--line); color: var(--ink-3); }
+  .sw.uns { background: none; border: 1px dashed var(--ink-3); color: var(--ink-3); }
+
+  table.prec { width: 100%; border-collapse: collapse; }
+  table.prec th, table.prec td { padding: 7px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.prec th { text-align: left; }
+  th.sub, td.sub { text-align: center; padding-left: 3px; padding-right: 3px; }
+  th.sub { font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+
+  tr.side > td:first-child { border-left: 2px solid var(--line); }
+  tr.detail > td { border-bottom: 1px solid var(--line); padding-top: 0; }
+  .chgs { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; font-size: 12.5px; }
+  .chg { color: var(--ink-2); }
+  .chg .from { color: var(--ink-3); }
+  .chg .to { color: var(--ink); font-weight: 600; }
+  .story { font-size: 13px; margin: 6px 0; }
+  .benefit { padding-left: 10px; border-left: 2px solid var(--line); margin-top: 2px; }
+
+  .rel { font-size: 12.5px; white-space: nowrap; }
+  .rel .ok { color: var(--accent); font-size: 11px; margin-left: 4px; }
+  .rel .muted { font-size: 11px; margin-left: 4px; }
+
+  .note {
+    margin-top: 28px;
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-line);
+    border-radius: 4px;
+    padding: 12px 14px;
+  }
+  .note p { margin: 0; }
+  .note p + p { margin-top: 7px; }
+  .scroll-x { overflow-x: auto; }
+</style>

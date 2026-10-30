@@ -8,7 +8,8 @@
  */
 import Evidence from './Evidence.astro';
 import Prose from './Prose.astro';
-import { fmtBytes, KV_BASIS_LABEL, KV_BASIS_NOTE } from '../lib/data';
+import { fmtBytes, KV_BASIS_LABEL, KV_BASIS_NOTE, DTYPE_CELL, dtypeCell } from '../lib/data';
+import '../styles/dtype.css';
 
 interface Props {
   L: Record<string, any>;
@@ -21,14 +22,10 @@ const { L, recorded } = Astro.props;
 // 那一格静默降级成灰 `?` —— MXFP4 刚踩过一次（kimi-k3 的路由专家整行变灰）。
 // 槽位按位宽排序；MXFP4 与 FP4 同为 4 bit，共用 4 号槽：颜色编码的是位宽档，
 // 具体格式由格子里的字母和图例区分，不另占一个校验过的调色板槽位。
-const DT: Record<string, { short: string; cls: string }> = {
-  FP4: { short: '4', cls: 'dt-fp4' },
-  MXFP4: { short: '4', cls: 'dt-fp4' },
-  FP8_E4M3: { short: '8', cls: 'dt-fp8' },
-  BF16: { short: 'B', cls: 'dt-bf16' },
-  FP32: { short: '32', cls: 'dt-fp32' },
-};
-const dtOf = (d: string) => DT[d] ?? { short: '?', cls: 'dt-other' };
+// 精度格子的缩写与配色表在 lib/data.ts 的 DTYPE_CELL，配色在 styles/dtype.css。
+// 这里曾有一份本地副本 —— 精度演进页要用同一套，抄第二份会让同一个精度在两页
+// 显示成不同颜色，而读者看不出来。
+const dtOf = dtypeCell;
 
 const ROLE: Record<string, { mark: string; label: string; config?: boolean }> = {
   kv_source: { mark: 'K', label: '产出全局 KV' },
@@ -130,7 +127,8 @@ const drift = [
 const mib = (b: number) => (b / 2 ** 20).toFixed(1);
 // 图例按位宽从低到高排，与调色板槽位顺序一致；表里没出现的精度不进图例
 const seen = new Set(L.classes.flatMap((c: any) => c.tensors.map((t: any) => t.logical_dtype ?? t.dtype)));
-const usedDtypes = [...Object.keys(DT).filter((d) => seen.has(d)), ...[...seen].filter((d: any) => !DT[d])] as string[];
+const usedDtypes = [...Object.keys(DTYPE_CELL).filter((d) => seen.has(d)),
+  ...[...seen].filter((d: any) => !DTYPE_CELL[d])] as string[];
 
 // MTP 块没有主干意义上的角色，按它多出来的算子组描述
 const classRoles = (c: any) => {
@@ -473,33 +471,7 @@ const classRoles = (c: any) => {
     border-left: 1px dashed var(--line);
   }
 
-  /* 精度类别色：默认调色板 1–4 号槽位，浅深两档各自校验过 CVD 与正常视觉间距 */
-  .lm-wrap, .lm-legend, .lm-class {
-    --dt-fp4: #2a78d6;
-    --dt-fp8: #eb6834;
-    --dt-bf16: #1baf7a;
-    --dt-fp32: #eda100;
-    --dt-ink: #ffffff;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme='light']) :is(.lm-wrap, .lm-legend, .lm-class) {
-      --dt-fp4: #3987e5;
-      --dt-fp8: #d95926;
-      --dt-bf16: #199e70;
-      --dt-fp32: #c98500;
-    }
-  }
-  :root[data-theme='dark'] :is(.lm-wrap, .lm-legend, .lm-class) {
-    --dt-fp4: #3987e5;
-    --dt-fp8: #d95926;
-    --dt-bf16: #199e70;
-    --dt-fp32: #c98500;
-  }
-  .dt-fp4 { background: var(--dt-fp4); }
-  .dt-fp8 { background: var(--dt-fp8); }
-  .dt-bf16 { background: var(--dt-bf16); }
-  .dt-fp32 { background: var(--dt-fp32); }
-  .dt-other { background: var(--ink-3); }
+  /* 精度类别色与 .dt-* 类已移到 styles/dtype.css（与 DTYPE_CELL 配套），这里只留布局 */
 
   .lm-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 8px 0; color: var(--ink-2); }
   .lm-legend span { display: inline-flex; align-items: center; gap: 5px; }

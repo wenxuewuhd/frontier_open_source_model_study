@@ -459,6 +459,33 @@ function bytesAreRewrittenElements(m: Model): boolean {
   return Boolean(kv.per_token_elems) && kv.per_token_bytes === kv.per_token_elems * 2;
 }
 
+/**
+ * 精度取值 -> 格子显示（缩写 + 配色类）。**这张表只此一份。**
+ *
+ * 逐层实现图与精度演进页都查它。basis 标签表就是因为抄了两份、措辞还不一样
+ * （模型页「按厂商公布值」vs data.ts「厂商公布」），同一个取值在站内有了两种读法；
+ * 精度这张表更经不起抄 —— 它决定的是颜色，两份不一致时读者根本看不出来。
+ *
+ * 配色在 `site/src/styles/dtype.css`，和这张表配套：**往这里加一档却忘了加颜色，
+ * 那一档会渲染成无背景的裸字**。键序按位宽从低到高，逐层图的图例直接用这个顺序。
+ *
+ * 缩写不是装饰：浅色模式下 BF16 / FP32 对页面底色不足 3:1，颜色单独不够用。
+ */
+export const DTYPE_CELL: Record<string, { short: string; cls: string }> = {
+  FP4: { short: '4', cls: 'dt-fp4' },
+  MXFP4: { short: '4', cls: 'dt-fp4' },
+  NVFP4: { short: '4', cls: 'dt-fp4' },
+  INT4: { short: '4', cls: 'dt-fp4' },
+  FP8_E4M3: { short: '8', cls: 'dt-fp8' },
+  BF16: { short: 'B', cls: 'dt-bf16' },
+  FP32: { short: '32', cls: 'dt-fp32' },
+  MIXED: { short: '混', cls: 'dt-mixed' },
+};
+
+/** 查不到就给 `?` 配中性灰 —— 不要静默当成某一档，那会让一档没进表的精度冒充别的。 */
+export const dtypeCell = (d?: string | null) =>
+  DTYPE_CELL[d ?? ''] ?? { short: '?', cls: 'dt-other' };
+
 export const KV_BASIS_LABEL: Record<string, string> = {
   theoretical_floor: '理论下限',
   vendor_declared: '厂商公布',
