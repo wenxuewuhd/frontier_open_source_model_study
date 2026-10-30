@@ -1,0 +1,462 @@
+id: wan2.1-t2v-14b
+family: wan
+kind: video-gen
+display_name: Wan2.1-T2V-14B
+released: '2025-02-25'
+license: apache-2.0
+visibility: public
+
+# 口径照本族首录 wan2.2-ti2v-5b 的头注释来（params 只算 DiT、不建 arch 块、
+# 没有 KV cache 这笔账）。这一份是 wan 线的差分基线：它的价值在
+# lineage.changed_from_predecessor 的对侧 —— Wan2.2 相对它改了什么，全部对着这份说。
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/Wan-AI/Wan2.1-T2V-14B
+    locator: README.md §Introduction of Wan2.1 (2) Video Diffusion DiT 的结构表与正文 @ a064a6c71f5b
+    accessed: '2026-10-30'
+    note: >-
+      这份卡**给了结构表**，是视频线里少见的一手结构来源：14B 一行是
+      Dimension 5120 / Input 16 / Output 16 / Feedforward 13824 /
+      Frequency 256 / Heads 40 / Layers 40，与 config.json 和权重清单三路逐项相同。
+      正文还给了一条能对着权重复核的设计说明：「an MLP with a Linear layer and a SiLU
+      layer ... predict six modulation parameters individually. This MLP is shared
+      across all transformer blocks, with each block learning a distinct set of biases」。
+      VAE 只给了定性描述（3D causal VAE、能编解码任意长度 1080P），
+      压缩率、z_dim、步数、CFG 与帧数卡上都没有，那几项取自厂商参考实现
+  - kind: repo
+    url: https://github.com/Wan-Video/Wan2.1/blob/main/wan/configs/wan_t2v_14B.py
+    locator: t2v_14B 全量字段 + shared_config.py + generate.py 的 _validate_args 与 argparse 默认值
+    accessed: '2026-10-30'
+    note: >-
+      厂商参考实现（来源优先级第三档）。采样口径取自这里：t2v 任务
+      sample_steps 50、sample_shift 5.0（`_validate_args` 里按任务分支设的默认）、
+      sample_guide_scale 5.0（argparse 默认）、frame_num 81、sample_fps 16
+      （shared_config）、size 默认 1280*720。
+      结构字段与权重清单逐项对上：patch_size (1,2,2) = `patch_embedding.weight`
+      的后三维；dim 5120 / ffn_dim 13824 / num_heads 40 / num_layers 40 与
+      config.json 逐字相同；qk_norm 与 cross_attn_norm 两个布尔在清单里有对应张量
+      （`self_attn.norm_q/norm_k`、`cross_attn.norm_q/norm_k`）；
+      window_size (-1,-1) 即不开窗，self-attention 是满的。
+      vae_stride (4,8,8) 与 vae_checkpoint `Wan2.1_VAE.pth` 也在这里
+  - kind: repo
+    url: https://github.com/Wan-Video/Wan2.2/blob/main/wan/modules/vae2_1.py
+    locator: _video_vae 的默认 cfg 与 class Wan2_1_VAE.__init__
+    accessed: '2026-10-30'
+    note: >-
+      VAE 的形状只有这一个来源（卡上没有数）。`Wan2_1_VAE.__init__` 的
+      z_dim 默认 16，且归一化常数 mean / std 各恰好 16 个值；
+      `_video_vae` 的默认 cfg 是 dim 96、dim_mult [1,2,4,4]、num_res_blocks 2、
+      attn_scales []、temperal_downsample [False, True, True] ——
+      两次时间下采样即时间压缩 4，与 vae_stride 的 4 一致。
+      卷积层是 `CausalConv3d`，所以时间因果。
+      **引的是 Wan2.2 仓的这个文件**：两代用的是同一个 VAE 权重，
+      而 2.2 仓里这份实现带着完整默认值
+  - kind: modelcard
+    url: https://huggingface.co/Wan-AI/Wan2.1-T2V-14B
+    locator: diffusion_pytorch_model-0000{1..6}-of-00006.safetensors 的头 @ a064a6c71f5b
+    accessed: '2026-10-30'
+    note: >-
+      权重清单逐分片读头取全：6 分片 1,095 个张量，无读失败分片。
+      全部 F32，无 scale 容器、无打包容器，numel 即参数数。
+      HF 自己从分片头统计的 safetensors tally 是 14,288,491,584（F32 一种），
+      与本仓实测**逐位相同** —— 这是视频线里第一份有外部参数量锚的记录。
+      VAE 与文本编码器仍是 `.pth`，读不了清单
+
+hf:
+  repo: Wan-AI/Wan2.1-T2V-14B
+  sha: a064a6c71f5be440641209c07bf2a5ce7a2ff5e4
+  last_modified: '2025-03-12T03:08:09.000Z'
+  pipeline_tag: text-to-video
+  gated: false
+
+lineage:
+  track: historical
+  successor: wan2.2-t2v-a14b
+  # wan 线的差分基线，2025 年的「标准配方」：单流 DiT + 每层 cross-attn 文本注入
+  # + 4×8×8/16ch 时间因果 VAE + umT5-XXL。本仓没有它的前代（同代的 1.3B 档是
+  # 规模缩放，不是结构差分，按视频线 policy 不单独录），所以 predecessor 空缺。
+
+params:
+  total: 14288491584
+  # 稠密主干，每一次前向都过全部权重 —— 没有 MoE 路由、没有跨步复用，
+  # 所以激活参数恒等于总量。显式写出来，免得推导去走「权重总量」那条兜底
+  active_decode: 14288491584
+  active_prefill: 14288491584
+  breakdown:
+    ffn: 5663068160
+    cross_attention: 4195532800
+    self_attention: 4195532800
+    adaln_modulation: 186081280
+    text_proj: 47196160
+    norm: 409600
+    unpatchify_head: 337984
+    patch_embed: 332800
+  counting_note: >-
+    **只含 DiT 主干**，按完整权重清单（6 分片 1,095 条目）逐项统计。
+    全 F32、无 scale 容器、无打包容器，所以 numel 即参数数，
+    14,288,491,584 × 4 B = 57,153,966,336 B；六个分片的 HTTP 实际大小
+    合计 57,154,077,392 B，差 111,056 B 正好是六个 safetensors 头
+    （每张量约 101 B，与 ti2v-5b 那份的 83,536 B / 825 张量同一个比值）。
+
+    **VAE 与文本编码器不在这个数里**，理由同 ti2v-5b：它们是 `.pth`（pickle），
+    读不了清单。`Wan2.1_VAE.pth` 507,609,880 B、
+    `models_t5_umt5-xxl-enc-bf16.pth` 11,361,920,418 B。
+    三者相加 69,023,496,634 B（64.28 GiB），是「14B」按 F32 算的 1.21 倍 ——
+    比 ti2v-5b 那份的 1.71 倍低，因为分母大了而两个附件一样大。
+
+    分桶口径与 ti2v-5b 一致：self_attention 与 cross_attention 各含 q/k/v/o 四个
+    [5120,5120] 投影加 bias，以及 norm_q / norm_k 两个 [5120] 的 QK-norm；
+    adaln_modulation 含逐层 modulation [1,6,5120]、time_embedding 与
+    time_projection [30720,5120]；`head.modulation` 归 unpatchify_head。
+
+generation:
+  backbone:
+    stream_design: single
+    layers: 40
+    double_blocks: 0
+    single_blocks: 40
+    hidden: 5120
+    heads: 40
+    head_dim: 128
+    ffn: 13824
+    text_conditioning: cross_attn
+    patch_size: [1, 2, 2]
+    position: 3D RoPE（freq_dim 256，t/h/w 三轴分配）
+    note: >-
+      **参数的大头在注意力投影，不在 FFN** —— 这一代与同族 ti2v-5b 正好相反。
+      每层 FFN 141,576,704 参数，比两块注意力之和（209,776,640）少 32.5%；
+      全模型 FFN 占 39.6%、self 与 cross 各占 29.4%（合计 58.7%）。
+      ti2v-5b 那边是 FFN 52.9%、两块注意力合计 45.3%。
+      根因是 FFN 倍率：这一代 13824/5120 = 2.7，ti2v-5b 是 14336/3072 = 4.67。
+      **同一个族系里「DiT 的参数在哪」不是常数**，按一代的比例去分配 kernel
+      工作量，到另一代就错了。
+
+      cross-attention 与 self-attention 参数**逐字节相同**（各 4,195,532,800），
+      两边都是满的 q/k/v/o [5120,5120]，没有 GQA（40 个 KV 头 = 40 个 Q 头，是 MHA）。
+      但默认档下**算力差 147.7 倍**：self-attention 跑在 75,600 个视频 token 上，
+      cross-attention 只对 512 个文本 token（text_len 512），
+      而注意力矩阵那一项是 O(n·m)。
+
+      adaLN 的 157,317,120 参数（`time_projection.1`，占 adaln 桶的 84.5%）
+      是**全部 40 层共用的一份**，逐层只有 [1,6,5120] 的偏置、40 层合计 1,228,800。
+      这正是卡上那句「This MLP is shared across all transformer blocks, with each
+      block learning a distinct set of biases」在权重里的样子 ——
+      若逐层各一份 MLP，这一块就是 40 × 157,317,120 = 6.29B，占全模型 44%。
+      官方说法与权重清单在这一项上对得上，是这份卡能当结构来源的依据之一
+
+  vae:
+    spatial_compression: 8
+    temporal_compression: 4
+    latent_channels: 16
+    causal: true
+    decoder_arch: conv3d
+    name: Wan2.1-VAE（Wan-VAE）
+    note: >-
+      latent_channels 16 是**权重实测**：`patch_embedding.weight` 形状
+      [5120, 16, 1, 2, 2]，`head.head.weight` 形状 [64, 5120] 而
+      64 = 16 × 1 × 2 × 2 —— 进出都是 16 通道。
+      压缩率 4×8×8 来自参考实现的 `vae_stride`，并与 `vae2_1.py` 的
+      temperal_downsample [False, True, True]（两次时间下采样 → 4）一致；
+      z_dim 16 在 `Wan2_1_VAE.__init__` 的默认值与 16 个归一化常数两处对上。
+      **时间因果**：`CausalConv3d`，帧数写成 4n+1（81 = 4×20+1），首帧单独编码，
+      所以 latent 帧数是 (81−1)/4+1 = 21 而不是 20.25。
+      decoder_arch 记 conv3d：`Decoder3d` 是 CausalConv3d + ResidualBlock 堆叠，
+      `attn_scales` 默认空，注意力只在中间块一处 ——
+      和同族外的 MiniMax-H3（36 层 Transformer 解码器）不是一个量级。
+      **params 未录**：权重在 `Wan2.1_VAE.pth`（507,609,880 B）里，
+      是 pickle 不是 safetensors，读头拿不到清单；dtype 未声明，
+      所以「字节 ÷ 每元素字节」这条退路也走不通。不填比填一个估值好
+
+  text_encoders:
+    - role: primary
+      name: umT5-XXL（encoder-only）
+      hf_repo: google/umt5-xxl
+      hidden: 4096
+      shipped_with_weights: true
+      release_dtype: BF16
+      params: 5680960209
+      note: >-
+        hidden 4096 是**权重实测**：`text_embedding.0.weight` 形状 [5120, 4096]，
+        即进 DiT 的文本特征是 4096 维。
+        params 是**推算不是实测**：随仓文件 `models_t5_umt5-xxl-enc-bf16.pth`
+        11,361,920,418 B ÷ 2 B（文件名自称 bf16）= 5,680,960,209，
+        pickle 自身的开销会让真值略小。仓里只放了 google/umt5-xxl 的
+        tokenizer 四件套，没有它的 config，所以层数与头数未知。
+        **这个文件在 wan 三份记录里字节数完全相同**（ti2v-5b、本份、t2v-A14B
+        都是 11,361,920,418 B），即整条 wan 线共用同一份文本编码器权重。
+        按参数它只有 DiT 的 0.40 倍，按字节 0.20 倍 —— 比 ti2v-5b 那边
+        （1.14 倍 / 0.57 倍）轻得多，所以这一代把它放 CPU 的收益小
+
+  sampling:
+    steps: 50
+    cfg:
+      scale: 5.0
+      distilled: false
+      embedded: false
+      forwards_per_step: 2
+    scheduler: flow matching（UniPC 默认 / DPM++ 可选）
+    shift: 5.0
+    note: >-
+      **端到端是 50 步 × 2 次前向 = 100 次 14.29B 主干前向**，不是 50 次。
+      CFG 未蒸馏、未嵌入：`text2video.py` 的循环里 `noise_pred_cond` 与
+      `noise_pred_uncond` 各调一次主干。
+      这三项**模型卡一个都没写**，全部取自厂商参考实现（第三档来源）：
+      步数与 shift 在 `generate.py` 的 `_validate_args` 里按任务分支设，
+      guide_scale 5.0 是 argparse 默认值
+
+  buckets:
+    - width: 1280
+      height: 720
+      frames: 81
+      fps: 16
+      duration_s: 5.0625
+      default: true
+      note: >-
+        `generate.py` 的 `--size` 默认值就是 1280*720，所以默认档取这一个。
+        frames 81 与 fps 16 取自 `_validate_args` 与 shared_config；
+        duration_s = 81 / 16 = 5.0625 秒，卡上口语写作「5 秒」。
+        latent 21×90×160，patch (1,2,2) 后 21×45×80 = 75,600 个 token，
+        与参考实现的 `seq_len = ceil(h_lat × w_lat / (p_h × p_w) × t_lat)`
+        算出的 75,600 一致
+    - width: 720
+      height: 1280
+      frames: 81
+      fps: 16
+      duration_s: 5.0625
+      note: 竖版 720P，与横版同像素量，token 数相同
+    - width: 832
+      height: 480
+      frames: 81
+      fps: 16
+      duration_s: 5.0625
+      note: >-
+        480P 档。latent 21×60×104 → 21×30×52 = 32,760 个 token，
+        是 720P 档的 43.3%
+    - width: 480
+      height: 832
+      frames: 81
+      fps: 16
+      duration_s: 5.0625
+      note: 竖版 480P，与横版同 token 数
+
+  constraints:
+    width_divisor: 16
+    height_divisor: 16
+    frame_formula: 4n+1
+    note: >-
+      除数 16 = VAE 空间压缩 8 × DiT patch 2，两者相乘才是有效压缩率。
+      四个支持档都整除：1280/16=80、720/16=45、832/16=52、480/16=30。
+      **这个 16 是推出来的，不是厂商断言的** —— 参考实现只用
+      `SUPPORTED_SIZES` 做白名单断言，没有整除性检查，而
+      `size[1] // vae_stride[1]` 是地板除，传一个不整除的尺寸会静默截断
+      而不是报错。帧数 4n+1 来自时间因果 VAE 的首帧单独编码
+
+precision:
+  weights_release: [FP32]
+  weights_release_scope:
+    FP32:
+      manifest_taken: true
+      in_precision_table: true
+      repo: Wan-AI/Wan2.1-T2V-14B
+      note: >-
+        1,095 个张量**无一例外**全是 F32，与同族 ti2v-5b 一致 ——
+        wan 线从 2025 年 2 月到 7 月三份都是全 F32 发布。
+        代价直接可见：14.29B 参数占 53.23 GiB，若按 BF16 发布只要 26.62 GiB。
+        而厂商 `shared_config.param_dtype` 是 `torch.bfloat16`，
+        即**发布精度与推理精度不是一个值**。
+        这一代**没有**把参数真正转成 BF16 的开关：`text2video.py` 只在
+        `amp.autocast(dtype=param_dtype)` 下跑，autocast 改的是计算精度，
+        不改参数的落盘与驻留形态，所以 53.23 GiB 是躲不掉的。
+        后一代 Wan2.2 才加了 `--convert_model_dtype`
+  inference_default: FP32
+
+bottlenecks:
+  - dimension: host-io
+    finding: >-
+      「14B」只说 DiT，而且这一代**没有降低驻留精度的开关**。
+      一次推理要驻留 DiT + VAE + umT5-XXL 三套权重共 64.28 GiB，
+      其中 53.23 GiB 是 F32 的 DiT；`amp.autocast` 把计算降到 BF16，
+      但参数仍以 F32 驻留
+    quantified: >-
+      DiT 57,153,966,336 B（F32 实测）+ VAE 507,609,880 B
+      + T5 11,361,920,418 B = 69,023,496,634 B（64.28 GiB）。
+      同一份权重按 BF16 存只要 26.62 + 0.47 + 10.58 = 37.67 GiB
+    fix: >-
+      单卡档位靠 `--offload_model True` 与 `--t5_cpu` 错峰搬运，
+      不是靠压缩驻留量。要真正省下这一半，得等后一代的
+      `--convert_model_dtype`（见 lineage 的 precision 轴）。
+      维度记 host-io 而不是容量，理由同 ti2v-5b：它已经溢出单卡，
+      真正要规划的是搬什么、什么时候搬
+    visibility: public
+  - dimension: compute
+    finding: >-
+      按参数量分配注意力侧的优化预算会错两个量级：
+      cross-attention 与 self-attention 参数**逐字节相同**，但前者只对 512 个
+      文本 token，后者对 75,600 个视频 token
+    quantified: >-
+      默认档 1280×720×81 帧 → latent 21×90×160，patch (1,2,2) 后
+      21×45×80 = 75,600 个 token。注意力矩阵项 self:cross = 75,600:512 = 147.7:1
+    fix: 稀疏化与 kernel 工作全部压在 self-attention 上；cross-attention 走常规实现即可
+    visibility: public
+  - dimension: compute
+    finding: 端到端是 100 次主干前向，不是 50 次 —— CFG 未蒸馏，每步条件与无条件各一遍
+    quantified: steps 50 × forwards_per_step 2 = 100
+    fix: >-
+      CFG 蒸馏是这条线最直接的 2 倍收益。wan 线三份（含后一代 A14B）
+      都没做，同期的 HunyuanVideo-1.5 与 MiniMax-H3 已经做了
+    visibility: public
+
+infra_signals:
+  - text: >-
+      同一个族系里「DiT 的参数在哪」不是常数：这一代 FFN 占 39.6%、
+      两块注意力占 58.7%，而同代的 ti2v-5b 是 52.9% / 45.3%，
+      唯一的变量是 FFN 倍率（2.7 vs 4.67）。
+      按某一代的参数分布去规划 kernel 优先级，换一代就反了
+    evidence: derived
+  - text: >-
+      adaLN 调制的 MLP 全层共用一份，这件事只在参数量上看得见：
+      共用一份是 157,317,120 参数，逐层各一份会是 6.29B、占全模型 44%。
+      它同时意味着**这一块不随层数增长**，而逐层偏置随层数线性增长但基数极小
+      （40 层合计 1,228,800）
+    evidence: derived
+
+evidence:
+  id: official
+  family: official
+  kind: judgement
+  display_name: official
+  released: official
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  params.counting_note: derived
+  generation: official
+  generation.backbone.head_dim: derived
+  generation.backbone.note: derived
+  generation.vae: derived
+  generation.vae.note: derived
+  # text_encoders 里 params 是按文件大小推的、hidden 是权重实测，
+  # 两者都不是官方声明 —— 证据路径不支持数组下标，所以整块标 derived
+  generation.text_encoders: derived
+  generation.sampling: judgement
+  generation.buckets: judgement
+  generation.constraints: derived
+  precision: official
+  precision.weights_release_scope: derived
+  bottlenecks: judgement
+  infra_signals: derived
+  notes: judgement
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-30'
+  scope: [official, derived, judgement]
+  method: >-
+    Gate B 三路：config.json（12 个字段）、权重清单（6 分片 1,095 张量）与
+    模型卡的结构表逐项对读，厂商参考实现 wan_t2v_14B.py 作第四路。
+    结构字段四路一致：dim 5120 / ffn 13824 / heads 40 / layers 40 / in 16 / out 16
+    / freq 256 这七项在卡的表、config、参考实现三处逐字相同，
+    其中 in/out 16 与 patch (1,2,2) 另在 `patch_embedding.weight`
+    [5120,16,1,2,2] 与 `head.head.weight` [64,5120] 里实测到。
+    外部对账：HF 自己的 safetensors tally 14,288,491,584 与本仓实测**逐位相同**。
+    字节对账：实测 numel × 4 B 与六个分片的 HTTP Content-Length 差 111,056 B（= 头）。
+    卡上那句「adaLN 的 MLP 全层共用、逐层只学偏置」用参数量复核过
+    （157,317,120 + 40×30,720 = adaln 桶的全部）。
+    Gate C：判断类字段逐条在 evidence 里标了 judgement 或 derived。
+
+review:
+  - id: R1
+    field: params.total
+    severity: imprecise
+    claim: 「Wan2.1-T2V-14B 是 14B 模型」
+    finding: >-
+      14B 说的是 DiT，而且这一代连「按 BF16 驻留」都做不到。
+      一次推理要驻留三套权重共 64.28 GiB，其中 DiT 自己就是 53.23 GiB，
+      因为发布格式是 F32 而参考实现只用 autocast 降计算精度、不转参数。
+      按字节总量是 DiT 单独的 1.21 倍
+    resolution: corrected
+    changed_to: >-
+      params.total 只填 DiT 并在 counting_note 写明排除了什么、为什么；
+      另外两块的规模进 generation.vae 与 generation.text_encoders；
+      bottlenecks 里单列一条 host-io，并写明「没有转精度的开关」这一半
+  - id: R2
+    field: generation.constraints.width_divisor
+    severity: unsupported
+    claim: 宽高必须被 16 整除
+    finding: >-
+      厂商没有断言过整除性。参考实现只拿 `SUPPORTED_SIZES` 做白名单
+      （四个档都被 16 整除），而 `size[1] // vae_stride[1]` 是地板除 ——
+      传一个不整除的尺寸会**静默截断**，不报错也不拒绝。
+      所以 16 是「VAE 8 × patch 2」推出来的有效压缩率，
+      不是一条厂商声明的约束
+    resolution: confirmed
+    changed_to: >-
+      保留 16，但在 constraints.note 写明它是推出来的、厂商的实际机制是白名单，
+      并指出地板除会静默截断。evidence 标 derived 而不是 official
+  - id: R3
+    field: generation.vae
+    severity: unsupported
+    claim: VAE 的压缩率与通道数有官方依据
+    finding: >-
+      模型卡对 VAE 只有定性描述（3D causal VAE、能编解码任意长度 1080P），
+      **压缩率、z_dim、层数一个数都没给**。
+      4×8×8 与 z_dim 16 取自厂商参考实现（第三档来源），
+      其中 16 另有权重实测佐证（in/out 投影都是 16 通道），
+      压缩率的 4 另有 temperal_downsample 两次下采样佐证，
+      但空间的 8 只有 `vae_stride` 一处来源
+    resolution: open
+    changed_to: >-
+      generation.vae 整块标 derived；在 note 里逐项写清哪个数有几路佐证。
+      空间压缩 8 只有一路，留一条 open question
+
+notes: >-
+  **这份是 wan 线的差分基线**，录它的价值在对侧：Wan2.2 相对它改了什么，
+  在 lineage.changed_from_predecessor 里逐轴写着，每一条都能对回这份的字段。
+
+  一条值得记的实测：Wan2.2-T2V-A14B 的两套专家，**张量名到形状的映射与这一份
+  逐项相同**（1,095 个名字、形状与 dtype 全同），两边的 config 除
+  `_diffusers_version` 外逐字相同。即那一代的「MoE」没有动主干形状 ——
+  它是把这份主干复制成两套、按去噪时间步整体换入换出。
+  同族系跨版本比张量名集合是本仓最省力的判据（见 model-audit skill 的取数顺序 1），
+  这次它直接回答了「A14B 的专家是不是改过结构」。
+
+  字节对账（三块相加对 usedStorage）：
+  DiT 57,154,077,392（六分片 HTTP 实际大小）+ VAE 507,609,880
+  + T5 11,361,920,418 + tokenizer 21,454,081 + 其余小文件 6,342,999
+  = 69,051,934,770 B，与 HF tree API 逐文件求和一致。
+  而 HF 的 usedStorage 是 149,464,228,510 B，**差 80,412,293,740 B** ——
+  仓里有三个相邻的 `init upload` 提交（2025-02-25 的 07:59、12:58、16:22），
+  旧修订版的 LFS 对象仍计进 usedStorage。
+  所以 usedStorage 在这条线上**不是**「当前修订版的权重总字节」，
+  这是 ti2v-5b 那份记下的同一个坑（差额在那边约等于一份 DiT）在本份的复现。
+  这里的差额不是某一个文件的整数倍，所以**没有逐项拆解它**，
+  只确认它的方向与成因；要拆得准得逐修订版列 LFS 对象，那是另一轮取数。
+
+  取数提醒：这个仓是视频线里最规整的两个之一（顶层 config.json 只含 DiT 的
+  12 个字段、1 个 index、6 个分片），不需要 `--include`。
+  HF 还给了它的 safetensors tally，视频线里目前只有这一份有这个外部锚 ——
+  同族的 T2V-A14B 那个仓，HF 自己也没算出 tally。
+
+open_questions:
+  - >-
+    VAE 的参数量、层数与解码器通道配置都不知道（见 R3）。`Wan2.1_VAE.pth` 是 pickle，
+    读头拿不到清单，dtype 也没声明。本份连 decoder_arch 都是从参考实现的类定义
+    读出来的（conv3d），不是实测。参考实现的默认 cfg（dim 96、dim_mult [1,2,4,4]、
+    num_res_blocks 2）给了算参数量的全部输入，但那是**按代码默认值算**不是实测，
+    而仓里 507,609,880 B 这个文件大小在 dtype 未知时无法反推元素数去校验
+  - >-
+    VAE 的空间压缩 8 只有 `vae_stride` 一处来源（见 R3）。
+    时间的 4 有 temperal_downsample 佐证、通道的 16 有权重佐证，空间的 8 没有。
+    要钉死得数 `Decoder3d` 的 Resample 层，那要先能读 pickle
+  - >-
+    umT5-XXL 的层数与头数不知道：仓里只放了 tokenizer 四件套，没有它的 config。
+    params 5,680,960,209 是按文件大小 ÷ 2 推的，不是实测
+  - >-
+    训练精度无一手来源。发布权重全 F32 是实测，`shared_config.param_dtype`
+    是 bfloat16 也是实测，但那两个说的都是推理侧，不是训练格式
+  - >-
+    单卡峰值显存与端到端耗时只在卡的 `assets/comp_effic.png` 图里，
+    正文没有数字。图没有解析，所以 performance 一项没填 ——
+    不是没查，是来源是张图

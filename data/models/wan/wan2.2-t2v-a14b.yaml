@@ -1,0 +1,650 @@
+id: wan2.2-t2v-a14b
+family: wan
+kind: video-gen
+display_name: Wan2.2-T2V-A14B
+released: '2025-07-24'
+license: apache-2.0
+visibility: public
+
+# 口径照本族首录 wan2.2-ti2v-5b 的头注释来（params 只算 DiT、不建 arch 块、
+# 没有 KV cache 这笔账）。这一份另有一条自己的：
+#
+# **两套专家不进 arch.moe。** 它的路由轴是去噪时间步，不是 token：
+# 没有 router、没有 top-k、没有 all-to-all。填进 arch.moe 会让站点显示一个
+# 不存在的 EP 通信量，也会让「总参 / 激活参数」被读成「同一层里选 k 个专家」。
+# schema 为此单设 generation.expert_switching（axis / boundary / experts /
+# both_resident）。取数实测印证了这一点：仓里没有顶层 config，
+# 组件目录就叫 high_noise_model / low_noise_model，各带一份完整的 config 与 index。
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B
+    locator: README.md §Introduction of Wan2.2 (1) Mixture-of-Experts (MoE) Architecture @ c8c270b13ee0
+    accessed: '2026-10-30'
+    note: >-
+      MoE 的语义与切换判据全在这一节，是 official 口径：
+      「a high-noise expert for the early stages, focusing on overall layout;
+      and a low-noise expert for the later stages, refining video details.
+      Each expert model has about 14B parameters, resulting in a total of 27B
+      parameters but only 14B active parameters per step, keeping inference
+      computation and GPU memory nearly unchanged.」
+      切换点由信噪比定义：「We define a threshold step t_moe corresponding to
+      half of the SNR_min, and switch to the low-noise expert when t < t_moe.」
+      另有两条：480P 与 720P、5 秒（§This repository contains）；
+      单卡 `--offload_model True --convert_model_dtype` 需
+      「at least 80GB VRAM」（§Run Text-to-Video Generation）。
+      训练数据相对 Wan2.1「+65.6% more images and +83.2% more videos」。
+      **卡上的 27B 与它自己的「约 14B 一套」对不上**，见 R1
+  - kind: repo
+    url: https://github.com/Wan-Video/Wan2.2/blob/main/wan/configs/wan_t2v_A14B.py
+    locator: t2v_A14B 全量字段 + shared_config.py + configs/__init__.py 的 SUPPORTED_SIZES['t2v-A14B']
+    accessed: '2026-10-30'
+    note: >-
+      厂商参考实现（第三档来源）。采样与切换口径取自这里：
+      sample_steps 40 / sample_shift 12.0 / boundary 0.875 /
+      sample_guide_scale (3.0 低噪, 4.0 高噪) / frame_num 81（shared_config）/
+      sample_fps 16 / size 默认 1280*720。
+      low_noise_checkpoint 与 high_noise_checkpoint 两个字段直接给出组件目录名。
+      结构字段与权重清单逐项对上：patch_size (1,2,2) = `patch_embedding.weight`
+      的后三维；dim 5120 / ffn_dim 13824 / num_heads 40 / num_layers 40 与
+      两份组件 config 逐字相同；qk_norm 与 cross_attn_norm 在清单里有对应张量；
+      window_size (-1,-1) 即不开窗。vae_checkpoint 仍是 `Wan2.1_VAE.pth`、
+      vae_stride 仍是 (4,8,8) —— 这一代**没换 VAE**
+  - kind: repo
+    url: https://github.com/Wan-Video/Wan2.2/blob/main/wan/text2video.py
+    locator: WanT2V.__init__ / _configure_model / _prepare_model_for_timestep / generate 的采样循环；generate.py 第 322–323 行
+    accessed: '2026-10-30'
+    note: >-
+      `both_resident` 的依据只在这里（卡上只有一句「GPU memory nearly unchanged」，
+      不构成机制交代）。三处代码合起来才说得清，见 generation.expert_switching.note。
+      采样循环还给出两件事：`noise_pred_cond` 与 `noise_pred_uncond` 各调一次主干
+      （真 CFG，每步两次前向），以及 `sample_guide_scale` 随专家切换
+      （`guide_scale[1] if t >= boundary else guide_scale[0]`），
+      即引导强度是两个值不是一个
+  - kind: modelcard
+    url: https://huggingface.co/Wan-AI/Wan2.2-T2V-A14B
+    locator: high_noise_model/ 与 low_noise_model/ 各 6 个 diffusion_pytorch_model-*.safetensors 的头 @ c8c270b13ee0
+    accessed: '2026-10-30'
+    note: >-
+      权重清单逐分片读头取全：12 分片、每套 1,095 个张量，无读失败分片。
+      全部 F32，无 scale 容器、无打包容器，numel 即参数数。
+      **两套专家的张量名、形状与 dtype 逐项相同**，所以取数脚本把 1,095 个名字
+      全部记成了跨分片重复（shard_map 的 duplicates），而 shapes.json 里
+      只存得下一套 —— 这是 Gate B 那处 MISMATCH 的根因，见 reviewed 与 R2。
+      同样的原因，**HF 自己也没算出这个仓的 safetensors tally**
+      （repoinfo 的 `safetensors` 字段是 null），所以这一份没有外部参数量锚，
+      与同族 wan2.1-t2v-14b（tally 逐位相同）正好相反
+
+hf:
+  repo: Wan-AI/Wan2.2-T2V-A14B
+  sha: c8c270b13ee05bfa474194ac9fb07a5868a97cea
+  last_modified: '2025-08-07T09:43:34.000Z'
+  pipeline_tag: text-to-video
+  gated: false
+
+lineage:
+  track: main
+  predecessor: wan2.1-t2v-14b
+  changed_from_predecessor:
+    - axis: moe
+      text: >-
+        引入按**去噪时间步**切换的两套专家：高噪专家管前期布局、低噪专家管后期细节，
+        在 `boundary` 0.875（即时间步 875 / 1000）处换手。
+        没有 router、没有 top-k、没有 all-to-all —— 这三样是 LLM 侧 MoE 的全部通信
+        与调度成本，这里一个都不存在。每套专家的张量名到形状的映射与前代
+        **逐项相同**（1,095 个名字全同），两份 config 除 `_diffusers_version`
+        外逐字相同，即主干形状一个字节都没动
+      benefit: >-
+        卡的说法是「enlarges the overall model capacity while maintaining the same
+        computational cost」，并给了四条验证损失曲线的消融（Wan2.1 基线、
+        Wan2.1 配 Wan2.2 高噪专家、Wan2.1 配 Wan2.2 低噪专家、全 MoE）。
+        代价不在算力也不在通信，在**权重存储翻倍**：落盘 106.46 GiB 对前代 53.23 GiB
+    - axis: scale
+      text: >-
+        总参数 14,288,491,584 → 28,576,983,168（两套各 14,288,491,584，实测），
+        而每步激活参数不变，仍是 14,288,491,584。
+        这是本仓第一份「总量翻倍、激活不变、而且不是 token 级路由」的记录
+      benefit: >-
+        单步算力与前代逐字相同（同样的 40 层 5120 宽主干跑同一条 latent 序列），
+        所以这一轴的收益全在容量、成本全在存储与一次换手的搬运
+    - axis: decoding
+      text: >-
+        采样默认值三项都改了：步数 50 → 40、`sample_shift` 5.0 → 12.0、
+        引导强度从单值 5.0 → **两个值**（低噪 3.0 / 高噪 4.0，随专家切换）。
+        端到端前向次数 100 → 80
+      benefit: >-
+        步数降 20% 是直接的 1.25 倍收益。引导强度分两档这件事本身说明两套专家
+        不是同一个模型的两份拷贝 —— 它们的最佳引导强度不同
+    - axis: precision
+      text: >-
+        发布精度仍是全 F32，但这一代**加了把参数真正转成 BF16 的开关**
+        （`generate.py` 的 `--convert_model_dtype`，照 `config.param_dtype` 转）。
+        前代只有 `amp.autocast`，改计算精度不改驻留形态
+      benefit: >-
+        对这一代尤其要紧：两套 F32 专家是 106.46 GiB，转 BF16 后 53.23 GiB，
+        正好回到前代 F32 单套的量级。卡上给的单卡命令里这个开关是默认带的
+    - axis: training
+      text: 训练数据相对前代增加 65.6% 的图像与 83.2% 的视频（卡的原话）
+      benefit: 卡称由此「notably enhances the model's generalization」。这是厂商口径，本仓无法复核
+  # 这一代**没有换 VAE**：vae_checkpoint 仍是 Wan2.1_VAE.pth，vae_stride 仍是
+  # (4,8,8)、z_dim 仍是 16，文件字节数与前代那份完全相同。
+  # 「恒定也是信息」—— 同代的 wan2.2-ti2v-5b 换成了 4×16×16/48ch 的 Wan2.2-VAE，
+  # 所以 VAE 这一轴在 Wan2.2 这一代是**分档位变的，不是整代变的**。
+  # 这就是视频线 policy 要「VAE 变了的同代档位单独录」的现成理由。
+
+params:
+  total: 28576983168
+  # 每步只过一套专家 —— 时间步落在 boundary 哪一侧就用哪一套，另一套完全不参与。
+  # 所以激活参数恰好是总量的一半，且 prefill / decode 之分在生成类里不存在，
+  # 两项填同一个值
+  active_decode: 14288491584
+  active_prefill: 14288491584
+  breakdown:
+    expert_high_noise: 14288491584
+    expert_low_noise: 14288491584
+  counting_note: >-
+    **只含 DiT 主干，含两套专家**（schema 的口径：total 含全部专家）。
+    按完整权重清单逐项统计：两个组件目录各 6 分片、各 1,095 条目，
+    每套 14,288,491,584 参数，合计 28,576,983,168。
+    全 F32、无 scale 容器、无打包容器，所以 numel 即参数数，
+    28,576,983,168 × 4 B = 114,307,932,672 B；十二个分片的 HTTP 实际大小
+    合计 114,308,154,752 B，差 222,080 B 正好是十二个 safetensors 头
+    （每套 111,040 B，与前代六分片的 111,056 B 几乎相同 —— 张量数相同）。
+
+    **两套专家的内部拆分与前代逐项相同**，所以逐子系统的分桶不在这里重复
+    （ffn 5,663,068,160 / cross_attention 4,195,532,800 / self_attention
+    4,195,532,800 / adaln_modulation 186,081,280 / text_proj 47,196,160 /
+    norm 409,600 / unpatchify_head 337,984 / patch_embed 332,800，
+    每套一份，见 wan2.1-t2v-14b 的 params.breakdown）。
+    breakdown 这里按**专家**拆，因为这一代新增的那根轴是专家而不是子系统。
+
+    **卡上的「27B」与实测差 5.8%**，见 R1：27B 既不等于实测 28.58B，
+    也不等于卡自己说的「约 14B 一套」乘二。
+
+    **VAE 与文本编码器不在这个数里**，理由同族内另两份：它们是 `.pth`（pickle），
+    读不了清单。`Wan2.1_VAE.pth` 507,609,880 B（与前代同一份，字节数相同）、
+    `models_t5_umt5-xxl-enc-bf16.pth` 11,361,920,418 B。
+    两套专家 + VAE + T5 相加 126,177,462,970 B（117.51 GiB）；
+    只驻留一套专家时是 69,023,496,634 B（64.28 GiB），与前代完全相同 ——
+    **这就是卡那句「GPU memory nearly unchanged」的实测形态**，
+    但它只对「一次只驻留一套」的部署方式成立，见 generation.expert_switching
+
+generation:
+  backbone:
+    stream_design: single
+    layers: 40
+    double_blocks: 0
+    single_blocks: 40
+    hidden: 5120
+    heads: 40
+    head_dim: 128
+    ffn: 13824
+    text_conditioning: cross_attn
+    patch_size: [1, 2, 2]
+    position: 3D RoPE（freq_dim 256，t/h/w 三轴分配）
+    note: >-
+      这一组数**每一项都与前代 wan2.1-t2v-14b 相同**，并且是实测相同而不是抄来的：
+      两份组件 config 与前代的顶层 config 除 `_diffusers_version`
+      （0.33.1 vs 0.30.0）外逐字相同，1,095 个张量名到形状的映射也逐项相同。
+      所以这里填的是**一套专家的主干形状**，不是两套之和 ——
+      两套的层数不相加，它们是同一条前向路径的两个备选权重。
+
+      参数的大头仍在注意力投影：每层 FFN 141,576,704，比两块注意力之和
+      （209,776,640）少 32.5%；全模型（单套口径）FFN 39.6%、
+      self 与 cross 各 29.4%。默认档下 self-attention 跑 75,600 个视频 token、
+      cross-attention 只对 512 个文本 token，**算力差 147.7 倍而参数逐字节相同**。
+
+      adaLN 调制的 157,317,120 参数是全部 40 层共用的一份（`time_projection.1`），
+      逐层只有 [1,6,5120] 的偏置 —— 这是前代卡上点明的设计，这一代沿用。
+      **它也被复制了两份**：两套专家各有自己的共用 MLP 与各自的逐层偏置
+
+  vae:
+    spatial_compression: 8
+    temporal_compression: 4
+    latent_channels: 16
+    causal: true
+    decoder_arch: conv3d
+    name: Wan2.1-VAE（Wan-VAE）
+    ref_model_id: wan2.1-t2v-14b
+    note: >-
+      **这一代没换 VAE**：`vae_checkpoint` 仍是 `Wan2.1_VAE.pth`，
+      随仓文件字节数 507,609,880 B 与前代那份完全相同。
+      ref_model_id 指过去记这件事；上面那四个数**不是从那边抄的**，
+      它们在本仓自己的来源里各自成立：`vae_stride` (4,8,8) 在本仓的
+      `wan_t2v_A14B.py` 里，latent_channels 16 是本份权重实测
+      （`patch_embedding.weight` [5120,16,1,2,2]、`head.head.weight` [64,5120]
+      而 64 = 16×1×2×2）。
+      填了值而不是只留指针，是因为 `derive.py` 的 token 数推导直接读
+      `vae.spatial_compression` / `temporal_compression`，不解析 ref_model_id ——
+      只留指针会让这一份算不出 latent token 数。
+      **时间因果**：帧数 4n+1（81 = 4×20+1），latent 帧数 (81−1)/4+1 = 21。
+      params 未录的理由与前代相同（pickle，读不了清单，dtype 也没声明）。
+
+      值得对照的是同代的 wan2.2-ti2v-5b：那一档换成了 4×16×16/48ch 的
+      Wan2.2-VAE，latent token 数掉到 1/4。**所以 VAE 这一轴在 Wan2.2 这一代
+      是分档位变的，不是整代变的** —— 旗舰这一档一个字节都没动
+
+  text_encoders:
+    - role: primary
+      name: umT5-XXL（encoder-only）
+      hf_repo: google/umt5-xxl
+      hidden: 4096
+      shipped_with_weights: true
+      release_dtype: BF16
+      params: 5680960209
+      note: >-
+        与前代同一份权重：`models_t5_umt5-xxl-enc-bf16.pth` 在 wan 三份记录的仓里
+        字节数完全相同（11,361,920,418 B）。
+        hidden 4096 是本份**权重实测**（`text_embedding.0.weight` [5120,4096]）；
+        params 是**推算不是实测**（11,361,920,418 ÷ 2 B，文件名自称 bf16），
+        pickle 自身的开销会让真值略小。仓里只放了 tokenizer 四件套，没有它的 config，
+        所以层数与头数未知。
+        它每次生成只跑一遍，而主干要跑 80 遍，所以参考实现的 `--t5_cpu`
+        把它放 CPU 是错峰代价最小的一项
+
+  sampling:
+    steps: 40
+    cfg:
+      distilled: false
+      embedded: false
+      forwards_per_step: 2
+    scheduler: flow matching（UniPC 默认 / DPM++ 可选）
+    shift: 12.0
+    note: >-
+      **端到端是 40 步 × 2 次前向 = 80 次前向，每次只过一套 14.29B 专家**，
+      不是 80 次 28.58B。这是这一代最容易算错的一处：
+      总参数翻倍而端到端算力与前代的 100 次 14.29B 前向相比**降了 20%**。
+      CFG 未蒸馏、未嵌入：采样循环里 `noise_pred_cond` 与 `noise_pred_uncond`
+      各调一次主干。
+
+      `cfg.scale` **留空不是没查到** —— 它在这一代是两个值：
+      `sample_guide_scale` = (3.0 低噪, 4.0 高噪)，采样循环按
+      `guide_scale[1] if t >= boundary else guide_scale[0]` 选，
+      即引导强度随专家切换。一个 number 装不下两个口径不同的值，
+      硬填一个会让下游以为全程同一强度。两个值记在这里。
+      步数 / shift / 两档引导强度全部取自厂商参考实现（第三档来源），
+      模型卡一项都没写
+
+  buckets:
+    - width: 1280
+      height: 720
+      frames: 81
+      fps: 16
+      duration_s: 5.0625
+      default: true
+      note: >-
+        `generate.py` 的 `--size` 默认值就是 1280*720。
+        frames 81 与 fps 16 取自 shared_config；duration_s = 81 / 16 = 5.0625 秒，
+        卡上口语写作「5s」。latent 21×90×160，patch (1,2,2) 后
+        21×45×80 = 75,600 个 token，与参考实现的 `seq_len` 算式一致。
+        与前代四个档位逐项相同
+    - width: 720
+      height: 1280
+      frames: 81
+      fps: 16
+      duration_s: 5.0625
+      note: 竖版 720P，与横版同像素量，token 数相同
+    - width: 832
+      height: 480
+      frames: 81
+      fps: 16
+      duration_s: 5.0625
+      note: 480P 档。latent 21×60×104 → 21×30×52 = 32,760 个 token，是 720P 档的 43.3%
+    - width: 480
+      height: 832
+      frames: 81
+      fps: 16
+      duration_s: 5.0625
+      note: 竖版 480P，与横版同 token 数
+
+  constraints:
+    width_divisor: 16
+    height_divisor: 16
+    frame_formula: 4n+1
+    note: >-
+      除数 16 = VAE 空间压缩 8 × DiT patch 2。四个支持档都整除。
+      与前代同一套约束，且同样是**推出来的不是厂商断言的**：
+      参考实现只用 `SUPPORTED_SIZES` 做白名单，没有整除性检查，
+      而 `size[1] // vae_stride[1]` 是地板除，不整除会静默截断。
+      帧数 4n+1 来自时间因果 VAE 的首帧单独编码
+
+  expert_switching:
+    axis: timestep
+    boundary: 0.875
+    experts: 2
+    both_resident: false
+    note: >-
+      **查清了，答案是「不必须，但官方多卡路径确实两套都驻留」。**
+      三处代码合起来才说得清（`wan/text2video.py` 与 `generate.py`）：
+
+      1. `WanT2V.__init__` 对 `low_noise_model` 与 `high_noise_model`
+         各做一次 `from_pretrained`，所以**宿主内存里从头到尾都是两套**，
+         与下面哪条路径无关。
+      2. `_prepare_model_for_timestep` 在 `offload_model or init_on_cpu` 为真时，
+         把不需要的那套 `.to('cpu')`、需要的那套 `.to(device)` ——
+         **显存里只有一套**。
+      3. 两个标志的默认值决定走哪条：`generate.py` 第 322–323 行
+         `offload_model = False if world_size > 1 else True`，
+         而 `init_on_cpu` 在 `t5_fsdp or dit_fsdp or use_sp` 时置 False。
+         于是**单卡**（offload_model=True）只驻留一套；
+         **卡上给的多卡命令** `--dit_fsdp --t5_fsdp --ulysses_size 8`
+         两个标志都为假，`_configure_model` 对两套各做一次 `.to(device)`，
+         两套同时驻留（FSDP 分片到各 rank）。
+
+      所以 both_resident 填 false：它问的是「必须」，而官方自己提供了只驻留一套的
+      路径，并把它设成单卡默认。**卡那句「GPU memory nearly unchanged」
+      只在这条路径上成立**，多卡 FSDP 路径下每 rank 的权重分片是前代的两倍。
+
+      换手次数：采样循环按 `timesteps` 顺序迭代，flow matching 调度器给出的是
+      单调递减序列，所以谓词 `t >= boundary` 整个生成过程只翻转一次 ——
+      **每次生成恰好一次换入换出，不是每步一次**。按 `--convert_model_dtype`
+      后的 BF16 算，那是一次 28.58 GB 的 PCIe 往返（搬出一套、搬入一套），
+      摊到 40 步 80 次前向上。单调性是从调度器的约定读出来的，本仓没有实测，
+      所以这一条记 judgement 而不是 derived。
+
+      每套专家 57,153,966,336 B（F32 实测，= 53.23 GiB）；两套 106.46 GiB。
+      参数量按专家的拆分在 params.breakdown
+
+precision:
+  weights_release: [FP32]
+  weights_release_scope:
+    FP32:
+      manifest_taken: true
+      in_precision_table: true
+      repo: Wan-AI/Wan2.2-T2V-A14B
+      note: >-
+        两套专家共 2,190 个张量全是 F32，与同族另两份一致 ——
+        wan 线 2025 年 2 月到 7 月三份全是 F32 发布。
+        这一代的代价被专家数放大一倍：28.58B 参数占 106.46 GiB，
+        按 BF16 发布只要 53.23 GiB。
+        厂商 `shared_config.param_dtype` 是 `torch.bfloat16`，
+        即**发布精度与推理精度不是一个值**；而这一代新加了
+        `--convert_model_dtype` 把参数真正转过去（前代只有 `amp.autocast`，
+        改计算精度不改驻留形态）。卡给的单卡命令里这个开关是默认带的
+  inference_default: FP32
+
+bottlenecks:
+  - dimension: host-io
+    finding: >-
+      「A14B / 27B」说的是 DiT 的两套专家，而显存账取决于**部署路径而不是模型**：
+      单卡路径一次只驻留一套（与前代等量），官方多卡 FSDP 路径两套同时驻留。
+      同一份权重两个结论，这件事卡上那句「GPU memory nearly unchanged」没有交代
+    quantified: >-
+      一套专家 57,153,966,336 B（F32 实测，53.23 GiB）；两套 106.46 GiB。
+      加 VAE 507,609,880 B 与 T5 11,361,920,418 B：
+      只驻留一套 69,023,496,634 B（64.28 GiB，与前代逐字节相同）、
+      两套都驻留 126,177,462,970 B（117.51 GiB）
+    fix: >-
+      单卡靠 `--offload_model True` 走一套驻留 + 一次换手；
+      多卡若要省，得自己改 `_configure_model` 的 `.to(device)` 时机 ——
+      参考实现在那条路径上没有提供只驻留一套的开关。
+      维度记 host-io 而不是容量，理由同 ti2v-5b：权重已经溢出单卡，
+      要规划的是搬什么、什么时候搬
+    visibility: public
+  - dimension: host-io
+    finding: >-
+      时间步路由的搬运账与 token 路由完全不同：换手**每次生成只发生一次**，
+      因为时间步单调递减、boundary 只被跨越一次。
+      所以「两套专家」带来的不是逐步的专家换入换出，而是一次性的大块搬运
+    quantified: >-
+      一次换手搬出一套、搬入一套：BF16 下 2 × 14,288,491,584 × 2 B
+      = 57,153,966,336 B 的 PCIe 往返（F32 下翻倍），摊到 40 步 / 80 次前向。
+      对比 LLM 侧 token 级 MoE 的每 token all-to-all，这一项小到可以忽略
+    fix: >-
+      不需要优化。这一轴在这一代上不是瓶颈，记下来是为了防止把 LLM 侧
+      MoE 的搬运模型套到这里 —— 那会高估两三个量级
+    visibility: public
+  - dimension: compute
+    finding: >-
+      总参数翻倍而端到端算力**比前代低**：每步只过一套 14.29B 专家，
+      而步数从 50 降到 40。把「27B」当算力口径会高估一倍
+    quantified: >-
+      本代 40 步 × 2 次前向 = 80 次 14.29B 前向；
+      前代 50 步 × 2 次 = 100 次 14.29B 前向。算力比 0.8
+    fix: >-
+      规划算力按 params.active_decode（14,288,491,584）算，
+      规划存储按 params.total（28,576,983,168）算。
+      两个口径之间不算倍数
+    visibility: public
+  - dimension: compute
+    finding: >-
+      按参数量分配注意力侧的优化预算会错两个量级：
+      cross-attention 与 self-attention 参数逐字节相同，但前者只对 512 个
+      文本 token，后者对 75,600 个视频 token
+    quantified: >-
+      默认档 1280×720×81 帧 → latent 21×90×160，patch (1,2,2) 后
+      21×45×80 = 75,600 个 token。注意力矩阵项 self:cross = 75,600:512 = 147.7:1
+    fix: 稀疏化与 kernel 工作全部压在 self-attention 上
+    visibility: public
+
+infra_signals:
+  - text: >-
+      「MoE」在生成类模型上可以指两件完全不同的事。这一代的路由轴是**去噪时间步**：
+      没有 router、没有 top-k、没有 all-to-all，两套专家按信噪比整体换手，
+      每次生成只换一次。同一条视频线上的 MAGI-2 才是 token 级路由。
+      把两者记进同一个字段，会让「总参 / 激活参数」这对数在两种结构上被读成同一件事 ——
+      而它们的通信成本差好几个量级
+    evidence: derived
+  - text: >-
+      权重存储口径在这一代取决于部署路径：官方单卡路径驻留一套、
+      官方多卡 FSDP 路径驻留两套，同一份权重两个结论。
+      「一次部署实际驻留几套」必须跟着路径一起记，一个布尔装不下 ——
+      本记录的 both_resident 填 false 并在 note 里把两条路径的代码位置都写明
+    evidence: judgement
+  - text: >-
+      一个族系的「代际改动」可以只落在部分档位上。Wan2.2 这一代，
+      旗舰 A14B 一个字节都没动 VAE（仍是 Wan2.1-VAE 4×8×8/16ch），
+      而同代的 TI2V-5B 换成了 4×16×16/48ch。
+      按「这一代换了 VAE」去推 token 数，会在旗舰这一档错 4 倍
+    evidence: derived
+
+evidence:
+  id: official
+  family: official
+  kind: judgement
+  display_name: official
+  released: official
+  license: official
+  hf: official
+  lineage: judgement
+  lineage.changed_from_predecessor: derived
+  params: derived
+  params.counting_note: derived
+  generation: official
+  generation.backbone.head_dim: derived
+  generation.backbone.note: derived
+  generation.vae: derived
+  generation.vae.note: derived
+  # text_encoders 里 params 是按文件大小推的、hidden 是权重实测，
+  # 两者都不是官方声明 —— 证据路径不支持数组下标，所以整块标 derived
+  generation.text_encoders: derived
+  generation.sampling: judgement
+  generation.buckets: judgement
+  generation.constraints: derived
+  # axis / boundary / experts 三项有一手依据（卡 + 厂商 config），
+  # both_resident 与换手次数是从参考实现读出来的，整块按最弱的那一项标
+  generation.expert_switching: judgement
+  precision: official
+  precision.weights_release_scope: derived
+  bottlenecks: judgement
+  infra_signals: derived
+  notes: judgement
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-30'
+  scope: [official, derived, judgement]
+  method: >-
+    Gate B 三路：两份组件 config（high_noise_model / low_noise_model，各 12 字段）、
+    权重清单（12 分片、每套 1,095 张量）与厂商参考实现 wan_t2v_A14B.py 逐项对读。
+    结构字段三路一致：dim 5120 / ffn 13824 / heads 40 / layers 40 / in 16 / out 16
+    / freq 256，两份组件 config 彼此逐字相同、与参考实现逐字相同、
+    并与前代 wan2.1-t2v-14b 的顶层 config 除 `_diffusers_version` 外逐字相同。
+    张量侧：两套专家的 1,095 个名字到形状与 dtype 的映射逐项相同，
+    也与前代逐项相同（实测比过，不是推断）。
+    字节对账：实测 numel × 4 B（114,307,932,672）与十二个分片的
+    HTTP Content-Length 合计（114,308,154,752）差 222,080 B，= 12 个 safetensors 头。
+
+    **交叉核对有 1 处 MISMATCH，根因已查清，不是算错**：derive.py 报
+    「参数总量 YAML 声明 28,576,983,168 / shapes 实测 14,288,491,584，−50%」。
+    原因是两套专家的张量名完全相同，fetch_hf.py 把 1,095 个名字全部记成跨分片
+    重复（shard_map 的 duplicates，组件维在 shard_map 而不在 shapes.json），
+    于是 shapes.json 只装得下一套；derive.py 只读 shapes.json，
+    结构上看不见第二套。差值恰好是一套专家（14,288,491,584 × 2 = 声明值，
+    逐位相等），不是 2% 量级的偏差而是整数倍的口径差。详见 R2。
+    同一个原因让这一份**没有外部参数量锚**：HF 自己的 safetensors tally 也是 null。
+
+    Gate C：判断类字段逐条在 evidence 里标了 judgement 或 derived；
+    both_resident 与「每次生成只换一次手」两条记 judgement，
+    依据是参考实现的三处代码，写在 generation.expert_switching.note 里。
+
+review:
+  - id: R1
+    field: params.total
+    severity: imprecise
+    claim: 卡上的「a total of 27B parameters」
+    finding: >-
+      实测两套各 14,288,491,584，合计 28,576,983,168 —— 比 27B 高 5.8%。
+      而且 27B **与卡自己的说法也不自洽**：卡写「Each expert model has about 14B
+      parameters」，14 × 2 = 28 而不是 27。
+      两套的清单各 1,095 个张量、形状逐项相同，没有任何共享或别名的权重可以
+      解释掉这 1.58B（组件目录各带一份完整的 patch_embedding / text_embedding /
+      time_projection / head，不是一份共用）。
+      所以 27B 是个取整后的宣传数，不是另一种口径
+    resolution: corrected
+    changed_to: >-
+      params.total 填实测 28,576,983,168 并在 counting_note 写明与卡的差；
+      卡的 27B 只在 sources 的 note 里作为原话保留。
+      激活参数 14,288,491,584 与卡的「only 14B active parameters per step」
+      在取整后一致，这一半没有问题
+  - id: R2
+    field: params.total
+    severity: imprecise
+    claim: Gate B 的参数总量两路应该对得上
+    finding: >-
+      对不上，而且根因在本仓的取数与推导链上，不在记录里。
+      `fetch_hf.py` 的 shapes.json 是一个扁平的「张量名 → 形状/dtype」字典，
+      组件维只进 shard_map.json。
+      这个仓的两套专家**张量名完全相同**（这是实测结论，不是假设：
+      1,095 个名字、形状与 dtype 逐项相同），于是 1,095 个名字全部被记成
+      跨分片重复，shapes.json 只剩一套。
+      `derive.py` 只读 cfg.json 与 shapes.json，所以它看见的参数总量是
+      14,288,491,584，报出 −50%。
+      另外两件事同源：derive.py 不读 `cfg_components.json`，
+      所以这个没有顶层 config 的仓在 Gate B 里「层数」那一条是 skip，
+      双路对账只剩一路；以及 HF 自己的 safetensors tally 也是 null，
+      外部锚同样不存在
+    resolution: deferred
+    changed_to: >-
+      记录侧不改 —— 28,576,983,168 是实测值（一套实测 × 2，两套逐项相同已验证），
+      改成 14,288,491,584 才是错的（schema 的 total 口径明确「MoE 含全部专家」）。
+      修法在共享代码侧，已报给派活的会话统一改，本份不动 scripts/。
+      三个可选修法：(a) derive.py 认 generation.expert_switching.experts，
+      按它折算 shapes 实测值；(b) shapes.json 带上组件维（信息已在 shard_map）；
+      (c) 记录能声明「这条 MISMATCH 已解释，依据在 R2」——
+      这正是 STATUS.md 的 D3 要的那个能力，本份是它的第二个实例
+  - id: R3
+    field: generation.expert_switching.both_resident
+    severity: unsupported
+    claim: 卡上的「keeping inference computation and GPU memory nearly unchanged」
+    finding: >-
+      显存那一半只在单卡路径上成立。参考实现里两套专家在
+      `__init__` 就各 `from_pretrained` 一次（宿主内存恒为两套），
+      显存里是一套还是两套由 `offload_model` 与 `init_on_cpu` 决定，
+      而 `generate.py` 把 `offload_model` 默认成
+      `False if world_size > 1 else True` —— 即**多卡默认不 offload**，
+      再加上 `--dit_fsdp` 让 `init_on_cpu` 为假，
+      `_configure_model` 就对两套各做一次 `.to(device)`。
+      卡给的多卡命令正是这一条。所以「GPU memory nearly unchanged」
+      在官方自己给的两条命令里，一条成立一条不成立
+    resolution: confirmed
+    changed_to: >-
+      both_resident 填 false（它问的是「必须」，而官方提供了只驻留一套的路径），
+      并在 note 里把两条路径的代码位置与各自的显存量都写出来。
+      evidence 里 generation.expert_switching 整块标 judgement ——
+      axis / boundary / experts 有一手依据，这一项没有
+  - id: R4
+    field: generation.sampling.cfg.scale
+    severity: missing
+    claim: 引导强度应该能填
+    finding: >-
+      填不了一个值：`sample_guide_scale` 是 (3.0, 4.0)，采样循环按
+      `t >= boundary` 在两者间选，即低噪专家 3.0、高噪专家 4.0。
+      schema 的 `cfg.scale` 是单个 number，硬填一个会让下游以为全程同一强度。
+      这不是「未查到」
+    resolution: open
+    changed_to: >-
+      scale 留空，两个值写进 sampling.note 并说明留空是哪一种空。
+      `forwards_per_step` 不受影响（仍是 2，两档都是真 CFG），
+      所以端到端算力的推导不缺因子
+
+notes: >-
+  **本仓第一份时间步路由的记录。** 它和 token 级路由共用「MoE」这个词，
+  但在 infra 账上几乎没有重叠：没有 router、没有 top-k、没有 all-to-all，
+  每次生成只换手一次。schema 的 `generation.expert_switching` 就是为这件事单设的，
+  `arch.moe` 这一份**刻意没有建**。
+
+  取数实测印证了结构判断：仓里没有顶层 config，两个组件目录就叫
+  `high_noise_model` 与 `low_noise_model`，各带一份完整的 config 与 index。
+  如果它是 token 级路由，专家会是同一份 index 里的 `experts.N.*` 张量。
+
+  一条跨代的实测结论：**两套专家与前代 wan2.1-t2v-14b 的主干形状逐项相同**
+  （1,095 个张量名到形状与 dtype 全同，config 除 `_diffusers_version` 外逐字相同）。
+  即这一代的「MoE 化」没有动任何一个形状数字，它是把前代主干复制成两套、
+  按去噪时间步整体换手。同族系跨版本比张量名集合是本仓最省力的判据
+  （model-audit skill 的取数顺序 1），这次它直接回答了「专家有没有改过结构」。
+
+  字节对账（逐文件相加对 usedStorage）：
+  两套 DiT 114,308,154,752（十二分片 HTTP 实际大小）+ VAE 507,609,880
+  + T5 11,361,920,418 + tokenizer 21,454,081 + index 与 config 194,110
+  + assets 与其余 2,273,586 = 126,201,624,837 B，与 HF tree API 逐文件求和一致。
+  而 HF 的 usedStorage 是 240,513,070,041 B，**差 114,311,445,204 B** ——
+  与两套 DiT 的分片字节（114,308,154,752）只差 3,290,452 B，
+  即 usedStorage 多算了约一整份两套专家。
+  仓有 9 个提交，其中两次是 `Upload folder using huggingface_hub`
+  （2025-07-24 16:00 与 2025-07-25 03:14），**旧修订版的 LFS 对象仍计进 usedStorage**。
+  这是 ti2v-5b 那份记下的同一个坑在本份的复现，而且这一次差额几乎正好是
+  一个整数倍，比那边更干净。所以 usedStorage 在这条线上**不是**
+  「当前修订版的权重总字节」，要逐文件取 HTTP 大小。
+
+  顺带一条取数提醒：这个仓根目录有个 939,260 B 的 `nohup.out`，
+  是上传时留下的日志，不是模型文件。逐文件求和时它在分母里。
+
+open_questions:
+  - >-
+    引导强度在数据层查不到（见 R4）。`generation.sampling.cfg.scale` 是单个 number，
+    而这一代是两个值（低噪 3.0 / 高噪 4.0，随专家切换），所以它只存在于
+    sampling.note 的散文里 —— 任何按字段取值的下游（站点、跨族系对照）都取不到它。
+    要修得在 schema 侧让 scale 能按专家分档，那是共享文件的改动，不在本份里做。
+    `forwards_per_step` 不受影响，所以端到端算力的推导不缺因子
+  - >-
+    卡上的「at least 80GB VRAM」拆不开。那条单卡命令带
+    `--offload_model True --convert_model_dtype`，即显存里只有一套 BF16 专家
+    = 26.62 GiB，加 VAE 0.47 GiB、T5 若不加 `--t5_cpu` 另 10.58 GiB，
+    权重侧最多约 37.7 GiB。**剩下约 42 GB 不是权重**，
+    而卡没有给激活与工作区的拆分。
+    所以这一档的显存结论里，权重不是约束的大头 —— 但大头是什么，没有一手依据
+  - >-
+    「每次生成恰好一次换手」依赖 flow matching 调度器给出单调递减的时间步序列。
+    这一条是从调度器的约定读出来的，本仓**没有实测**（要跑一遍
+    `FlowUniPCMultistepScheduler.set_timesteps(40, shift=12.0)` 打印序列，
+    而 .venv 里没有 torch）。记 judgement
+  - >-
+    `boundary` 0.875 与卡上「t_moe corresponding to half of the SNR_min」
+    的换算关系没查。代码里 `boundary = 0.875 × num_train_timesteps = 875`
+    是时间步单位，卡上的定义是信噪比单位，两者之间的函数没有公开材料。
+    所以本记录只登记 0.875 这个实现值，不声称它等于「SNR_min 的一半」
+  - >-
+    两套专家的权重**差多少**没查。形状逐项相同已经验证，但数值差异（例如逐张量的
+    余弦距离或范数比）需要下载两套各 53 GiB 的权重，本轮没做。
+    这件事有实际意义：卡的消融说「Wan2.1 配 Wan2.2 高噪专家」也能跑，
+    说明两套之间以及与前代之间的权重是可互换的同一形状空间
+  - >-
+    VAE 的参数量、层数与解码器通道配置都不知道（与前代同一个原因：
+    `Wan2.1_VAE.pth` 是 pickle，读头拿不到清单，dtype 也没声明）
+  - >-
+    umT5-XXL 的层数与头数不知道：仓里只放了 tokenizer 四件套，没有它的 config。
+    params 5,680,960,209 是按文件大小 ÷ 2 推的，不是实测
+  - >-
+    训练精度无一手来源。发布权重全 F32 是实测，`shared_config.param_dtype`
+    是 bfloat16 也是实测，但那两个说的都是推理侧
