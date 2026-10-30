@@ -81,18 +81,60 @@ function cellFor(m: Model, key: string): Cell {
   return { kind: 'not_applicable' };
 }
 
+/** 低于 16 bit 的几档 —— 这页的主线就是「谁被压到了这里」。 */
+const BELOW16 = new Set(['FP4', 'MXFP4', 'NVFP4', 'INT4', 'FP8_E4M3']);
+
 /**
- * 这个家族值得出哪几列：族内任何一代**有过这块权重**的就出。
- * 不取全部 16 个子系统 —— 稠密族系会多出 expert / router 等一排「不适用」，
- * 把真正的空格（未录）淹掉。
+ * 这个家族出哪几列，以及哪几列折起来。
+ *
+ * 全摊开是 14 列，DeepSeek 那段光格子条就占满一屏，表宽 4727px —— 真正的信息
+ * （谁被量化了）被一排从没动过的 BF16 淹掉。所以**只摊开这个家族里出过事的块**：
+ *   有任何一代低于 16 bit，或者有任何一代「未录」（调研进度，得看得见）→ 摊开
+ *   其余 → 折进一格汇总
+ *
+ * 折叠不是藏，是**把恒定的那部分变成一句话**。而且折完之后家族之间的差别反而跳出来：
+ * Qwen 的 14 列里 13 列可折 —— 它的旗舰权重一格都没量化过，量化只出现在旁路
+ * 发布仓，这正是它和 DeepSeek 最大的差别，摊开时反而被一排 BF16 盖住了。
+ *
+ * **FP32 不能被折没。** 「小而对误差敏感的块反而被提上去」是本页的结论之一，
+ * 所以汇总格里单独点名 FP32 的那几块。
  */
-function columnsFor(models: Model[]): string[] {
+function columnsFor(models: Model[]): { open: string[]; folded: string[] } {
   const used = new Set<string>();
   for (const m of models) {
     for (const k of Object.keys(perSub(m))) used.add(k);
     for (const [k, v] of Object.entries(byShapes(m))) if (v > 0) used.add(k);
   }
-  return SUB_ORDER.filter((k) => used.has(k));
+  const all = SUB_ORDER.filter((k) => used.has(k));
+  const open = all.filter((k) => models.some((m) => {
+    const d = perSub(m)[k];
+    if (d) return BELOW16.has(String(d));
+    return (byShapes(m)[k] ?? 0) > 0; // 未录
+  }));
+  return { open, folded: all.filter((k) => !open.includes(k)) };
+}
+
+/** 折叠格的内容：适用的块数、是否同一档、哪几块是 FP32。 */
+function foldSummary(m: Model, keys: string[]) {
+  const vals: { key: string; dtype: string }[] = [];
+  let na = 0;
+  for (const k of keys) {
+    const c = cellFor(m, k);
+    if (c.kind === 'dtype') vals.push({ key: k, dtype: c.dtype });
+    else na += 1;
+  }
+  const kinds = [...new Set(vals.map((v) => v.dtype))];
+  const fp32 = vals.filter((v) => v.dtype === 'FP32').map((v) => SUB_LABEL[v.key] ?? v.key);
+  return {
+    n: vals.length,
+    na,
+    label: vals.length === 0 ? '—' : kinds.length === 1 ? `全 ${kinds[0]}` : '≥16bit',
+    fp32,
+    title: [
+      ...vals.map((v) => `${SUB_LABEL[v.key] ?? v.key}：${v.dtype}`),
+      ...(na ? [`另有 ${na} 块这一代不适用`] : []),
+    ].join('\n'),
+  };
 }
 
 /** 谱系序：和注意力演进页同一条 —— 主干按日期不缩进，支线挂在自己的前代下。 */
@@ -250,11 +292,10 @@ const precChanges = (m: Model) => changesFor(m).filter((c) => c.field.axis === '
 const precStory = (m: Model) =>
   (m.lineage?.changed_from_predecessor ?? []).filter((c: any) => c.axis === 'precision');
 
-const fams = families().map((f) => ({
-  ...f,
-  cols: columnsFor(f.models),
-  rows: lineageOrder(f.models),
-}));
+const fams = families().map((f) => {
+  const { open, folded } = columnsFor(f.models);
+  return { ...f, cols: open, folded, rows: lineageOrder(f.models) };
+});
 
 /* ---- 页首结论：每个数都从记录算，一句话都不写死 ----
  *
@@ -374,6 +415,12 @@ const shortName = (m: Model, label: string) =>
             <tr>
               <th>版本</th>
               {f.cols.map((k) => <th class="sub" title={k}>{SUB_LABEL[k] ?? k}</th>)}
+              {f.folded.length > 0 && (
+                <th class="sub fold" title={`这个家族从没低于 16 bit 的 ${f.folded.length} 块：`
+                  + f.folded.map((k) => SUB_LABEL[k] ?? k).join('、')}>
+                  其余 {f.folded.length}
+                </th>
+              )}
               <th>发布形态</th>
               <th>量化块 / scale</th>
               <th>KV 缓存</th>
@@ -387,6 +434,9 @@ const shortName = (m: Model, label: string) =>
               const blk = blocks(m);
               const method = prec(m).quantization?.subsystem_method;
               const kv = kvRows(m);
+              // 必须在这里算、在模板里渲染：包进 IIFE 的话产出的元素拿不到 Astro 的
+              // 作用域属性，组件 <style> 就匹配不上，颜色会静默退回继承值
+              const fold = f.folded.length > 0 ? foldSummary(m, f.folded) : null;
               const chg = precChanges(m);
               const story = precStory(m);
               return (
@@ -424,6 +474,15 @@ const shortName = (m: Model, label: string) =>
                         </td>
                       );
                     })}
+                    {fold && (
+                      <td class="sub fold" title={fold.title}>
+                        <span class="foldv">{fold.label}</span>
+                        {fold.n > 0 && <span class="muted"> ×{fold.n}</span>}
+                        {fold.fp32.length > 0 && (
+                          <div class="fp32note">其中 {fold.fp32.join('、')} 是 FP32</div>
+                        )}
+                      </td>
+                    )}
                     <td>
                       {rel.length ? rel.map((r) => (
                         <div class="rel">
@@ -466,15 +525,20 @@ const shortName = (m: Model, label: string) =>
                         </div>
                       )) : <span class="absent unsurveyed">未录</span>}
                     </td>
-                    <td class="small muted">
-                      {method ? <Prose text={method} /> : <span class="absent unsurveyed">未录</span>}
+                    {/* 整段取数方法折起来：它是全表最宽的一格（DeepSeek 那条是一整段），
+                        但**不能删** —— 「全 BF16」这句话的分量取决于它是数了 49.7 万条还是
+                        抽了几个分片。默认一行，点开看全文，两头都保住 */}
+                    <td class="small muted basis">
                       <Evidence tag={evidenceFor('precision.quantization.per_subsystem', m.evidence)} />
+                      {method
+                        ? <details><summary>取数方法</summary><Prose text={method} /></details>
+                        : <span class="absent unsurveyed">未录</span>}
                     </td>
                   </tr>
                   {(chg.length > 0 || story.length > 0) && (
                     <tr class={`detail ${side ?? ''}`}>
                       <td class={side}></td>
-                      <td colspan={f.cols.length + 4}>
+                      <td colspan={f.cols.length + 4 + (f.folded.length > 0 ? 1 : 0)}>
                         {chg.length > 0 && (
                           <div class="chgs">
                             <span class="muted">字段变化</span><Evidence tag="derived" />
@@ -606,6 +670,14 @@ const shortName = (m: Model, label: string) =>
 
   .kvd { white-space: nowrap; }
   .kvf { white-space: nowrap; color: var(--ink-3); font-style: italic; }
+
+  th.fold, td.fold { border-left: 1px dashed var(--line); white-space: nowrap; }
+  .foldv { font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
+  .fp32note { font-size: 10.5px; color: var(--ink-3); margin-top: 2px; }
+  /* 取数方法折起来之后这一格就不该再撑宽表了 */
+  td.basis { max-width: 22ch; }
+  td.basis summary { cursor: pointer; white-space: nowrap; }
+  td.basis details[open] { max-width: 60ch; white-space: normal; }
 
   .rel { font-size: 12.5px; white-space: nowrap; }
   .rel .ok { color: var(--accent); font-size: 11px; margin-left: 4px; }
