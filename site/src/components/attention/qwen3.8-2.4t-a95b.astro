@@ -1,0 +1,201 @@
+---
+/**
+ * Qwen3.8-2.4T-A95B · 混合线性注意力的生产侧与消费侧。
+ *
+ * 照 deepseek-v41-flash.astro 的形写（两段式、分带编号、每框带量、加粗引导句、
+ * role="img" + aria-label、marker id 带模型前缀），但内容的分法由架构决定：
+ *
+ * - DeepSeek 那张的两段是「压缩 + 稀疏选择」的产销关系，分带按**缓存种类**
+ *   （query 侧 / 滑窗 / 压缩）切。
+ * - 本模型是 3:1 混合线性注意力，没有压缩、没有 indexer、没有候选 mask，
+ *   **分带只能按两条路切**（69 层线性 / 23 层 full）—— 因为这两条路产出的
+ *   缓存对象在计费方式上根本不同：一个每序列固定，一个随上下文增长。
+ *   所以 ochre / violet / rose 三套语义色一个都没用上，**缺色本身是信息**：
+ *   这个模型在「压缩」「索引」「掩码」这三件事上都是空的。
+ *
+ * 两带之间**没有连线**：DeepSeek 那张的分带是同一层里的几条路，一个 x 扇出去是对的；
+ * 这里 ① 与 ② 是**不同的层**（3:1 交替），画一条 x → x 的箭头会读成「线性层的输入
+ * 喂给 full 层」，而图要说的是两类层各自产出什么缓存对象。
+ *
+ * 数据来源：data/models/qwen/qwen3.8-2.4t-a95b.yaml 的 arch.attention 与 precision，
+ * 加 facts/qwen3.8-2.4t-a95b/shapes.json（1,609 条，BF16 发布）。
+ * 图上每个数都能在那两处查到。两处刻意没画成确定值：
+ * - q_proj 的 32768 = 2 × 64 × 256 里哪一半是 query、哪一半是门，记录没说，图上只写和；
+ * - 矩阵状态的维序记录挂着 open question，图上只写元素数（维序不影响容量）。
+ *
+ * 发布形态：按 BF16 发布画。FP8 发布（Qwen3.8-2.4T-A95B-FP8）的
+ * modules_to_not_convert 把 23 层 q/k/v/o 与 69 层线性投影全部留 BF16 ——
+ * 实测那个仓里注意力一侧非 BF16 的张量数是 0，所以这张图对两个发布都成立，
+ * 两者的差别只在路由专家（不在本图范围内）。
+ */
+---
+
+<figure class="attn-fig">
+  <div class="figbox">
+    <svg class="dia" viewBox="0 0 940 356" role="img"
+         aria-label="Qwen3.8 旗舰生产侧：69 层线性注意力把 qkv 流经短卷积写进每序列固定的递归状态；23 层 full attention 把 4 个 KV 头写进随上下文增长的 KV cache">
+      <defs>
+        <marker id="q38-pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead"/></marker>
+        <marker id="q38-pb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead-t"/></marker>
+      </defs>
+
+      <text x="18" y="18" class="lbl-s">① 线性注意力（Gated DeltaNet）· 69 / 92 层 —— 产出每序列固定的状态</text>
+      <rect x="18" y="44" width="66" height="40" rx="3" class="box"/>
+      <text x="51" y="69" class="lbl" text-anchor="middle">x</text>
+      <path d="M84 64 L104 64" class="arr" marker-end="url(#q38-pa)"/>
+
+      <rect x="106" y="38" width="148" height="52" rx="3" class="box"/>
+      <text x="180" y="59" class="lbl" text-anchor="middle">in_proj_qkv</text>
+      <text x="180" y="76" class="lbl-s" text-anchor="middle">[20480, 8192]</text>
+      <path d="M254 64 L274 64" class="arr" marker-end="url(#q38-pa)"/>
+
+      <rect x="276" y="38" width="152" height="52" rx="3" class="box"/>
+      <text x="352" y="58" class="lbl-s" text-anchor="middle">q 16×128 + k 16×128</text>
+      <text x="352" y="74" class="lbl-s" text-anchor="middle">+ v 128×128 = 20480</text>
+      <path d="M428 64 L448 64" class="arr" marker-end="url(#q38-pa)"/>
+
+      <rect x="450" y="38" width="152" height="52" rx="3" class="box"/>
+      <text x="526" y="58" class="lbl" text-anchor="middle">conv1d 深度可分</text>
+      <text x="526" y="75" class="lbl-s" text-anchor="middle">[20480, 1, 4] · 窗 4</text>
+      <path d="M602 64 L622 64" class="arr-t" marker-end="url(#q38-pb)"/>
+
+      <rect x="624" y="32" width="298" height="64" rx="3" class="box-t"/>
+      <text x="773" y="52" class="lbl-t" text-anchor="middle">递归状态 · 每序列固定</text>
+      <text x="773" y="68" class="lbl-x" text-anchor="middle">矩阵 128×128×128 + conv 4×20480 = 2,179,072 元素/层</text>
+      <text x="773" y="85" class="lbl-t" text-anchor="middle">69 层 · FP32 → 573.56 MiB / 序列</text>
+
+      <text x="18" y="112" class="lbl-x">conv 通道 20480 恒等于 in_proj_qkv 的输出维（69/69 层零例外）；衰减参数 A_log [128] 与 dt_bias [128] 每状态头一个，故状态头数 128</text>
+      <text x="18" y="128" class="lbl-x">矩阵状态的维序记录未核（不影响容量）；窗长按全窗 4 计，是上界</text>
+
+      <line x1="18" y1="148" x2="922" y2="148" class="arr-d"/>
+
+      <text x="18" y="170" class="lbl-s">② full attention（Gated Attention）· 23 / 92 层，落在层号 ≡ 3 (mod 4) —— 产出随上下文增长的 KV</text>
+      <rect x="18" y="192" width="66" height="40" rx="3" class="box"/>
+      <text x="51" y="217" class="lbl" text-anchor="middle">x</text>
+      <path d="M84 212 L104 212" class="arr" marker-end="url(#q38-pa)"/>
+
+      <rect x="106" y="186" width="148" height="52" rx="3" class="box"/>
+      <text x="180" y="206" class="lbl" text-anchor="middle">q_proj</text>
+      <text x="180" y="223" class="lbl-s" text-anchor="middle">[32768, 8192] = 2×64×256</text>
+      <path d="M254 212 L274 212" class="arr" marker-end="url(#q38-pa)"/>
+
+      <rect x="276" y="186" width="152" height="52" rx="3" class="box"/>
+      <text x="352" y="206" class="lbl" text-anchor="middle">k_proj / v_proj</text>
+      <text x="352" y="223" class="lbl-s" text-anchor="middle">各 [1024, 8192] = 4×256</text>
+      <path d="M428 212 L448 212" class="arr" marker-end="url(#q38-pa)"/>
+
+      <rect x="450" y="186" width="152" height="52" rx="3" class="box"/>
+      <text x="526" y="206" class="lbl-s" text-anchor="middle">q_norm / k_norm [256]</text>
+      <text x="526" y="223" class="lbl-s" text-anchor="middle">RoPE 64 / 256 维</text>
+      <path d="M602 212 L622 212" class="arr-t" marker-end="url(#q38-pb)"/>
+
+      <rect x="624" y="184" width="298" height="60" rx="3" class="box-t"/>
+      <text x="773" y="203" class="lbl-t" text-anchor="middle">KV cache · 随上下文增长</text>
+      <text x="773" y="219" class="lbl-x" text-anchor="middle">2 × 4 头 × 256 = 2,048 元素 / 层 / token</text>
+      <text x="773" y="236" class="lbl-t" text-anchor="middle">23 层 → 47,104 元素 = 94,208 B / token</text>
+
+      <text x="18" y="262" class="lbl-x">q_proj 的 32768 维里一半是 query、一半是输出门（记录只说和，没说哪一半），门在消费侧用；o_proj 入口 16384 = 64 × 256 只对应 query 那一半</text>
+      <text x="18" y="278" class="lbl-x">以上层数是主干口径（92 主干层 + 1 草稿块）。草稿块带一套同名 q/k/v/o、没有 linear_attn，开草稿侧累积 KV 的是 24 层 → 98,304 B/token</text>
+
+      <line x1="18" y1="296" x2="922" y2="296" class="arr-d"/>
+      <text x="18" y="318" class="lbl-x">本图按 BF16 发布画。同模型的 FP8 发布把 23 层 q/k/v/o 与 69 层线性投影全部留在 modules_to_not_convert 里 —— 实测那个仓注意力一侧非 BF16 的张量数为 0，</text>
+      <text x="18" y="334" class="lbl-x">所以两个发布的注意力路径逐条同形，本图对两者都成立；两者的差别只在路由专家的存储与精度，不在本图范围内。</text>
+    </svg>
+  </div>
+  <figcaption>
+    <b>图 1 · 生产侧。两条路产出的不是同一种东西。</b>69 层线性注意力产的是
+    <b>每序列固定</b>的递归状态（矩阵 128×128×128 + conv 4×20480，FP32，
+    69 层合 <code>573.56 MiB/序列</code>，与上下文长度无关）；23 层 full attention 产的是
+    <b>随上下文增长</b>的 KV（<code>2 × 4 × 256 = 2,048</code> 元素/层/token，
+    23 层合 <code>94,208 B/token</code>）。两个量的单位不同，<b>不能相加成一个
+    「KV per token」</b> —— 这一档正是把本仓的缓存模型逼成
+    <code>per_token_bytes</code> + <code>per_sequence_bytes</code> 两个分量的那一个。
+  </figcaption>
+</figure>
+
+<figure class="attn-fig">
+  <div class="figbox">
+    <svg class="dia" viewBox="0 0 940 332" role="img"
+         aria-label="Qwen3.8 旗舰消费侧：线性路读写同一份递归状态、搬运量与上下文无关；full 路 64 个 query 头共享 4 个 KV 头读全量 KV，两条路的缓存总量在 3192 个 token 处交叉">
+      <defs>
+        <marker id="q38-qa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead"/></marker>
+        <marker id="q38-qb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead-t"/></marker>
+      </defs>
+
+      <text x="18" y="18" class="lbl-s">③ 线性路 · 读写同一份状态　（搬运量与上下文长度无关）</text>
+      <rect x="18" y="42" width="176" height="56" rx="3" class="box-t"/>
+      <text x="106" y="64" class="lbl-t" text-anchor="middle">递归状态（读写同一份）</text>
+      <text x="106" y="81" class="lbl-x" text-anchor="middle">2,179,072 元素/层 · FP32</text>
+      <path d="M194 70 L214 70" class="arr-t" marker-end="url(#q38-qb)"/>
+
+      <rect x="216" y="42" width="172" height="56" rx="3" class="box"/>
+      <text x="302" y="63" class="lbl" text-anchor="middle">状态更新 · 门控衰减</text>
+      <text x="302" y="80" class="lbl-s" text-anchor="middle">A_log [128] / dt_bias [128]</text>
+      <path d="M388 70 L408 70" class="arr" marker-end="url(#q38-qa)"/>
+
+      <rect x="410" y="42" width="148" height="56" rx="3" class="box"/>
+      <text x="484" y="63" class="lbl" text-anchor="middle">短卷积窗</text>
+      <text x="484" y="80" class="lbl-s" text-anchor="middle">4 × 20480 通道</text>
+      <path d="M558 70 L578 70" class="arr" marker-end="url(#q38-qa)"/>
+
+      <rect x="580" y="42" width="160" height="56" rx="3" class="box"/>
+      <text x="660" y="63" class="lbl" text-anchor="middle">输出门 in_proj_z</text>
+      <text x="660" y="80" class="lbl-s" text-anchor="middle">[16384, 8192] = 128×128</text>
+      <path d="M740 70 L760 70" class="arr" marker-end="url(#q38-qa)"/>
+
+      <rect x="762" y="42" width="160" height="56" rx="3" class="box"/>
+      <text x="842" y="63" class="lbl" text-anchor="middle">out_proj</text>
+      <text x="842" y="80" class="lbl-s" text-anchor="middle">[8192, 16384]</text>
+
+      <text x="18" y="120" class="lbl-x">每层另有 norm [128] 与 in_proj_a / in_proj_b 各 [128, 8192]（每状态头一个系数）。decode 每步搬运的是这一份常量状态，不随上下文变长</text>
+
+      <line x1="18" y1="140" x2="922" y2="140" class="arr-d"/>
+
+      <text x="18" y="162" class="lbl-s">④ full 路 · 64 个 query 头共享 4 个 KV 头　（搬运量随上下文线性增长）</text>
+      <rect x="18" y="186" width="176" height="56" rx="3" class="box-t"/>
+      <text x="106" y="208" class="lbl-t" text-anchor="middle">KV cache</text>
+      <text x="106" y="225" class="lbl-x" text-anchor="middle">L 个位置 × 4 头 × 256 × 2</text>
+      <path d="M194 214 L214 214" class="arr-t" marker-end="url(#q38-qb)"/>
+
+      <rect x="216" y="186" width="186" height="56" rx="3" class="box"/>
+      <text x="309" y="207" class="lbl" text-anchor="middle">GQA 读</text>
+      <text x="309" y="224" class="lbl-s" text-anchor="middle">64 query 头 / 4 KV 头 = 16:1</text>
+      <path d="M309 166 L309 184" class="arr" marker-end="url(#q38-qa)"/>
+      <text x="319" y="178" class="lbl-s">q 64 × 256</text>
+      <path d="M402 214 L422 214" class="arr" marker-end="url(#q38-qa)"/>
+
+      <rect x="424" y="186" width="150" height="56" rx="3" class="box"/>
+      <text x="499" y="207" class="lbl" text-anchor="middle">全量 softmax</text>
+      <text x="499" y="224" class="lbl-s" text-anchor="middle">无压缩 · 无稀疏选择</text>
+      <path d="M574 214 L594 214" class="arr" marker-end="url(#q38-qa)"/>
+
+      <rect x="596" y="186" width="156" height="56" rx="3" class="box"/>
+      <text x="674" y="207" class="lbl" text-anchor="middle">输出门</text>
+      <text x="674" y="224" class="lbl-s" text-anchor="middle">q_proj 另一半逐元素乘</text>
+      <path d="M752 214 L772 214" class="arr" marker-end="url(#q38-qa)"/>
+
+      <rect x="774" y="186" width="148" height="56" rx="3" class="box"/>
+      <text x="848" y="207" class="lbl" text-anchor="middle">o_proj</text>
+      <text x="848" y="224" class="lbl-s" text-anchor="middle">[8192, 16384]</text>
+
+      <text x="18" y="264" class="lbl-x">262144 满上下文时这一路是 23.00 GiB —— KV 的落盘精度未披露，按模型 dtype 兜底（dtype_fallback），不是实测值</text>
+
+      <line x1="18" y1="282" x2="922" y2="282" class="arr-d"/>
+      <text x="18" y="304" class="lbl-s">两条路的总量在 3,192 个 token 处相等（元素口径）：69 层状态 150,355,968 元素/序列 ÷ 23 层 47,104 元素/token = 3,192。</text>
+      <text x="18" y="322" class="lbl-x">字节口径下这个交点是 6,384 token —— 差一倍不是结构差异，是状态的 FP32 有 config 声明、而 KV 只有 dtype 兜底。跨路比较只能用元素口径。</text>
+    </svg>
+  </div>
+  <figcaption>
+    <b>图 2 · 消费侧。计费方式在 3,192 个 token 处交叉。</b>元素口径下，69 层线性状态是
+    <code>150,355,968 元素/序列</code>的一条水平线，23 层 KV 是
+    <code>47,104 元素/token</code>的一条斜线：<b>短于 3,192 token，状态是主项；
+    长于它，KV 压过来</b>（262144 满上下文 23.00 GiB）。
+    <b>字节口径下这个交点落在 6,384 token</b> —— 差一倍不是结构差异，而是
+    状态的 FP32 有 <code>mamba_ssm_dtype</code> 声明、KV 的落盘精度却未披露、
+    只能按模型 dtype 兜底。所以这两条路要比，只能在元素口径上比。
+  </figcaption>
+</figure>
