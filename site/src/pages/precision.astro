@@ -121,16 +121,58 @@ function releases(m: Model): {
 }
 
 /** 量化块与 scale：只有一部分记录有，没有的照三态走，不留裸 `—`。 */
-function blocks(m: Model): { sub: string; block?: string; scale?: string }[] {
+function blocks(m: Model): { sub: string; block?: string; scale?: string; fmt?: string }[] {
   const q = prec(m).quantization ?? {};
   const blk: Record<string, any> = q.per_subsystem_block ?? {};
   const scl: Record<string, any> = q.per_subsystem_scale ?? {};
   const keys = [...new Set([...Object.keys(blk), ...Object.keys(scl)])];
   return SUB_ORDER.filter((k) => keys.includes(k)).map((k) => ({
     sub: k,
-    block: blk[k] ? `[${[].concat(blk[k]).join(', ')}]` : undefined,
+    block: blk[k] ? String(blk[k]) : undefined,
     scale: scl[k] ? String(scl[k]) : undefined,
+    fmt: blockFormat((q.per_subsystem ?? {})[k], blk[k], scl[k]),
   }));
+}
+
+/**
+ * 块格式的名字由**签名**推出来，不取记录的 `dtype` 字段。
+ *
+ * 因为 `FP4` 不是一种存储格式，它是**元素格式**（E2M1：1 符号 + 2 指数 + 1 尾数）。
+ * NVFP4 与 MXFP4 的元素都是 E2M1，分开它们的是块大小与 scale：
+ *   块 16 + E4M3  → NVFP4 式（NVIDIA；严格的 NVFP4 还有第二级 FP32 全局 scale）
+ *   块 32 + E8M0  → MXFP4（OCP Microscaling 标准）
+ * 本仓的 dtype 字段记的是元素格式，所以 DeepSeek 全族的 4bit 都写作 `FP4`，
+ * 而它们其实分属两种块格式 —— 页面只印 `FP4` 等于把这个区别丢了。
+ *
+ * **只在签名完全对上时给名字，对不上就不给。** 推名字是推断，不是记录里的事实：
+ *   - scale 记成容器（如 `UINT8`，E8M0 的容器）时不推 —— 容器说明不了逻辑精度
+ *   - 块是混合的（`[1,32]+[32,32]`）时不推 —— 一个子系统里两种块，没有单一名字
+ * 页面上这个名字标成推导，读者要核就看并排的块与 scale 两列。
+ */
+function blockSize(block: unknown): number | undefined {
+  if (typeof block === 'number') return block;
+  if (typeof block !== 'string') return undefined;
+  if (block.includes('+')) return undefined; // 混合块，不给单一名字
+  const m = block.match(/(\d+)\s*\]?\s*$/);
+  return m ? Number(m[1]) : undefined;
+}
+
+/** 元素格式是第三个因子，**少验一个就会把 FP8 认成 MXFP4**。 */
+const IS_E2M1 = new Set(['FP4', 'MXFP4', 'NVFP4']);
+
+function blockFormat(dtype: unknown, block: unknown, scale: unknown): string | undefined {
+  // 初版只验了块与 scale 两个因子，于是 `FP8_E4M3 · 块 32 · scale E8M0` 的滑窗
+  // 被标成了 MXFP4 —— 那是 8 bit 元素，怎么也成不了 FP4。本仓「一个乘式逐因子验」
+  // 说的就是这个：三个因子只验两个，剩下那个照样能错一个量级。
+  // 元素不是 E2M1 就一律不给名字（MXFP8 之类另有定义，但本仓没有一手依据去断言）。
+  const dt = typeof dtype === 'string' ? dtype.toUpperCase() : '';
+  if (!IS_E2M1.has(dt)) return undefined;
+  const n = blockSize(block);
+  const sc = typeof scale === 'string' ? scale.toUpperCase() : '';
+  if (!n) return undefined;
+  if (n === 16 && sc === 'FP8_E4M3') return 'NVFP4 式';
+  if (n === 32 && sc === 'FP8_E8M0') return 'MXFP4';
+  return undefined;
 }
 
 /**
@@ -140,16 +182,21 @@ function blocks(m: Model): { sub: string; block?: string; scale?: string }[] {
  * 后者里 `dtype_fallback` 是**按模型权重 dtype 兜底的占位值**，不是查到的事实。
  * 一列里同时出现这两种东西，必须让读者一眼分得出哪行是声明、哪行是兜底。
  */
-function kvRows(m: Model): { comp: string; sig: string; declared: boolean }[] {
+function kvRows(m: Model): { comp: string; sig: string; fmt?: string; declared: boolean }[] {
   const comps = prec(m).kv_cache_components ?? {};
-  const out: { comp: string; sig: string; declared: boolean }[] = [];
+  const out: { comp: string; sig: string; fmt?: string; declared: boolean }[] = [];
   for (const [k, v] of Object.entries(comps)) {
     if (k === 'source' || !v || typeof v !== 'object') continue;
     const c: any = v;
     // 签名而不是名字：块与 scale 才区分得开 NVFP4（16 + E4M3）与 MXFP4（32 + E8M0）
     const bits = [c.dtype, c.block ? `块 ${c.block}` : '', c.scale_dtype ? `scale ${c.scale_dtype}` : '']
       .filter(Boolean);
-    out.push({ comp: k, sig: bits.join(' · '), declared: true });
+    out.push({
+      comp: k,
+      sig: bits.join(' · '),
+      fmt: blockFormat(c.dtype, c.block, c.scale_dtype),
+      declared: true,
+    });
   }
   if (out.length) return out;
   const basis = (m.derived as any)?.kv_cache?.bytes_basis;
@@ -273,6 +320,13 @@ const shortName = (m: Model, label: string) =>
     <span><i class="sw abs">·</i>不适用（这一代没有这块权重）</span>
     <span><i class="sw uns">?</i>未录（有权重，精度还没查）</span>
   </div>
+  <p class="small muted sigline">
+    <code>FP4</code> 是<b>元素格式</b>（E2M1），不是存储格式 —— NVFP4 与 MXFP4 的元素都是 E2M1，
+    分开它们的是<b>块大小与 scale</b>：块 16 + <code>E4M3</code> 是 NVFP4 式，
+    块 32 + <code>E8M0</code> 是 OCP MXFP4。表里标成
+    <b class="fmt">MXFP4</b> 这样的名字都是<b>由签名推出</b>的，不是记录的 <code>dtype</code> 字段；
+    签名对不上就不给名字，要核就看并排的块与 scale。
+  </p>
 
   {fams.map((f) => (
     <section>
@@ -349,6 +403,11 @@ const shortName = (m: Model, label: string) =>
                           {SUB_LABEL[b.sub] ?? b.sub}
                           {b.block && <> <code>{b.block}</code></>}
                           {b.scale && <> · scale <code>{b.scale}</code></>}
+                          {b.fmt && (
+                            <b class="fmt" title="由「块 + scale」签名推出，不是记录的 dtype 字段">
+                              {b.fmt}
+                            </b>
+                          )}
                         </div>
                       )) : <span class="absent unsurveyed">未录</span>}
                     </td>
@@ -357,6 +416,11 @@ const shortName = (m: Model, label: string) =>
                         <div class={r.declared ? 'kvd' : 'kvf'}>
                           {r.comp && <span class="muted">{KV_COMP_LABEL[r.comp] ?? r.comp} </span>}
                           <code>{r.sig}</code>
+                          {r.fmt && (
+                            <b class="fmt" title="由「块 + scale」签名推出，不是记录的 dtype 字段">
+                              {r.fmt}
+                            </b>
+                          )}
                           {!r.declared && <span class="muted"> · 非声明</span>}
                         </div>
                       )) : <span class="absent unsurveyed">未录</span>}
@@ -483,6 +547,16 @@ const shortName = (m: Model, label: string) =>
 
   /* 声明与兜底必须一眼分得开：兜底那行整体压暗，并在文字上写明「非声明」——
      只靠颜色区分不够，这一格的内容本身就是「这个数可不可信」 */
+  /* 推出来的名字和记录里的原值必须看得出区别：原值走 <code>，推导值走这个 */
+  .fmt {
+    margin-left: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--judgement);
+    border-bottom: 1px dotted var(--judgement);
+  }
+  .sigline { max-width: 72ch; margin: -6px 0 18px; }
+
   .kvd { white-space: nowrap; }
   .kvf { white-space: nowrap; color: var(--ink-3); font-style: italic; }
 
