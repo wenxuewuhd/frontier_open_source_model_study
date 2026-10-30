@@ -1,0 +1,326 @@
+# 机械字段来自 config（official）；形状、参数量与子系统拆分来自完整权重清单
+# （38 分片 963 条目，无读失败分片，全 BF16）。head_dim 与 KV 宽度不是 config 字段，
+# 由清单的张量形状定（derived）。
+id: qwen1.5-72b
+family: qwen
+kind: llm
+display_name: Qwen1.5-72B
+released: '2024-01-23'
+license: other
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen1.5-72B
+    locator: config.json @ 93bac0d1ae83
+    accessed: '2026-10-30'
+    note: >-
+      许可取自 HF tags license:other 与 cardData license_name: tongyi-qianwen
+      （不是 apache-2.0 —— Qwen 线到 Qwen2-57B-A14B 才开始发 apache-2.0，
+      两者在同一家族里并存，不能从一档推另一档）。
+      BF16 发布，38 分片 963 个张量，逐分片读头取全，failed_shards 为空
+
+hf:
+  repo: Qwen/Qwen1.5-72B
+  sha: 93bac0d1ae83d50c43b1793e2d74a00dc43a4c36
+  last_modified: '2024-04-05T10:44:18.000Z'
+  pipeline_tag: text-generation
+  gated: false
+
+lineage:
+  track: main
+  successor: qwen2-72b
+  # 家族链首，没有 predecessor。照 ds-v2 / glm-4-9b 的做法，这里写「起点带着什么」——
+  # 站点的「逐维度演进」在起点要有东西可读。同代的 Qwen1.5-MoE-A2.7B 是从这里分出去的
+  # 另一条支线（predecessor 指向本记录），所以 successor 只能写稠密那一支。
+  changed_from_predecessor:
+    - axis: attention
+      text: >-
+        **MHA**：64 query 头 / 64 KV 头 / head_dim 128，q/k/v/o 四张都是 [8192, 8192]，
+        q/k/v 另各带一张 [8192] 的 bias。80 层同构，没有 GQA、没有共享、没有滑窗
+        （config 的 sliding_window 32768 配 use_sliding_window: false，是惰性字段，
+        不记进 arch）
+      benefit: >-
+        这是整条 Qwen 线的缓存基线：每层 2 × 64 × 128 = 16384 元素，
+        80 层每 token 1,310,720 元素 —— 32K 满上下文 80 GiB（BF16 兜底口径）。
+        后面每一代在注意力上的动作都是相对这个数在压：Qwen2 的 GQA 压 8 倍，
+        Qwen3.5 的 3:1 混合把累积 KV 的层数再压到 1/4
+    - axis: moe
+      text: 没有 MoE，80 层全是稠密 FFN（gate/up/down 三张独立投影，中间维 24576）
+      benefit: >-
+        带宽口径的激活参数是 71,042,211,840（总量减输入词表），占总参数 98.3% ——
+        decode 每 token 要搬 132.33 GiB。MoE 要到同代的 Qwen1.5-MoE-A2.7B 才出现，
+        而在稠密这一支上一直到 Qwen3.5-27B 的 dense FFN 都没有变过形态
+    - axis: context
+      text: 32768（config 的 max_position_embeddings），RoPE theta 1e6
+      benefit: >-
+        这一代上下文短，所以 MHA 的 2.5 MiB/token 还撑得住（32K 共 80 GiB，
+        和 134.65 GiB 的权重同量级）。Qwen2 把上下文放到 128K 的同时换了 GQA，
+        两件事必须一起发生 —— 否则 128K × MHA 是 320 GiB
+    - axis: precision
+      text: BF16 直接发布，config 没有 quantization_config，963 个条目全是 BF16
+      benefit: >-
+        没有量化 scale 容器、没有低位打包，所以条目数即张量数、numel 即参数数。
+        同代另有 AWQ / GPTQ-Int4/Int8 / GGUF 发布，但那是同一份权重的再发布，
+        本仓不单独立记录
+    - axis: decoding
+      text: 没有 MTP 草稿块（config 无相关键，层号止于 79）
+      benefit: >-
+        没有草稿侧成本，也没有「草稿块要不要算进 KV 层数」这个口径问题 ——
+        那件事从 Qwen3-Next 开始
+
+params:
+  total: 7.2e+10
+  breakdown:
+    dense_ffn: 48318400000.0
+    attention: 21476800000.0
+    embed: 1245710000.0
+    lm_head: 1245710000.0
+    norm: 1318912.0
+  counting_note: >-
+    total 取自模型名（72B），属厂商声明；breakdown 是本仓按完整权重清单
+    （38 分片 963 条目，全 BF16、无量化 scale、无低位打包）实测的分项，取 6 位有效数字。
+    实测全量 72,287,920,128，与 HF 平台自己从分片头统计的 safetensors tally 逐位相同。
+    对 72B 是 +0.40%，在 Gate B 的 2% 容差内；没有草稿块、没有视觉塔，所以没有 excludes，
+    也不存在 Qwen3.8 两档那种「名字扣了哪几项」的口径问题。
+    词表与输出层不共享权重（embed_tokens 与 lm_head 各 1,245,708,288，
+    config tie_word_embeddings: false），两项都在 total 里。
+    Gate B 的「参数总量」一项拿的是声明值比实测值，而真正不依赖本仓任何一行代码的
+    外部核对是 HF 的 safetensors tally。
+    权重存储 134.65 GiB。激活参数两个口径：带宽口径 71,042,211,840
+    （不含只 gather 一行的输入词表）、可比官方口径 72,287,920,128（含输入词表，
+    稠密模型下恰等于全量）。
+
+context:
+  max: 32768
+
+arch:
+  layers: 80
+  hidden: 8192
+  vocab: 152064
+  norm: RMSNorm
+  norm_eps: 1.0e-05
+  activation: SwiGLU
+  position: RoPE theta 1e6，作用在全部 head_dim 维（config 无 partial_rotary_factor）
+
+  attention:
+    type: MHA
+    num_heads: 64
+    num_kv_heads: 64
+    head_dim: 128
+    head_dim_note: >-
+      head_dim 不是这一代的 config 字段，128 = hidden 8192 / num_attention_heads 64，
+      由清单印证：q/k/v/o 四张都是 [8192, 8192]。num_key_value_heads 与
+      num_attention_heads 同为 64，所以 KV 不做任何分组共享 —— 缓存宽度
+      2 × 64 × 128 = 16384 元素/层，是后面所有代际的对照基线。
+      q/k/v 各带一张 [8192] 的 bias（Qwen1/Qwen2 一代的约定），o_proj 没有 bias；
+      Qwen3 起 bias 整体取消（attention_bias: false）
+    layer_pattern: 80 层同构，每层产出自己的 KV，无跨层共享、无滑窗、无稀疏
+
+  ffn:
+    type: dense
+    intermediate: 24576
+
+precision:
+  weights_release: [BF16]
+  quantization:
+    per_subsystem:
+      attention: BF16
+      dense_ffn: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+    subsystem_method: >-
+      来自完整权重清单（38 分片 963 条目）逐项统计，非抽样：每个条目都带 shape 与 dtype，
+      failed_shards 为空，963 条全是 BF16。所以各子系统 BF16 是全量结论而不只是代表值。
+      这一代没有 quantization_config，不存在 scale 张量与量化块
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/Qwen/Qwen1.5-72B
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      MHA 下 KV 不做任何共享，每层每 token 2 × 64 头 × 128 = 16384 元素。
+      这是本仓记录过的最高的每 token 缓存密度，比同期的 GQA 方案高一个量级。
+      32K 上下文就要 80 GiB，和 134.65 GiB 的权重存储同量级 ——
+      「长上下文的显存由 KV 主导」这件事在这一代已经成立，只是上下文还短。
+    quantified: >-
+      16384 元素/层/token × 80 层 = 1,310,720 元素/token；KV 落盘精度未披露，
+      按 config 的 torch_dtype=bfloat16 兜底（2 B/元素）得 2,621,440 B/token、
+      32K 满上下文 80.00 GiB —— dtype_fallback 口径，不能和按落盘格式算出的
+      理论下限比倍数
+    visibility: public
+  - dimension: weight-bandwidth
+    finding: >-
+      稠密 72B，除输入词表以外的权重每 token 全部搬运。dense_ffn 一项占总参数 66.8%，
+      注意力占 29.7% —— 注意力占比这么高是 MHA 的直接后果（四张 [8192, 8192]
+      满方阵），换成 Qwen2 的 GQA 之后同规模下注意力参数掉到 16.6%。
+    quantified: >-
+      带宽口径激活 71,042,211,840 × 2 B = 132.33 GiB/token；权重存储 134.65 GiB
+      （含输入词表）—— 两个口径差输入词表那一项，不要混用
+    visibility: public
+
+infra_signals:
+  - text: >-
+      Qwen 线的起点是常规 MHA + 稠密 FFN，算子侧不需要任何非标准支持
+      （带 bias 的 q/k/v 投影 + MHA + SwiGLU + RMSNorm）。它的意义全在于当基线：
+      每 token 1,310,720 个 KV 元素这个数，是后面 GQA（Qwen2，/8）、
+      混合线性注意力（Qwen3.5，累积 KV 的层数再 /4）两步压缩的分母。
+      比较时要用元素口径 —— 本记录与后面几代的 KV 字节都是 dtype 兜底，
+      字节那一列互相之间也不可比。
+    evidence: judgement
+    horizon: settled
+    axis: attention
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: official
+  params.breakdown: derived
+  params.counting_note: judgement
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.head_dim: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.ffn.type: derived
+  precision: official
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  Qwen 家族在本仓的谱系起点（2024-01），也是稠密支线的链首。
+  同代的 Qwen1.5-MoE-A2.7B 从这里分出 MoE 支线，Qwen1.5-110B 是同结构的更大档位、不另录。
+  结构是常规 MHA + 稠密 FFN，没有 MoE、没有 MTP、没有量化、没有混合层。
+  层数、宽度、注意力几何、参数量与逐子系统精度都对照完整权重清单核过。
+  config 的 sliding_window: 32768 配 use_sliding_window: false，是惰性字段，
+  不记进 arch.attention.sliding_window —— 记了会在族谱页上显示成「有滑窗」。
+
+open_questions:
+  - >-
+    KV cache 的实际落盘精度未披露，按 config 的 torch_dtype=bfloat16 兜底，
+    bytes_basis 是 dtype_fallback，不能和别人按落盘格式算出来的理论下限比倍数
+  - >-
+    训练精度没有一手来源：config 的 torch_dtype: bfloat16 说的是发布权重，
+    模型卡正文未核，故不填 precision.training
+  - >-
+    同代的 Qwen1.5-110B（2024-04-25）没有取数核过。按名字是更大的同结构档位，
+    若后面要讲 2024 年这一代的规模线，它是该补的一份
+
+reviewed:
+  date: '2026-10-30'
+  scope:
+    - official
+    - derived
+    - judgement
+  reviewer: 本会话逐字段复算
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序对 facts/qwen1.5-72b 核：config 全部键、
+    完整权重清单（963 条目逐项 numel / dtype / 层索引）、repoinfo 的 tags / cardData /
+    createdAt / lastModified / sha 与 safetensors tally。
+    缓存乘式的四个因子逐个落到清单里的某个张量形状上（见 R1）。
+    参数分项由清单逐项求和，与 breakdown 逐项、与 HF tally 三方比对。
+    derive.py 以默认 --ep 1 带 --model 重跑，0 处不一致，外部 tally 逐位相同。
+    **原理上核不了的**（清单只有名字、形状与 dtype）：运行期标量（norm_eps、rope_theta、
+    attention_dropout）只有 config 一个来源；KV 的实际落盘精度；训练精度。
+    后两项在 open_questions 里。
+review:
+  - id: R1
+    field: bottlenecks
+    severity: unsupported
+    claim: 每 token 1,310,720 个 KV 元素、2,621,440 B、32K 共 80.00 GiB
+    finding: >-
+      四个因子逐个验过，没有一个是从 config 的头数乘积推的：
+      (1) **哪些层** —— 清单里 self_attn.q_proj 恰在 0–79 全部 80 层，层号最大 79，
+      没有任何 mtp.* 或借用层号的草稿块，所以 80 是 KV 层数而不只是总层数；
+      (2) **每层多宽** —— k_proj 与 v_proj 都是 [8192, 8192]，输出维 8192 = 64 头 × 128，
+      K 与 V 各一份故 2 × 8192 = 16384 元素，这是从产出张量的输出维读的，
+      与 num_key_value_heads × head_dim 的乘积恰好相等（MHA 下两者本来就该相等）；
+      (3) **一个条目覆盖几个 token** —— 无压缩、无滑窗、无跨层共享，1:1；
+      (4) **每元素几字节** —— 无一手来源，按 config 的 torch_dtype 兜底 2 B，
+      口径标 dtype_fallback 并留了 open question
+    resolution: confirmed
+  - id: R2
+    field: arch.attention.sliding_window
+    severity: imprecise
+    claim: >-
+      scaffold.py 生成的草稿里有 arch.attention.sliding_window，取值 32768
+    finding: >-
+      config 同时有 sliding_window 32768 与 use_sliding_window false —— 这个值是惰性的，
+      Qwen1.5 / Qwen2 一代全线都带着它而从不启用（Qwen3 起 sliding_window 直接是 null）。
+      记进 arch 会在族谱页的变化矩阵上显示成「有滑窗 → 取消」，
+      而 Qwen 线从来没有用过滑窗局部 KV
+    resolution: corrected
+    changed_to: >-
+      不记 arch.attention.sliding_window，改为在 lineage 的 attention 条与 notes 里
+      写明这是惰性字段
+  - id: R3
+    field: precision.training
+    severity: unsupported
+    claim: >-
+      scaffold 草稿里 precision.training 是 TODO，按 config 的 torch_dtype 填 BF16 很顺手
+    finding: >-
+      config 只有 torch_dtype bfloat16，说的是发布权重的落盘 dtype，不是训练精度；
+      本仓读过的来源里没有这一代的训练精度。同类错在 qwen3.8-2.4t-a95b 的 R4
+      与 glm-5.3 上各发生过一次
+    resolution: corrected
+    changed_to: 不填 precision.training，加一条 open question 说明无一手来源
+  - id: R4
+    field: license
+    severity: unsupported
+    claim: license other
+    finding: >-
+      facts/qwen1.5-72b/repoinfo.json 的 tags 是 license:other，cardData 是
+      license other / license_name tongyi-qianwen。**Qwen 线的许可按档位不同**：
+      本记录与 qwen1.5-moe-a2.7b、qwen2-72b 是 tongyi-qianwen，
+      qwen2-57b-a14b 起到 qwen3.5 全线是 apache-2.0，qwen3.8-2.4t-a95b 又回到
+      license_name qwen3.8-max。旗舰那份原先写 apache-2.0 就是从别档抄来的（其 R3），
+      所以这个字段每份都单独查了一手
+    resolution: confirmed
+  - id: R5
+    field: params.counting_note
+    severity: unsupported
+    claim: 实测 72,287,920,128 对声明 72B 是 +0.40%
+    finding: >-
+      分项逐个重算过：dense_ffn 80 × 3 × 8192 × 24576 = 48,318,382,080；
+      attention 80 × (4 × 8192² + 3 × 8192) = 21,476,802,560（q/k/v 的 bias 三张各 [8192]）；
+      embed 与 lm_head 各 152064 × 8192 = 1,245,708,288；
+      norm 80 × 2 × 8192 + 8192 = 1,318,912。
+      五项合计与清单求和、与 HF tally 三者逐位相同。+0.40% 在 2% 容差内，
+      而且没有草稿块或视觉塔可扣，所以这一代不存在 Qwen3.8 两档那种
+      「名字扣了哪几项」的判断
+    resolution: confirmed
+  - id: R6
+    field: bottlenecks
+    severity: imprecise
+    claim: 带宽口径激活 71,042,211,840，不等于总参数
+    finding: >-
+      输入词表每 token 只 gather 一行，不进带宽口径：71,042,211,840
+      = 72,287,920,128 − 1,245,708,288。lm_head 则必须计入（每步对 152064 行做全量 GEMM）。
+      derive.py 的两个口径（带宽 71B / 可比官方 72.3B）与此一致。
+      glm-4-9b 的 R2 就是把这两个数写成了一个
+    resolution: confirmed
