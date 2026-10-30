@@ -24,12 +24,21 @@ lineage:
   successor: ds-v3.2-exp
   changed_from_predecessor:
   - axis: precision
-    text: config 声明 FP8 的 scale 格式为 ue8m0（2 的幂次 scale）。块仍 [128,128]，张量名与 V3 完全一致。但实测 scale 张量仍以 FP32
-      存放 —— ue8m0 在这一代约束的是取值不是容器
-    benefit: scale 是纯 2 的幂次，反量化从浮点乘退化成指数加。但要注意声明与存储是两步走的：这一代 scale 张量还是 FP32，到 V4 才真的换成 8 bit 的 F8_E8M0。按「声明
-      ue8m0 就是 8 bit 存储」去算 scale 张量大小，这一代会算小 4 倍
+    text: >-
+      config 声明 FP8 的 scale 格式为 ue8m0（2 的幂次 scale）。块仍 [128,128]，张量名与 V3 完全一致。但实测 scale 张量仍以 FP32
+      存放 —— ue8m0 在这一代约束的是取值不是容器。取值这一半是 range 读数值抽样核过的：
+      layers.0.self_attn.kv_a_proj_with_mqa.weight_scale_inv [5,56] 与 layers.10.mlp.experts.7.down_proj.weight_scale_inv [56,16]
+      在 V3.1 是 280/280、896/896 个 2 的幂次，同名张量在 V3 是 0/280、0/896。只读了这两个张量，不是全部
+    benefit: scale 是纯 2 的幂次，反量化可以从浮点乘退化成指数加。但要注意声明与存储是两步走的：这一代 scale 张量还是 FP32，到 V4-Flash 才真的换成 8 bit 的 F8_E8M0。按「声明
+      ue8m0 就是 8 bit 存储」去算 scale 张量大小，这一代会算小 4 倍。「指数加」是实现上可以利用的性质，不是这一代权重本身做了什么
 params:
-  counting_note: 未单独取全量权重清单：本版张量名集合与 ds-v3 逐个相同、逐子系统 dtype 也一致，参数量必然相同，见该记录。重复取一遍只是把同一个数算两遍。
+  counting_note: >-
+    没有取全量形状（facts/ds-v3.1/shapes.json 是空的，只有 names.json），所以 derive.py 整体 skip，本记录不填 total。
+    参数量与 ds-v3 相同，依据是三条独立的证据，而不是「名字相同所以必然相同」：(1) config 与 V3 只差 quantization_config.scale_fmt
+    与 transformers_version；(2) 91991 个张量名逐个相同；(3) HF 的 safetensors tally 按 dtype 拆开，BF16 3,918,786,560 与
+    F8_E4M3 680,571,043,840 与 V3 逐位相同，F32 多出的 41,540,496 恰等于 V3 的 scale 元素数 —— 这个仓的 tally 把 scale 算进了
+    参数量（总数 684,531,386,000），V3 的没算。另有抽样读到的 74 个张量形状与 dtype 与 V3 全量清单逐个一致。
+    所以按本仓口径（排 scale）全量是 684,489,845,504，扣草稿侧后 671.03B，见 ds-v3
 context:
   max: 163840
   train_native: 4096
@@ -51,12 +60,14 @@ arch:
     q_lora_rank: 1536
     head_dim: 192
     v_head_dim: 128
-    head_dim_note: head_dim 192 = qk_nope 128 + qk_rope 64，只适用于 QK 路径。V 的每头维度是 v_head_dim 128，所以 o_proj
+    head_dim_note: num_kv_heads 128 是 query 侧可见的 KV 头数，不是缓存宽度：落盘缓存是 kv_a_proj_with_mqa 的 576 维
+      （latent 512 + rope 64），按 2 × 128 × 192 折算会高估 42.7 倍。head_dim 192 不是 config 字段，
+      是 qk_nope 128 + qk_rope 64，只适用于 QK 路径。V 的每头维度是 v_head_dim 128，所以 o_proj
       入口宽度是 128 头 × 128 = 16384（权重实测 [hidden, 16384]），不是 128 × 192 = 24576。按单一 head_dim 推 o_proj 会高
       50%
   ffn:
     type: moe
-    layer_pattern: 第 0–2 层稠密（intermediate 18432），其余为 MoE。稠密层的 FFN 比单个专家宽 9 倍，是全模型最宽的单个 GEMM
+    layer_pattern: 第 0–2 层稠密（intermediate 18432），第 3–60 层为 MoE（58 层）。稠密层的 FFN 中间维是单个专家（2048）的 9 倍
   moe:
     routed_experts: 256
     top_k: 8
@@ -66,10 +77,13 @@ arch:
     expert_groups: 8
     routing: sigmoid 打分 / noaux_tc 选路
     storage_note: 逐专家独立张量，不是堆叠。grouped GEMM 因此吃 2 维权重列表而非 3 维张量，EP 切分是切张量列表
-    balance: 无辅助损失，靠逐专家偏置 mlp.gate.e_score_correction_bias 调节（第 3 层起，59 个）
+    balance: 无辅助损失，靠逐专家偏置 mlp.gate.e_score_correction_bias 调节。清单里 59 个 = 主干 MoE 层 3–60 的 58 个 + MTP 块（layers.61）1 个
     dense_intermediate: 18432
   decoding:
     mtp_layers: 1
+    mtp_layers_note: >-
+      config 的 num_nextn_predict_layers 1 与名字清单一致（只有 layers.61 一块，名字集合与 V3 相同）。没有形状，derive.py 不出 KV；
+      按名字与 config 都与 V3 相同，KV 层覆盖同 ds-v3：主干口径 61 层，开草稿侧 62 层（61 主干 + 1 草稿块）
 precision:
   quantization:
     method: fp8
@@ -95,7 +109,9 @@ precision:
       attention: FP32
       dense_ffn: FP32
       draft: FP32
-    subsystem_method: 抽样：每个子系统 6 个代表张量，共读 10 个分片头
+    subsystem_method: >-
+      抽样：每个子系统 6 个代表张量，共读 10 个分片头（facts/ds-v3.1/subsystem_dtypes.json）。抽到的 74 个张量形状与 dtype
+      与 ds-v3 的完整清单逐个一致；本版没有完整清单，所以这些值是代表值，全量占比引 ds-v3
     per_subsystem_block:
       expert: '[128,128]'
       shared_expert: '[128,128]'
@@ -112,13 +128,15 @@ evidence:
   family: official
   kind: derived
   display_name: official
-  released: official
+  released: derived
   license: official
   hf: official
   lineage: judgement
   params: derived
   context: official
   arch: official
+  arch.attention.head_dim: derived
+  arch.decoding.mtp_layers_note: derived
   arch.attention.type: derived
   arch.norm: derived
   arch.activation: derived
@@ -141,6 +159,83 @@ evidence:
   arch.ffn.layer_pattern: derived
 notes: 唯一的改动是 scale 格式。它不改张量形状，却改反量化算子的实现：ue8m0 的 scale 是纯指数，乘 scale 可以变成加指数。容易被当成元数据忽略过去。
 open_questions:
+- 训练精度没有一手来源，故不填 precision.training
+- >-
+  ue8m0 的取值约束只在两个 scale 张量上读数值核过（全部是 2 的幂次），其余张量未读。要钉死得扫全部 45808 个 scale
 - scale_fmt 的 ue8m0 管不管激活 scale，config 没说。它和 fmt、weight_block_size 并列， 字面像是只管权重侧；但激活用 dynamic 量化、scale
   是运行时现算的，如果不同样取 2 的幂次， 「反量化退化成指数加」这条优化就只能用在权重一边。权重清单查不到运行时产物， 要看上游实现（vLLM / SGLang 的 per_token_group_quant_fp8
   有没有做 pow2 对齐）才能定。 这个口径决定反量化要不要留浮点乘，对算子表是实的
+reviewed:
+  date: '2026-10-30'
+  scope:
+  - official
+  - derived
+  - judgement
+  reviewer: 本会话逐字段复算
+  method: >-
+    按 .claude/skills/model-audit 的顺序逐字段核。本版只有名字清单，所以核法是对照 ds-v3：config 逐键 diff、
+    91991 个张量名的集合差（0）、subsystem_dtypes.json 里 74 个抽样张量的形状与 dtype 对 ds-v3 完整清单逐个比（0 处不同）、
+    repoinfo 的 tags / cardData / createdAt / 按 dtype 拆开的 safetensors tally。ue8m0 的取值约束用 range 请求读了
+    V3 与 V3.1 两个同名 scale 张量的 FP32 数值（scratchpad 里的 probe_scale.py，只读该张量的字节区间）。
+    继承自 V3 模板的几处（最宽 GEMM、59 个偏置、num_kv_heads）按 ds-v3 的 R2 / R6 / R8 同样改掉。
+review:
+- id: R1
+  field: params.counting_note
+  severity: overreach
+  claim: 「本版张量名集合与 ds-v3 逐个相同、逐子系统 dtype 也一致，参数量必然相同」
+  finding: >-
+    名字相同 + 代表 dtype 相同推不出形状相同。结论本身成立，但依据要换成能核的：config 只差 scale_fmt 与 transformers_version；
+    HF tally 的 BF16（3,918,786,560）与 F8_E4M3（680,571,043,840）元素数与 V3 逐位相同，F32 多出的 41,540,496 恰是 V3 的
+    scale 元素数 —— V3.1 这个仓的 tally 含 scale，V3 的不含。这正是 README 记的「两个仓 tally 口径不同」在这一对上的又一例
+  resolution: corrected
+  changed_to: counting_note 改列三条独立证据，并写明 tally 口径差异
+- id: R2
+  field: lineage.changed_from_predecessor
+  severity: unsupported
+  claim: 「ue8m0 在这一代约束的是取值不是容器」
+  finding: >-
+    README 原把这句标为推断（facts/ 里没有张量数值）。range 读两个 scale 张量后：V3.1 是 280/280、896/896 个 2 的幂次，
+    V3 同名张量是 0/280、0/896。取值约束在这两个张量上实测成立；只读了 2 个，没扫全部
+  resolution: corrected
+  changed_to: lineage 写明读了哪两个张量、各多少个 2 的幂次；open question 留「要钉死得扫全部 scale」
+- id: R3
+  field: arch.ffn.layer_pattern
+  severity: wrong
+  claim: 「是全模型最宽的单个 GEMM」
+  finding: 名字集合与 V3 相同、config 同形，lm_head [129280, 7168] 926.7M 元素大于稠密层 132.1M（同 ds-v3 的 R2）
+  resolution: corrected
+  changed_to: 删掉「最宽 GEMM」
+- id: R4
+  field: arch.decoding
+  severity: missing
+  claim: 只有 mtp_layers 1
+  finding: 没有形状，derive.py 不出 KV，记录里也没有 KV 层覆盖的口径。按与 V3 相同的名字集合，主干 61 层、开草稿侧 62 层
+  resolution: corrected
+  changed_to: 新增 mtp_layers_note
+- id: R5
+  field: arch.moe.balance
+  severity: imprecise
+  claim: 「第 3 层起，59 个」
+  finding: 名字清单里 59 个偏置的层号是 3–61，其中 61 是 MTP 块（同 ds-v3 的 R6）
+  resolution: corrected
+  changed_to: 拆成 58 + 1
+- id: R6
+  field: arch.attention.num_kv_heads
+  severity: missing
+  claim: num_kv_heads 128 旁边没有口径说明
+  finding: 落盘缓存是 576 维，按头数乘积折算高估 42.7 倍（同 ds-v3 的 R8）
+  resolution: corrected
+  changed_to: head_dim_note 开头补上
+- id: R7
+  field: evidence
+  severity: miscategorized
+  claim: arch.attention.head_dim 与 released 继承 official
+  finding: config 没有 head_dim 键；released 2025-08-21 是 repoinfo 的 createdAt
+  resolution: corrected
+  changed_to: 两者与新增的 mtp_layers_note 标 derived
+- id: R8
+  field: license
+  severity: unsupported
+  claim: license mit
+  finding: repoinfo 的 tags 是 license:mit，cardData 是 license mit。原值成立（与 V3 不同：V3 的 HF 元数据没有 license）
+  resolution: confirmed
