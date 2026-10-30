@@ -237,3 +237,19 @@ review:
   claim: license other
   finding: repoinfo 的 tags 是 license:other，cardData 是 license_name deepseek（LICENSE-MODEL）。原值成立
   resolution: confirmed
+- id: R9
+  field: arch.attention.kv_lora_rank
+  severity: unsupported
+  claim: 每 token 34,560 个 KV 元素由本仓按 (kv_lora_rank + qk_rope_head_dim) × 层数 自己算出，没有外部对照
+  finding: >-
+    厂商公布过这个数，而且对得上。DeepSeek-V2 论文（arXiv:2405.04434，URL 取自 V4.1 报告的
+    参考文献，2026-10-30 读）§2.1.3 给出公式 "DeepSeek-V2 requires a total KV cache containing
+    (d_c + d_R_h) l elements"，与本仓的算法逐项相同（d_c 512 + d_R_h 64 = 576，config
+    num_hidden_layers 60，576 × 60 = 34,560）；Table 9 的 "Large MoE w/ MLA" 一行直接写着
+    KV Cache per Token (# Element) = 34.6K，与 34,560 一致。
+    **但论文给的是元素数，不是字节**：Table 1 的脚注明说 "The amount of KV cache is measured by
+    the number of elements, regardless of the storage precision"。所以本记录的
+    declared_per_token_bytes 仍然空着，字节继续按模型 dtype 兜底（dtype_fallback），
+    这一条只确认元素那一侧。V4.1 报告的 Figure 1(b) 跨代图里也没有 V2 这一行
+  resolution: confirmed
+  changed_to: 原值保留；元素口径现有厂商论文作外部对照，字节口径仍无公布值

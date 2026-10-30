@@ -1,7 +1,7 @@
 {
  "id": "ds-v4-flash-vision-exp",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T02:05:35+00:00",
+ "generated_at": "2026-10-30T06:29:13+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-flash-vision-exp",
   "config_present": true,
@@ -93,7 +93,7 @@
   "layers": 43,
   "full_attention_layers": 43,
   "linear_attention_layers": 0,
-  "per_token_bytes": 6880,
+  "per_token_bytes": 5893.0,
   "per_sequence_bytes": 5636096,
   "per_token_elems": 3440,
   "per_token_elems_bound": "exact",
@@ -109,13 +109,19 @@
     }
    },
    "indexer": {
-    "bytes_per_token": 1344,
+    "bytes_per_token": 357.0,
     "elements_per_token": 672,
-    "bytes_basis": "dtype_fallback",
+    "bytes_basis": "theoretical_floor",
     "terms": {
      "elements_per_token": 672,
-     "bytes_per_element": 2,
-     "source": "完整权重清单实测"
+     "bytes_per_element": 0.53125,
+     "source": "完整权重清单实测",
+     "storage": {
+      "dtype": "FP4",
+      "block": 32,
+      "scale_dtype": "FP8_E8M0",
+      "note": "OCP MXFP4，E2M1 + 每 32 通道一个 E8M0 scale，每元素 0.5 + 1/32 = 0.53125 B"
+     }
     }
    },
    "local_window": {
@@ -131,18 +137,20 @@
    }
   },
   "notes": [
-   "注意力侧与 ds-v4-flash-dspark 逐个相同，数也相同（依据见 ds-v4-flash 的 R1）：条目宽取 compressor.norm（512 / 128）， 全局 KV = 21 × 512/4 + 20 × 512/128 = 2768，indexer = 21 × 128/4 = 672。滑窗主干 43 × 128 × 512 = 2818048 元素/序列； 开草稿侧 3 个 MTP 块各有一份滑窗，46 层 3014656"
+   "注意力侧与 ds-v4-flash-dspark 逐个相同，数也相同（依据见 ds-v4-flash 的 R1）：条目宽取 compressor.norm（512 / 128）， 全局 KV = 21 × 512/4 + 20 × 512/128 = 2768，indexer = 21 × 128/4 = 672。滑窗主干 43 × 128 × 512 = 2818048 元素/序列； 开草稿侧 3 个 MTP 块各有一份滑窗，46 层 3014656",
+   "字节是理论下限：元素数 × 落盘精度（含 scale）的精确计数，不含分页、环页与对齐粒度。实际部署在它之上，不能直接当显存预算",
+   "各分量字节口径不一：有的按落盘精度（理论下限），有的按模型 dtype 兜底，合计不是同一种数"
   ],
-  "bytes_basis": "dtype_fallback",
+  "bytes_basis": "mixed",
   "dtype_assumed": true,
   "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
  },
  "kv_capacity_bytes_at_context": {
-  "4096": 33816576,
-  "32768": 231079936,
-  "1048576": 7219838976
+  "4096": 29773824.0,
+  "32768": 198737920.0,
+  "1048576": 6184894464.0
  },
- "kv_capacity_basis": "dtype_fallback",
+ "kv_capacity_basis": "mixed",
  "active_params": {
   "status": "ok",
   "total": 13238555968.0,

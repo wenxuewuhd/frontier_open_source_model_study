@@ -1,7 +1,7 @@
 {
  "id": "deepseek-v41-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T02:21:23+00:00",
+ "generated_at": "2026-10-30T06:29:13+00:00",
  "inputs": {
   "facts_dir": "facts/deepseek-v41-flash",
   "config_present": true,
@@ -143,7 +143,7 @@
       "dtype": "FP8_E4M3",
       "block": 32,
       "scale_dtype": "FP8_E8M0",
-      "note": "参考实现 _window_kv：kv_norm、末 64 维转 rope 之后，整条 512 维（含 rope 尾巴）act_quant(kv, fp8_block_size=32, scale_fmt=ue8m0, scale_dtype=float8_e8m0fnu)。每 32 元素一个 E8M0 scale，每位置 512 + 16 = 528 B。 vLLM 的 swa_bytes_per_token 在 mxfp8 布局下同为 528（R35）"
+      "note": "**落盘格式未公布，这一格是 QAT 网格而非存储宽度。** 技术报告只讲全局 KV 与 indexer， 滑窗的唯一依据是参考实现 _window_kv 的 act_quant(kv, fp8_block_size=32, scale_fmt=ue8m0, scale_dtype=float8_e8m0fnu, inplace=True) —— 而 inplace 伪量化只说明值被舍到 FP8 网格， 不说明存成多宽（见核查 R38）。按这个网格折算是每位置 512 + 16 = 528 B"
      },
      "note": "滑窗局部 KV，每序列固定，不随上下文增长"
     }
@@ -154,7 +154,9 @@
    "元素口径：每 token 多少元素。条目宽度逐层从完整权重清单量出，再按 compress_ratio 折算 —— 一个条目池化 r 个 token（依据见核查 R30）。 全局 KV：4 个源层各 compressor.wkv [512, 5120]，每条目 512 元素；L2/L8/L14 比值 2、 L20 比值 1，合计 3×256 + 512 = 1280。 是 512 而不是 512+64 —— wkv 输出总共就 512 维，且 96085 个张量里 K 侧 没有任何 rope 投影，所以 qk_rope_head_dim 的 64 维在 latent 之内。 indexer：同 4 层各 indexer.wk [128, 512]，每条目 128 元素，跟着同一个 r 折， 3×64 + 128 = 320。 滑窗：attn.wkv [512, 5120] 在主干 40 层与 MTP 3 块都有，sliding_window=128， 43 × 128 × 512 = 2818048 元素/序列（只跑主干时 40 层 2621440），不随上下文增长，不计入 per_token。 字节不写在这里：落盘精度另有来源、可信度不同（precision.kv_cache_components）， 由 derive.py 折算，结果是理论下限",
    "字节是理论下限：元素数 × 落盘精度（含 scale）的精确计数，不含分页、环页与对齐粒度。实际部署在它之上，不能直接当显存预算"
   ],
-  "bytes_basis": "theoretical_floor"
+  "bytes_basis": "theoretical_floor",
+  "declared_per_token_bytes": 890.0,
+  "declared_source": "DeepSeek-V4.1-Flash 技术报告 Figure 1(b)「Global KV Cache Per Token (Bytes)」的数据标签 （图文件 assets/dsv41_kv_cache.png @ 314113f8，2026-10-30 读）：DeepSeek-V1 389,120 / DeepSeek-V3.2 48,068 / DeepSeek-V4-Flash 3,514 / DeepSeek-V4.1-Flash 890。 图注给的四个比值 8.1× / 13.7× / 3.9× / 437× 与这四个数逐个自洽，报告摘要与结论 也两处复述 890 与「roughly 1/4 of DeepSeek-V4-Flash」"
  },
  "kv_capacity_bytes_at_context": {
   "4096": 6551552.0,
@@ -240,6 +242,13 @@
    "item": "KV 层覆盖口径",
    "status": "ok",
    "why": "公式按主干 40 层算（config num_hidden_layers）；清单里另有 3 个草稿块，带着与主干注意力同名的 11 个投影，即它们也产出 KV。开草稿侧时容量要按 43 层算 —— 记录里要写明用哪个口径"
+  },
+  {
+   "item": "外部 KV 字节对账",
+   "厂商公布": 890.0,
+   "本仓逐分量算": 890.0,
+   "delta_pct": 0.0,
+   "status": "ok"
   }
  ]
 }
