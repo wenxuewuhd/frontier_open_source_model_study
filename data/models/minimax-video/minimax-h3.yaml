@@ -1,0 +1,615 @@
+id: minimax-h3
+family: minimax-video
+kind: video-gen
+display_name: MiniMax-H3
+released: '2026-07-28'
+license: other
+license_restriction: >-
+  MiniMax H3 Community License。美国 / 欧盟 / 英国 / 韩国的使用者需另行通过
+  platform.minimax.io/h3-license 申请。这不是法务洁癖 —— 它决定这套权重能不能
+  进某个部署区域，属于 infra 可行性
+visibility: public
+
+# 视频线第二份记录，口径沿用 wan2.2-ti2v-5b 定下的三条：
+# params.total 只算 DiT；不建 arch 块；没有 KV cache 这笔账。
+#
+# 这一份和 wan 那份的差别在于**仓里有两套并列布局**：
+#   原始 checkpoint  FL2VA/ 与 Ref2VA/（SGLang / vLLM 用）
+#   diffusers 格式   顶层 transformer/ transformer_ref/ text_encoder/ vae/ audio_vae/
+# 同一批权重按两套命名各放一份，所以 usedStorage 和「合并全部分片」都会重复计数。
+# 本记录的数全部取自 **diffusers 顶层布局**，理由见 counting_note。
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/MiniMaxAI/MiniMax-H3
+    locator: README.md §System Overview / §H3-Encoder / §H3-VAE / §H3-Omni-Transformer @ 42ed227ee7df
+    accessed: '2026-10-30'
+    note: >-
+      官方口径来源。卡上直接给出的：33B 稠密单流 Transformer、其中约 13B 在 AdaLN 分支
+      且「推理时不需要加载」；文本编码器用 Qwen3-VL-32B 的**全部预训练权重**并取其
+      **第 50 层** hidden state；VisualVAE 记作 **f16t4d24**（空间 16×、时间 4×、24 latent 通道），
+      patchify 1×2×2 之后「有效空间下采样 32×、时间仍 4×」；AudioVAE 把 32 kHz 压到 **40 Hz**，
+      左右声道共用同一套编解码器各跑一遍；**发布权重是 CFG 蒸馏过的**；
+      输出 4–15 秒、24 fps、短边默认 768、音频 32 kHz 立体声。
+      卡上**没有**默认采样步数 —— 见 open_questions
+  - kind: modelcard
+    url: https://huggingface.co/MiniMaxAI/MiniMax-H3
+    locator: README.md §Local Deployment of H3-Base 的 checkpoint 表 @ 42ed227ee7df
+    accessed: '2026-10-30'
+    note: >-
+      两个任务 checkpoint（FL2VA 覆盖 t2va / fl2va，Ref2VA 覆盖 ref2va），
+      Precision 一栏两行都写 BF16。H3-Context-IR 与 H3-Regenerate-2K **未开源**，
+      卡上写明「not included in this open-source release」
+  - kind: repo
+    url: https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/FL2VA/model_index.json
+    locator: FL2VA/model_index.json 与 Ref2VA/model_index.json 的 _minimax_h3.partition @ 42ed227ee7df
+    accessed: '2026-10-30'
+    note: >-
+      定死了 transformer_ref 的性质：两份 model_index 各自带
+      `_minimax_h3.partition: fl2va` / `ref2va`，`tasks` 分别是 ["t2va","fl2va"] 与 ["ref2va"]，
+      而**每份自包含 checkpoint 下只有一个 transformer 目录**。
+      顶层 diffusers 的 MiniMaxH3ModularPipeline 把两套并列成 transformer + transformer_ref，
+      是为了一个 pipeline 能切任务，不是一次推理要同时加载两套。见 review R1
+  - kind: repo
+    url: https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/FL2VA/video_vae/source/config.json
+    locator: AutoencoderKLLegacy 全量字段 @ 42ed227ee7df
+    accessed: '2026-10-30'
+    note: >-
+      VAE 的一手结构（比顶层 vae/config.json 更完整）：
+      `vae_ratio: 16` / `vae_ratio_t: 4` 与卡的 f16t4d24 一致；
+      **`causal_encoder: true` 而 `causal_decoder: false`**；
+      `use_vit_decoder: true` + `vit_decoder_kwargs.num_layers: 36` / `heads: 32` /
+      `dim_head: 64` / `ffn_use_gated: true` / `norm_type: rms_norm` / `rope_theta: 100`，
+      即**解码器是 36 层 Transformer 而不是卷积栈**；
+      `space_down [2,2,2,2,1,1]` 连乘 16、`time_down [1,2,2,1,1,1]` 连乘 4，与 ratio 对上；
+      `clip_length: 17` + `token_drop: 3` 说明编码是**按 17 帧一段切片、段间丢 3 帧重叠**，
+      不是一次性对整段做 (F−1)/4+1 —— 见 review R3
+  - kind: repo
+    url: https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/scripts/readme/reproducible-768p-t2va-request.sh
+    locator: scripts/readme/reproducible-768p-t2va-request.sh 的 target 块 @ 42ed227ee7df
+    accessed: '2026-10-30'
+    note: >-
+      厂商随仓的可复现脚本（来源优先级第三档：技术报告 > 模型卡 > 厂商参考实现 > 引擎）。请求只给
+      `short_edge: 768` / `aspect_ratio: "16:9"` / `duration_seconds: 10`，
+      **像素网格与帧数由服务端对齐，脚本里没有**。步数、CFG 强度也都不在请求里
+  - kind: repo
+    url: https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/assets/t2va.mp4
+    locator: assets/t2va.mp4 / i2va.mp4 / ref2va.mp4 的 moov（tkhd + mdhd + stts + stsz）@ 42ed227ee7df
+    accessed: '2026-10-30'
+    note: >-
+      上一条脚本的**官方输出样片**，用来补上脚本里没有的像素网格。逐个解 moov 实测：
+      t2va 视频轨 **1344×768、243 帧、timescale 12288 / 每样本 512 ticks = 精确 24 fps、
+      10.125 秒**，音频轨 timescale **32000**（与卡的 32 kHz 一致）；
+      i2va 1344×768 / 192 帧 / 8.000 秒；ref2va 1344×768 / 124 帧 / 5.167 秒；
+      2K 档的 t2va_2k.mp4 是 2560×1440 / 243 帧。
+      1344 与 768 都被 32 整除（= VAE 16 × patch 2），与「有效 32× 空间下采样」自洽
+  - kind: modelcard
+    url: https://huggingface.co/MiniMaxAI/MiniMax-H3
+    locator: transformer/ text_encoder/ vae/ audio_vae/ 的 index.json 与全部 32 个分片头 @ 42ed227ee7df
+    accessed: '2026-10-30'
+    note: >-
+      权重清单逐分片读头取全，按组件分开统计（**不合并**，理由见 counting_note）：
+      transformer 14 分片 638 张量、transformer_ref 14 分片 638 张量、
+      text_encoder 14 分片 1058 张量、vae 3 分片 703 张量、audio_vae 单文件 1087 张量。
+      另用 HF tree API 的 LFS sha256 比对了两套布局，结论见 review R1 / R2
+
+hf:
+  repo: MiniMaxAI/MiniMax-H3
+  sha: 42ed227ee7df40d41602854ae760620d6eb651fe
+  last_modified: '2026-08-13T01:46:29.000Z'
+  pipeline_tag: image-text-to-video
+  gated: false
+
+lineage:
+  track: main
+  # minimax-video family 的第一份记录，也是目前唯一一份。
+  # 和语言模型线的 minimax family（MiniMax-M3）是两条互不相干的技术路线，
+  # 按视频线的 policy 单开 family，不挂在 minimax 下。
+  # 文本编码器用的是 Qwen3-VL-32B 而不是自家 M 系列，所以两条线连组件都没共用。
+
+params:
+  total: 33122992896
+  # 稠密单流主干，没有 MoE 路由、没有跨步复用，每一步对全部 token 过全部权重 ——
+  # 激活参数恒等于总量。但注意卡说 AdaLN 那 13.06B 的调制输出可以预计算缓存，
+  # 若真做了，每步搬运的权重会少 39%。本仓没有验证过那条路径，所以这里不扣。
+  active_decode: 33122992896
+  active_prefill: 33122992896
+  breakdown:
+    adaln_modulation: 13055204736
+    ffn: 11560550400
+    self_attention: 7707046400
+    token_refiner: 770730752
+    text_proj: 27530496
+    patch_embed_video: 1037664
+    norm: 542976
+    patch_embed_audio: 349472
+  # 不用 excludes：取数已经按组件收到 transformer/ 一个目录，shapes 里本来就没有
+  # 另外三块，再声明「扣除」会让对账去减一个不存在的项。排除了什么写在 counting_note
+  counting_note: >-
+    **只含 DiT 主干（diffusers 顶层 `transformer/`）**，按完整权重清单
+    （14 分片 638 张量）逐项统计。BF16 626 条 + F32 12 条，
+    无 scale 容器、无打包容器，numel 即参数数：
+    33,122,992,896 × 加权字节 = 66,280,430,080 B，与 index.json 的 total_size 逐字相同。
+
+    **为什么只取 diffusers 布局**：这个仓把同一批权重按两套命名各放了一份 ——
+    原始 checkpoint 在 `FL2VA/` 与 `Ref2VA/`，diffusers 格式在顶层。
+    两套的张量名不同（原始 535 条 `blocks.N.*`，diffusers 638 条 `transformer_blocks.N.*`），
+    **把全仓分片合并成一份清单会把同一个模型按两套命名各算一遍**；
+    而 FL2VA 与 Ref2VA 的 DiT 张量名完全相同，合并时又会被折成一份。
+    两头都错，所以按组件分开量。原始布局量出 33,122,992,912 参数，
+    比 diffusers 的 33,122,992,896 多 16 —— 差在 535 vs 638 的拆分方式上，不是两个模型。
+
+    **三块不在这个数里**：
+    文本编码器 Qwen3-VL-32B 33,357,390,064 参数 / 66,714,780,128 B（全 BF16，**比 DiT 还大**）、
+    视觉 VAE 2,603,868,984 参数 / 10,415,475,936 B（全 F32）、
+    音频 VAE 151,326,585 参数 / 605,306,340 B（全 F32）。
+    一次推理四块都要在，合计 **69,235,578,529 参数 / 144,015,992,484 B（134.13 GiB）** ——
+    是「33B」按 BF16 算的 2.17 倍。对账见 notes。
+
+    分桶口径：adaln_modulation 含逐层 `adaln_proj.linear`（[96768, 2688]，96768 = 18 × 5376）、
+    `norm_out.linear` 与 `time_embedder`；self_attention 含 q/k/v 三个 [7168, 5376] 与
+    o [5376, 7168] 以及 [128] 的 QK-norm；ffn 含 [28672, 5376] 的 gate+up 融合与
+    [5376, 14336] 的 down；token_refiner 是入口那 2 层 refiner 的全部权重，
+    它没有 adaln_proj，所以单列而不是并进上面三桶。
+
+generation:
+  backbone:
+    stream_design: single
+    layers: 50
+    double_blocks: 0
+    single_blocks: 50
+    hidden: 5376
+    heads: 56
+    head_dim: 128
+    head_dim_note: >-
+      **heads × head_dim = 7168 ≠ hidden 5376。** 注意力内维比残差流宽 33%：
+      q/k/v 是 [7168, 5376]、o 是 [5376, 7168]（权重实测）。
+      拿 hidden 去推注意力投影的规模会低估三分之一
+    ffn: 14336
+    refiner_layers: 2
+    text_conditioning: in_sequence
+    patch_size: [1, 2, 2]
+    position: 3D MM-RoPE (t, h, w)，rope_freq_dim 16、rope_theta 10000
+    note: >-
+      卡说「注意力层与 FFN 层都不含模态特定结构，模态特定参数只在输入/输出层与
+      AdaLN 分支里」—— 权重清单对得上：每层只有一套 `attn.*`、一套 `ff.*`，
+      模态入口是 `proj_in [5376, 96]`（视频，96 = 24 latent 通道 × 1×2×2 patch）、
+      `audio_proj_in [5376, 32]`（音频）、`context_embedder [5376, 5120]`（文本，
+      5120 正是 Qwen3-VL 的 hidden）。
+      **AdaLN 是这份记录最反直觉的一块**：13.06B，占主干 39.41%，比 FFN（34.90%）
+      和注意力（23.27%）都大。每层 `adaln_proj.linear` 是 [96768, 2688]，
+      96768 = 18 × 5376 = 3 种模态 × 6 组调制，2688 = 5376 / 2 是时间步条件向量的宽度。
+      卡说这部分「输出可预计算并缓存，推理-only 部署不必加载」——
+      **本仓没有验证过那条路径**，所以 params 里没有扣除；
+      要扣得先确认缓存后的驻留量，那是另一轮的事（见 open_questions）
+
+  vae:
+    spatial_compression: 16
+    temporal_compression: 4
+    latent_channels: 24
+    causal: true
+    decoder_arch: transformer
+    params: 2603868984
+    name: H3-VisualVAE（f16t4d24）
+    note: >-
+      **整条视频线里第一个解码器不是卷积栈的 VAE**：`use_vit_decoder: true`，
+      36 层、32 头 × 64 dim_head、gated SiLU FFN、RMSNorm、RoPE theta 100。
+      2.60B 参数 / 10,415,475,936 B **全 F32**（703 张量逐条实测）。
+      卡说这个解码器是在编码器训完之后另训的，目的就是降低解码成本 ——
+      即便如此它仍是一次独立的大计算，不是边角料。
+      与 wan2.2-ti2v-5b 的对照：那一份的 VAE 是 .pth 读不了清单、decoder_arch 只能填 unknown。
+      **causal 只对编码器成立**：`causal_encoder: true` / `causal_decoder: false`。
+      latent_channels 24 三处一致：卡的 f16t4d24、`vae/config.json` 的
+      `latent_channels: 24`、以及 DiT 的 `proj_in.weight [5376, 96]`（96 = 24 × 1×2×2）
+
+  audio:
+    in_channels: 32
+    vae: H3-AudioVAE（DAC 式）
+    vae_params: 151326585
+    sample_rate_in: 32000
+    sample_rate_out: 32000
+    latent_hz: 40
+    channels: 2
+    note: >-
+      latent_hz 40 是**推导**：`encoder_rates [2,4,4,5,5]` 连乘 800，32000 / 800 = 40，
+      与卡的「compresses 32 kHz audio into a sequence of latent tokens with a
+      temporal rate of 40 Hz」一致（两路互相印证）。
+      `latent_channels: 32` 与 DiT 的 `audio_proj_in [5376, 32]` 对得上。
+      **立体声怎么进序列没定论**：卡说左右声道共用同一套编解码器、各自独立跑一遍再合成，
+      但 DiT 入口只有 32 通道（= 单声道 latent 宽度），
+      所以两条声道是拼成两倍 token 还是另有安排，公开材料回答不了。
+      推导里音频 token 按**单声道**计，是下界 —— 见 open_questions
+
+  text_encoders:
+    - role: primary
+      name: Qwen3-VL-32B（取第 50 层 hidden state）
+      hf_repo: Qwen/Qwen3-VL-32B
+      params: 33357390064
+      hidden: 5120
+      shipped_with_weights: true
+      gated: false
+      release_dtype: BF16
+      hidden_layer_taken: 50
+      substitutable: false
+      note: >-
+        **全部预训练权重随仓发布**，1058 张量全 BF16，实测 33,357,390,064 参数 /
+        66,714,780,128 B —— **比 DiT 本体还大**（参数 1.007 倍、字节 1.007 倍）。
+        config 实测：text 侧 64 层 / hidden 5120 / 64 头 / 8 个 KV 头（GQA）/
+        intermediate 25600 / vocab 151936；vision 侧 27 层 / hidden 1152 / patch 16 /
+        out_hidden 5120 / spatial_merge 2 / temporal_patch 2。
+        卡明确说取的是**第 50 层**（共 64 层）的 hidden state，不是最后一层 ——
+        所以推理时后 14 层可以不跑，但权重仍随仓发布。
+        用 HF 的 LFS sha256 比对过：`FL2VA/text_encoder`、`Ref2VA/text_encoder`
+        与顶层 `text_encoder/` **14 个分片的 oid 两两完全相同**，
+        即两个任务 checkpoint 共用同一份文本编码器，仓里只存了一份。
+        卡还要求必须用 H3 仓自带的 tokenizer（加了 `<d>` 等特殊 token），不能直接用上游的
+
+  sampling:
+    cfg:
+      distilled: true
+      embedded: false
+      forwards_per_step: 1
+    scheduler: MiniMaxH3Scheduler（flow matching）
+    note: >-
+      **发布权重已做 CFG 蒸馏**，卡原话「The released checkpoints are CFG-distilled
+      Omni Transformer model weights」，所以每步只跑一次主干前向，没有无条件那一路。
+      和 wan2.2-ti2v-5b 正好相反：那一份 CFG 未蒸馏，端到端是 50 步 × 2 = 100 次前向。
+      **steps 没有填，因为模型卡与厂商脚本都没有给**：
+      `reproducible-768p-t2va-request.sh` 的请求体只有 short_edge / aspect_ratio /
+      duration_seconds，步数在服务端。引擎文档（sglang cookbook）给了 50，
+      但按本仓的来源优先级那是第四档，不足以进字段。见 open_questions。
+      视频与音频各有一套 scheduler，sigma shift 分别是 12.0 与 3.0
+      （两份 model_index 的 `_minimax_h3.sigma_shift_scales` 一致）
+
+  pipeline_stages:
+    - name: H3-Context-IR
+      model: 未开源（托管服务）
+      open_source: false
+      note: >-
+        多模态输入的理解与改写，产出送进 H3-Base 的结构化中间表示。
+        卡说它依赖多阶段工作流与多个托管模型，不在开源范围内，只提供 API。
+        **所以端到端负载在公开仓里算不全**
+    - name: H3-Base
+      model: same-backbone
+      resolution: 短边 768
+      open_source: true
+      note: 本记录覆盖的就是这一段。步数未知
+    - name: H3-Regenerate-2K
+      model: same-backbone（in-context 重生成）
+      resolution: 2K
+      open_source: false
+      note: >-
+        不是常规超分模块，而是把 768p 结果连同原始上下文再喂回 H3 本体重生成一遍。
+        卡说「not yet open-sourced」。样片 t2va_2k.mp4 实测 2560×1440 / 243 帧
+
+  buckets:
+    - width: 1344
+      height: 768
+      frames: 243
+      fps: 24
+      duration_s: 10.125
+      default: true
+      note: >-
+        取自厂商可复现脚本（short_edge 768 / 16:9 / duration 10）**的官方输出样片**
+        assets/t2va.mp4 实测。脚本本身不含像素网格，网格由服务端按 aspect_ratio 对齐 ——
+        1344 与 768 都被 32 整除。243 帧 / 12288 timescale / 512 ticks 每样本 = 精确 24 fps
+    - width: 1344
+      height: 768
+      frames: 192
+      fps: 24
+      duration_s: 8.0
+      note: assets/i2va.mp4 实测（首帧图生视频，请求 8 秒）
+    - width: 1344
+      height: 768
+      frames: 124
+      fps: 24
+      duration_s: 5.1666667
+      note: assets/ref2va.mp4 实测（多模态参考，请求 5 秒）
+    - width: 2560
+      height: 1440
+      frames: 243
+      fps: 24
+      duration_s: 10.125
+      note: >-
+        2K 档，由未开源的 H3-Regenerate-2K 产出（assets/t2va_2k.mp4 实测）。
+        **不是 H3-Base 能直接出的档位**，列在这里是为了说明 2K 路径的像素量
+
+  constraints:
+    width_divisor: 32
+    height_divisor: 32
+    note: >-
+      除数 32 = VAE 空间压缩 16 × DiT patch 2，与卡的「有效空间下采样 32×」一致。
+      1344/32 = 42、768/32 = 24，都整除。
+      **帧数约束没有填**：三个官方样片是 243 / 192 / 124 帧，
+      192 与 124 被 4 整除而 243 不被，凑不出一条成立的规则 —— 见 review R3
+
+  checkpoint_variants:
+    - name: transformer（FL2VA 分区）
+      role: base
+      bytes: 66280430080
+      resident: true
+      note: 覆盖 t2va 与 fl2va 两个任务。本记录的 params 量的就是它
+    - name: transformer_ref（Ref2VA 分区）
+      role: base
+      bytes: 66280430080
+      resident: false
+      note: >-
+        **另一个任务分区的主干，不是和上面那套同时驻留的第二个模块。**
+        依据：FL2VA/ 与 Ref2VA/ 两份自包含 checkpoint 各自只有一个 transformer 目录，
+        且 model_index 里 `_minimax_h3.partition` 分别是 fl2va / ref2va。
+        顶层 diffusers 把两套并列成 transformer + transformer_ref，是让一个
+        ModularPipeline 能切任务。实测两者张量名集合与 total_size 完全相同、
+        **LFS sha256 无一重合**，即同架构不同权重的两次微调。详见 review R1
+    - name: text_encoder（Qwen3-VL-32B）
+      role: text-encoder
+      bytes: 66714780128
+      resident: true
+      note: 两个任务分区共用同一份，LFS oid 逐分片相同
+    - name: vae
+      role: vae
+      bytes: 10415475936
+      resident: true
+    - name: audio_vae
+      role: audio-vae
+      bytes: 605306340
+      resident: true
+
+precision:
+  weights_release: [BF16, FP32]
+  weights_release_scope:
+    BF16:
+      measured: true
+      repo: MiniMaxAI/MiniMax-H3
+      note: >-
+        DiT 的 626 / 638 条是 BF16（全部注意力、FFN、AdaLN 投影、norm），
+        文本编码器 1058 条**全部** BF16。卡的 checkpoint 表也写 BF16
+    FP32:
+      measured: true
+      repo: MiniMaxAI/MiniMax-H3
+      note: >-
+        三处是 F32，卡上没提，是实测出来的：
+        DiT 的 12 条模态进出口与时间步嵌入（`proj_in/out`、`audio_proj_in/out`、
+        `time_embedder.linear_1/2` 的 weight 与 bias）；
+        视觉 VAE 的 703 条**全部**；音频 VAE 的 1087 条**全部**。
+        即「BF16 模型」说的是主干与文本编码器，两个 VAE 整体是 F32
+  inference_default: BF16
+
+bottlenecks:
+  - dimension: host-io
+    finding: >-
+      「33B」只说 DiT。一次推理要同时驻留 DiT、Qwen3-VL-32B 文本编码器、
+      视觉 VAE、音频 VAE 四套权重，而**文本编码器比 DiT 本体还大**。
+      维度记 host-io 而不是容量，沿用 wan2.2-ti2v-5b 的同一判断：
+      134 GiB 单卡放不下已是既成事实，真正要规划的是搬什么、什么时候搬
+    quantified: >-
+      DiT 66,280,430,080 B + 文本编码器 66,714,780,128 B + 视觉 VAE 10,415,475,936 B
+      + 音频 VAE 605,306,340 B = 144,015,992,484 B（134.13 GiB）；
+      参数合计 69,235,578,529。文本编码器 / DiT = 1.007（参数）
+    fix: >-
+      文本编码器每次生成只跑一遍且只取到第 50 层（共 64 层），DiT 要跑满步数 ——
+      和 wan2.2-ti2v-5b 的 `--t5_cpu` 是同一类错峰机会，而且这里还能截断后 14 层。
+      厂商给的部署基线是 4 卡 Ulysses 序列并行
+    visibility: public
+  - dimension: compute
+    finding: >-
+      AdaLN 调制分支占主干参数的 39.41%，比 FFN 和注意力都大。
+      卡说它的输出可以预计算缓存、推理-only 部署不必加载 ——
+      如果成立，这是一次性省掉近四成权重搬运的机会，但本仓没有验证过
+    quantified: >-
+      adaln_modulation 13,055,204,736 / 33,122,992,896 = 39.41%；
+      每层 `adaln_proj.linear` [96768, 2688]，96768 = 18 × 5376 = 3 模态 × 6 组调制
+    fix: >-
+      先验「预计算后实际驻留多少」再谈收益。**不要用 33B − 13B = 20B 当结论** ——
+      那是两个口径相减（见 open_questions）
+    visibility: public
+  - dimension: compute
+    finding: >-
+      CFG 已蒸馏，每步只跑一次前向。和同线 wan2.2-ti2v-5b 的 2 次相比，
+      这一项直接省掉一半 —— 它是生成类负载账里最容易漏的因子
+    quantified: forwards_per_step 1（卡：released checkpoints are CFG-distilled）
+    fix: 无需再做；记在这里是为了跨记录对照时不要把两份的「步数」直接比
+    visibility: public
+
+infra_signals:
+  - text: >-
+      生成类系统的「模型大小」是个不完整的说法。H3 的 33B 指 DiT，
+      而一次推理的常驻权重是 134 GiB，其中文本编码器比主干还大 ——
+      这一代把一个完整的 32B VLM 塞进了文生视频流水线，
+      文本编码器从「附属组件」变成了与主干同量级的部署对象
+    evidence: derived
+  - text: >-
+      AdaLN 分支占去主干近四成参数，是这一代单流多模态 DiT 的结构代价：
+      模态特定性不做在注意力和 FFN 里，而是集中到调制分支上。
+      厂商声称它可预计算缓存，若成立则「参数量」与「每步搬运量」在生成类上
+      会出现比 MoE 更大的背离
+    evidence: judgement
+  - text: >-
+      仓里同一批权重按两套布局各放一份（原始 checkpoint 与 diffusers），
+      合并全部分片会把同一个模型按两套命名各算一遍，而两个任务分区的 DiT
+      张量名相同又会被折成一份。生成类的取数必须按组件分开量，不能全仓合并
+    evidence: derived
+
+evidence:
+  id: official
+  family: judgement
+  kind: judgement
+  display_name: official
+  released: official
+  license: official
+  license_restriction: official
+  hf: official
+  lineage: judgement
+  params: derived
+  generation: official
+  generation.backbone.head_dim_note: derived
+  generation.backbone.note: derived
+  generation.vae.params: derived
+  generation.vae.decoder_arch: official
+  generation.vae.note: derived
+  generation.audio.latent_hz: derived
+  generation.audio.vae_params: derived
+  generation.audio.note: derived
+  generation.text_encoders: derived
+  generation.sampling: official
+  generation.pipeline_stages: official
+  generation.buckets: derived
+  generation.constraints: derived
+  generation.checkpoint_variants: derived
+  precision: derived
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: derived
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-30'
+  method: >-
+    Gate B 三路：组件 config（17 份）、权重清单（按组件分开读 32 个分片头）、
+    厂商可复现脚本 + 其官方输出样片的 moov。
+    结构字段三路一致：patch (1,2,2) 既在 `transformer/config.json`、
+    也在 `proj_in.weight [5376, 96]` 的 96 = 24×1×2×2 里；
+    hidden 5376 / layers 50 / ffn 14336 / in_channels 24 / audio_in_channels 32 /
+    text_dim 5120 五项 config 与清单逐项对上；
+    VAE 的 16× / 4× 在卡、`vae/config.json` 的两个 downsample 数组连乘、
+    `source/config.json` 的 `vae_ratio` / `vae_ratio_t` 三处一致。
+    字节对账：四个组件的实测 numel×bpe 与各自 index.json 的 total_size **逐字相同**。
+    卡的「约 13B 在 AdaLN」逐张量验到 13,055,204,736（占 39.41%）。
+    另用 HF tree API 的 LFS sha256 做了布局去重判定（R1 / R2）。
+    Gate C：判断类字段 6 处，逐条在 evidence 里标了 judgement。
+
+review:
+  - id: R1
+    field: generation.checkpoint_variants
+    severity: wrong
+    claim: >-
+      「Ref2VA 侧要同时驻留 transformer 与 transformer_ref 两套 33B，
+      加上文本编码器与 VAE 共约 104B / 137 GB」—— 这是本线 Gate A 文档
+      （docs/video-gen-gate-a.md §4.1）写下的结论
+    finding: >-
+      **错的，是把 diffusers 的模块化布局读成了「一次推理要两套」。**
+      三条证据：(1) `FL2VA/model_index.json` 与 `Ref2VA/model_index.json` 各自带
+      `_minimax_h3.partition: fl2va` / `ref2va`，`tasks` 分别是 ["t2va","fl2va"] 与 ["ref2va"]；
+      (2) 两份自包含 checkpoint 下**各只有一个 transformer 目录**；
+      (3) 卡说「released as two task-specific checkpoints」，sglang 启动参数是
+      `--model-variant fl2va` 或 `ref2va`，一次只起一个。
+      顶层 diffusers 把两者并列成 transformer + transformer_ref，是让一个
+      ModularPipeline 能切任务，不是一次推理要同时加载
+    resolution: corrected
+    changed_to: >-
+      两套都进 checkpoint_variants，FL2VA 那套 `resident: true`、
+      Ref2VA 那套 `resident: false`。常驻账改为 69.24B / 134.13 GiB（四块），
+      不是 104B / 137 GB。**Gate A 文档里那段需要同步更正**（见 open_questions）
+  - id: R2
+    field: params.counting_note
+    severity: wrong
+    claim: 把全仓 104 个分片合并成一份清单就能统计参数量
+    finding: >-
+      不能。`fetch_hf.py` 全仓取数得到 4421 个唯一张量名、并报了
+      「6183 个张量在多个分片里有相同副本」。根因是仓里**两套并列布局**：
+      同一个 DiT 在 diffusers 布局下叫 `transformer_blocks.N.*`（638 条）、
+      在原始布局下叫 `blocks.N.*`（535 条），**合并后同一个模型被按两套命名各算一遍**；
+      而 FL2VA 与 Ref2VA 的 DiT 张量名完全相同，合并时又被折成一份 ——
+      两个不同权重的模型只剩一个。LFS sha256 比对坐实了后者：
+      `FL2VA/transformer` 与 `Ref2VA/transformer` 13 个分片 **oid 无一重合**，
+      而 `FL2VA/text_encoder` 与顶层 `text_encoder/` 14 个 oid **两两相同**
+    resolution: corrected
+    changed_to: >-
+      按组件分开量，params 只取 diffusers 顶层 `transformer/`。
+      facts/minimax-h3/shapes.json 是全仓合并的结果，**本记录没有用它**
+  - id: R3
+    field: generation.buckets
+    severity: unsupported
+    claim: 时间因果 VAE 的 latent 帧数是 (F−1)/4+1，默认档 243 帧对应 61.5 帧 latent
+    finding: >-
+      **这个公式在 H3 上不成立，但正确的公式也拿不到。**
+      三个官方样片是 243 / 192 / 124 帧：192 与 124 被 4 整除、243 不被，
+      而 4n+1 三个都不满足。根因在 VAE 的切片编码：
+      `clip_length: 17` + `token_drop: 3` 说明编码是按 17 帧一段、段间丢 3 帧重叠做的，
+      不是一次性对整段套 (F−1)/4+1。
+      本仓 `derive.py` 对 `causal: true` 用的就是那个简单公式，
+      所以它会在 t 轴报「token 数不是整数」—— **那个告警是对的，不要去绕过它**
+    resolution: open
+    changed_to: >-
+      `causal: true` 照 `causal_encoder: true` 填（那是一手事实），
+      默认档按实测的 243 帧填，接受推导里 t 轴 61.5 的非整数与随之而来的 partial 标记。
+      latent 帧数的真值在 61 与 62 之间，差 1.6%，不足以改变任何结论，
+      但**不能为了让数好看就改 causal 或改帧数**。constraints 的 frame_formula 留空
+  - id: R4
+    field: generation.vae.params
+    severity: wrong
+    claim: 「VAE 约 5.2B」—— Gate A §4.1 按 10.42 GB ÷ 2 B（BF16）估的
+    finding: >-
+      VAE 的 703 条张量**全是 F32**，不是 BF16。实测 2,603,868,984 参数。
+      按 BF16 估会高一倍。这正是 model-audit 规则「config 与权重冲突时权重赢」的
+      同一类问题 —— 这里连 config 都没说 dtype，是凭文件大小猜的
+    resolution: corrected
+    changed_to: generation.vae.params 填实测的 2,603,868,984，并在 precision 里记下两个 VAE 整体 F32
+  - id: R5
+    field: generation.sampling.steps
+    severity: missing
+    claim: 默认采样步数应该能填
+    finding: >-
+      填不了。模型卡没有，厂商可复现脚本的请求体也没有（只有 short_edge /
+      aspect_ratio / duration_seconds，步数在服务端）。
+      引擎文档（sglang cookbook）给 50，社区蒸馏 LoRA 做到 8 / 4 步 ——
+      按本仓来源优先级前者是第四档、后者是第三方，都不足以进字段。
+      **后果是端到端 FLOPs 在这份记录里算不出来**，`derive.py` 会明说缺这一项
+    resolution: open
+    changed_to: 留空并在 sampling.note 与 open_questions 写明是哪一种空
+
+notes: >-
+  **字节对账。** 四个组件的实测 numel × 每元素字节与各自 index.json 的
+  `total_size` 逐字相同（audio_vae 是单文件无 index，直接读头）：
+  transformer 66,280,430,080；text_encoder 66,714,780,128；vae 10,415,475,936；
+  audio_vae 605,306,340。合计 144,015,992,484 B。
+
+  **usedStorage 在这个仓上同样不能直接用。** HF 报 354,942,260,031 B，
+  约是上面合计的 2.46 倍。原因不是旧修订版（wan 那份是那个原因），
+  而是**两套布局并存**：原始 checkpoint 的 `FL2VA/` + `Ref2VA/` 又各放了一份
+  transformer / text_encoder / video_vae / audio_vae。
+  其中文本编码器三处 LFS oid 相同、只存一份；
+  两个 VAE 在 FL2VA 与 Ref2VA 之间 oid 相同但与顶层 diffusers 版不同（重新打包过）。
+  所以「仓有多大」和「一次部署要多少」在这条线上差一倍以上，必须分开说。
+
+  **取数提醒。** 这个仓**没有顶层 config.json**，有 17 份组件 config，
+  104 个分片、12 个 index。`fetch_hf.py --id minimax-h3` 能取全，
+  但产出的 `shapes.json` 是全仓合并的，**不能直接用于参数量**（见 R2）。
+  本记录的数来自按组件分开的逐分片读头。
+
+open_questions:
+  - >-
+    `generation.sampling.steps` 填不了（R5）：默认采样步数卡与厂商脚本都没有，
+    引擎文档说 50 但那是第四档来源。
+    **端到端 FLOPs 因此算不出** —— derive 只能给出单步。
+    若后续出技术报告，这一项要按报告补，并重算端到端
+  - >-
+    卡说 AdaLN 那 13.06B「输出可预计算并缓存、推理-only 部署不必加载」。
+    **没有验证过。** 要按张量名分桶统计预计算之后实际还要驻留多少才能给数。
+    在那之前**不要把 33.12B − 13.06B = 20.07B 写进任何字段** —— 那是两个口径相减，
+    正是 CLAUDE.md 点名的范畴错误
+  - >-
+    立体声怎么占序列不知道。卡说左右声道共用编解码器各跑一遍，
+    但 DiT 的 `audio_proj_in` 只有 32 通道（= 单声道 latent 宽度）。
+    推导里音频 token 按单声道算（40 Hz × 时长），**是下界**；
+    若两声道各占一份 token，音频那一路要翻倍
+  - >-
+    文本 token 数不知道，而 H3 是把文本拼进同一条注意力序列的（`in_sequence`）。
+    所以推导给出的序列长度与注意力 FLOPs 都是**下界**，derive 会标出来。
+    厂商脚本里的 prompt 是 H3-Context-IR 产出的长结构化文本，
+    样例的 usage 显示 prompt_tokens 在 5,650–33,323 之间 ——
+    那是 Context-IR 自己的 token 账，不一定等于喂进 DiT 的文本 token 数
+  - >-
+    `generation.buckets` 的帧数与 VAE 时间压缩对不齐（R3）：latent 帧数的真值
+    在 61 与 62 之间。VAE 按 17 帧切片、段间丢 3 帧，端到端的帧数→latent 映射没有公开，
+    `generation.constraints.frame_formula` 也因此留空。
+    影响约 1.6%，不改变任何结论，但推导里 t 轴会报非整数 —— 那个告警是对的
+  - >-
+    H3-Context-IR 与 H3-Regenerate-2K 未开源，**端到端负载在公开仓里算不全**。
+    本记录覆盖的只有中间那段 H3-Base（768p）
+  - >-
+    训练精度无一手来源。发布权重 BF16（主干与文本编码器）+ F32（两个 VAE 与 12 条进出口）
+    是实测，但那说的是落盘格式不是训练格式
+  - >-
+    本线 Gate A 文档 docs/video-gen-gate-a.md §4.1 里「Ref2VA 要两套 33B、
+    常驻约 104B / 137 GB」与「VAE 约 5.2B」两处已被 R1 / R4 证伪，
+    **那份文档需要同步更正**。本次只改记录，没动文档

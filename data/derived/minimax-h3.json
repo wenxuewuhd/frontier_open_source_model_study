@@ -1,0 +1,180 @@
+{
+ "id": "minimax-h3",
+ "generated_by": "scripts/derive.py",
+ "generated_at": "2026-10-30T15:46:52+00:00",
+ "inputs": {
+  "facts_dir": "/Users/yuan/Work/frontier-llm-tracking/frontier_open_source_model_study/facts/minimax-h3",
+  "config_present": false,
+  "shapes_present": true,
+  "model_yaml": "data/models/minimax-video/minimax-h3.yaml",
+  "ep_size": 1
+ },
+ "from_shapes": {
+  "available": true,
+  "complete": true,
+  "tensor_count": 638,
+  "params_total": 33122992896.0,
+  "params_by_subsystem": {
+   "other": 25077833184.0,
+   "norm": 29495296.0,
+   "attention": 8015314944.0,
+   "audio": 349472.0
+  },
+  "params_total_container": 33122992896.0,
+  "params_container_by_subsystem": {
+   "other": 25077833184.0,
+   "norm": 29495296.0,
+   "attention": 8015314944.0,
+   "audio": 349472.0
+  },
+  "scale_elements": 0.0,
+  "weight_bytes_total": 66280430080.0,
+  "weight_bytes_by_subsystem": {
+   "other": 50189411712.0,
+   "norm": 58990592.0,
+   "attention": 16030629888.0,
+   "audio": 1397888.0
+  },
+  "weight_bytes_by_dtype": {
+   "BF16": 66211541504.0,
+   "FP32": 68888576.0
+  },
+  "weight_dtype_containers": {},
+  "experts_seen": 0,
+  "expert_storage": null,
+  "layers_present": 50,
+  "mtp_layers_seen": [],
+  "mtp_attention_suffixes": [],
+  "draft_blocks_seen": 0,
+  "layer_index_max": 50,
+  "layers_missing": [],
+  "moe_layers_seen": 0,
+  "unknown_dtypes": [],
+  "packing_applied": {},
+  "packing_suspect": [],
+  "incomplete_note": null
+ },
+ "kv_cache": {
+  "status": "not_applicable",
+  "why": "非自回归生成模型：推理过程中无跨步复用的 KV，不适用本口径"
+ },
+ "kv_capacity_bytes_at_context": {},
+ "kv_capacity_basis": null,
+ "active_params": {
+  "status": "not_applicable",
+  "why": "生成类每步对全部 latent token 做一次前向，没有「每 token 激活」这个量；单步负载见 generation_workload"
+ },
+ "flops": {},
+ "arithmetic_intensity": {},
+ "ep_communication": {
+  "status": "not_applicable",
+  "why": "生成类不做 EP all-to-all；对应的通信是序列并行(Ulysses)的 all-to-all，口径不同，本脚本未建模"
+ },
+ "reconciliation": [
+  {
+   "item": "路由专家数",
+   "status": "ok",
+   "why": "dense 模型，无 MoE"
+  },
+  {
+   "item": "层数",
+   "status": "skip",
+   "why": "config 缺失"
+  },
+  {
+   "item": "参数总量",
+   "YAML 声明": 33122992896.0,
+   "shapes 实测": 33122992896.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "ok",
+   "why": "与 HF 的 safetensors tally 逐位相同（33,122,992,896）"
+  }
+ ],
+ "generation_workload": {
+  "status": "partial",
+  "bucket": {
+   "width": 1344,
+   "height": 768,
+   "frames": 243,
+   "fps": 24,
+   "duration_s": 10.125,
+   "default": true,
+   "note": "取自厂商可复现脚本（short_edge 768 / 16:9 / duration 10）**的官方输出样片** assets/t2va.mp4 实测。脚本本身不含像素网格，网格由服务端按 aspect_ratio 对齐 —— 1344 与 768 都被 32 整除。243 帧 / 12288 timescale / 512 ticks 每样本 = 精确 24 fps"
+  },
+  "effective_compression": {
+   "temporal": 4,
+   "spatial_h": 32,
+   "spatial_w": 32,
+   "note": "VAE 压缩率 × DiT patch。两者在记录里分开存，只在这里相乘 —— 合成一个数存进记录是范畴错误"
+  },
+  "latent_tokens": 61992.0,
+  "latent_tokens_terms": {
+   "formula": "[(F - 1) / t_vae + 1  （时间因果 VAE：首帧单独编码）] / p_t × (H / s_vae / p_h) × (W / s_vae / p_w)",
+   "factors": {
+    "frames": 243,
+    "height": 768,
+    "width": 1344,
+    "vae_temporal_compression": 4,
+    "vae_spatial_compression": 16,
+    "vae_causal": true,
+    "patch_t": 1,
+    "patch_h": 2,
+    "patch_w": 2
+   },
+   "per_axis": {
+    "t": 61.5,
+    "h": 24.0,
+    "w": 42.0
+   },
+   "latent_frames": 61.5
+  },
+  "audio_tokens": 405.0,
+  "audio_tokens_terms": {
+   "formula": "latent_hz × duration_s",
+   "factors": {
+    "latent_hz": 40,
+    "duration_s": 10.125
+   },
+   "note": "单声道一条序列。左右声道各跑一遍编解码器的结构里，DiT 侧是否也翻倍取决于实现，未确认前不乘声道数"
+  },
+  "sequence_tokens": 62397.0,
+  "sequence_tokens_is_lower_bound": true,
+  "flops_per_step": {
+   "linear": 4133550775463424.0,
+   "linear_terms": {
+    "formula": "2 × 激活参数 × 序列 token 数",
+    "factors": {
+     "active_params": 33122992896,
+     "source": "params.active_decode（记录声明）",
+     "tokens": 62397.0
+    }
+   },
+   "attention": 4186168206796800.0,
+   "attention_terms": {
+    "formula": "每层 QK^T 2·n²·d + (softmax·V) 2·n²·d = 4·n²·d，再乘层数",
+    "factors": {
+     "layers": 50,
+     "hidden": 5376,
+     "tokens": 62397.0
+    },
+    "note": "稠密全注意力口径。块稀疏（SSTA）或线性注意力要另按其形态折算，本函数不替你折 —— 折算比例是记录里的事实，不是公式里的常数"
+   },
+   "total": 8319718982260224.0,
+   "attention_share": 0.503162212055814
+  },
+  "excluded": [
+   "文本编码一次（编码器参数量在 generation.text_encoders，本函数不计）",
+   "VAE decode 一次（VAE 结构不在 config 里，解码器是 Transformer 时这一项不是小量）",
+   "音频 VAE 与声码器"
+  ],
+  "notes": [
+   "t 轴的 token 数不是整数，档位与压缩率对不齐",
+   "文本 token 拼在同一条序列里，但记录没给文本长度 —— 序列长度是下界，注意力 FLOPs 同样是下界",
+   "缺 sampling.steps 或 sampling.cfg.forwards_per_step，端到端算不出"
+  ]
+ }
+}
