@@ -270,24 +270,34 @@ def _():
         assert cur, f"{mid} 有实测精度，却说不出测自哪个仓（{path} 是空的）"
 
 
-@case("三·正例：全仓真正「声明了而清单里没有」的那四份")
+@case("三·正例：「声明了而清单里没有」的记录，每一份都得带交代")
 def _():
-    got = []
+    # **这条断言规则，不是名单。** 原先写死四个 id，于是每进一份这类记录就红一次
+    # （今天已经第三条这样的用例了：KV 那两条同病）。名单会变，规律不会 ——
+    # 凡是摘掉 weights_release_scope 就报错的，必须本来就带着 scope 交代。
+    #
+    # 这一类长什么样：厂商另发了量化变体、本仓没把它的实测值并进精度表。
+    # 典型是 minimax-m3（MiniMaxAI/MiniMax-M3-MXFP8 并行维护，本仓取过清单
+    # 但没进 per_subsystem 表）与三份通义变体。LTX 两份进来之后是六份。
+    # 闸口照旧放行（它们有 scope），这条查的是更底下那一层：
+    # 摘掉交代之后还认不认得出来。
+    need, missing = [], []
     for mid, d in RECS.items():
         bare = copy.deepcopy(d)
         bare.get("precision", {}).pop("weights_release_scope", None)
-        if release_errors(bare):
-            got.append(mid)
-    # 原先是三份通义。minimax-m3 是后加的第四份：厂商与主仓并行维护
-    # MiniMaxAI/MiniMax-M3-MXFP8（2026-10-30 查 HF API 确认存在，31 个分片、
-    # 下载 48,817），而本仓只取过主仓的清单。补进 weights_release 之后它
-    # 当然会落进这张名单 —— **这正是对的**：声明了、没进精度表、所以必须带
-    # in_precision_table: false 交代清楚。闸口照旧放行（它有 scope），这条用例
-    # 查的是更底下那一层：摘掉交代之后还认不认得出来。
-    # （2026-10-30 拆字段前这个键叫 measured，它同时背着「取没取过清单」，
-    #  而 minimax-m3 恰好是「取过、没进表」，只能填 false —— 字段在说反话。）
-    want = ["minimax-m3", "qwen3.5-27b", "qwen3.5-397b-a17b", "qwen3.8-2.4t-a95b"]
-    assert sorted(got) == want, f"实际是 {sorted(got)}，应当是 {want}"
+        if not release_errors(bare):
+            continue
+        need.append(mid)
+        if not (d.get("precision") or {}).get("weights_release_scope"):
+            missing.append(mid)
+    assert need, "一份都没有，说明 release_errors 失效了 —— 这条用例没验到东西"
+    assert not missing, (
+        f"这几份「声明了而清单里没有」却没带 weights_release_scope 交代：{sorted(missing)}")
+    # 带了交代的，每一档都要说清是「取没取过清单」还是「进没进精度表」
+    for mid in need:
+        for prec, sc in (RECS[mid]["precision"]["weights_release_scope"]).items():
+            assert "manifest_taken" in sc and "in_precision_table" in sc, \
+                f"{mid} 的 {prec} 档缺两个布尔之一 —— 一个布尔装不下两件事"
 
 
 @case("三·负例：把 scope 摘掉，那一份立刻报错")
