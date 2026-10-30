@@ -200,7 +200,11 @@ generation:
       与 wan2.2-ti2v-5b 的对照：那一份的 VAE 是 .pth 读不了清单、decoder_arch 只能填 unknown。
       **causal 只对编码器成立**：`causal_encoder: true` / `causal_decoder: false`。
       latent_channels 24 三处一致：卡的 f16t4d24、`vae/config.json` 的
-      `latent_channels: 24`、以及 DiT 的 `proj_in.weight [5376, 96]`（96 = 24 × 1×2×2）
+      `latent_channels: 24`、以及 DiT 的 `proj_in.weight [5376, 96]`（96 = 24 × 1×2×2）。
+      **`temporal_compression: 4` 是块内卷积比，不是端到端比值。**
+      17 帧一块先补 3 帧到 20 再除以 4 得 5 个 token，所以整段的帧数∶token 数
+      是 3.375（243/72）而不是 4。两个数都对，但是两个口径 ——
+      填进字段的是前者（照 `vae_ratio_t: 4`），算 token 数要用 R3 的分块公式
 
   audio:
     in_channels: 32
@@ -292,7 +296,10 @@ generation:
       note: >-
         取自厂商可复现脚本（short_edge 768 / 16:9 / duration 10）**的官方输出样片**
         assets/t2va.mp4 实测。脚本本身不含像素网格，网格由服务端按 aspect_ratio 对齐 ——
-        1344 与 768 都被 32 整除。243 帧 / 12288 timescale / 512 ticks 每样本 = 精确 24 fps
+        1344 与 768 都被 32 整除。243 帧 / 12288 timescale / 512 ticks 每样本 = 精确 24 fps。
+        **latent 帧数 72**：C = (243+12)/17 = 15 块，T = 5×15 − 3 = 72（见 R3）。
+        latent token 72 × 24 × 42 = 72,576 —— 注意 derived JSON 里是 61,992，偏低 17%，
+        原因见 R6
     - width: 1344
       height: 768
       frames: 192
@@ -317,11 +324,14 @@ generation:
   constraints:
     width_divisor: 32
     height_divisor: 32
+    frame_formula: 17n+5
     note: >-
       除数 32 = VAE 空间压缩 16 × DiT patch 2，与卡的「有效空间下采样 32×」一致。
       1344/32 = 42、768/32 = 24，都整除。
-      **帧数约束没有填**：三个官方样片是 243 / 192 / 124 帧，
-      192 与 124 被 4 整除而 243 不被，凑不出一条成立的规则 —— 见 review R3
+      **帧数是 17n+5 而不是 4n+1**：VAE 按 17 帧一块编码、每块 5 个 token、
+      整段末尾丢 3 个，解码时每块回 17 帧再补 5 帧 overlap 尾，
+      所以 F = 17·C − 12（C 为块数）。仓里 14 个官方样片 14/14 满足，
+      243 / 192 / 124 对应 C = 15 / 12 / 8。推导见 review R3
 
   checkpoint_variants:
     - name: transformer（FL2VA 分区）
@@ -426,9 +436,11 @@ infra_signals:
       会出现比 MoE 更大的背离
     evidence: judgement
   - text: >-
-      仓里同一批权重按两套布局各放一份（原始 checkpoint 与 diffusers），
-      合并全部分片会把同一个模型按两套命名各算一遍，而两个任务分区的 DiT
-      张量名相同又会被折成一份。生成类的取数必须按组件分开量，不能全仓合并
+      **厂商声明的 VAE 时间压缩率不等于端到端的帧数∶token 比值。**
+      H3 的卡与 config 都写 4×，那是块内卷积比；而 VAE 按 17 帧一块、每块 5 个 token，
+      整段的实际比值是 3.375。差 17% 的 token 数，经 O(n²) 的注意力放大成 27% 的单步算力。
+      生成类的负载规划必须拿端到端比值，而拿到它只能去读厂商的 VAE 实现 ——
+      这不是 H3 一家的问题：各家的帧数约束（4n+1 / 8n+1 / 17n+5）都是这类分块规则的外在表现
     evidence: derived
 
 evidence:
@@ -520,22 +532,67 @@ review:
       facts/minimax-h3/shapes.json 是全仓合并的结果，**本记录没有用它**
   - id: R3
     field: generation.buckets
-    severity: unsupported
+    severity: wrong
     claim: 时间因果 VAE 的 latent 帧数是 (F−1)/4+1，默认档 243 帧对应 61.5 帧 latent
     finding: >-
-      **这个公式在 H3 上不成立，但正确的公式也拿不到。**
-      三个官方样片是 243 / 192 / 124 帧：192 与 124 被 4 整除、243 不被，
-      而 4n+1 三个都不满足。根因在 VAE 的切片编码：
-      `clip_length: 17` + `token_drop: 3` 说明编码是按 17 帧一段、段间丢 3 帧重叠做的，
-      不是一次性对整段套 (F−1)/4+1。
-      本仓 `derive.py` 对 `causal: true` 用的就是那个简单公式，
-      所以它会在 t 轴报「token 数不是整数」—— **那个告警是对的，不要去绕过它**
+      **公式不对，真值也不在 61 与 62 之间，是 72。** 上一版把这条留成 open，
+      说「正确的公式拿不到」—— 拿得到：厂商把 VAE 实现随仓发在
+      `FL2VA/video_vae/klvae.py`，时间维算术整段都在里面。
+
+      `setup_forward` 定了四个量：`tokens_chunk_size = ceil(17/4) = 5`、
+      `frame_pre_padding = (−17) mod 4 = 3`、`token_overlap = (−3) mod 5 = 2`、
+      `frame_overlap = max(2×4 − 3, 0) = 5`。
+      `encode_temporal` 把帧数补齐到 17 的整数倍、每 17 帧一块各出 5 个 token，
+      最后整体丢掉 `token_drop` 个：**T = ceil(F/17) × 5 − 3**。
+      `decode_temporal` 反过来：`num_chunks = (T+3)/5 − 1`，每块输出
+      `chunk_dec(20) − frame_pre_padding(3) = 17` 帧，末尾再补上 5 帧的 overlap 尾：
+      **F = 17·C − 12，其中 C = (T+3)/5**。
+
+      所以帧数的合法集合是 **F ≡ 5 (mod 17)**，而不是 4n+1。
+      仓里 **14 个官方样片逐个验过，14/14 全部满足**，且 C = (F+12)/17 个个是整数：
+      243 / 192 / 124 三种帧长，C 分别是 15 / 12 / 8，latent 帧数 **72 / 57 / 37**。
+
+      **端到端的有效时间压缩率因此是 3.375 而不是 4**（243/72）。
+      卡上那个「temporal compression factor of 4×」说的是块内卷积比 ——
+      17 帧先补 3 帧到 20 再除以 4 得 5 —— 不是整段帧数与 token 数的比值。
+      这正是本仓「不同口径之间不算倍数」的一个实例：
+      `vae_ratio_t` 是模块参数，端到端比值是另一个量
+    resolution: corrected
+    changed_to: >-
+      `constraints.frame_formula` 从留空改成 **17n+5**（n = C−1）；
+      默认档的 note 写明 C=15、latent 帧数 72；vae.note 写明两个口径的差别。
+      `causal: true` 与 `temporal_compression: 4` 都保留 —— 它们照
+      `causal_encoder: true` 与 `vae_ratio_t: 4` 填，是一手事实，不该为了迁就
+      端到端比值去改。**但 derive 现在算不出 72**，见 R6
+  - id: R6
+    field: '-'
+    severity: wrong
+    claim: >-
+      `data/derived/minimax-h3.json` 里的 latent token 数 61,992、序列 62,397、
+      单步 FLOPs 8.320e15 是对的
+    finding: >-
+      **都偏低。** `derive.py` 的 `gen_workload()` 只会按
+      `causal` + `temporal_compression` 套 (F−1)/t+1 或 F/t，
+      而 H3 的真实映射是分块的（R3），一个除数表达不了 ——
+      三个档位的实际比值分别是 3.375 / 3.368 / 3.351，连常数都不是。
+
+      按 R3 的真值重算：latent 帧数 72（不是 61.5），
+      latent token 72 × 24 × 42 = **72,576**（derive 给 61,992，低 **17.1%**）；
+      加音频 405 后序列 **72,981**；
+      单步线性 2 × 33,122,992,896 × 72,981 = **4.835e15**；
+      单步注意力 4 × 50 × 5376 × 72,981² = **5.727e15**；
+      单步合计 **1.056e16**（derive 给 8.320e15，低 **26.9%**），
+      注意力占比 **54.2%**（derive 给 50.3%）。
+      注意力那一项是 O(n²)，所以 token 数低 17% 会让它低 31%。
+
+      `derive.py` 与 `data/schema/` 是共享文件，本记录不改它们
     resolution: open
     changed_to: >-
-      `causal: true` 照 `causal_encoder: true` 填（那是一手事实），
-      默认档按实测的 243 帧填，接受推导里 t 轴 61.5 的非整数与随之而来的 partial 标记。
-      latent 帧数的真值在 61 与 62 之间，差 1.6%，不足以改变任何结论，
-      但**不能为了让数好看就改 causal 或改帧数**。constraints 的 frame_formula 留空
+      记录正文里的数按真值写（R3 与 notes），**derived JSON 暂时仍是偏低的那组**。
+      建议的共享改法：让 `generation.buckets[]` 支持声明 `latent_frames`，
+      `gen_workload()` 有声明就用声明值、没有才套公式 ——
+      这对别的 family 同样有用（LTX 的 8n+1、Wan 与 HunyuanVideo-1.5 的 4n+1
+      各有各的规矩）。已报给主会话
   - id: R4
     field: generation.vae.params
     severity: wrong
@@ -573,12 +630,27 @@ notes: >-
   两个 VAE 在 FL2VA 与 Ref2VA 之间 oid 相同但与顶层 diffusers 版不同（重新打包过）。
   所以「仓有多大」和「一次部署要多少」在这条线上差一倍以上，必须分开说。
 
+  **帧数与 latent token 的真实映射**（从厂商随仓的 `FL2VA/video_vae/klvae.py` 读出，
+  再用仓里 14 个官方样片逐个验过，14/14 满足）：
+  编码 `T = ceil(F/17) × 5 − 3`，解码 `F = 17·C − 12`（`C = (T+3)/5` 为块数），
+  合法帧数 `F ≡ 5 (mod 17)`。
+  243 / 192 / 124 三种帧长对应 C = 15 / 12 / 8、latent 帧数 72 / 57 / 37。
+  默认档的 latent token 是 72 × 24 × 42 = **72,576**，序列 72,981，单步 FLOPs 1.056e16。
+  **`data/derived/` 里的那组数偏低 17%–27%**，原因与修法见 R6。
+
   **取数提醒。** 这个仓**没有顶层 config.json**，有 17 份组件 config，
   104 个分片、12 个 index。`fetch_hf.py --id minimax-h3` 能取全，
   但产出的 `shapes.json` 是全仓合并的，**不能直接用于参数量**（见 R2）。
   本记录的数来自按组件分开的逐分片读头。
 
 open_questions:
+  - >-
+    **`data/derived/minimax-h3.json` 里的 latent token 数与单步 FLOPs 偏低，已知未修（R6）。**
+    真值：latent 帧数 72、latent token 72,576、序列 72,981、单步 FLOPs 1.056e16；
+    derived 给的是 61,992 / 62,397 / 8.320e15，分别低 17.1% 与 26.9%。
+    原因是 `derive.py` 的 `gen_workload()` 只能套单一除数，而 H3 的帧数→token 映射是分块的。
+    要改 `derive.py` 与 schema，是共享文件，已报给主会话。
+    **引用这份记录的负载数时以 R3 / R6 的真值为准，不要直接引 derived JSON**
   - >-
     `generation.sampling.steps` 填不了（R5）：默认采样步数卡与厂商脚本都没有，
     引擎文档说 50 但那是第四档来源。
@@ -600,11 +672,6 @@ open_questions:
     厂商脚本里的 prompt 是 H3-Context-IR 产出的长结构化文本，
     样例的 usage 显示 prompt_tokens 在 5,650–33,323 之间 ——
     那是 Context-IR 自己的 token 账，不一定等于喂进 DiT 的文本 token 数
-  - >-
-    `generation.buckets` 的帧数与 VAE 时间压缩对不齐（R3）：latent 帧数的真值
-    在 61 与 62 之间。VAE 按 17 帧切片、段间丢 3 帧，端到端的帧数→latent 映射没有公开，
-    `generation.constraints.frame_formula` 也因此留空。
-    影响约 1.6%，不改变任何结论，但推导里 t 轴会报非整数 —— 那个告警是对的
   - >-
     H3-Context-IR 与 H3-Regenerate-2K 未开源，**端到端负载在公开仓里算不全**。
     本记录覆盖的只有中间那段 H3-Base（768p）
