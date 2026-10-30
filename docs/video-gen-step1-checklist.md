@@ -1,8 +1,8 @@
 # 视频生成线 · 第 1 步补管线实施清单
 
 > 这是 [video-gen-gate-a.md](video-gen-gate-a.md) §5.5 的展开，供第 1 步执行。
-> Gate A 已定：12 份记录、8 个 family，录入先只做视频。本清单只覆盖 **schema + derive.py +
-> subsystems.py** 三件，不涉及录记录本身。
+> Gate A 已定：12 份记录、8 个 family，录入先只做视频。本清单覆盖 **schema + derive.py +
+> subsystems.py** 三件管线改造，以及第一批三份记录的排期（§E、§F）。
 > 编制日期 2026-10-30，**2026-10-30 复核更新一次**（见 §0）。基线 `main` = 37e9404。
 
 ## 0. 先决条件：P1 的共享脚本改动
@@ -112,9 +112,25 @@ for n in [...]:        # 上表左列
 恰好被 `audio` 正则接住了。`audio` 在 LLM 侧的语义是「音频理解编码器」，在生成侧是
 「音频 VAE / 音频分支」—— 同一个桶装两种东西，跨族系对照时会错。
 
-### A3. 改法
+### A3. 改法 —— 拆成 A3a / A3b 两半
 
-**第一层：按顶层组件前缀分桶。** 在 `classify()` 之前加一个 `component()`：
+A3 不是一整块。它是两件性质不同的事，**只有后一半和 P1 撞车**：
+
+| | 改什么 | 碰不碰那张正则表 | 能不能现在做 |
+|---|---|---|---|
+| **A3a 组件层** | 新加 `component()` + 新文件 `data/schema/components.json` | **不碰** | **能** |
+| **A3b 正则表扩展** | 往 `SUBSYSTEM` 里插新条目 | 碰，而且顺序敏感 | 等 P1 整合 |
+
+这个拆分有实际后果：**组件级的账 A3a 一落地就能算**。
+`minimax-h3`（要分开 DiT 33B / 文本编码器 33B / VAE 5.2B）和
+`ltx-2.3`（要分开主干 18.56B / connector 2.0B / 文本投影 1.16B）靠的都是组件层。
+只有 `magi-2-preview` 要的是 DiT **桶内**的专家 / mHC / 注意力拆分 —— 那才是 A3b。
+
+---
+
+#### A3a 组件层（不撞车，可先做）
+
+**按顶层组件前缀分桶。** 在 `classify()` 之前加一个 `component()`：
 
 ```
 dit          ← 无前缀 / block. / model.diffusion_model. / transformer.
@@ -130,10 +146,20 @@ connector    ← connectors. / *_embeddings_connector.
 前缀表必须**数据驱动**（放 `data/schema/components.json`），不要硬编码 —— 候选之间命名差异极大，
 硬编码等于每录一个新模型改一次代码。
 
-**第二层：桶内跑子系统正则。** `dit` 桶内用扩展后的正则；其余桶内一律不再细分
-（VAE 的内部结构对负载账没意义，整块算就行）。
+桶内是否再细分由调用方决定：`dit` 桶内继续跑 `classify()`，其余桶一律整块算
+（VAE 的内部结构对负载账没意义）。**A3a 单独落地时，`dit` 桶内先跑现有的 `classify()`**
+—— 对 H3 和 LTX-2.3 够用，对 MAGI-2 会错（见 A2），所以 MAGI-2 要等 A3b。
 
-**正则要加的条目**（按优先级顺序插入，注意顺序即优先级）：
+**A3a 的验收**：A2 表里带组件前缀的那 9 行
+（`text_encoder.*` 两行、`vae.*` 两行、`vocoder.*`、`audio_vae.*`、`connector`、
+`adaln_single`、`text_embedding_projection`）归到正确的组件桶；
+LLM 侧现有记录全部落进 `dit` 桶，`derive.py` 输出一字不变。
+
+---
+
+#### A3b 正则表扩展（撞车，等 P1 整合）
+
+**在 `dit` 桶内把现有正则扩掉 A2 剩下的那些错。** 要加的条目（按优先级顺序插入，注意顺序即优先级）：
 
 | 子系统 | 新增正则 | 必须排在谁之前 |
 |---|---|---|
@@ -155,10 +181,10 @@ text_encoder, vae_encoder, vae_decoder, audio_vae, vocoder, upsampler, other（�
 `adaln` 必须单列：MiniMax-H3 的 33B 里约 13B 在这里，厂商说推理可预计算缓存。
 不单列就永远验不了那句话。
 
-**验收**：A2 那张表的 26 行全部归到「应该归到」列，且 LLM 侧现有记录的
+**A3b 的验收**：A2 那张表的 26 行全部归到「应该归到」列，且 LLM 侧现有记录的
 `derive.py` 输出一字不变（跑 `data/models/` 下全部记录对比）。
 
-> **P1 依赖：这是全清单唯一真撞车的一节，必须排在 P1 整合之后。**
+> **P1 依赖：A3b 是全清单唯一真撞车的一节，必须排在 P1 整合之后。A3a 不受影响。**
 > GLM 线已经报了「`subsystems.py` 必改」—— 要补语言模型侧缺的子系统划分。那条改动目前
 > 还只在交接笔记里、不在 git 里（主会话禁止 P1 会话直接改共享文件），所以 `git diff` 查不到它，
 > **但它确实存在**。两边改的是同一张正则表，而这张表**顺序即优先级**，分别改完再合并几乎必然出错。
@@ -319,31 +345,79 @@ MiniMax-H3 的卡自己把「VAE 压缩」和「patch 后的有效压缩」分�
 
 ---
 
-## E. 建议执行顺序
+## E. 执行顺序与第一批录入
 
-从 `main`（现 37e9404）直接开分支，不需要先合 `p1-glm`。分两段，中间卡在 P1 整合上。
+从 `main`（现 37e9404）直接开分支，不需要先合 `p1-glm`。
+**第一批录哪三份已经定了**（2026-10-30，用户拍板）：
+`wan2.2-ti2v-5b` → `minimax-h3` → `magi-2-preview`。
+选这三份的理由与分工见 §F。
 
-**第一段 —— 现在就能做（不碰 `subsystems.py`）**
+### 第一段 —— 现在就能做
 
 1. **B1** `family` 枚举 —— 一行，解除整条线的阻塞
 2. **B2 + B3 + B4** schema 重建（`generation` 块是新建子树，和任何 P1 改动不重叠）
-3. **C1** `derive.py` 按 `kind` 分流（`vendor_declared` 分支已在 main，直接在它之上加入口判断）
+3. **C1** `derive.py` 按 `kind` 分流（`vendor_declared` 分支已在 main，在它之上加入口判断）
 4. **C2** 生成类推导（latent token 数、单步/端到端 FLOPs、常驻权重字节）
-5. **D** 里不依赖归类的那几项：`validate.py`、`fetch_hf.py` / `scaffold.py`、`tracking.yaml`、双周采集源
+5. **A3a** 组件层 `component()` + `data/schema/components.json`（不碰正则表，不撞车）
+6. **C3** 参数量按组件先分一层（依赖 A3a，不依赖 A3b）
+7. **D** 里不依赖 `dit` 桶内细分的那几项：`validate.py`、`fetch_hf.py` / `scaffold.py`、
+   `tracking.yaml`、双周采集源
 
-**⏸ 卡点：等 P1 五条线跑完、共享改动整合进 main**
+→ 这一段跑完，**第 1、2 份记录就能录**（`wan2.2-ti2v-5b`、`minimax-h3`）。
+
+### ⏸ 卡点：等 P1 五条线跑完、共享改动整合进 main
 
 待整合的两项见 §0：GLM 线的 `subsystems.py`、Kimi 线的 `dtypes.py`（INT4-in-INT32）。
-前者和本清单 A 节改同一张顺序敏感的正则表。
+前者和 **A3b** 改同一张顺序敏感的正则表。
 
-**第二段 —— P1 整合之后**
+### 第二段 —— P1 整合之后
 
-6. **A3** `subsystems.py` 分两层 + 扩正则，跑 LLM 侧全量回归确认输出不变
-7. **C3** 参数量按组件先分一层（依赖 A3 的 `component()`）
-8. **D** 里的 `fetch_dtypes.py`（和 `derive.py` 共用同一份归类，不能两套）、`site/`
-9. 用 `magi-2-preview` 做第一份记录验收 —— 它一次性压到 MoE 账、mHC、sink、
-   跨厂商 VAE 复用、两阶段流水线；`minimax-h3` 压的是另一头（组件与部署口径），紧随其后
+8. **A3b** `dit` 桶内正则扩展，跑 LLM 侧全量回归确认输出不变
+9. **D** 里的 `fetch_dtypes.py`（和 `derive.py` 共用同一份归类，不能两套）、`site/`
+10. 录第 3 份：`magi-2-preview`
 
-验收标准：两份记录都能过 `validate.py` 与 `derive.py`（返回 0，用 `.venv/bin/python`），
+### 验收标准
+
+三份都能过 `validate.py` 与 `derive.py`（返回 0，用 `.venv/bin/python`），
 `--list-judgements` 里的新增项逐条看过，且 LLM 侧现有记录（`main` 上 15 份，P1 还在加）的
-`derive.py` 输出一字不变。A 节另有自己的验收：§A2 那 26 行全部归到「应该归到」列。
+`derive.py` 输出一字不变。A3a / A3b 另有各自的归类验收，见 §A3。
+
+---
+
+## F. 第一批三份的分工
+
+| 顺序 | model_id | 它压的是什么 | 依赖 |
+|---|---|---|---|
+| 1 | `wan2.2-ti2v-5b` | **对照组。** 单 checkpoint、单文本编码器、无音频、config 齐全 —— 整条线里最简单的一份。先用它确认改完的管线在「正常模型」上不出错，比先录最难的那个稳 | 第一段 |
+| 2 | `minimax-h3` | **压 schema 字段。** 四个大模型（DiT 33B ×2 + Qwen3-VL-32B 33B + VAE 5.2B）、未开源的两个模块、可预计算的 13B AdaLN、音视频双 scheduler、CFG 已蒸馏 | 第一段（组件级账靠 A3a） |
+| 3 | `magi-2-preview` | **压脚本归类。** 36 层 ×3072 专家的 MoE 账、mHC 残差、attention sink、跨厂商复用的 Wan2.2 VAE、两阶段流水线 | **A3b**（DiT 桶内细分） |
+
+第 2 份要留的 open question（Gate A §7 已列）：H3 的默认步数卡上没写；
+「33B 里 13B 推理可免」没验过，**不要把 33 − 13 = 20 写进任何字段**，那是两个口径相减。
+
+第 3 份要先解决的（Gate A §7 第 17、18 条）：MAGI-2 的采样参数卡上一条都没有，
+要去读 sand.ai 技术博客或 GitHub 推理代码；MoE 的 top-k 与「每 token 激活 6B」的口径不定，
+激活参数和 EP 通信量就算不出来。
+
+---
+
+## G. 本线之外的三件待办
+
+这三件不属于第 1 步，列在这里是为了不丢。
+
+1. **LTX-2.5 申请访问 —— 需要用户的 HF 账号，本会话做不了。**
+   `Lightricks/LTX-2.5` 与 `Lightricks/LTX-2.5-Diffusers` 两个仓都 gated，
+   连 `README.md` 都取不到。批下来之前 `ltx` family 的最新记录只能停在 `ltx-2.3`，
+   名册里要一直挂 `status: blocked-gated`。
+
+2. **世界模型 / 交互式视频线的 Gate A —— 建议排在第一批录完之后。**
+   候选见 Gate A §2.4（Hy-Nomas、Matrix-Game-4.0、AlayaWorld/Evoke、Cosmos3、
+   LongLive-2.0、lingbot-world）。它们自回归逐块生成，KV cache 与流式时延都回来了。
+   现在开会凭空猜字段 —— 它能复用多少 `generation` 块，要先看视频线录完三份之后那个块长什么样。
+
+3. **图像生成的小勘探 —— 2–3 个模型即可，目的只是验证扩展位。**
+   PLAN §3.2 要求 schema 按 image-gen + video-gen 一次建齐，但本轮**一个图像模型都没调研**，
+   凭空建字段必然漏。图像侧没有时间维（无帧数 / 时长 / fps），但有视频侧没有的多尺度与 refiner。
+   扫视频时撞见过几个线索，**未经查证，只是名字**：`Qwen-Image-2.1` / `Qwen-Image-2512`、
+   `Z-Image-Turbo`（以上阿里）、`HunyuanImage-2.1`（腾讯）、`FLUX.1-Redux-dev`（BFL，
+   HunyuanVideo-1.5 的 SigLIP 就从这个 gated 仓取）。要做得先按视频线那套方法正经扫一遍 HF。

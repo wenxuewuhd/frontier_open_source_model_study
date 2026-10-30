@@ -18,6 +18,8 @@
 
 一共 **12 份记录、8 个 family**，分两波。第一波 7 份是当代前沿，第二波 5 份是历史基线与旁支路线。
 波次只是排期建议，Gate A 的结论是这 12 份都该录。
+**第一波里先录哪三份已经定了**（2026-10-30）：`wan2.2-ti2v-5b` → `minimax-h3` → `magi-2-preview`，
+分工与依赖见 [video-gen-step1-checklist.md](video-gen-step1-checklist.md) §F。
 
 ### 第一波（当代前沿，7 份）
 
