@@ -66,6 +66,45 @@ main            2f262ec   已推，未推 0
   VAE 或注意力形态变了的同代档位单独录」。要写进 `tracking.yaml` 的 policy，
   这是本仓第一次出现两套选题标准。
 
+### E. 旗舰模型的两张图（用户 2026-10-30 点名）
+
+参照物是 `deepseek-v41-flash` 模型页现有的逐层实现图，以及那份「V4.1 注意力分层图」
+里的**图 1 生产侧 / 图 2 消费侧**。两件事分开做，第二件不依赖第一件。
+
+- **E1 另外五个旗舰补逐层实现产物** —— `glm-5.3`、`minimax-m3`、`kimi-k3`、
+  `step-5-preview`、`qwen3.8-2.4t-a95b`。现在**只有 `deepseek-v41-flash` 有
+  `data/derived/*.layers.json`**，站点的逐层图就是读它。
+  生成：`scripts/extract_layers.py --id <id> --model <yaml>`（只吃完整清单，
+  零差异孪生版的空 `shapes.json` 会直接退出，这是有意的）。
+  **先确认五份的 `shapes.json` 都是完整清单**；`facts/` 不随分支走，缺了要先拷。
+
+- **E2 每个旗舰画一张注意力架构图**，照图 1 / 图 2 的两段式：
+  **生产侧**（谁产 KV、产什么形状、什么 dtype）+ **消费侧**（谁读、怎么选、怎么拼）。
+
+  那两张图的可复制约定，抄下来免得每张重新发明：
+  - **内联 SVG**，无 JS；`viewBox` 约 940×330–380，`width:100%` + `min-width:760px`，
+    外层 `.figbox` 允许横向滚动
+  - **横向分带**，每带一个 `①②③` 编号标题（`.lbl-s`），带与带之间用虚线
+    （`.arr-d`）分隔。生产侧三带：query / 滑窗 KV / 压缩 KV；消费侧两带：indexer / 稀疏注意力
+  - **四套语义配色**：teal = KV 与 cache 数据流、ochre = 压缩与打分、
+    violet = indexer 与 index key、rose = 候选与 mask；中性灰框是普通算子。
+    盒子 `.box/.box-t/.box-o/.box-v/.box-r`，箭头 `.arr/.arr-t/.arr-v/.arr-d`
+  - **每个盒子都带量**：投影形状（`wkv 5120→512`）、头数与维度（`64×512`、`32×128`）、
+    dtype 与块（`FP4 b16+e4m3`、`MXFP4 b32+e8m0`）、缓存宽度（`512 维正文` / `128 维摘要`）、
+    条目字节（`512 条 × 288 B`）。**没有量的框不要画**，那就退化成示意图了
+  - **`<figcaption>` 用加粗引导句说出这张图唯一最该记住的那件事**
+    （图 1 是「index_k 与 compress_kv 同源于 latent」，图 2 是「indexer 只产索引，
+    真正的 KV 数据流在第 ⑤ 带」）
+  - 每张图 `role="img"` + 一句 `aria-label` 概括全图；marker id 每张唯一（`pa/pb`、`qa/qb`）
+  - 深浅色都要能看：颜色走 `:root` 的 CSS 变量，`prefers-color-scheme` 与
+    `[data-theme]` 两处都覆盖
+
+  **这六张图的内容差异极大**，别套模板：MLA+DSA（glm-5.3）、
+  MSA block-sparse（minimax-m3）、KDA+MLA 混合（kimi-k3）、
+  SWA/global 3:1 + DSA（step-5-preview）、混合线性注意力（qwen3.8-2.4t-a95b）
+  各自的「谁产谁用」结构根本不同 —— 这正是画图的价值所在。
+  数据来源用 E1 的 `.layers.json` 加各自记录的 `arch.attention`，**不要凭印象画**。
+
 ### D. 已知缺陷，记着没修
 
 - **D1 `derive.py` 的算术强度按参数量比例折算 decode 权重字节** —— 对混合精度模型不成立
