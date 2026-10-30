@@ -1,0 +1,6930 @@
+{
+ "id": "step-5-preview",
+ "generated_by": "scripts/extract_layers.py",
+ "generated_at": "2026-10-30",
+ "inputs": {
+  "shapes": "facts/step-5-preview/shapes.json",
+  "shapes_sha256_16": "977e16165fb98c19",
+  "cfg": "facts/step-5-preview/cfg.json",
+  "cfg_sha256_16": "887b34c5191fc68b",
+  "tensors": 2704
+ },
+ "op_groups": [
+  {
+   "key": "attn_norm",
+   "label": "attn_norm"
+  },
+  {
+   "key": "q",
+   "label": "Q 路径"
+  },
+  {
+   "key": "kv",
+   "label": "K / V 投影"
+  },
+  {
+   "key": "indexer",
+   "label": "稀疏索引器"
+  },
+  {
+   "key": "attn_gate",
+   "label": "注意力输出门"
+  },
+  {
+   "key": "o",
+   "label": "输出投影"
+  },
+  {
+   "key": "ffn_norm",
+   "label": "ffn_norm"
+  },
+  {
+   "key": "router",
+   "label": "路由器"
+  },
+  {
+   "key": "shared_expert",
+   "label": "共享专家"
+  },
+  {
+   "key": "expert",
+   "label": "路由专家"
+  },
+  {
+   "key": "dense_ffn",
+   "label": "稠密 FFN"
+  },
+  {
+   "key": "mtp_glue",
+   "label": "MTP 拼接"
+  }
+ ],
+ "kv_storage": {
+  "global_kv": {
+   "dtype": "BF16",
+   "block": null,
+   "scale_dtype": null,
+   "data_bytes_per_element": 2,
+   "scale_bytes_per_element": 0,
+   "bytes_per_element": 2,
+   "basis": "theoretical_floor"
+  },
+  "index_k": {
+   "dtype": "FP8_E4M3",
+   "block": null,
+   "scale_dtype": null,
+   "data_bytes_per_element": 1,
+   "scale_bytes_per_element": 0,
+   "bytes_per_element": 1,
+   "basis": "theoretical_floor"
+  },
+  "local_window": {
+   "dtype": "BF16",
+   "block": null,
+   "scale_dtype": null,
+   "data_bytes_per_element": 2,
+   "scale_bytes_per_element": 0,
+   "bytes_per_element": 2,
+   "basis": "theoretical_floor"
+  },
+  "source": "data/models/stepfun/step-5-preview.yaml"
+ },
+ "bytes_semantics": "bytes_by_group 是存储（含 scale，全部专家）；decode_bytes_by_group 是每 token 搬运，路由专家按 top_k / 专家数折算，其余组全读",
+ "cache_basis": {
+  "entry_elems": "产出张量的输出维，权重实测",
+  "per_token_elems": "条目宽度即每 token 元素数：这一族的缓存没有时序压缩，一个 token 一个条目，折算比 1",
+  "local_window": "self_attn.k_proj.weight + self_attn.v_proj 输出维（实测）× sliding_window（config），每序列固定，不随上下文增长。主干与 MTP 块分开合计",
+  "bytes": "元素数 × kv_storage 里该分量的每元素字节（含 scale）。basis=theoretical_floor 是精确计数的理论下限，不含分页、环页、对齐粒度，实际部署在它之上；basis=dtype_fallback 是记录没给精度时的兜底，两种不能混比"
+ },
+ "config_only_roles": {},
+ "layers": [
+  {
+   "kind": "main",
+   "index": 0,
+   "label": "L0",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "dense_ffn"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "dense_ffn": 339738624,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064
+   },
+   "bytes_total": 554206720,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "dense_ffn": 339738624,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064
+   },
+   "decode_bytes_total": 554206720,
+   "experts_active": null,
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 1,
+   "label": "L1",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "dense_ffn"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "dense_ffn": 339738624,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064
+   },
+   "bytes_total": 554206720,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "dense_ffn": 339738624,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064
+   },
+   "decode_bytes_total": 554206720,
+   "experts_active": null,
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 2,
+   "label": "L2",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "dense_ffn"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "dense_ffn": 339738624,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064
+   },
+   "bytes_total": 554206720,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "dense_ffn": 339738624,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064
+   },
+   "decode_bytes_total": 554206720,
+   "experts_active": null,
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 3,
+   "label": "L3",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 4,
+   "label": "L4",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 5,
+   "label": "L5",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 6,
+   "label": "L6",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 7,
+   "label": "L7",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 8,
+   "label": "L8",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 9,
+   "label": "L9",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 10,
+   "label": "L10",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 11,
+   "label": "L11",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 12,
+   "label": "L12",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 13,
+   "label": "L13",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 14,
+   "label": "L14",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 15,
+   "label": "L15",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 16,
+   "label": "L16",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 17,
+   "label": "L17",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 18,
+   "label": "L18",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 19,
+   "label": "L19",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 20,
+   "label": "L20",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 21,
+   "label": "L21",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 22,
+   "label": "L22",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 23,
+   "label": "L23",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 24,
+   "label": "L24",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 25,
+   "label": "L25",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 26,
+   "label": "L26",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 27,
+   "label": "L27",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 28,
+   "label": "L28",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 29,
+   "label": "L29",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 30,
+   "label": "L30",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 31,
+   "label": "L31",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 32,
+   "label": "L32",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 33,
+   "label": "L33",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 34,
+   "label": "L34",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 35,
+   "label": "L35",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 36,
+   "label": "L36",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 37,
+   "label": "L37",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 38,
+   "label": "L38",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 39,
+   "label": "L39",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 40,
+   "label": "L40",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 41,
+   "label": "L41",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 42,
+   "label": "L42",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 43,
+   "label": "L43",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 44,
+   "label": "L44",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 45,
+   "label": "L45",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 46,
+   "label": "L46",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 47,
+   "label": "L47",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 48,
+   "label": "L48",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 49,
+   "label": "L49",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 50,
+   "label": "L50",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 51,
+   "label": "L51",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 52,
+   "label": "L52",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 53,
+   "label": "L53",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 54,
+   "label": "L54",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 55,
+   "label": "L55",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 56,
+   "label": "L56",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 57,
+   "label": "L57",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 58,
+   "label": "L58",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 59,
+   "label": "L59",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 60,
+   "label": "L60",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 61,
+   "label": "L61",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 62,
+   "label": "L62",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 63,
+   "label": "L63",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 64,
+   "label": "L64",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 65,
+   "label": "L65",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 66,
+   "label": "L66",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 67,
+   "label": "L67",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 68,
+   "label": "L68",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 69,
+   "label": "L69",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 70,
+   "label": "L70",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 71,
+   "label": "L71",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 72,
+   "label": "L72",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 73,
+   "label": "L73",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 74,
+   "label": "L74",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 75,
+   "label": "L75",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 76,
+   "label": "L76",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 77,
+   "label": "L77",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 78,
+   "label": "L78",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 79,
+   "label": "L79",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 80,
+   "label": "L80",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 81,
+   "label": "L81",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 82,
+   "label": "L82",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 83,
+   "label": "L83",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 84,
+   "label": "L84",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 85,
+   "label": "L85",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 86,
+   "label": "L86",
+   "class": "C2",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6900501376,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 406133632,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 87,
+   "label": "L87",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 6645399552,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 6938515584,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 151031808,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 444147840,
+   "experts_active": "8/352",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 88,
+   "label": "L88",
+   "class": "C3",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 13287555072,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 13542656896,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 301989888,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 557091712,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 89,
+   "label": "L89",
+   "class": "C3",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 13287555072,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 13542656896,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 301989888,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 557091712,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 90,
+   "label": "L90",
+   "class": "C3",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 13287555072,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "bytes_total": 13542656896,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "expert": 301989888,
+    "router": 2884992,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "shared_expert": 37748736
+   },
+   "decode_bytes_total": 557091712,
+   "experts_active": "8/352",
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 91,
+   "label": "L91",
+   "class": "C4",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "dense_ffn"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 16384,
+    "dense_ffn": 339738624,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208
+   },
+   "bytes_total": 592220928,
+   "decode_bytes_by_group": {
+    "attn_norm": 16384,
+    "dense_ffn": 339738624,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064,
+    "indexer": 38014208
+   },
+   "decode_bytes_total": 592220928,
+   "experts_active": null,
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1536,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1536.0,
+     "per_token_bytes": 3072.0
+    },
+    "index_k": {
+     "entry_elems": 256,
+     "source": "self_attn.sparse_indexer_k.weight",
+     "compress_ratio": null,
+     "per_token_elems": 256.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "mtp",
+   "index": 0,
+   "label": "MTP0",
+   "class": "C5",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "dense_ffn",
+    "mtp_glue"
+   ],
+   "bytes_by_group": {
+    "mtp_glue": 1123074048,
+    "attn_norm": 16384,
+    "dense_ffn": 339738624,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064
+   },
+   "bytes_total": 1677280768,
+   "decode_bytes_by_group": {
+    "mtp_glue": 1123074048,
+    "attn_norm": 16384,
+    "dense_ffn": 339738624,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064
+   },
+   "decode_bytes_total": 1677280768,
+   "experts_active": null,
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "mtp",
+   "index": 1,
+   "label": "MTP1",
+   "class": "C5",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "dense_ffn",
+    "mtp_glue"
+   ],
+   "bytes_by_group": {
+    "mtp_glue": 1123074048,
+    "attn_norm": 16384,
+    "dense_ffn": 339738624,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064
+   },
+   "bytes_total": 1677280768,
+   "decode_bytes_by_group": {
+    "mtp_glue": 1123074048,
+    "attn_norm": 16384,
+    "dense_ffn": 339738624,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064
+   },
+   "decode_bytes_total": 1677280768,
+   "experts_active": null,
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  },
+  {
+   "kind": "mtp",
+   "index": 2,
+   "label": "MTP2",
+   "class": "C5",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "dense_ffn",
+    "mtp_glue"
+   ],
+   "bytes_by_group": {
+    "mtp_glue": 1123074048,
+    "attn_norm": 16384,
+    "dense_ffn": 339738624,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064
+   },
+   "bytes_total": 1677280768,
+   "decode_bytes_by_group": {
+    "mtp_glue": 1123074048,
+    "attn_norm": 16384,
+    "dense_ffn": 339738624,
+    "ffn_norm": 16384,
+    "attn_gate": 524288,
+    "kv": 12583680,
+    "o": 100663296,
+    "q": 100664064
+   },
+   "decode_bytes_total": 1677280768,
+   "experts_active": null,
+   "cache": {
+    "local_window": {
+     "entry_elems": 1536,
+     "window": 512,
+     "elems_per_sequence": 786432,
+     "bytes_per_sequence": 1572864
+    }
+   }
+  }
+ ],
+ "classes": [
+  {
+   "key": "C0",
+   "layers": [
+    "L0",
+    "L1",
+    "L2"
+   ],
+   "roles": [],
+   "tensors": [
+    {
+     "tensor": "input_layernorm.weight",
+     "group": "attn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      4096
+     ],
+     "dtype": "FP32",
+     "bytes_each": 16384
+    },
+    {
+     "tensor": "mlp.down_proj.weight",
+     "group": "dense_ffn",
+     "subsystem": "dense_ffn",
+     "count": 1,
+     "shape": [
+      4096,
+      13824
+     ],
+     "dtype": "BF16",
+     "bytes_each": 113246208
+    },
+    {
+     "tensor": "mlp.gate_proj.weight",
+     "group": "dense_ffn",
+     "subsystem": "dense_ffn",
+     "count": 1,
+     "shape": [
+      13824,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 113246208
+    },
+    {
+     "tensor": "mlp.up_proj.weight",
+     "group": "dense_ffn",
+     "subsystem": "dense_ffn",
+     "count": 1,
+     "shape": [
+      13824,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 113246208
+    },
+    {
+     "tensor": "post_attention_layernorm.weight",
+     "group": "ffn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      4096
+     ],
+     "dtype": "FP32",
+     "bytes_each": 16384
+    },
+    {
+     "tensor": "self_attn.g_proj.weight",
+     "group": "attn_gate",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      64,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 524288
+    },
+    {
+     "tensor": "self_attn.k_norm.weight",
+     "group": "kv",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      192
+     ],
+     "dtype": "FP32",
+     "bytes_each": 768
+    },
+    {
+     "tensor": "self_attn.k_proj.weight",
+     "group": "kv",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      768,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 6291456
+    },
+    {
+     "tensor": "self_attn.o_proj.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      4096,
+      12288
+     ],
+     "dtype": "BF16",
+     "bytes_each": 100663296
+    },
+    {
+     "tensor": "self_attn.q_norm.weight",
+     "group": "q",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      192
+     ],
+     "dtype": "FP32",
+     "bytes_each": 768
+    },
+    {
+     "tensor": "self_attn.q_proj.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 100663296
+    },
+    {
+     "tensor": "self_attn.v_proj.weight",
+     "group": "kv",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      768,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 6291456
+    }
+   ]
+  },
+  {
+   "key": "C1",
+   "layers": [
+    "L3",
+    "L7",
+    "L11",
+    "L15",
+    "L19",
+    "L23",
+    "L27",
+    "L31",
+    "L35",
+    "L39",
+    "L43",
+    "L47",
+    "L51",
+    "L55",
+    "L59",
+    "L63",
+    "L67",
+    "L71",
+    "L75",
+    "L79",
+    "L83",
+    "L87"
+   ],
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "tensors": [
+    {
+     "tensor": "input_layernorm.weight",
+     "group": "attn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      4096
+     ],
+     "dtype": "FP32",
+     "bytes_each": 16384
+    },
+    {
+     "tensor": "moe.down_proj.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 1,
+     "shape": [
+      352,
+      4096,
+      1536
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      352,
+      32,
+      12
+     ],
+     "scale_dtype": "FP32",
+     "block": "[1,128,128]",
+     "bytes_each": 2215133184
+    },
+    {
+     "tensor": "moe.gate.weight",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      352,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 2883584
+    },
+    {
+     "tensor": "moe.gate_proj.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 1,
+     "shape": [
+      352,
+      1536,
+      4096
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      352,
+      12,
+      32
+     ],
+     "scale_dtype": "FP32",
+     "block": "[1,128,128]",
+     "bytes_each": 2215133184
+    },
+    {
+     "tensor": "moe.router_bias",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      352
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1408
+    },
+    {
+     "tensor": "moe.up_proj.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 1,
+     "shape": [
+      352,
+      1536,
+      4096
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      352,
+      12,
+      32
+     ],
+     "scale_dtype": "FP32",
+     "block": "[1,128,128]",
+     "bytes_each": 2215133184
+    },
+    {
+     "tensor": "post_attention_layernorm.weight",
+     "group": "ffn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      4096
+     ],
+     "dtype": "FP32",
+     "bytes_each": 16384
+    },
+    {
+     "tensor": "self_attn.g_proj.weight",
+     "group": "attn_gate",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      64,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 524288
+    },
+    {
+     "tensor": "self_attn.k_norm.weight",
+     "group": "kv",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      192
+     ],
+     "dtype": "FP32",
+     "bytes_each": 768
+    },
+    {
+     "tensor": "self_attn.k_proj.weight",
+     "group": "kv",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      768,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 6291456
+    },
+    {
+     "tensor": "self_attn.o_proj.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      4096,
+      12288
+     ],
+     "dtype": "BF16",
+     "bytes_each": 100663296
+    },
+    {
+     "tensor": "self_attn.q_norm.weight",
+     "group": "q",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      192
+     ],
+     "dtype": "FP32",
+     "bytes_each": 768
+    },
+    {
+     "tensor": "self_attn.q_proj.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 100663296
+    },
+    {
+     "tensor": "self_attn.sparse_indexer_k.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      256,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 2097152
+    },
+    {
+     "tensor": "self_attn.sparse_indexer_k_norm.bias",
+     "group": "indexer",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      256
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "self_attn.sparse_indexer_k_norm.weight",
+     "group": "indexer",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      256
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "self_attn.sparse_indexer_q.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      4096,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 33554432
+    },
+    {
+     "tensor": "self_attn.sparse_indexer_q_norm.weight",
+     "group": "indexer",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      256
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "self_attn.sparse_indexer_w.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      16,
+      4096
+     ],
+     "dtype": "FP32",
+     "bytes_each": 262144
+    },
+    {
+     "tensor": "self_attn.sparse_indexer_z.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      256,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 2097152
+    },
+    {
+     "tensor": "self_attn.ssmax_s",
+     "group": "indexer",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      64
+     ],
+     "dtype": "FP32",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "self_attn.v_proj.weight",
+     "group": "kv",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      768,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 6291456
+    },
+    {
+     "tensor": "share_expert.down_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      4096,
+      1536
+     ],
+     "dtype": "BF16",
+     "bytes_each": 12582912
+    },
+    {
+     "tensor": "share_expert.gate_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      1536,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 12582912
+    },
+    {
+     "tensor": "share_expert.up_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      1536,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 12582912
+    }
+   ]
+  },
+  {
+   "key": "C2",
+   "layers": [
+    "L4",
+    "L5",
+    "L6",
+    "L8",
+    "L9",
+    "L10",
+    "L12",
+    "L13",
+    "L14",
+    "L16",
+    "L17",
+    "L18",
+    "L20",
+    "L21",
+    "L22",
+    "L24",
+    "L25",
+    "L26",
+    "L28",
+    "L29",
+    "L30",
+    "L32",
+    "L33",
+    "L34",
+    "L36",
+    "L37",
+    "L38",
+    "L40",
+    "L41",
+    "L42",
+    "L44",
+    "L45",
+    "L46",
+    "L48",
+    "L49",
+    "L50",
+    "L52",
+    "L53",
+    "L54",
+    "L56",
+    "L57",
+    "L58",
+    "L60",
+    "L61",
+    "L62",
+    "L64",
+    "L65",
+    "L66",
+    "L68",
+    "L69",
+    "L70",
+    "L72",
+    "L73",
+    "L74",
+    "L76",
+    "L77",
+    "L78",
+    "L80",
+    "L81",
+    "L82",
+    "L84",
+    "L85",
+    "L86"
+   ],
+   "roles": [],
+   "tensors": [
+    {
+     "tensor": "input_layernorm.weight",
+     "group": "attn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      4096
+     ],
+     "dtype": "FP32",
+     "bytes_each": 16384
+    },
+    {
+     "tensor": "moe.down_proj.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 1,
+     "shape": [
+      352,
+      4096,
+      1536
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      352,
+      32,
+      12
+     ],
+     "scale_dtype": "FP32",
+     "block": "[1,128,128]",
+     "bytes_each": 2215133184
+    },
+    {
+     "tensor": "moe.gate.weight",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      352,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 2883584
+    },
+    {
+     "tensor": "moe.gate_proj.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 1,
+     "shape": [
+      352,
+      1536,
+      4096
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      352,
+      12,
+      32
+     ],
+     "scale_dtype": "FP32",
+     "block": "[1,128,128]",
+     "bytes_each": 2215133184
+    },
+    {
+     "tensor": "moe.router_bias",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      352
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1408
+    },
+    {
+     "tensor": "moe.up_proj.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 1,
+     "shape": [
+      352,
+      1536,
+      4096
+     ],
+     "dtype": "FP8_E4M3",
+     "scale_shape": [
+      352,
+      12,
+      32
+     ],
+     "scale_dtype": "FP32",
+     "block": "[1,128,128]",
+     "bytes_each": 2215133184
+    },
+    {
+     "tensor": "post_attention_layernorm.weight",
+     "group": "ffn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      4096
+     ],
+     "dtype": "FP32",
+     "bytes_each": 16384
+    },
+    {
+     "tensor": "self_attn.g_proj.weight",
+     "group": "attn_gate",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      64,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 524288
+    },
+    {
+     "tensor": "self_attn.k_norm.weight",
+     "group": "kv",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      192
+     ],
+     "dtype": "FP32",
+     "bytes_each": 768
+    },
+    {
+     "tensor": "self_attn.k_proj.weight",
+     "group": "kv",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      768,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 6291456
+    },
+    {
+     "tensor": "self_attn.o_proj.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      4096,
+      12288
+     ],
+     "dtype": "BF16",
+     "bytes_each": 100663296
+    },
+    {
+     "tensor": "self_attn.q_norm.weight",
+     "group": "q",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      192
+     ],
+     "dtype": "FP32",
+     "bytes_each": 768
+    },
+    {
+     "tensor": "self_attn.q_proj.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 100663296
+    },
+    {
+     "tensor": "self_attn.v_proj.weight",
+     "group": "kv",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      768,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 6291456
+    },
+    {
+     "tensor": "share_expert.down_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      4096,
+      1536
+     ],
+     "dtype": "BF16",
+     "bytes_each": 12582912
+    },
+    {
+     "tensor": "share_expert.gate_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      1536,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 12582912
+    },
+    {
+     "tensor": "share_expert.up_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      1536,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 12582912
+    }
+   ]
+  },
+  {
+   "key": "C3",
+   "layers": [
+    "L88",
+    "L89",
+    "L90"
+   ],
+   "roles": [],
+   "tensors": [
+    {
+     "tensor": "input_layernorm.weight",
+     "group": "attn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      4096
+     ],
+     "dtype": "FP32",
+     "bytes_each": 16384
+    },
+    {
+     "tensor": "moe.down_proj.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 1,
+     "shape": [
+      352,
+      4096,
+      1536
+     ],
+     "dtype": "BF16",
+     "bytes_each": 4429185024
+    },
+    {
+     "tensor": "moe.gate.weight",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      352,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 2883584
+    },
+    {
+     "tensor": "moe.gate_proj.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 1,
+     "shape": [
+      352,
+      1536,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 4429185024
+    },
+    {
+     "tensor": "moe.router_bias",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      352
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1408
+    },
+    {
+     "tensor": "moe.up_proj.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 1,
+     "shape": [
+      352,
+      1536,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 4429185024
+    },
+    {
+     "tensor": "post_attention_layernorm.weight",
+     "group": "ffn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      4096
+     ],
+     "dtype": "FP32",
+     "bytes_each": 16384
+    },
+    {
+     "tensor": "self_attn.g_proj.weight",
+     "group": "attn_gate",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      64,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 524288
+    },
+    {
+     "tensor": "self_attn.k_norm.weight",
+     "group": "kv",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      192
+     ],
+     "dtype": "FP32",
+     "bytes_each": 768
+    },
+    {
+     "tensor": "self_attn.k_proj.weight",
+     "group": "kv",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      768,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 6291456
+    },
+    {
+     "tensor": "self_attn.o_proj.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      4096,
+      12288
+     ],
+     "dtype": "BF16",
+     "bytes_each": 100663296
+    },
+    {
+     "tensor": "self_attn.q_norm.weight",
+     "group": "q",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      192
+     ],
+     "dtype": "FP32",
+     "bytes_each": 768
+    },
+    {
+     "tensor": "self_attn.q_proj.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 100663296
+    },
+    {
+     "tensor": "self_attn.v_proj.weight",
+     "group": "kv",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      768,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 6291456
+    },
+    {
+     "tensor": "share_expert.down_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      4096,
+      1536
+     ],
+     "dtype": "BF16",
+     "bytes_each": 12582912
+    },
+    {
+     "tensor": "share_expert.gate_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      1536,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 12582912
+    },
+    {
+     "tensor": "share_expert.up_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      1536,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 12582912
+    }
+   ]
+  },
+  {
+   "key": "C4",
+   "layers": [
+    "L91"
+   ],
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "tensors": [
+    {
+     "tensor": "input_layernorm.weight",
+     "group": "attn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      4096
+     ],
+     "dtype": "FP32",
+     "bytes_each": 16384
+    },
+    {
+     "tensor": "mlp.down_proj.weight",
+     "group": "dense_ffn",
+     "subsystem": "dense_ffn",
+     "count": 1,
+     "shape": [
+      4096,
+      13824
+     ],
+     "dtype": "BF16",
+     "bytes_each": 113246208
+    },
+    {
+     "tensor": "mlp.gate_proj.weight",
+     "group": "dense_ffn",
+     "subsystem": "dense_ffn",
+     "count": 1,
+     "shape": [
+      13824,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 113246208
+    },
+    {
+     "tensor": "mlp.up_proj.weight",
+     "group": "dense_ffn",
+     "subsystem": "dense_ffn",
+     "count": 1,
+     "shape": [
+      13824,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 113246208
+    },
+    {
+     "tensor": "post_attention_layernorm.weight",
+     "group": "ffn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      4096
+     ],
+     "dtype": "FP32",
+     "bytes_each": 16384
+    },
+    {
+     "tensor": "self_attn.g_proj.weight",
+     "group": "attn_gate",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      64,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 524288
+    },
+    {
+     "tensor": "self_attn.k_norm.weight",
+     "group": "kv",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      192
+     ],
+     "dtype": "FP32",
+     "bytes_each": 768
+    },
+    {
+     "tensor": "self_attn.k_proj.weight",
+     "group": "kv",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      768,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 6291456
+    },
+    {
+     "tensor": "self_attn.o_proj.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      4096,
+      12288
+     ],
+     "dtype": "BF16",
+     "bytes_each": 100663296
+    },
+    {
+     "tensor": "self_attn.q_norm.weight",
+     "group": "q",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      192
+     ],
+     "dtype": "FP32",
+     "bytes_each": 768
+    },
+    {
+     "tensor": "self_attn.q_proj.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 100663296
+    },
+    {
+     "tensor": "self_attn.sparse_indexer_k.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      256,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 2097152
+    },
+    {
+     "tensor": "self_attn.sparse_indexer_k_norm.bias",
+     "group": "indexer",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      256
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "self_attn.sparse_indexer_k_norm.weight",
+     "group": "indexer",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      256
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "self_attn.sparse_indexer_q.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      4096,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 33554432
+    },
+    {
+     "tensor": "self_attn.sparse_indexer_q_norm.weight",
+     "group": "indexer",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      256
+     ],
+     "dtype": "FP32",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "self_attn.sparse_indexer_w.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      16,
+      4096
+     ],
+     "dtype": "FP32",
+     "bytes_each": 262144
+    },
+    {
+     "tensor": "self_attn.sparse_indexer_z.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      256,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 2097152
+    },
+    {
+     "tensor": "self_attn.ssmax_s",
+     "group": "indexer",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      64
+     ],
+     "dtype": "FP32",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "self_attn.v_proj.weight",
+     "group": "kv",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      768,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 6291456
+    }
+   ]
+  },
+  {
+   "key": "C5",
+   "layers": [
+    "MTP0",
+    "MTP1",
+    "MTP2"
+   ],
+   "roles": [],
+   "tensors": [
+    {
+     "tensor": "eh_proj.weight",
+     "group": "mtp_glue",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      4096,
+      8192
+     ],
+     "dtype": "BF16",
+     "bytes_each": 67108864
+    },
+    {
+     "tensor": "enorm.weight",
+     "group": "mtp_glue",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      4096
+     ],
+     "dtype": "FP32",
+     "bytes_each": 16384
+    },
+    {
+     "tensor": "hnorm.weight",
+     "group": "mtp_glue",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      4096
+     ],
+     "dtype": "FP32",
+     "bytes_each": 16384
+    },
+    {
+     "tensor": "input_layernorm.weight",
+     "group": "attn_norm",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      4096
+     ],
+     "dtype": "FP32",
+     "bytes_each": 16384
+    },
+    {
+     "tensor": "mlp.down_proj.weight",
+     "group": "dense_ffn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      4096,
+      13824
+     ],
+     "dtype": "BF16",
+     "bytes_each": 113246208
+    },
+    {
+     "tensor": "mlp.gate_proj.weight",
+     "group": "dense_ffn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      13824,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 113246208
+    },
+    {
+     "tensor": "mlp.up_proj.weight",
+     "group": "dense_ffn",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      13824,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 113246208
+    },
+    {
+     "tensor": "post_attention_layernorm.weight",
+     "group": "ffn_norm",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      4096
+     ],
+     "dtype": "FP32",
+     "bytes_each": 16384
+    },
+    {
+     "tensor": "self_attn.g_proj.weight",
+     "group": "attn_gate",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      64,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 524288
+    },
+    {
+     "tensor": "self_attn.k_norm.weight",
+     "group": "kv",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      192
+     ],
+     "dtype": "FP32",
+     "bytes_each": 768
+    },
+    {
+     "tensor": "self_attn.k_proj.weight",
+     "group": "kv",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      768,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 6291456
+    },
+    {
+     "tensor": "self_attn.o_proj.weight",
+     "group": "o",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      4096,
+      12288
+     ],
+     "dtype": "BF16",
+     "bytes_each": 100663296
+    },
+    {
+     "tensor": "self_attn.q_norm.weight",
+     "group": "q",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      192
+     ],
+     "dtype": "FP32",
+     "bytes_each": 768
+    },
+    {
+     "tensor": "self_attn.q_proj.weight",
+     "group": "q",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      12288,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 100663296
+    },
+    {
+     "tensor": "self_attn.v_proj.weight",
+     "group": "kv",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      768,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 6291456
+    },
+    {
+     "tensor": "transformer.shared_head.norm.weight",
+     "group": "mtp_glue",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      4096
+     ],
+     "dtype": "FP32",
+     "bytes_each": 16384
+    },
+    {
+     "tensor": "transformer.shared_head.output.weight",
+     "group": "mtp_glue",
+     "subsystem": "draft",
+     "count": 1,
+     "shape": [
+      128896,
+      4096
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1055916032
+    }
+   ]
+  }
+ ],
+ "cache_totals": {
+  "global_kv": {
+   "layers": [
+    3,
+    7,
+    11,
+    15,
+    19,
+    23,
+    27,
+    31,
+    35,
+    39,
+    43,
+    47,
+    51,
+    55,
+    59,
+    63,
+    67,
+    71,
+    75,
+    79,
+    83,
+    87,
+    91
+   ],
+   "entry_elems_sum": 35328,
+   "per_token_elems_sum": 35328.0,
+   "per_token_bytes_sum": 70656.0,
+   "bytes_basis": "theoretical_floor",
+   "note": "这一族的缓存没有时序压缩，一个 token 一个条目，所以折算前后相等；entry_elems_sum 只作对照"
+  },
+  "index_k": {
+   "layers": [
+    3,
+    7,
+    11,
+    15,
+    19,
+    23,
+    27,
+    31,
+    35,
+    39,
+    43,
+    47,
+    51,
+    55,
+    59,
+    63,
+    67,
+    71,
+    75,
+    79,
+    83,
+    87,
+    91
+   ],
+   "entry_elems_sum": 5888,
+   "per_token_elems_sum": 5888.0,
+   "per_token_bytes_sum": 5888.0,
+   "bytes_basis": "theoretical_floor",
+   "note": "这一族的缓存没有时序压缩，一个 token 一个条目，所以折算前后相等；entry_elems_sum 只作对照"
+  },
+  "local_window": {
+   "main": {
+    "layers": 69,
+    "elems_per_sequence": 54263808,
+    "bytes_per_sequence": 108527616
+   },
+   "mtp": {
+    "layers": 3,
+    "elems_per_sequence": 2359296,
+    "bytes_per_sequence": 4718592
+   },
+   "elems_per_sequence": 56623104,
+   "bytes_per_sequence": 113246208,
+   "bytes_basis": "theoretical_floor"
+  }
+ },
+ "checks": [
+  {
+   "item": "产出 index K 的层",
+   "config": [
+    3,
+    7,
+    11,
+    15,
+    19,
+    23,
+    27,
+    31,
+    35,
+    39,
+    43,
+    47,
+    51,
+    55,
+    59,
+    63,
+    67,
+    71,
+    75,
+    79,
+    83,
+    87,
+    91
+   ],
+   "weights": [
+    3,
+    7,
+    11,
+    15,
+    19,
+    23,
+    27,
+    31,
+    35,
+    39,
+    43,
+    47,
+    51,
+    55,
+    59,
+    63,
+    67,
+    71,
+    75,
+    79,
+    83,
+    87,
+    91
+   ],
+   "status": "ok",
+   "note": "config 列取自 layer_types 的 full_attention（sparse_config.apply_to_layer_types 指定），只覆盖主干；权重列是实际带 index K 投影的主干层"
+  }
+ ],
+ "issues": []
+}

@@ -1,0 +1,4510 @@
+{
+ "id": "minimax-m3",
+ "generated_by": "scripts/extract_layers.py",
+ "generated_at": "2026-10-30",
+ "inputs": {
+  "shapes": "facts/minimax-m3/shapes.json",
+  "shapes_sha256_16": "50902fb14bbd8414",
+  "cfg": "facts/minimax-m3/cfg.json",
+  "cfg_sha256_16": "b4e7574bbc1ac6da",
+  "tensors": 23416
+ },
+ "op_groups": [
+  {
+   "key": "attn_norm",
+   "label": "attn_norm"
+  },
+  {
+   "key": "q",
+   "label": "Q 路径"
+  },
+  {
+   "key": "kv",
+   "label": "K / V 投影"
+  },
+  {
+   "key": "indexer",
+   "label": "稀疏索引器"
+  },
+  {
+   "key": "o",
+   "label": "输出投影"
+  },
+  {
+   "key": "ffn_norm",
+   "label": "ffn_norm"
+  },
+  {
+   "key": "router",
+   "label": "路由器"
+  },
+  {
+   "key": "shared_expert",
+   "label": "共享专家"
+  },
+  {
+   "key": "expert",
+   "label": "路由专家"
+  },
+  {
+   "key": "dense_ffn",
+   "label": "稠密 FFN"
+  }
+ ],
+ "kv_storage": {
+  "global_kv": {
+   "bytes_per_element": 2,
+   "basis": "dtype_fallback"
+  },
+  "index_k": {
+   "bytes_per_element": 2,
+   "basis": "dtype_fallback"
+  },
+  "source": "data/models/minimax/minimax-m3.yaml"
+ },
+ "bytes_semantics": "bytes_by_group 是存储（含 scale，全部专家）；decode_bytes_by_group 是每 token 搬运，路由专家按 top_k / 专家数折算，其余组全读",
+ "cache_basis": {
+  "entry_elems": "产出张量的输出维，权重实测",
+  "per_token_elems": "条目宽度即每 token 元素数：这一族的缓存没有时序压缩，一个 token 一个条目，折算比 1",
+  "bytes": "元素数 × kv_storage 里该分量的每元素字节（含 scale）。basis=theoretical_floor 是精确计数的理论下限，不含分页、环页、对齐粒度，实际部署在它之上；basis=dtype_fallback 是记录没给精度时的兜底，两种不能混比"
+ },
+ "config_only_roles": {},
+ "layers": [
+  {
+   "kind": "main",
+   "index": 0,
+   "label": "L0",
+   "class": "C0",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "o",
+    "ffn_norm",
+    "dense_ffn"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 12288,
+    "dense_ffn": 452984832,
+    "ffn_norm": 12288,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 666919424,
+   "decode_bytes_by_group": {
+    "attn_norm": 12288,
+    "dense_ffn": 452984832,
+    "ffn_norm": 12288,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 666919424,
+   "experts_active": null,
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 1,
+   "label": "L1",
+   "class": "C0",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "o",
+    "ffn_norm",
+    "dense_ffn"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 12288,
+    "dense_ffn": 452984832,
+    "ffn_norm": 12288,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 666919424,
+   "decode_bytes_by_group": {
+    "attn_norm": 12288,
+    "dense_ffn": 452984832,
+    "ffn_norm": 12288,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 666919424,
+   "experts_active": null,
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 2,
+   "label": "L2",
+   "class": "C0",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "o",
+    "ffn_norm",
+    "dense_ffn"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 12288,
+    "dense_ffn": 452984832,
+    "ffn_norm": 12288,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 666919424,
+   "decode_bytes_by_group": {
+    "attn_norm": 12288,
+    "dense_ffn": 452984832,
+    "ffn_norm": 12288,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 666919424,
+   "experts_active": null,
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 3,
+   "label": "L3",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 4,
+   "label": "L4",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 5,
+   "label": "L5",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 6,
+   "label": "L6",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 7,
+   "label": "L7",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 8,
+   "label": "L8",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 9,
+   "label": "L9",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 10,
+   "label": "L10",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 11,
+   "label": "L11",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 12,
+   "label": "L12",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 13,
+   "label": "L13",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 14,
+   "label": "L14",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 15,
+   "label": "L15",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 16,
+   "label": "L16",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 17,
+   "label": "L17",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 18,
+   "label": "L18",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 19,
+   "label": "L19",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 20,
+   "label": "L20",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 21,
+   "label": "L21",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 22,
+   "label": "L22",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 23,
+   "label": "L23",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 24,
+   "label": "L24",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 25,
+   "label": "L25",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 26,
+   "label": "L26",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 27,
+   "label": "L27",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 28,
+   "label": "L28",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 29,
+   "label": "L29",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 30,
+   "label": "L30",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 31,
+   "label": "L31",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 32,
+   "label": "L32",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 33,
+   "label": "L33",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 34,
+   "label": "L34",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 35,
+   "label": "L35",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 36,
+   "label": "L36",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 37,
+   "label": "L37",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 38,
+   "label": "L38",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 39,
+   "label": "L39",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 40,
+   "label": "L40",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 41,
+   "label": "L41",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 42,
+   "label": "L42",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 43,
+   "label": "L43",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 44,
+   "label": "L44",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 45,
+   "label": "L45",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 46,
+   "label": "L46",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 47,
+   "label": "L47",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 48,
+   "label": "L48",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 49,
+   "label": "L49",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 50,
+   "label": "L50",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 51,
+   "label": "L51",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 52,
+   "label": "L52",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 53,
+   "label": "L53",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 54,
+   "label": "L54",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 55,
+   "label": "L55",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 56,
+   "label": "L56",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 57,
+   "label": "L57",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 58,
+   "label": "L58",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 59,
+   "label": "L59",
+   "class": "C1",
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "q",
+    "kv",
+    "indexer",
+    "o",
+    "ffn_norm",
+    "router",
+    "shared_expert",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "router": 3146240,
+    "expert": 14495514624,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "bytes_total": 14833706496,
+   "decode_bytes_by_group": {
+    "router": 3146240,
+    "expert": 452984832,
+    "shared_expert": 113246208,
+    "attn_norm": 12288,
+    "ffn_norm": 12288,
+    "indexer": 7864832,
+    "kv": 12583168,
+    "o": 100663296,
+    "q": 100663552
+   },
+   "decode_bytes_total": 791176704,
+   "experts_active": "4/128",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 1024,
+     "source": "self_attn.k_proj.weight + self_attn.v_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 1024.0,
+     "per_token_bytes": 2048.0
+    },
+    "index_k": {
+     "entry_elems": 128,
+     "source": "self_attn.index_k_proj.weight",
+     "compress_ratio": null,
+     "per_token_elems": 128.0,
+     "per_token_bytes": 256.0
+    }
+   }
+  }
+ ],
+ "classes": [
+  {
+   "key": "C0",
+   "layers": [
+    "L0",
+    "L1",
+    "L2"
+   ],
+   "roles": [
+    "kv_source"
+   ],
+   "tensors": [
+    {
+     "tensor": "input_layernorm.weight",
+     "group": "attn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 12288
+    },
+    {
+     "tensor": "mlp.down_proj.weight",
+     "group": "dense_ffn",
+     "subsystem": "dense_ffn",
+     "count": 1,
+     "shape": [
+      6144,
+      12288
+     ],
+     "dtype": "BF16",
+     "bytes_each": 150994944
+    },
+    {
+     "tensor": "mlp.gate_proj.weight",
+     "group": "dense_ffn",
+     "subsystem": "dense_ffn",
+     "count": 1,
+     "shape": [
+      12288,
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 150994944
+    },
+    {
+     "tensor": "mlp.up_proj.weight",
+     "group": "dense_ffn",
+     "subsystem": "dense_ffn",
+     "count": 1,
+     "shape": [
+      12288,
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 150994944
+    },
+    {
+     "tensor": "post_attention_layernorm.weight",
+     "group": "ffn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 12288
+    },
+    {
+     "tensor": "self_attn.k_norm.weight",
+     "group": "kv",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "BF16",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "self_attn.k_proj.weight",
+     "group": "kv",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      512,
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 6291456
+    },
+    {
+     "tensor": "self_attn.o_proj.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      6144,
+      8192
+     ],
+     "dtype": "BF16",
+     "bytes_each": 100663296
+    },
+    {
+     "tensor": "self_attn.q_norm.weight",
+     "group": "q",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "BF16",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "self_attn.q_proj.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      8192,
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 100663296
+    },
+    {
+     "tensor": "self_attn.v_proj.weight",
+     "group": "kv",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      512,
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 6291456
+    }
+   ]
+  },
+  {
+   "key": "C1",
+   "layers": [
+    "L3",
+    "L4",
+    "L5",
+    "L6",
+    "L7",
+    "L8",
+    "L9",
+    "L10",
+    "L11",
+    "L12",
+    "L13",
+    "L14",
+    "L15",
+    "L16",
+    "L17",
+    "L18",
+    "L19",
+    "L20",
+    "L21",
+    "L22",
+    "L23",
+    "L24",
+    "L25",
+    "L26",
+    "L27",
+    "L28",
+    "L29",
+    "L30",
+    "L31",
+    "L32",
+    "L33",
+    "L34",
+    "L35",
+    "L36",
+    "L37",
+    "L38",
+    "L39",
+    "L40",
+    "L41",
+    "L42",
+    "L43",
+    "L44",
+    "L45",
+    "L46",
+    "L47",
+    "L48",
+    "L49",
+    "L50",
+    "L51",
+    "L52",
+    "L53",
+    "L54",
+    "L55",
+    "L56",
+    "L57",
+    "L58",
+    "L59"
+   ],
+   "roles": [
+    "kv_source",
+    "index_source"
+   ],
+   "tensors": [
+    {
+     "tensor": "block_sparse_moe.e_score_correction_bias",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "FP32",
+     "bytes_each": 512
+    },
+    {
+     "tensor": "block_sparse_moe.experts.E.w1.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 128,
+     "shape": [
+      3072,
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 37748736
+    },
+    {
+     "tensor": "block_sparse_moe.experts.E.w2.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 128,
+     "shape": [
+      6144,
+      3072
+     ],
+     "dtype": "BF16",
+     "bytes_each": 37748736
+    },
+    {
+     "tensor": "block_sparse_moe.experts.E.w3.weight",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 128,
+     "shape": [
+      3072,
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 37748736
+    },
+    {
+     "tensor": "block_sparse_moe.gate.weight",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      128,
+      6144
+     ],
+     "dtype": "FP32",
+     "bytes_each": 3145728
+    },
+    {
+     "tensor": "block_sparse_moe.shared_experts.down_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      6144,
+      3072
+     ],
+     "dtype": "BF16",
+     "bytes_each": 37748736
+    },
+    {
+     "tensor": "block_sparse_moe.shared_experts.gate_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      3072,
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 37748736
+    },
+    {
+     "tensor": "block_sparse_moe.shared_experts.up_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      3072,
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 37748736
+    },
+    {
+     "tensor": "input_layernorm.weight",
+     "group": "attn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 12288
+    },
+    {
+     "tensor": "post_attention_layernorm.weight",
+     "group": "ffn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 12288
+    },
+    {
+     "tensor": "self_attn.index_k_norm.weight",
+     "group": "indexer",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "BF16",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "self_attn.index_k_proj.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      128,
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1572864
+    },
+    {
+     "tensor": "self_attn.index_q_norm.weight",
+     "group": "indexer",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "BF16",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "self_attn.index_q_proj.weight",
+     "group": "indexer",
+     "subsystem": "indexer",
+     "count": 1,
+     "shape": [
+      512,
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 6291456
+    },
+    {
+     "tensor": "self_attn.k_norm.weight",
+     "group": "kv",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "BF16",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "self_attn.k_proj.weight",
+     "group": "kv",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      512,
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 6291456
+    },
+    {
+     "tensor": "self_attn.o_proj.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      6144,
+      8192
+     ],
+     "dtype": "BF16",
+     "bytes_each": 100663296
+    },
+    {
+     "tensor": "self_attn.q_norm.weight",
+     "group": "q",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "BF16",
+     "bytes_each": 256
+    },
+    {
+     "tensor": "self_attn.q_proj.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      8192,
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 100663296
+    },
+    {
+     "tensor": "self_attn.v_proj.weight",
+     "group": "kv",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      512,
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 6291456
+    }
+   ]
+  }
+ ],
+ "cache_totals": {
+  "global_kv": {
+   "layers": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59
+   ],
+   "entry_elems_sum": 61440,
+   "per_token_elems_sum": 61440.0,
+   "per_token_bytes_sum": 122880.0,
+   "bytes_basis": "dtype_fallback",
+   "note": "这一族的缓存没有时序压缩，一个 token 一个条目，所以折算前后相等；entry_elems_sum 只作对照"
+  },
+  "index_k": {
+   "layers": [
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59
+   ],
+   "entry_elems_sum": 7296,
+   "per_token_elems_sum": 7296.0,
+   "per_token_bytes_sum": 14592.0,
+   "bytes_basis": "dtype_fallback",
+   "note": "这一族的缓存没有时序压缩，一个 token 一个条目，所以折算前后相等；entry_elems_sum 只作对照"
+  }
+ },
+ "checks": [
+  {
+   "item": "产出 index K 的层",
+   "config": [
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59
+   ],
+   "weights": [
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59
+   ],
+   "status": "ok",
+   "note": "config 列取自 sparse_attention_config.sparse_attention_freq 的非 0 位，只覆盖主干；权重列是实际带 index K 投影的主干层"
+  }
+ ],
+ "issues": []
+}

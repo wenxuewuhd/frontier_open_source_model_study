@@ -1,0 +1,8101 @@
+{
+ "id": "kimi-k3",
+ "generated_by": "scripts/extract_layers.py",
+ "generated_at": "2026-10-30",
+ "inputs": {
+  "shapes": "facts/kimi-k3/shapes.json",
+  "shapes_sha256_16": "f29344885d6dc12b",
+  "cfg": "facts/kimi-k3/cfg.json",
+  "cfg_sha256_16": "0957eaec4595140e",
+  "tensors": 497220
+ },
+ "op_groups": [
+  {
+   "key": "attn_norm",
+   "label": "attn_norm"
+  },
+  {
+   "key": "attn_res",
+   "label": "注意力残差系数"
+  },
+  {
+   "key": "q",
+   "label": "Q 路径"
+  },
+  {
+   "key": "kv_latent",
+   "label": "MLA 潜向量 KV"
+  },
+  {
+   "key": "linear_attn",
+   "label": "线性注意力状态"
+  },
+  {
+   "key": "attn_gate",
+   "label": "注意力输出门"
+  },
+  {
+   "key": "o",
+   "label": "输出投影"
+  },
+  {
+   "key": "ffn_norm",
+   "label": "ffn_norm"
+  },
+  {
+   "key": "ffn_res",
+   "label": "FFN 残差系数"
+  },
+  {
+   "key": "router",
+   "label": "路由器"
+  },
+  {
+   "key": "shared_expert",
+   "label": "共享专家"
+  },
+  {
+   "key": "expert_latent",
+   "label": "路由专家潜空间投影"
+  },
+  {
+   "key": "expert",
+   "label": "路由专家"
+  },
+  {
+   "key": "dense_ffn",
+   "label": "稠密 FFN"
+  }
+ ],
+ "kv_storage": {
+  "global_kv": {
+   "bytes_per_element": 2,
+   "basis": "dtype_fallback"
+  },
+  "source": "data/models/kimi/kimi-k3.yaml"
+ },
+ "bytes_semantics": "bytes_by_group 是存储（含 scale，全部专家）；decode_bytes_by_group 是每 token 搬运，路由专家按 top_k / 专家数折算，其余组全读",
+ "cache_basis": {
+  "entry_elems": "产出张量的输出维，权重实测",
+  "per_token_elems": "条目宽度即每 token 元素数：这一族的缓存没有时序压缩，一个 token 一个条目，折算比 1",
+  "bytes": "元素数 × kv_storage 里该分量的每元素字节（含 scale）。basis=theoretical_floor 是精确计数的理论下限，不含分页、环页、对齐粒度，实际部署在它之上；basis=dtype_fallback 是记录没给精度时的兜底，两种不能混比",
+  "recurrent_state": "递归式注意力层的状态，每序列固定。卷积状态 = conv1d 通道 ×（核宽 − 1），两个因子都在权重形状里；矩阵状态 = value_heads × key_head_dim × value_head_dim，因子来自 config 但先与 QKV 投影输出维对账（见每层的 factors_check）。**不折字节也不折每 token 值** —— 状态精度没有一手来源，而「每序列固定」和「随上下文增长」不是一个量"
+ },
+ "config_only_roles": {},
+ "layers": [
+  {
+   "kind": "main",
+   "index": 0,
+   "label": "L0",
+   "class": "C0",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "dense_ffn"
+   ],
+   "bytes_by_group": {
+    "attn_norm": 14336,
+    "dense_ffn": 1453326336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 2341213184,
+   "decode_bytes_by_group": {
+    "attn_norm": 14336,
+    "dense_ffn": 1453326336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 2341213184,
+   "experts_active": null,
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 1,
+   "label": "L1",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 2,
+   "label": "L2",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 3,
+   "label": "L3",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 4,
+   "label": "L4",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 5,
+   "label": "L5",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 6,
+   "label": "L6",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 7,
+   "label": "L7",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 8,
+   "label": "L8",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 9,
+   "label": "L9",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 10,
+   "label": "L10",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 11,
+   "label": "L11",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 12,
+   "label": "L12",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 13,
+   "label": "L13",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 14,
+   "label": "L14",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 15,
+   "label": "L15",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 16,
+   "label": "L16",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 17,
+   "label": "L17",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 18,
+   "label": "L18",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 19,
+   "label": "L19",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 20,
+   "label": "L20",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 21,
+   "label": "L21",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 22,
+   "label": "L22",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 23,
+   "label": "L23",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 24,
+   "label": "L24",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 25,
+   "label": "L25",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 26,
+   "label": "L26",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 27,
+   "label": "L27",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 28,
+   "label": "L28",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 29,
+   "label": "L29",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 30,
+   "label": "L30",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 31,
+   "label": "L31",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 32,
+   "label": "L32",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 33,
+   "label": "L33",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 34,
+   "label": "L34",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 35,
+   "label": "L35",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 36,
+   "label": "L36",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 37,
+   "label": "L37",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 38,
+   "label": "L38",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 39,
+   "label": "L39",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 40,
+   "label": "L40",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 41,
+   "label": "L41",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 42,
+   "label": "L42",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 43,
+   "label": "L43",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 44,
+   "label": "L44",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 45,
+   "label": "L45",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 46,
+   "label": "L46",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 47,
+   "label": "L47",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 48,
+   "label": "L48",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 49,
+   "label": "L49",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 50,
+   "label": "L50",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 51,
+   "label": "L51",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 52,
+   "label": "L52",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 53,
+   "label": "L53",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 54,
+   "label": "L54",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 55,
+   "label": "L55",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 56,
+   "label": "L56",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 57,
+   "label": "L57",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 58,
+   "label": "L58",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 59,
+   "label": "L59",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 60,
+   "label": "L60",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 61,
+   "label": "L61",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 62,
+   "label": "L62",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 63,
+   "label": "L63",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 64,
+   "label": "L64",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 65,
+   "label": "L65",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 66,
+   "label": "L66",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 67,
+   "label": "L67",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 68,
+   "label": "L68",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 69,
+   "label": "L69",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 70,
+   "label": "L70",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 71,
+   "label": "L71",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 72,
+   "label": "L72",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 73,
+   "label": "L73",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 74,
+   "label": "L74",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 75,
+   "label": "L75",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 76,
+   "label": "L76",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 77,
+   "label": "L77",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 78,
+   "label": "L78",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 79,
+   "label": "L79",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 80,
+   "label": "L80",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 81,
+   "label": "L81",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 82,
+   "label": "L82",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 83,
+   "label": "L83",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 84,
+   "label": "L84",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 85,
+   "label": "L85",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 86,
+   "label": "L86",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 87,
+   "label": "L87",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 88,
+   "label": "L88",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 89,
+   "label": "L89",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 90,
+   "label": "L90",
+   "class": "C1",
+   "roles": [],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "linear_attn",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "bytes_total": 16990092800,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "linear_attn": 535479296,
+    "attn_gate": 176160768,
+    "o": 176160768
+   },
+   "decode_bytes_total": 1548500480,
+   "experts_active": "16/896",
+   "cache": {
+    "recurrent_state": {
+     "covers": "per_sequence",
+     "basis": "weights_measured",
+     "conv_channels": 36864,
+     "conv_kernel": 4,
+     "conv_state_elems": 110592,
+     "conv_sources": [
+      "self_attn.k_conv1d.weight",
+      "self_attn.q_conv1d.weight",
+      "self_attn.v_conv1d.weight"
+     ],
+     "matrix_state_elems": 1572864,
+     "matrix_state_factors": {
+      "value_heads": 96,
+      "key_head_dim": 128,
+      "value_head_dim": 128
+     },
+     "matrix_state_basis": "config_derived",
+     "factors_source": "config linear_attn_config.{num_heads,head_dim}",
+     "factors_check": "QKV 投影输出维合计 36864 = 2×96×128 + 96×128，与权重一致",
+     "elems_per_sequence": 1683456
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 91,
+   "label": "L91",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  },
+  {
+   "kind": "main",
+   "index": 92,
+   "label": "L92",
+   "class": "C2",
+   "roles": [
+    "kv_source"
+   ],
+   "compress_ratio": null,
+   "groups": [
+    "attn_norm",
+    "attn_res",
+    "q",
+    "kv_latent",
+    "attn_gate",
+    "o",
+    "ffn_norm",
+    "ffn_res",
+    "router",
+    "shared_expert",
+    "expert_latent",
+    "expert"
+   ],
+   "bytes_by_group": {
+    "expert": 15722348544,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "bytes_total": 16566684160,
+   "decode_bytes_by_group": {
+    "expert": 280756224,
+    "router": 12848640,
+    "expert_latent": 102767616,
+    "shared_expert": 264241152,
+    "attn_norm": 14336,
+    "ffn_res": 28672,
+    "ffn_norm": 14336,
+    "attn_res": 28672,
+    "attn_gate": 176160768,
+    "kv_latent": 33424384,
+    "o": 176160768,
+    "q": 78646272
+   },
+   "decode_bytes_total": 1125091840,
+   "experts_active": "16/896",
+   "cache": {
+    "global_kv": {
+     "entry_elems": 576,
+     "source": "self_attn.kv_a_proj_with_mqa.weight",
+     "compress_ratio": null,
+     "per_token_elems": 576.0,
+     "per_token_bytes": 1152.0
+    }
+   }
+  }
+ ],
+ "classes": [
+  {
+   "key": "C0",
+   "layers": [
+    "L0"
+   ],
+   "roles": [],
+   "tensors": [
+    {
+     "tensor": "input_layernorm.weight",
+     "group": "attn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "mlp.down_proj.weight",
+     "group": "dense_ffn",
+     "subsystem": "dense_ffn",
+     "count": 1,
+     "shape": [
+      7168,
+      33792
+     ],
+     "dtype": "BF16",
+     "bytes_each": 484442112
+    },
+    {
+     "tensor": "mlp.gate_proj.weight",
+     "group": "dense_ffn",
+     "subsystem": "dense_ffn",
+     "count": 1,
+     "shape": [
+      33792,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 484442112
+    },
+    {
+     "tensor": "mlp.up_proj.weight",
+     "group": "dense_ffn",
+     "subsystem": "dense_ffn",
+     "count": 1,
+     "shape": [
+      33792,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 484442112
+    },
+    {
+     "tensor": "mlp_res_norm.weight",
+     "group": "ffn_res",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "mlp_res_proj.weight",
+     "group": "ffn_res",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      1,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "post_attention_layernorm.weight",
+     "group": "ffn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "self_attention_res_norm.weight",
+     "group": "attn_res",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "self_attention_res_proj.weight",
+     "group": "attn_res",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      1,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "self_attn.A_log",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "FP32",
+     "bytes_each": 512
+    },
+    {
+     "tensor": "self_attn.b_proj.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      96,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1376256
+    },
+    {
+     "tensor": "self_attn.dt_bias",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288
+     ],
+     "dtype": "FP32",
+     "bytes_each": 49152
+    },
+    {
+     "tensor": "self_attn.f_a_proj.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      128,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1835008
+    },
+    {
+     "tensor": "self_attn.f_b_proj.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      128
+     ],
+     "dtype": "BF16",
+     "bytes_each": 3145728
+    },
+    {
+     "tensor": "self_attn.g_proj.weight",
+     "group": "attn_gate",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 176160768
+    },
+    {
+     "tensor": "self_attn.k_conv1d.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      1,
+      4
+     ],
+     "dtype": "FP32",
+     "bytes_each": 196608
+    },
+    {
+     "tensor": "self_attn.k_proj.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 176160768
+    },
+    {
+     "tensor": "self_attn.o_norm.weight",
+     "group": "linear_attn",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "FP32",
+     "bytes_each": 512
+    },
+    {
+     "tensor": "self_attn.o_proj.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      7168,
+      12288
+     ],
+     "dtype": "BF16",
+     "bytes_each": 176160768
+    },
+    {
+     "tensor": "self_attn.q_conv1d.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      1,
+      4
+     ],
+     "dtype": "FP32",
+     "bytes_each": 196608
+    },
+    {
+     "tensor": "self_attn.q_proj.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 176160768
+    },
+    {
+     "tensor": "self_attn.v_conv1d.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      1,
+      4
+     ],
+     "dtype": "FP32",
+     "bytes_each": 196608
+    },
+    {
+     "tensor": "self_attn.v_proj.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 176160768
+    }
+   ]
+  },
+  {
+   "key": "C1",
+   "layers": [
+    "L1",
+    "L2",
+    "L4",
+    "L5",
+    "L6",
+    "L8",
+    "L9",
+    "L10",
+    "L12",
+    "L13",
+    "L14",
+    "L16",
+    "L17",
+    "L18",
+    "L20",
+    "L21",
+    "L22",
+    "L24",
+    "L25",
+    "L26",
+    "L28",
+    "L29",
+    "L30",
+    "L32",
+    "L33",
+    "L34",
+    "L36",
+    "L37",
+    "L38",
+    "L40",
+    "L41",
+    "L42",
+    "L44",
+    "L45",
+    "L46",
+    "L48",
+    "L49",
+    "L50",
+    "L52",
+    "L53",
+    "L54",
+    "L56",
+    "L57",
+    "L58",
+    "L60",
+    "L61",
+    "L62",
+    "L64",
+    "L65",
+    "L66",
+    "L68",
+    "L69",
+    "L70",
+    "L72",
+    "L73",
+    "L74",
+    "L76",
+    "L77",
+    "L78",
+    "L80",
+    "L81",
+    "L82",
+    "L84",
+    "L85",
+    "L86",
+    "L88",
+    "L89",
+    "L90"
+   ],
+   "roles": [],
+   "tensors": [
+    {
+     "tensor": "block_sparse_moe.experts.E.w1.weight_packed",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 896,
+     "shape": [
+      3072,
+      1792
+     ],
+     "dtype": "UINT8",
+     "logical_shape": [
+      3072,
+      3584
+     ],
+     "logical_dtype": "MXFP4",
+     "scale_shape": [
+      3072,
+      112
+     ],
+     "scale_dtype": "UINT8",
+     "block": "[1,32]",
+     "bytes_each": 5849088
+    },
+    {
+     "tensor": "block_sparse_moe.experts.E.w2.weight_packed",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 896,
+     "shape": [
+      3584,
+      1536
+     ],
+     "dtype": "UINT8",
+     "logical_shape": [
+      3584,
+      3072
+     ],
+     "logical_dtype": "MXFP4",
+     "scale_shape": [
+      3584,
+      96
+     ],
+     "scale_dtype": "UINT8",
+     "block": "[1,32]",
+     "bytes_each": 5849088
+    },
+    {
+     "tensor": "block_sparse_moe.experts.E.w3.weight_packed",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 896,
+     "shape": [
+      3072,
+      1792
+     ],
+     "dtype": "UINT8",
+     "logical_shape": [
+      3072,
+      3584
+     ],
+     "logical_dtype": "MXFP4",
+     "scale_shape": [
+      3072,
+      112
+     ],
+     "scale_dtype": "UINT8",
+     "block": "[1,32]",
+     "bytes_each": 5849088
+    },
+    {
+     "tensor": "block_sparse_moe.gate.e_score_correction_bias",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      896
+     ],
+     "dtype": "FP32",
+     "bytes_each": 3584
+    },
+    {
+     "tensor": "block_sparse_moe.gate.weight",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      896,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 12845056
+    },
+    {
+     "tensor": "block_sparse_moe.routed_expert_down_proj.weight",
+     "group": "expert_latent",
+     "subsystem": "dense_ffn",
+     "count": 1,
+     "shape": [
+      3584,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 51380224
+    },
+    {
+     "tensor": "block_sparse_moe.routed_expert_norm.weight",
+     "group": "expert_latent",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      3584
+     ],
+     "dtype": "BF16",
+     "bytes_each": 7168
+    },
+    {
+     "tensor": "block_sparse_moe.routed_expert_up_proj.weight",
+     "group": "expert_latent",
+     "subsystem": "dense_ffn",
+     "count": 1,
+     "shape": [
+      7168,
+      3584
+     ],
+     "dtype": "BF16",
+     "bytes_each": 51380224
+    },
+    {
+     "tensor": "block_sparse_moe.shared_experts.down_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      7168,
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 88080384
+    },
+    {
+     "tensor": "block_sparse_moe.shared_experts.gate_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      6144,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 88080384
+    },
+    {
+     "tensor": "block_sparse_moe.shared_experts.up_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      6144,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 88080384
+    },
+    {
+     "tensor": "input_layernorm.weight",
+     "group": "attn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "mlp_res_norm.weight",
+     "group": "ffn_res",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "mlp_res_proj.weight",
+     "group": "ffn_res",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      1,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "post_attention_layernorm.weight",
+     "group": "ffn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "self_attention_res_norm.weight",
+     "group": "attn_res",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "self_attention_res_proj.weight",
+     "group": "attn_res",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      1,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "self_attn.A_log",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "FP32",
+     "bytes_each": 512
+    },
+    {
+     "tensor": "self_attn.b_proj.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      96,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1376256
+    },
+    {
+     "tensor": "self_attn.dt_bias",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288
+     ],
+     "dtype": "FP32",
+     "bytes_each": 49152
+    },
+    {
+     "tensor": "self_attn.f_a_proj.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      128,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1835008
+    },
+    {
+     "tensor": "self_attn.f_b_proj.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      128
+     ],
+     "dtype": "BF16",
+     "bytes_each": 3145728
+    },
+    {
+     "tensor": "self_attn.g_proj.weight",
+     "group": "attn_gate",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 176160768
+    },
+    {
+     "tensor": "self_attn.k_conv1d.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      1,
+      4
+     ],
+     "dtype": "FP32",
+     "bytes_each": 196608
+    },
+    {
+     "tensor": "self_attn.k_proj.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 176160768
+    },
+    {
+     "tensor": "self_attn.o_norm.weight",
+     "group": "linear_attn",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      128
+     ],
+     "dtype": "FP32",
+     "bytes_each": 512
+    },
+    {
+     "tensor": "self_attn.o_proj.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      7168,
+      12288
+     ],
+     "dtype": "BF16",
+     "bytes_each": 176160768
+    },
+    {
+     "tensor": "self_attn.q_conv1d.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      1,
+      4
+     ],
+     "dtype": "FP32",
+     "bytes_each": 196608
+    },
+    {
+     "tensor": "self_attn.q_proj.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 176160768
+    },
+    {
+     "tensor": "self_attn.v_conv1d.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      1,
+      4
+     ],
+     "dtype": "FP32",
+     "bytes_each": 196608
+    },
+    {
+     "tensor": "self_attn.v_proj.weight",
+     "group": "linear_attn",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 176160768
+    }
+   ]
+  },
+  {
+   "key": "C2",
+   "layers": [
+    "L3",
+    "L7",
+    "L11",
+    "L15",
+    "L19",
+    "L23",
+    "L27",
+    "L31",
+    "L35",
+    "L39",
+    "L43",
+    "L47",
+    "L51",
+    "L55",
+    "L59",
+    "L63",
+    "L67",
+    "L71",
+    "L75",
+    "L79",
+    "L83",
+    "L87",
+    "L91",
+    "L92"
+   ],
+   "roles": [
+    "kv_source"
+   ],
+   "tensors": [
+    {
+     "tensor": "block_sparse_moe.experts.E.w1.weight_packed",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 896,
+     "shape": [
+      3072,
+      1792
+     ],
+     "dtype": "UINT8",
+     "logical_shape": [
+      3072,
+      3584
+     ],
+     "logical_dtype": "MXFP4",
+     "scale_shape": [
+      3072,
+      112
+     ],
+     "scale_dtype": "UINT8",
+     "block": "[1,32]",
+     "bytes_each": 5849088
+    },
+    {
+     "tensor": "block_sparse_moe.experts.E.w2.weight_packed",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 896,
+     "shape": [
+      3584,
+      1536
+     ],
+     "dtype": "UINT8",
+     "logical_shape": [
+      3584,
+      3072
+     ],
+     "logical_dtype": "MXFP4",
+     "scale_shape": [
+      3584,
+      96
+     ],
+     "scale_dtype": "UINT8",
+     "block": "[1,32]",
+     "bytes_each": 5849088
+    },
+    {
+     "tensor": "block_sparse_moe.experts.E.w3.weight_packed",
+     "group": "expert",
+     "subsystem": "expert",
+     "count": 896,
+     "shape": [
+      3072,
+      1792
+     ],
+     "dtype": "UINT8",
+     "logical_shape": [
+      3072,
+      3584
+     ],
+     "logical_dtype": "MXFP4",
+     "scale_shape": [
+      3072,
+      112
+     ],
+     "scale_dtype": "UINT8",
+     "block": "[1,32]",
+     "bytes_each": 5849088
+    },
+    {
+     "tensor": "block_sparse_moe.gate.e_score_correction_bias",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      896
+     ],
+     "dtype": "FP32",
+     "bytes_each": 3584
+    },
+    {
+     "tensor": "block_sparse_moe.gate.weight",
+     "group": "router",
+     "subsystem": "router",
+     "count": 1,
+     "shape": [
+      896,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 12845056
+    },
+    {
+     "tensor": "block_sparse_moe.routed_expert_down_proj.weight",
+     "group": "expert_latent",
+     "subsystem": "dense_ffn",
+     "count": 1,
+     "shape": [
+      3584,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 51380224
+    },
+    {
+     "tensor": "block_sparse_moe.routed_expert_norm.weight",
+     "group": "expert_latent",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      3584
+     ],
+     "dtype": "BF16",
+     "bytes_each": 7168
+    },
+    {
+     "tensor": "block_sparse_moe.routed_expert_up_proj.weight",
+     "group": "expert_latent",
+     "subsystem": "dense_ffn",
+     "count": 1,
+     "shape": [
+      7168,
+      3584
+     ],
+     "dtype": "BF16",
+     "bytes_each": 51380224
+    },
+    {
+     "tensor": "block_sparse_moe.shared_experts.down_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      7168,
+      6144
+     ],
+     "dtype": "BF16",
+     "bytes_each": 88080384
+    },
+    {
+     "tensor": "block_sparse_moe.shared_experts.gate_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      6144,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 88080384
+    },
+    {
+     "tensor": "block_sparse_moe.shared_experts.up_proj.weight",
+     "group": "shared_expert",
+     "subsystem": "shared_expert",
+     "count": 1,
+     "shape": [
+      6144,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 88080384
+    },
+    {
+     "tensor": "input_layernorm.weight",
+     "group": "attn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "mlp_res_norm.weight",
+     "group": "ffn_res",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "mlp_res_proj.weight",
+     "group": "ffn_res",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      1,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "post_attention_layernorm.weight",
+     "group": "ffn_norm",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "self_attention_res_norm.weight",
+     "group": "attn_res",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "self_attention_res_proj.weight",
+     "group": "attn_res",
+     "subsystem": "residual",
+     "count": 1,
+     "shape": [
+      1,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 14336
+    },
+    {
+     "tensor": "self_attn.g_proj.weight",
+     "group": "attn_gate",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      12288,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 176160768
+    },
+    {
+     "tensor": "self_attn.kv_a_layernorm.weight",
+     "group": "kv_latent",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      512
+     ],
+     "dtype": "BF16",
+     "bytes_each": 1024
+    },
+    {
+     "tensor": "self_attn.kv_a_proj_with_mqa.weight",
+     "group": "kv_latent",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      576,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 8257536
+    },
+    {
+     "tensor": "self_attn.kv_b_proj.weight",
+     "group": "kv_latent",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      24576,
+      512
+     ],
+     "dtype": "BF16",
+     "bytes_each": 25165824
+    },
+    {
+     "tensor": "self_attn.o_proj.weight",
+     "group": "o",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      7168,
+      12288
+     ],
+     "dtype": "BF16",
+     "bytes_each": 176160768
+    },
+    {
+     "tensor": "self_attn.q_a_layernorm.weight",
+     "group": "q",
+     "subsystem": "norm",
+     "count": 1,
+     "shape": [
+      1536
+     ],
+     "dtype": "BF16",
+     "bytes_each": 3072
+    },
+    {
+     "tensor": "self_attn.q_a_proj.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      1536,
+      7168
+     ],
+     "dtype": "BF16",
+     "bytes_each": 22020096
+    },
+    {
+     "tensor": "self_attn.q_b_proj.weight",
+     "group": "q",
+     "subsystem": "attention",
+     "count": 1,
+     "shape": [
+      18432,
+      1536
+     ],
+     "dtype": "BF16",
+     "bytes_each": 56623104
+    }
+   ]
+  }
+ ],
+ "cache_totals": {
+  "global_kv": {
+   "layers": [
+    3,
+    7,
+    11,
+    15,
+    19,
+    23,
+    27,
+    31,
+    35,
+    39,
+    43,
+    47,
+    51,
+    55,
+    59,
+    63,
+    67,
+    71,
+    75,
+    79,
+    83,
+    87,
+    91,
+    92
+   ],
+   "entry_elems_sum": 13824,
+   "per_token_elems_sum": 13824.0,
+   "per_token_bytes_sum": 27648.0,
+   "bytes_basis": "dtype_fallback",
+   "note": "这一族的缓存没有时序压缩，一个 token 一个条目，所以折算前后相等；entry_elems_sum 只作对照"
+  },
+  "recurrent_state": {
+   "layers": 69,
+   "layer_ids": [
+    0,
+    1,
+    2,
+    4,
+    5,
+    6,
+    8,
+    9,
+    10,
+    12,
+    13,
+    14,
+    16,
+    17,
+    18,
+    20,
+    21,
+    22,
+    24,
+    25,
+    26,
+    28,
+    29,
+    30,
+    32,
+    33,
+    34,
+    36,
+    37,
+    38,
+    40,
+    41,
+    42,
+    44,
+    45,
+    46,
+    48,
+    49,
+    50,
+    52,
+    53,
+    54,
+    56,
+    57,
+    58,
+    60,
+    61,
+    62,
+    64,
+    65,
+    66,
+    68,
+    69,
+    70,
+    72,
+    73,
+    74,
+    76,
+    77,
+    78,
+    80,
+    81,
+    82,
+    84,
+    85,
+    86,
+    88,
+    89,
+    90
+   ],
+   "conv_state_elems": 7630848,
+   "matrix_state_elems": 108527616,
+   "elems_per_sequence": 116158464,
+   "covers": "per_sequence",
+   "note": "69 层是递归式注意力，**每 token 缓存贡献为 0** —— 上面的每 token 合计只来自其余层，不是全部层的平均。状态每序列固定，和每 token 量不是同一个口径，两者不要相加也不要算倍数"
+  }
+ },
+ "checks": [
+  {
+   "item": "递归式注意力层",
+   "config": [
+    1,
+    2,
+    3,
+    5,
+    6,
+    7,
+    9,
+    10,
+    11,
+    13,
+    14,
+    15,
+    17,
+    18,
+    19,
+    21,
+    22,
+    23,
+    25,
+    26,
+    27,
+    29,
+    30,
+    31,
+    33,
+    34,
+    35,
+    37,
+    38,
+    39,
+    41,
+    42,
+    43,
+    45,
+    46,
+    47,
+    49,
+    50,
+    51,
+    53,
+    54,
+    55,
+    57,
+    58,
+    59,
+    61,
+    62,
+    63,
+    65,
+    66,
+    67,
+    69,
+    70,
+    71,
+    73,
+    74,
+    75,
+    77,
+    78,
+    79,
+    81,
+    82,
+    83,
+    85,
+    86,
+    87,
+    89,
+    90,
+    91
+   ],
+   "weights": [
+    0,
+    1,
+    2,
+    4,
+    5,
+    6,
+    8,
+    9,
+    10,
+    12,
+    13,
+    14,
+    16,
+    17,
+    18,
+    20,
+    21,
+    22,
+    24,
+    25,
+    26,
+    28,
+    29,
+    30,
+    32,
+    33,
+    34,
+    36,
+    37,
+    38,
+    40,
+    41,
+    42,
+    44,
+    45,
+    46,
+    48,
+    49,
+    50,
+    52,
+    53,
+    54,
+    56,
+    57,
+    58,
+    60,
+    61,
+    62,
+    64,
+    65,
+    66,
+    68,
+    69,
+    70,
+    72,
+    73,
+    74,
+    76,
+    77,
+    78,
+    80,
+    81,
+    82,
+    84,
+    85,
+    86,
+    88,
+    89,
+    90
+   ],
+   "status": "MISMATCH",
+   "note": "config 列取自 linear_attn_config.kda_layers；权重列是带因果深度卷积与衰减参数（conv1d / A_log / dt_bias）的层。**这些层不产生每 token KV**，所以这份层集合错了，每 token 缓存合计就按错的层数求和"
+  }
+ ],
+ "issues": []
+}
