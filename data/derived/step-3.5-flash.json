@@ -1,7 +1,7 @@
 {
  "id": "step-3.5-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T07:06:49+00:00",
+ "generated_at": "2026-10-30T07:17:42+00:00",
  "inputs": {
   "facts_dir": "facts/step-3.5-flash",
   "config_present": true,
@@ -70,7 +70,7 @@
  "kv_cache": {
   "status": "measured",
   "attention_type": "HYBRID",
-  "kv_dtype": "BF16",
+  "kv_dtype": "bfloat16",
   "layers": 45,
   "full_attention_layers": 12,
   "linear_attention_layers": 0,
@@ -102,9 +102,11 @@
    }
   },
   "notes": [
-   "逐因子：全局 K/V 每层 2（K 与 V）× 8 组 × 128 = 2048 元素 （k_proj / v_proj 输出维 1024，k_norm 逐头 [128] 不改宽度；48/48 层穷举一致）， × 12 个全局层 = 24,576； 滑窗 512 个位置 × 2048 元素 × 33 个主干滑窗层 = 34,603,008 元素/序列 （开草稿侧再加 3 × 1,048,576 = 3,145,728）。 **滑窗那一侧是结构下限，不是参考实现的行为**：滑窗靠掩码实现 （create_sliding_window_causal_mask，逐层 sliding_window=512）， 而参考实现的缓存是 transformers 的 DynamicCache —— 它不设上界， 滑窗层也会随上下文一直长。512 个位置是「正确解码所需」的量， 要靠引擎侧的有界滑窗缓存才拿得到（见 open_questions）。 **精度那一侧的出处**：Step3p5Attention 第 504 行把 k_norm 与 RoPE 之后的 key_states / value_states 交给 past_key_value.update()，缓存对象是 Step3p5Model.forward 第 705 行唯一的 DynamicCache()（无 dtype 形参）， 原样保留传入 dtype，而 q/k/v 投影权重全是 BF16、路径上没有量化或 cast。 这是追数据流追出来的**激活 dtype**，不是落盘格式 —— 本记录因此不填 precision.kv_cache_components，让 bytes_basis 老实落在 dtype_fallback"
+   "逐因子：全局 K/V 每层 2（K 与 V）× 8 组 × 128 = 2048 元素 （k_proj / v_proj 输出维 1024，k_norm 逐头 [128] 不改宽度；48/48 层穷举一致）， × 12 个全局层 = 24,576； 滑窗 512 个位置 × 2048 元素 × 33 个主干滑窗层 = 34,603,008 元素/序列 （开草稿侧再加 3 × 1,048,576 = 3,145,728）。 **滑窗那一侧是结构下限，不是参考实现的行为**：滑窗靠掩码实现 （create_sliding_window_causal_mask，逐层 sliding_window=512）， 而参考实现的缓存是 transformers 的 DynamicCache —— 它不设上界， 滑窗层也会随上下文一直长。512 个位置是「正确解码所需」的量， 要靠引擎侧的有界滑窗缓存才拿得到（见 open_questions）。 **精度那一侧的出处**：Step3p5Attention 第 504 行把 k_norm 与 RoPE 之后的 key_states / value_states 交给 past_key_value.update()，缓存对象是 Step3p5Model.forward 第 705 行唯一的 DynamicCache()（无 dtype 形参）， 原样保留传入 dtype，而 q/k/v 投影权重全是 BF16、路径上没有量化或 cast。 这是追数据流追出来的**激活 dtype**，不是落盘格式 —— 而厂商的模型卡里也没有一处说过 KV 缓存精度（两个引擎的命令都不设 --kv-cache-dtype； 只有同代多模态封装 Step-3.7-Flash 的 **NVFP4** 变体才在命令里写了 --kv-cache-dtype fp8，那是另一个仓、另一种发布精度）。 本记录因此 precision.kv_cache 与 kv_cache_components 都不填， 让 bytes_basis 老实落在 dtype_fallback"
   ],
-  "bytes_basis": "dtype_fallback"
+  "bytes_basis": "dtype_fallback",
+  "dtype_assumed": true,
+  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML"
  },
  "kv_capacity_bytes_at_context": {
   "4096": 270532608,

@@ -236,26 +236,6 @@ arch:
 
 precision:
   weights_release: [BF16]
-  kv_cache: BF16
-  kv_cache_components:
-    global_kv:
-      dtype: BF16
-      note: >-
-        无 scale 张量。**这个键在本代指的是全部 61 层**，而在 Step-3.5-Flash / Step-5-Preview
-        里同一个键只指那 12 / 23 个全局层 —— 跨代读这个键名要先看层集合。
-        另：本记录没有 kv_sharing.measured_per_token，derive.py 走的是公式路，
-        **根本不读这个块**，derived JSON 里的分量键是 `full_attention` 而不是 global_kv
-    source: >-
-      读参考实现（二手于部署 kernel）：Step3vAttention 第 446 行把 RoPE 之后的
-      key_states / value_states 交给 past_key_value.update()，缓存对象是 transformers 的
-      DynamicCache（第 607 行唯一的构造点，无 dtype 形参）—— 原样保留传入 dtype，
-      而 q/k/v 投影权重全是 BF16、路径上没有量化或 cast。
-      **性质要说清**：这是追数据流追出来的激活 dtype，**不是一个带声明格式的缓存分配**。
-      数值上与「按权重 dtype 兜底」相同，区别只在出处：排除了「路径上有 cast」这一种可能。
-      derive.py 因此把 bytes_basis 记成 `declared_dtype`（声明精度），不是 `theoretical_floor`。
-      **模型卡那句「We currently only support bf16 inference」不作为本字段的依据** ——
-      它在 Transformers 用法一节里、下一句是「This behavior is aligned with vllm and sglang」，
-      讲的是推理与权重精度、不是 KV 缓存；引擎的 KV 精度是另一个开关，见 open_questions
   quantization:
     per_subsystem:
       expert: BF16
@@ -332,10 +312,13 @@ bottlenecks:
     quantified: >-
       元素口径逐因子：每层 2（K 与 V）× 1 组 × 256（k_proj / v_proj 输出维，61/61 层穷举一致）
       = 512 元素，× 61 层 = **31,232 元素/token**，无每序列固定分量。
-      按参考实现的 BF16 折算 62,464 B/token，65536 上下文满长度 3.81 GiB/序列。
-      **字节那一列的口径是 `declared_dtype`（声明精度），不是 `theoretical_floor`** ——
-      本代没有带格式的缓存分配（见 precision.kv_cache_components.source），
-      所以这一列不要和 Step-3.5-Flash / Step-5-Preview 的字节比。
+      按 BF16 折算 62,464 B/token，65536 上下文满长度 3.81 GiB/序列。
+      **字节那一列的口径是 `dtype_fallback`（按模型权重 dtype 兜底）**：
+      厂商没有一处说过 KV 缓存精度 —— 模型卡那句「We currently only support bf16 inference」
+      在 Transformers 用法一节里、下一句是「This behavior is aligned with vllm and sglang」，
+      讲的是推理与权重精度，不是缓存；部署指南也只给引擎命令、不设 --kv-cache-dtype。
+      可读的参考实现里又没有带格式的缓存分配（第 607 行唯一的 DynamicCache、无 dtype 形参），
+      所以 basis 老实留兜底，**字节这一列不与任何别代比**。
       跨代比**只用元素那一列**：前代 Step-1 180,224（5.77 倍）、
       后代 Step-3.5-Flash 24,576、Step-5-Preview 36,064 元素/token。
       比之前先对齐账的形状：本代与 Step-1 只有一个分量，后两代是混合结构，
@@ -430,8 +413,6 @@ evidence:
   arch.vision.fusion: derived
   precision: official
   precision.weights_release: derived
-  precision.kv_cache: judgement
-  precision.kv_cache_components: judgement
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived
   platforms: official
@@ -765,6 +746,26 @@ review:
     changed_to: >-
       counting_note 补九桶逐因子式，每项给出结果值，
       并点明 inter_norm 的 2048 宽与「按 3 × 7168 算会多 437,248」
+  - id: R22
+    field: precision.kv_cache
+    severity: unsupported
+    claim: precision.kv_cache 填 BF16，并引模型卡的「We currently only support bf16 inference」
+    finding: >-
+      与 step-1 的 R15 同一轮、同一个判据（来源优先级 + 查不到落盘格式就留 dtype_fallback）。
+      本代的证据链比 step-1 还更像能成立，所以要说清为什么仍然不够：
+      (a) 卡上那句 bf16 在 Transformers 用法一节里、下一句是「This behavior is aligned with
+      vllm and sglang」，讲的是推理与权重精度 —— 卡里另一处（第 119 行）
+      「Our model checkpoints are stored in bf16 and block-fp8 format」才是权重精度的正源，
+      两句都没碰缓存；这一点 R15 已经判过，本条是把结论落到 basis 上。
+      (b) 部署指南给的 vLLM / SGLang 命令**都不设 --kv-cache-dtype**，
+      而按来源优先级引擎实现本来也不作为精度来源。
+      (c) 这一族五个仓的 siblings 里没有技术报告 / PDF，无可对照。
+      (d) 参考实现里没有带格式的缓存分配（第 607 行唯一的 DynamicCache、无 dtype 形参）
+    resolution: corrected
+    changed_to: >-
+      删掉 precision.kv_cache 与 kv_cache_components（连带 evidence 两条），
+      bytes_basis 落回 dtype_fallback；元素数一个没动（31,232 元素/token）；
+      卡上那两句各自讲什么写进 open_questions
 
 notes: >-
   这一族第一个 MoE、也是唯一一代用 MFA 的。model_type step3_vl，
@@ -787,9 +788,12 @@ notes: >-
 
 open_questions:
   - >-
-    缓存精度取自参考实现：DynamicCache 原样保留 k_proj / v_proj 的 BF16，路径上没有量化，
-    模型卡也写了「currently only support bf16 inference」。但这是 remote-code 实现与模型卡措辞，
-    不是部署 kernel；vLLM / SGLang 是否给这一代做了 FP8 KV，未读
+    **KV 缓存精度没有任何厂商来源。** 模型卡那句「We currently only support bf16 inference」
+    讲的是推理与权重精度（下一句是「This behavior is aligned with vllm and sglang」），
+    不是缓存精度；部署指南给的 vLLM / SGLang 命令都不设 --kv-cache-dtype。
+    可读的参考实现里没有带格式的缓存分配（第 607 行唯一的 DynamicCache、无 dtype 形参），
+    追数据流只能确认 RoPE 之后的 K/V 是 BF16、路径上不量化 —— 那是激活 dtype 不是落盘格式。
+    所以 precision.kv_cache 不填、bytes_basis 留 `dtype_fallback`，字节列只当占位值
   - >-
     MFA 的 latent 维 2048 只作用在 query 上 —— K 与 V 各自从 hidden 直接投到 256，
     没有 latent、没有上投影。这是「低秩 Q + MQA」的组合，与 MLA 的「低秩 KV + 上投影」

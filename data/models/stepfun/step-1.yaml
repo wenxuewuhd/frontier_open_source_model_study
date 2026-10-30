@@ -92,6 +92,8 @@ arch:
       权重穷举一致：q_proj / o_proj 全 88 层都是 [12288, 12288]（96 × 128），
       k_proj / v_proj 全 88 层都是 [1024, 12288]（8 × 128），0 例外。
       没有 q_norm / k_norm，没有输出门 —— 写缓存的 K 就是 k_proj 的输出，8 × 128 = 1024 维
+      （StepAttention 第 97 行把 k_proj / v_proj 的输出直接交给 past_key_value.update()，
+      在 rearrange 之前，元素数不变）
     layer_pattern: >-
       88 层全部同一种注意力：无滑窗、无稀疏、无跨层共享，层间投影形状完全相同（88 层一个签名）。
       config 里没有 layer_types，参考实现也不按层分型。作用域：本代
@@ -117,26 +119,6 @@ arch:
 
 precision:
   weights_release: [BF16]
-  kv_cache: BF16
-  kv_cache_components:
-    global_kv:
-      dtype: BF16
-      note: >-
-        无 scale 张量。**这个键在本代指的是全部 88 层**，而在 Step-3.5-Flash / Step-5-Preview
-        里同一个键只指那 12 / 23 个全局层 —— 跨代读这个键名要先看层集合。
-        另：本记录没有 kv_sharing.measured_per_token，derive.py 走的是公式路，
-        **根本不读这个块**（_component_bpe 只在实测分支里被调用），
-        derived JSON 里的分量键是 `full_attention` 而不是 global_kv
-    source: >-
-      读参考实现（二手于部署 kernel）：StepAttention 第 97 行直接把 k_proj / v_proj 的输出
-      交给 past_key_value.update()，缓存对象是 transformers 的 DynamicCache
-      （Step1Model.forward 第 280 行唯一的构造点，无 dtype 形参）—— 它原样保留传入 dtype，
-      而 q/k/v 投影权重全是 BF16、路径上没有任何量化或 cast。
-      **性质要说清**：这是追数据流追出来的激活 dtype，**不是一个带声明格式的缓存分配**
-      （DynamicCache 没有「落盘格式」这回事）。数值上它与「按权重 dtype 兜底」相同，
-      区别只在出处：这里排除了「路径上有 cast」这一种可能。
-      所以 derive.py 把本记录的 bytes_basis 记成 `declared_dtype`（声明精度），
-      不是 `theoretical_floor` —— 后者要求一个真实的落盘格式
   quantization:
     per_subsystem:
       attention: BF16
@@ -175,10 +157,13 @@ bottlenecks:
     quantified: >-
       元素口径：每层 2 × 8 组 × 128 = 2048 元素（k_proj / v_proj 输出维，逐层穷举一致），
       × 88 层 = **180,224 元素/token**，无每序列固定分量。
-      按参考实现的 BF16 折算 360,448 B/token，32K 上下文满长度 11.00 GiB/序列。
-      **字节那一列的口径是 `declared_dtype`（声明精度），不是 `theoretical_floor`** ——
-      本代没有带格式的缓存分配，dtype 是追数据流得来的（见 precision.kv_cache_components.source），
-      所以这一列不要和 Step-3.5-Flash / Step-5-Preview 的字节比。
+      按 BF16 折算 360,448 B/token，32K 上下文满长度 11.00 GiB/序列。
+      **字节那一列的口径是 `dtype_fallback`（按模型权重 dtype 兜底）**：
+      厂商的模型卡与技术报告**没有任何一处说过 KV 缓存精度**（这个仓连部署一节都没有），
+      而可读的参考实现里也没有带格式的缓存分配 —— 只有一个 transformers 的 DynamicCache
+      （Step1Model.forward 第 280 行唯一的构造点、无 dtype 形参），它原样保留传入 dtype。
+      追数据流只能确认 q/k/v 投影是 BF16 且路径上没有量化或 cast，那是**激活 dtype**、
+      不是落盘格式，所以 basis 老实留兜底，**字节这一列不与任何别代比**。
       跨代比**只用元素那一列**：Step-3 31,232、Step-3.5-Flash 24,576、Step-5-Preview 36,064 元素/token。
       比之前先对齐账的形状：本代与 Step-3 只有一个分量，而后两代是混合结构，
       上面那两个数**只是它们随上下文增长的那一个分量**，各自另有每序列固定的
@@ -245,8 +230,6 @@ evidence:
   arch.decoding.mtp_layers_note: derived
   precision: official
   precision.weights_release: derived
-  precision.kv_cache: judgement
-  precision.kv_cache_components: judgement
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived
   platforms: derived
@@ -479,6 +462,26 @@ review:
     changed_to: >-
       补 v_head_dim: 128；arch.ffn.layer_pattern 补「作用域：本代」与穷举表述；
       infra_signals[1] 去掉硬件侧那一句，改写成与栈无关的「算子语义藏进二进制」，axis 改 operator
+  - id: R15
+    field: precision.kv_cache
+    severity: unsupported
+    claim: precision.kv_cache 填 BF16，并带一个 kv_cache_components 块（bytes_basis 因此是 declared_dtype）
+    finding: >-
+      本仓新定的来源优先级是「模型卡 / 技术报告 > 厂商参考实现 > 引擎实现」，
+      而且查不到落盘格式就留 `dtype_fallback`。照这条重查了一遍：
+      **这一族五个仓的 siblings 里没有任何技术报告 / PDF**（step-1 共 38 个文件，
+      只有 README.md 加三个预编译 .so），而 Step-Audio-Chat 的卡**连部署一节都没有**，
+      一处没提缓存精度。
+      可读的参考实现里也没有带格式的缓存分配：只有 Step1Model.forward 第 280 行
+      一个 transformers DynamicCache，无 dtype 形参、原样保留传入 dtype。
+      追数据流只能确认 q/k/v 投影是 BF16、路径上不量化 —— 那是**激活 dtype**，
+      不是落盘格式，不够支撑一个声明值
+    resolution: corrected
+    changed_to: >-
+      删掉 precision.kv_cache 与 kv_cache_components（连带 evidence 两条），
+      bytes_basis 因此落回 dtype_fallback、derive.py 打出「[精度兜底]」；
+      元素数一个没动（180,224 元素/token）；
+      追数据流的结论降级成散文，写进 head_dim_note 与 open_questions
 
 notes: >-
   阶跃星辰家族的公开起点，也是这一族唯一的稠密代。model_type step1、
@@ -499,9 +502,13 @@ open_questions:
     偏置要么烘在算子里、要么快路径根本不加。二进制 .so 未执行、未反编译，
     从可读源码判不出来 —— 要钉死得读 kernel 或做数值比对，那是独立一轮的事
   - >-
-    缓存精度取自参考实现：DynamicCache 原样保留 k_proj / v_proj 的 BF16，
-    路径上没有量化。但这是 remote-code 实现，不是部署 kernel；
-    没有任何引擎给这一代做过官方 FP8 KV 配方，也没查
+    **KV 缓存精度没有任何厂商来源**：模型卡没有部署一节、没有技术报告，
+    也就没有一处说过缓存精度。可读的参考实现里没有带格式的缓存分配
+    （只有一个无 dtype 形参的 DynamicCache），追数据流只能确认投影是 BF16、
+    路径上不量化 —— 那是激活 dtype 不是落盘格式。
+    所以 precision.kv_cache 不填、bytes_basis 留 `dtype_fallback`，字节列只当占位值。
+    引擎侧（vLLM / SGLang）有没有给这一代开 FP8 KV 也没查，而且按本仓的来源优先级，
+    引擎实现不作为精度来源
   - >-
     厂商「130 billion」与实测 131.95B 差 1.5%，口径没写（是否含词表、是否按 1 GiB 口径算，
     都解释不了 1.5%）

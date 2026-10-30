@@ -240,7 +240,11 @@ arch:
           Step3p5Model.forward 第 705 行唯一的 DynamicCache()（无 dtype 形参），
           原样保留传入 dtype，而 q/k/v 投影权重全是 BF16、路径上没有量化或 cast。
           这是追数据流追出来的**激活 dtype**，不是落盘格式 ——
-          本记录因此不填 precision.kv_cache_components，让 bytes_basis 老实落在 dtype_fallback
+          而厂商的模型卡里也没有一处说过 KV 缓存精度（两个引擎的命令都不设 --kv-cache-dtype；
+          只有同代多模态封装 Step-3.7-Flash 的 **NVFP4** 变体才在命令里写了
+          --kv-cache-dtype fp8，那是另一个仓、另一种发布精度）。
+          本记录因此 precision.kv_cache 与 kv_cache_components 都不填，
+          让 bytes_basis 老实落在 dtype_fallback
 
   ffn:
     type: moe
@@ -300,7 +304,6 @@ arch:
 
 precision:
   weights_release: [BF16, FP32]
-  kv_cache: BF16
   quantization:
     per_subsystem:
       expert: BF16
@@ -491,7 +494,6 @@ evidence:
   arch.decoding.speculative: derived
   precision: official
   precision.weights_release: derived
-  precision.kv_cache: judgement
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived
   platforms: official
@@ -880,6 +882,25 @@ review:
     changed_to: >-
       arch.norm 改成「公式决定了……—— 这一句是从公式推的，没有读张量数值」，
       并把 norm_eps 的出处从 arch.activation 搬过来、改成「config.json 里没有 rms_norm_eps 这个键」
+  - id: R26
+    field: precision.kv_cache
+    severity: unsupported
+    claim: precision.kv_cache 填 BF16（R20 已经删掉了 kv_cache_components，basis 当时落在 dtype_fallback）
+    finding: >-
+      R20 已经把 basis 从 theoretical_floor 降到 dtype_fallback，但 `precision.kv_cache: BF16`
+      这个声明还留着 —— 按本仓新定的来源优先级它同样没有来源：
+      模型卡一处没提缓存精度，它给的 vLLM 与 SGLang 命令**都不设 --kv-cache-dtype**，
+      这一族五个仓的 siblings 里也没有技术报告 / PDF。
+      一条反面参照把这件事钉得更死：**同代多模态封装 Step-3.7-Flash 的 NVFP4 变体**，
+      厂商卡里明写「running the FP4 quantized version requires modelopt activation and
+      **FP8 KV Cache alignment**」，命令里也写了 --kv-cache-dtype fp8 / fp8_e4m3 ——
+      说明这家在需要时是会写的，而 BF16 发布这边没写。
+      留着一个没来源的声明值，只会让下游以为卡上说过
+    resolution: corrected
+    changed_to: >-
+      删掉 precision.kv_cache（连带 evidence 一条）；basis 仍是 dtype_fallback、
+      元素数一个没动（24,576 元素/token + 34,603,008 元素/序列）；
+      Step-3.7-Flash-NVFP4 那条反面参照写进 open_questions
 
 notes: >-
   这一族结构上改动最大的一代：注意力、路由、归一化、位置编码、投机解码五条轴同时变。
@@ -915,8 +936,14 @@ open_questions:
     与后代 Step-5-Preview 的对照：那一代厂商另发了 inference/ 参考实现，
     里面的 DenseLayerCache 是按窗口大小预分配的
   - >-
-    缓存精度取自参考实现：DynamicCache 原样保留 k_norm 与 RoPE 之后的 BF16，路径上没有量化。
-    但这是 remote-code 实现，不是部署 kernel；vLLM / SGLang 是否给这一代开 FP8 KV，未读
+    **KV 缓存精度没有任何厂商来源**：模型卡没有一处说过缓存精度，它给的 vLLM / SGLang
+    命令都不设 --kv-cache-dtype。可读的参考实现里没有带格式的缓存分配
+    （第 705 行唯一的 DynamicCache、无 dtype 形参、且不设上界），
+    追数据流只能确认 k_norm 与 RoPE 之后的 K/V 是 BF16、路径上不量化 ——
+    那是激活 dtype 不是落盘格式。所以 precision.kv_cache 不填、
+    bytes_basis 留 `dtype_fallback`，字节列只当占位值。
+    参照：同代多模态封装 Step-3.7-Flash 的 NVFP4 变体，厂商命令里明写
+    --kv-cache-dtype fp8 / fp8_e4m3 —— 说明这家在需要时是会写的，而 BF16 发布这边没写
   - >-
     厂商「~11B 激活」与本仓带宽口径 11.46B 相差 4.2%，与扣掉 lm_head 的 10.93B 相差 0.6%，
     含输入词表是 11.99B。三个数都在 11B 附近，厂商口径没写是哪一个

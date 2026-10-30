@@ -1,7 +1,7 @@
 {
  "id": "step-3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T07:06:48+00:00",
+ "generated_at": "2026-10-30T07:17:42+00:00",
  "inputs": {
   "facts_dir": "facts/step-3",
   "config_present": true,
@@ -66,7 +66,7 @@
  "kv_cache": {
   "status": "ok",
   "attention_type": "MQA",
-  "kv_dtype": "BF16",
+  "kv_dtype": "bfloat16",
   "layers": 61,
   "full_attention_layers": 61,
   "linear_attention_layers": 0,
@@ -79,7 +79,7 @@
     "layers": 61,
     "bytes_per_layer": 1024,
     "bytes_per_token": 62464,
-    "dtype": "BF16",
+    "dtype": "bfloat16",
     "elements_per_token": 31232,
     "terms": {
      "num_kv_heads": 1,
@@ -89,14 +89,16 @@
    }
   },
   "notes": [],
-  "bytes_basis": "declared_dtype"
+  "dtype_assumed": true,
+  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML",
+  "bytes_basis": "dtype_fallback"
  },
  "kv_capacity_bytes_at_context": {
   "4096": 255852544,
   "32768": 2046820352,
   "65536": 4093640704
  },
- "kv_capacity_basis": "declared_dtype",
+ "kv_capacity_basis": "dtype_fallback",
  "active_params": {
   "status": "ok",
   "total": 38249345024.0,
