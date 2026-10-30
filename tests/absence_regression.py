@@ -29,6 +29,7 @@ from lib import columns  # noqa: E402
 from lib import yamlio  # noqa: E402
 
 import validate  # noqa: E402
+import fetch_hf  # noqa: E402
 
 
 # ------------------------------------------------------------ 小工具
@@ -399,6 +400,59 @@ def _():
     finally:
         if os.path.exists(probe):
             os.remove(probe)
+
+
+# ======================================== 取数：别把几个模型合并成一个不存在的模型
+#
+# Lightricks/LTX-2 的仓里 `ltx-2-19b-distilled.safetensors`（BF16）与
+# `-distilled-fp8.safetensors`（F8_E4M3）**张量名完全相同、dtype 不同**。
+# 原来的 collect_shapes 是 `out[name] = ...`，后读到的盖掉先读到的，而分片是并发完成的
+# —— 哪些张量是 BF16、哪些是 FP8 取决于线程完成顺序。实测这一个仓就有 **7,132 个** 这样的名字。
+# 更坏的一种是 LTX-2.3：8 个顶层 safetensors 是 8 个不同模型，而 dev 与 distilled 的
+# **形状和 dtype 完全一样**，连冲突都报不出来。所以要两道：选分片时拒绝歧义，合并时查冲突。
+
+@case("取数·反例：有 index.json 的分片仓照常全读")
+def _():
+    files = ["model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors",
+             "model.safetensors.index.json", "config.json"]
+    got = fetch_hf.pick_shards(files, [])
+    assert len(got) == 2, f"分片仓不该被拦：{got}"
+
+
+@case("取数·正例：无 index 且顶层多个 safetensors 时拒绝，不猜")
+def _():
+    # LTX-2.3 的真实形状：8 个独立模型，没有任何 index
+    files = ["ltx-2.3-22b-dev.safetensors", "ltx-2.3-22b-distilled.safetensors",
+             "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"]
+    try:
+        fetch_hf.pick_shards(files, [])
+    except SystemExit as e:
+        assert "--include" in str(e), f"拒绝了但没告诉人怎么办：{e}"
+        return
+    raise AssertionError("没拦住 —— 合并这三个会产出一个不存在的模型")
+
+
+@case("取数·反例：--include 点名之后放行，且只放行点到的")
+def _():
+    files = ["ltx-2.3-22b-dev.safetensors", "ltx-2.3-22b-distilled.safetensors"]
+    got = fetch_hf.pick_shards(files, ["ltx-2.3-22b-dev.safetensors"])
+    assert got == ["ltx-2.3-22b-dev.safetensors"], got
+
+
+@case("取数·正例：--include 一个都没匹配上要报错，不能静默取空")
+def _():
+    # 空清单会让 derive.py 把参数量静默算成 0，所以这里必须响
+    try:
+        fetch_hf.pick_shards(["a.safetensors", "idx.safetensors.index.json"], ["nope-*.safetensors"])
+    except SystemExit:
+        return
+    raise AssertionError("没匹配上却没报错 —— 下游会得到参数量 0")
+
+
+@case("取数·反例：单个顶层 safetensors 无 index 不算歧义")
+def _():
+    got = fetch_hf.pick_shards(["model.safetensors", "config.json"], [])
+    assert got == ["model.safetensors"], got
 
 
 # ============================================================ 跑
