@@ -31,6 +31,74 @@ hf:
 
 lineage:
   track: main
+  predecessor: minimax-m2
+  # 每条都对照过 facts/minimax-m2 与 facts/minimax-m3 的 config 差异与张量名差异，
+  # 不是从模型卡抄的。M2 与 M3 之间的三个发布（M2.1 / M2.5 / M2.7）与 M2
+  # 逐张量同名、HF tally 逐位相同，按仓内办法折叠进 minimax-m2，不单独立记录
+  changed_from_predecessor:
+    - axis: attention
+      text: >-
+        仍是全量 softmax GQA，但三处都动了：KV 头数 8 → 4（q 头 48 → 64，
+        hidden 3072 → 6144），层数 62 → 60，并在 L3–L59 共 57 层上加了 MSA
+        块稀疏选读（每层自带 indexer，index K 每 token 多存 128 维）。
+        qk-norm 从 per_layer 改成 per_head：M2 是 RMSNorm(48×128) / RMSNorm(8×128)
+        作用在展平后的整条 q / k 上，M3 是 [128] 的逐头 norm
+      benefit: >-
+        KV 元素/token 126976 → 68736（1.85 倍降），但**降容量的不是 MSA**：
+        主 KV 这一项 2 × 8 × 128 × 62 = 126976 → 2 × 4 × 128 × 60 = 61440，
+        2.0667 倍 = KV 头减半的 2.0000 倍 × 层数 62→60 的 1.0333 倍；
+        MSA 再把 index K 的 128 × 57 = 7296 **加回去**（+11.9%），净剩 1.8473 倍。
+        MSA 省的是读不是存（见 bottlenecks）。
+        qk-norm 改 per_head 会让按 M2 写的融合核在归一化的规约轴上算错
+    - axis: scale
+      text: hidden 3072 → 6144、层数 62 → 60，总参数实测 228,689,764,864 → 427,040,140,160（1.87 倍）
+      benefit: >-
+        和 M2「compact 档」的定位反向：回到旗舰尺寸。
+        带宽口径激活参数 10,415,956,480 → 24,733,280,640（2.37 倍），
+        decode 的权重搬运量按同样比例涨
+    - axis: moe
+      text: >-
+        128 个路由专家取 4（M2 是 256 取 8），专家中间维 1536 → 3072，
+        新增 1 个共享专家（shared_intermediate_size 3072）与前 3 层稠密
+        （dense_intermediate 12288），并新增 routed_scaling_factor 2.0
+      benefit: >-
+        每 token 的 all-to-all 落点数从 8 降到 4，而**每层载荷字节一个没变**：
+        2 · top_k · hidden · bytes 在两代都是 2 × 8 × 3072 × 2 = 2 × 4 × 6144 × 2
+        = 98,304 B，top_k 减半与 hidden 加倍正好抵消。全模型因 MoE 层数 62 → 57
+        略降：6,094,848 → 5,603,328 B/token。这个相等**两侧都按 BF16 激活算**
+        （derive.py 的 act_dtype 回退）；M2 的 config 声明 activation_scheme dynamic，
+        若 dispatch 真走 FP8，M2 那一侧减半、相等不成立。共享专家与稠密层把一部分容量从
+        「按 token 选路」挪成「常驻」，对 EP 的意义是这部分不再过 all-to-all
+    - axis: precision
+      text: >-
+        **退回不量化**：M2 是 FP8 blockwise（47864 个权重配 [128,128] 的 FP32 scale），
+        M3 的 23416 条清单里一个 scale 容器都没有（名字含 scale 的零命中），
+        FP32 只有 115 条 —— 57 个 block_sparse_moe.gate.weight、
+        57 个 e_score_correction_bias 与 1 个视觉 patch_embedding，其余全是 BF16
+      benefit: >-
+        权重存储 214.32 GiB → 795.51 GiB（3.71 倍；其中 1.87 倍来自参数量、
+        约 1.99 倍来自每元素字节）。部署侧要自己量化 —— 厂商另发了
+        MiniMax-M3-MXFP8 变体，本仓未录
+    - axis: modality
+      text: 纯文本 → 原生多模态（model_type minimax_m3_vl）：新增 32 层 CLIP 式 ViT、multi_modal_projector 与 patch_merge_mlp
+      benefit: >-
+        视觉侧 0.87B 参数（见 arch.vision），不进激活的带宽口径但占容量；
+        patch_merge 把 2×2 相邻 token 合一，prefill 的图像 token 数降 4 倍
+    - axis: context
+      text: max_position_embeddings 196,608 → 1,048,576（5.33 倍）
+      benefit: >-
+        这是 MSA 真正要解决的问题：62 层全量 KV 在 M2 的 196,608 上限已是 46.50 GiB，
+        按 M2 的几何放到 1Mi token 会是 248.0 GiB。M3 把它压到 134.25 GiB（BF16 兜底，
+        两侧同口径）—— 1.8473 倍里，KV 头减半贡献 2.0000、层数 62→60 贡献 1.0333，
+        而 index K 又加回 1.119，**MSA 在容量这一侧是负贡献**。
+        MSA 的收益在读量：按本记录 bottlenecks[kv-bandwidth] 的逐项推算，
+        1M 下约 5.86 倍，且其中七成的剩余读量是 indexer 全扫 ——
+        上限由 indexer 决定，不是「降一个量级」
+    - axis: decoding
+      text: MTP 声明从 3 个模块（M2）变成 7 个（num_mtp_modules 7），发布权重里**两代都是零个**
+      benefit: >-
+        没有变化就是这条的内容：连续两代声明 MTP 而不带权重，
+        说明这是训练侧配置的外溢而不是产品承诺。引擎读 config 判断「支持 MTP」会连错两代
 
 params:
   total: 427040140160.0
@@ -264,7 +332,7 @@ evidence:
   released: judgement
   license: official
   hf: official
-  lineage: official
+  lineage: judgement
   params: derived
   params.counting_note: derived
   context: official
@@ -315,7 +383,11 @@ reviewed:
     其余计数（21888 条专家张量的逐层下标枚举、1M 下的读量逐项、激活参数四种扣法）
     依据的是代理在完整清单上的枚举，未逐项重跑。
     Gate B：derive.py --id minimax-m3 --model ... 0 处不一致，外部 safetensors tally
-    逐位相同；但专家数那一项是 skip（键名不匹配），不在「0 处不一致」覆盖内
+    逐位相同；但专家数那一项是 skip（键名不匹配），不在「0 处不一致」覆盖内。
+    **第二轮（2026-10-30，补 lineage 时）**：新增的 lineage.changed_from_predecessor
+    单独过了一遍对抗核查（R13–R16），每条倍数都对 facts/minimax-m2 与
+    facts/minimax-m3 的完整清单与 data/derived/ 重算；该块之外的字段沿用第一轮结论，
+    未重新核查
 
 review:
   - id: R1
@@ -471,10 +543,57 @@ review:
       与仓内其它记录一致
     resolution: confirmed
     changed_to: 原值成立，不改
+  - id: R13
+    field: lineage.changed_from_predecessor
+    severity: wrong
+    claim: >-
+      precision 那一条写「除 57 个 router gate 与 1 个视觉 patch_embedding 是 FP32 外
+      全是 BF16」
+    finding: >-
+      漏了一类。穷举 23416 条清单，F32 共 **115** 条：57 个
+      block_sparse_moe.gate.weight [128, 6144]、**57 个 e_score_correction_bias [128]**、
+      1 个视觉 patch_embedding，元素合计 46,339,200，与 HF tally 的 F32 项逐位相同。
+      同一份记录的 precision.quantization.subsystem_method 本来就把三类都列对了，
+      是新写的 lineage 块把其中一类丢了
+    resolution: corrected
+    changed_to: lineage 的 precision 条改为列出 115 条 F32 的三类构成
+  - id: R14
+    field: lineage.changed_from_predecessor
+    severity: wrong
+    claim: 「主 KV 2 × 8 × 128 × 62 → 2 × 4 × 128 × 60，2.07 倍，**全部来自 KV 头数减半**」
+    finding: >-
+      两个乘积都复算无误，但 126976 / 61440 = 2.0667 = 2.0000（KV 头 8 → 4）
+      × 1.0333（层数 62 → 60）。句子自己把两个因子都写出来了，却把整个比值记在一个头上 ——
+      正是 skill 的「一个乘式逐因子验」反过来犯
+    resolution: corrected
+    changed_to: 改成「2.0667 = KV 头减半的 2.0000 × 层数的 1.0333」，index K 加回的 1.119 另列
+  - id: R15
+    field: lineage.changed_from_predecessor
+    severity: overreach
+    claim: context 那一条写「再靠块稀疏把**读量降一个量级**」，并把 248 → 134.25 GiB 记在 KV 头减半上
+    finding: >-
+      「一个量级」意味着 ≥10 倍，而同一份记录的 bottlenecks[kv-bandwidth] 逐项算出来是
+      **5.86 倍**，并且明说上限由 indexer 全扫（占剩余读量 69.6%）决定、不由 topk 块数决定。
+      新写的 lineage 块越过了本记录自己已经量出来的数。
+      容量那一侧的归因也不全：1.8473 = 2.0000（KV 头）× 1.0333（层数）÷ 1.119（index K 加回），
+      MSA 在容量上是负贡献
+    resolution: corrected
+    changed_to: 改成「约 5.86 倍，上限由 indexer 全扫决定」，并把 1.8473 的三个因子分开写
+  - id: R16
+    field: lineage.changed_from_predecessor
+    severity: imprecise
+    claim: 「每层载荷字节一个没变：2 × 8 × 3072 × 2 = 2 × 4 × 6144 × 2 = 98,304 B」
+    finding: >-
+      算术与 data/derived/ 的 ep_communication 逐位一致（两代都是 98,304 B/层，
+      全模型 6,094,848 → 5,603,328 B/token），但这个相等建立在**两侧都按 BF16 激活**
+      这个未声明的前提上（derive.py 的 act_dtype 回退）。M2 的 config 声明
+      activation_scheme dynamic，若 dispatch 真走 FP8，M2 那一侧减半、相等不成立
+    resolution: corrected
+    changed_to: 在该条末尾写明「两侧均按 BF16 激活算」与 FP8 下的反例
 
 notes: >-
-  MiniMax 家族的旗舰，model_type minimax_m3_vl，原生多模态。本仓第一份 MiniMax 记录，
-  也是第三种「稀疏注意力」：GQA 主干 + 块级选读（MSA），与 GLM-5.3 的 DSA 同属
+  MiniMax 家族的旗舰，model_type minimax_m3_vl，原生多模态。本仓最先录的一份
+  MiniMax 记录（历史线 Text-01 → M1 → M2 后补），也是第三种「稀疏注意力」：GQA 主干 + 块级选读（MSA），与 GLM-5.3 的 DSA 同属
   「全存、选读」一类，但选的是 128-token 块而不是单 token。
   层数、宽度、注意力几何、indexer 层集合、专家分布与 FP32 分布对照完整权重清单核过；
   top_k、routed_scaling_factor、topk 块数、swiglu 参数这类运行期标量只有 config 一个来源。

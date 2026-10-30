@@ -1,0 +1,378 @@
+# 结构字段与 minimax-text-01 逐项相同，本文件只写**与前代不同**的部分与各自的来源。
+# 相同这件事本身是核过的，不是假设：config 除 model_type / architectures / auto_map
+# 三个元字段外逐字段相同，facts/minimax-m1-80k/shapes.json 的 8243 条张量与
+# facts/minimax-text-01/shapes.json **逐条同名同形**，dtype 只差一条。
+id: minimax-m1-80k
+family: minimax
+kind: llm
+display_name: MiniMax-M1-80k
+aliases: [MiniMax-M1]
+released: '2025-06-13'
+license: apache-2.0
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/MiniMaxAI/MiniMax-M1-80k
+    locator: config.json / README.md @ 8d1494b1a260
+    accessed: '2026-10-30'
+    note: >-
+      BF16 发布，414 分片。权重清单逐分片读头取全，8243 个张量，无读失败分片。
+      模型卡原文：456B 总参数 / 45.9B 激活、原生 1M 上下文、
+      「two versions … with 40K and 80K thinking budgets」—— 40k/80k 指的是
+      **思考预算（生成长度）**，不是上下文窗口
+  - kind: repo
+    url: https://huggingface.co/MiniMaxAI/MiniMax-M1-80k/blob/main/modeling_minimax_m1.py
+    locator: MiniMaxM1LightningAttention.inference
+    accessed: '2026-10-30'
+    note: >-
+      参考实现与 Text-01 的同名文件在注意力部分逐段相同（只改了类名前缀），
+      递归状态仍是 prefill 建成 float32 的 [b, h, d, e]
+
+hf:
+  repo: MiniMaxAI/MiniMax-M1-80k
+  sha: 8d1494b1a260e22040d5b9b2eb332eb44500b34d
+  last_modified: '2025-07-07T07:51:42.000Z'
+  pipeline_tag: text-generation
+  gated: false
+
+lineage:
+  track: main
+  predecessor: minimax-text-01
+  successor: minimax-m2
+  changed_from_predecessor:
+    - axis: precision
+      text: >-
+        输入词表 model.embed_tokens.weight [200064, 6144] 从 FP32 换成 BF16。
+        这是两版之间**唯一**的权重级差异：其余 8242 条张量同名、同形、同 dtype
+        （逐条比对 facts 下两份完整清单）
+      benefit: >-
+        权重存储 851.85 → 849.56 GiB，少 2.29 GiB（1,229,193,216 元素 × 2 B）。
+        输入词表每 token 只 gather 一行，所以这 2.29 GiB 是纯容量帐、不改带宽帐 ——
+        激活参数两个口径都不变。FP32 存词表在 Text-01 里没有说明理由，这里也没有
+    - axis: training
+      text: >-
+        同一套权重形状上换了一条后训练路线：RL 推理模型，模型卡给了 40K 与 80K
+        两个**思考预算**档（MiniMax-M1-40k / MiniMax-M1-80k 两个仓）。
+        两个仓的 config 逐字节相同、HF safetensors tally 逐位相同，
+        40k/80k 不体现在任何结构或规格字段上
+      benefit: >-
+        对 infra 的含义是反的：能力跃迁很大，算子侧工作量为零 —— 张量名集合与
+        Text-01 逐条相同，已经支持 Text-01 的平台支持 M1 不需要任何算子工作。
+        代价转移到运行期：长思考把 decode 步数拉到 4 万–8 万，
+        缓存账的两个分量在这个量级上的配比见 bottlenecks
+
+params:
+  total: 456089655296.0
+  breakdown:
+    expert: 434865438720.0
+    attention: 18748538880.0
+    embed: 1229193216.0
+    lm_head: 1229193216.0
+    router: 15728640.0
+    norm: 1562624.0
+  counting_note: >-
+    按完整权重清单（414 分片 8243 条目）逐项统计，与 Text-01 的 breakdown 逐项相同
+    （同名同形）。无量化、无打包、无 scale 容器，numel 即参数数。
+    total 是实测值不是声明值，Gate B 的「参数总量」一项因此是实测比实测；
+    外部那一路是 HF 的 safetensors tally，与实测 456,089,655,296 逐位相同。
+    厂商声明「456 billion」，差 0.02%。清单层号 0–79 连续，无 MTP 块，没有 excludes
+
+context:
+  max: 10240000
+  train_native: 1000000
+
+arch:
+  layers: 80
+  hidden: 6144
+  vocab: 200064
+  norm: RMSNorm
+  norm_eps: 1.0e-05
+  activation: SwiGLU（hidden_act silu）；lightning 层的 qkv 投影后同样过一次 silu
+  position: >-
+    RoPE theta 1e7，rotary_dim 64（partial rotary 0.5），只作用在 10 个 softmax 层；
+    70 个 lightning 层不带位置编码，位置信息来自逐头衰减斜率（运行期常量，非权重）
+
+  attention:
+    type: hybrid
+    num_heads: 64
+    num_kv_heads: 8
+    head_dim: 128
+    partial_rotary_factor: 0.5
+    head_dim_note: >-
+      与 Text-01 逐张量相同：softmax 层 q_proj [8192, 6144]、k/v_proj [1024, 6144]、
+      o_proj [6144, 8192]，缓存条目 K/V 各 1024 维；lightning 层 qkv_proj [24576, 6144]
+      = 3 × 64 × 128（q/k/v 都是 64 头，无 GQA 收缩）、out_proj [6144, 8192]、
+      output_gate [8192, 6144]、norm [8192]。num_kv_heads=8 只对 softmax 层成立
+    layer_pattern: >-
+      attn_type_list 与 Text-01 逐位相同：L7, L15, …, L79 共 10 层 softmax，
+      其余 70 层 lightning（每 7 个 lightning 接 1 个 softmax）。
+      清单零例外证实：70 个 lightning 层都有 qkv_proj 且都无 q_proj，10 个 softmax 层反之
+    output_gate:
+      enabled: true
+      type: 只在 70 个 lightning 层上，output_gate [8192, 6144]，sigmoid 逐通道门
+    hybrid:
+      layer_types_count:
+        linear: 70
+        full: 10
+      interval: 8
+      note: 10 个 softmax 层累积随上下文增长的 KV，70 个 lightning 层携带每序列固定状态。无 MTP 块
+    linear_state:
+      mechanism: lightning attention（TransNormer 式衰减线性注意力，S ← exp(−slope)·S + kᵀv），无短卷积、无 delta rule
+      num_heads: 64
+      num_value_heads: 64
+      key_head_dim: 128
+      value_head_dim: 128
+      state_dtype: FP32
+      state_layout_note: >-
+        每层 [64, 128, 128] = 1,048,576 元素，三个因子都由 qkv_proj 输出维 24576
+        = 3 × 64 × 128 钉死。FP32 来自厂商参考实现（prefill 把状态建成 float32），
+        不是部署 kernel 或实测显存，见 open_questions
+
+  ffn:
+    type: moe
+    layer_pattern: 80/80 层都是 MoE，无稠密层、无共享专家（shared_intermediate_size 0，清单零命中）
+
+  moe:
+    routed_experts: 32
+    shared_experts: 0
+    top_k: 2
+    intermediate: 9216
+    routing: softmax 打分后 topk；gate.weight [32, 6144] 落盘 FP32（80 份）
+    balance: 辅助损失（router_aux_loss_coef 0.001），无 e_score 式偏置
+    storage_note: >-
+      逐专家独立张量，`.experts.` 张量 7680 条 = 80 层 × 32 × 3，每层下标集合恰为
+      {0..31}，零例外（全量穷举）。derive.py 的专家数对账报 skip（它找
+      n_routed_experts / num_experts，MiniMax 写的是 num_local_experts），
+      Gate B 的「0 处不一致」不含这一项
+
+  residual:
+    type: postnorm + 固定系数残差
+    note: >-
+      与 Text-01 相同：postnorm true，hidden = residual × 3.5565588200778455 + branch × 1.0，
+      六个 layernorm_*_{alpha,beta} 键取值逐位相同。系数是 config 标量，清单里无对应张量
+
+precision:
+  weights_release: [BF16, FP32]
+  quantization:
+    per_subsystem:
+      expert: BF16
+      attention: BF16
+      embed: BF16
+      lm_head: BF16
+      router: FP32
+      norm: BF16
+    subsystem_method: >-
+      不是抽样：完整清单 8243 条逐项统计。FP32 只剩一类 —— 80 个
+      block_sparse_moe.gate.weight [32, 6144]，合计 15,728,640 元素，
+      与 HF tally 的 F32 一项逐位相同；其余 456,073,926,656 全是 BF16。
+      与 Text-01 的差别只在输入词表（那边 FP32，这边 BF16）
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/MiniMaxAI/MiniMax-M1-80k
+    visibility: public
+  - engine: vLLM
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    caveat: 仓内 docs/vllm_deployment_guide.md 给了部署步骤；本仓未实测
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/MiniMaxAI/MiniMax-M1-80k
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      缓存账与 Text-01 逐项相同（结构一个字段都没动），这里只记它在**长思考**
+      这个新负载下的含义：80K 思考预算意味着 decode 要走到 8 万步，
+      而两个分量随步数的增长方式不同 —— 递归状态恒定、softmax KV 线性增长
+    quantified: >-
+      分量与 Text-01 同源同值：softmax 侧 10 层 × 2 × 8 × 128 = 20480 元素/token
+      （BF16 兜底 40960 B/token），lightning 侧 70 层 × 64 × 128 × 128 =
+      73,400,320 元素/序列（参考实现的 FP32 下 280.0 MiB/序列）。
+      两者相等的序列长度是 293,601,280 / 40960 = 7168 token。
+      所以 80K 档的思考过程里，**只有最初约 7K 步**容量由递归状态主导，
+      其后由 softmax KV 主导；跑满 80K 档（下面一律按 80 × 1024 = 81,920 token 计）时
+      单序列 KV 是 40960 × 81920 = 3,355,443,200 B = 3.125 GiB，
+      状态仍是 280.0 MiB。bytes_basis 是 dtype_fallback，跨族系比请用元素口径
+    visibility: public
+  - dimension: kv-bandwidth
+    finding: >-
+      长思考把 decode 的注意力读量推成二次增长，这一侧线性注意力帮不上忙 ——
+      省掉的 70 层本来就不随上下文读，剩下的 10 个 softmax 层照样每步全读
+    quantified: >-
+      一个 decode step：递归状态整读整写 70 × 1,048,576 × 4 B × 2 = 560.0 MiB（恒定），
+      softmax KV 只读不写 = 40960 · s B（s 为已有 token 数），
+      两者在 s = 587,202,560 / 40960 = 14336 持平。跑满 81,920 token 时，
+      末步的 KV 读量 40960 × 81920 = 3,355,443,200 B，是状态读写 587,202,560 B 的 5.71 倍。
+      按参考实现的算法推导、非实测；状态若按 BF16 存，两条线的交点移到 s = 7168
+    visibility: public
+
+infra_signals:
+  - text: >-
+      能力跃迁与 infra 工作量不是一回事，这是本仓第二次遇到（第一次是 DeepSeek R1
+      对 V3）：M1 相对 Text-01 的张量名集合逐条相同、形状逐条相同、dtype 只差一条，
+      已经支持 Text-01 的平台支持 M1 不需要任何算子工作。
+      跟踪一个新版本先比张量名集合，相同就不必重走算子评估
+    evidence: judgement
+    horizon: settled
+    axis: decoding
+  - text: >-
+      「线性注意力让 test-time compute 变便宜」要分两头看：长思考省下的是
+      70 层那一份不随上下文增长的读，而留下的 10 个 softmax 层的读量仍随步数线性涨，
+      累计是二次。按本代的分量，带宽交点在约 1.4 万 token（两侧精度按本记录取值，
+      状态 FP32 / KV BF16）—— 80K 档的大部分步数落在 KV 主导区
+    evidence: judgement
+    horizon: settled
+    axis: attention
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  aliases: judgement
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  params.counting_note: derived
+  context: official
+  context.train_native: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.attention.output_gate: derived
+  arch.attention.hybrid: derived
+  arch.attention.linear_state.mechanism: judgement
+  arch.attention.linear_state.num_heads: derived
+  arch.attention.linear_state.num_value_heads: derived
+  arch.attention.linear_state.key_head_dim: derived
+  arch.attention.linear_state.value_head_dim: derived
+  arch.attention.linear_state.state_dtype: judgement
+  arch.attention.linear_state.state_layout_note: judgement
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.routed_experts: derived
+  arch.moe.shared_experts: derived
+  arch.moe.routing: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.residual: derived
+  precision: official
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  MiniMax 的第一个推理（long-CoT）模型，结构原样沿用 Text-01。
+  本记录之所以单独立，不是因为结构变了，而是因为**精度变了**：仓内的判据是
+  「config 逐字段相同 + 张量名集合相同 + 逐子系统精度一致」三条齐备才折叠，
+  而这里第三条不成立（输入词表 FP32 → BF16），license 也从 MiniMax 自有许可
+  换成 apache-2.0。另有 MiniMax-M1-40k：config 与本仓逐字节相同、
+  HF safetensors tally 逐位相同，只是思考预算档不同，不单独立记录。
+  released 取 HF 仓的 createdAt 2025-06-13（技术报告 arXiv 2506.13585 同期）
+
+open_questions:
+  - >-
+    递归状态记 FP32，依据是厂商随仓参考实现（prefill 把状态建成 float32）。
+    部署侧（vLLM / LASP）若按 BF16 存，每序列 280.0 MiB 减半为 140.0 MiB，
+    与 KV 的两个交点（容量 7168、带宽 14336）都减半。未读部署 kernel、未实测，本条开着
+  - >-
+    softmax 层的 KV 落盘精度无一手声明，按 config 的 BF16 兜底（dtype_fallback），
+    40960 B/token 是上界。跨代比结构请用元素口径 20480 元素/token
+  - >-
+    厂商「45.9B activated」与本仓两套口径都不等：带宽口径 47,174,113,280、
+    可比官方口径 48,403,306,496。扣掉 lm_head 后是 45,944,920,064（45.94B），
+    是三者里最接近 45.9B 的 —— 与 Text-01 同一个口径差，厂商没有说明，记成推测
+  - >-
+    40k 与 80k 两个仓：config 逐字节相同（md5 相同）、张量名集合逐条相同（各 8243 条）、
+    HF safetensors tally 逐位相同。**没有取过 40k 的形状与 dtype**，
+    所以不说「权重完全相同」；差异在后训练与推荐生成长度。
+    本记录取 80k 作代表（模型卡的主评测用的是 80K 档）；40k 没有单独立记录，
+    也没有任何规格字段能把两者区分开
+  - 训练精度无一手声明，precision.training 不填
+
+reviewed:
+  date: '2026-10-30'
+  scope: [official, derived, judgement]
+  reviewer: 一个独立核查代理 + 本会话复算
+  method: >-
+    与 minimax-text-01 同一轮。代理穷举了 facts/minimax-m1-80k/shapes.json 全部
+    8243 条（非抽样）并与 facts/minimax-text-01 逐条比对名字、形状与 dtype。
+    本会话独立复核的是：两份清单的名集合相等、形状零差异、dtype 差异恰好一条
+    （model.embed_tokens.weight F32 → BF16），以及参考实现 ——
+    把 MiniMaxText01→MiniMaxM1、minimax_text_01→minimax_m1 两处标识符替换后，
+    modeling_minimax_m1.py 与 modeling_minimax_text_01.py **逐字节相同**
+    （unified diff 0 行），所以 Text-01 那一侧对递归状态形状与 FP32 的源码复核
+    对本记录同样成立，不是「同名文件大概一样」的推定。
+    另按代理提示补取了 facts/minimax-m1-40k 的名单：与 80k 的 8243 条逐条相同、
+    config 逐字节相同、HF tally 逐位相同（形状与 dtype 仍未取）。
+    Gate B：derive.py 0 处不一致，外部 safetensors tally 逐位相同；
+    专家数那一项是 skip（键名不匹配），不在覆盖内
+
+review:
+  - id: R1
+    field: open_questions
+    severity: unsupported
+    claim: 「40k 与 80k 两个仓在**权重**和 config 上完全相同」
+    finding: >-
+      同一份记录里另外两处写的是「config 逐字节相同、HF safetensors tally 逐位相同」，
+      那两处成立；而「权重完全相同」要的是名字与形状，当时 facts 下**没有** 40k 的任何
+      清单。逐 dtype 的元素总数相同不足以推出逐张量相同
+    resolution: corrected
+    changed_to: >-
+      补取 facts/minimax-m1-40k 的 --names-only 名单（8243 条，与 80k 逐条相同），
+      把这一条改写成「config 逐字节 + 名集合逐条 + tally 逐位，三样相同；
+      形状与 dtype 没取，所以不说权重完全相同」
+  - id: R2
+    field: bottlenecks
+    severity: wrong
+    claim: 交点 7168 / 14336 与「softmax KV 只读不写」
+    finding: 与 minimax-text-01 的 R1、R2 同源：交点是跨 basis 的比值（状态 FP32 取自参考实现、KV BF16 是兜底），且每步有 40960 B 的 KV 追加写
+    resolution: corrected
+    changed_to: 两条按 text-01 的同样写法改：合计口径标 mixed、交点给三种精度组合、写量写明并注明可忽略
+  - id: R3
+    field: hf
+    severity: wrong
+    claim: 起草时 sha 写成 8d1494b1a2607d1e5c2db71d3fdc9a2e4b4f1b64、last_modified 写成 2025-07-07T11:50:11.000Z
+    finding: >-
+      两个都是起草时按记忆补全的，不是读出来的。facts/minimax-m1-80k/repoinfo.json
+      的 sha 是 8d1494b1a260e22040d5b9b2eb332eb44500b34d、lastModified 是
+      2025-07-07T07:51:42.000Z。sha 错了整条记录就不可复现
+    resolution: corrected
+    changed_to: 两个字段按 repoinfo.json 改正；其余记录的 hf 块也逐字段对过一遍
+  - id: R4
+    field: lineage.changed_from_predecessor
+    severity: imprecise
+    claim: 「输入词表 F32 → BF16 是两版之间唯一的权重级差异」
+    finding: >-
+      独立穷举成立：8243 个名字集合相等、8243 个形状逐条相等、dtype 只有
+      model.embed_tokens.weight [200064, 6144] 一条不同。
+      省下的 1,229,193,216 × 2 B = 2,458,386,432 B = 2.29 GiB 与 derive 的
+      权重存储差（851.85 → 849.56 GiB）一致。数值不改
+    resolution: confirmed
+  - id: R5
+    field: bottlenecks
+    severity: imprecise
+    claim: 「跑满 80K 思考预算」没有说清 80K 是多少 token
+    finding: 起草时自查：80K 可能是 80,000 也可能是 81,920，而后面直接报了 40960 × 81920 这个乘积
+    resolution: corrected
+    changed_to: 写明「下面一律按 80 × 1024 = 81,920 token 计」，并把乘积写成完整字节数

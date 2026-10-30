@@ -1,13 +1,13 @@
 {
  "id": "minimax-m3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T02:36:05+00:00",
+ "generated_at": "2026-10-30T05:40:32+00:00",
  "inputs": {
   "facts_dir": "facts/minimax-m3",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/minimax/minimax-m3.yaml",
-  "ep_size": 4
+  "ep_size": 1
  },
  "from_shapes": {
   "available": true,
@@ -134,7 +134,7 @@
  },
  "ep_communication": {
   "status": "ok",
-  "ep_size": 4,
+  "ep_size": 1,
   "moe_layers": 57,
   "bytes_per_token": 5603328,
   "bytes_per_layer": 98304,
