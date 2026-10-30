@@ -1,0 +1,604 @@
+id: cogvideox-1.5-5b
+family: cogvideo
+kind: video-gen
+display_name: CogVideoX1.5-5B
+released: '2024-11-08'
+license: other
+visibility: public
+
+# 视频线第九份记录（录入次序），但**发布最早**（2024-11）。
+# 口径沿用 wan2.2-ti2v-5b：params.total 只算 DiT；不建 arch 块；没有 KV cache 这笔账。
+#
+# 下面这三条都是**对着已录的九份逐字段核过的**，不是印象：
+#   1. **时间维 patchify**（patch_size_t 2）—— 九份里唯一一个，其余八份 patch 的 t 都是 1
+#   2. 调度器是 **DDIM + v_prediction** —— 九份里唯一一个，其余八份全是 flow matching
+#   3. 文本与视频拼进同一条注意力序列 —— **不是唯一**，minimax-h3 也是这样
+#      （其余七份走 cross-attn 或双流）
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/zai-org/CogVideoX1.5-5B
+    locator: README.md §Model Introduction 的规格表与 §Quick Start 的 diffusers 示例 @ fdc5267c90b5
+    accessed: '2026-10-31'
+    note: >-
+      官方口径来源。规格表给出：发布日期 **2024-11-08**、
+      分辨率 **1360×768**、帧数 **16N+1（N ≤ 10）**、帧率 **16 fps**、
+      推理精度「BF16（推荐）、FP16、FP32、FP8、INT8，不支持 INT4」。
+      §Quick Start 的示例给了 `num_inference_steps=50` / `num_frames=81` /
+      `guidance_scale=6` —— **采样参数来自模型卡自己的代码块**（第二档来源），
+      不是厂商参考实现。九份里 ltx-2 的卡也有同类代码块；
+      wan、stepvideo 那几份的步数与 CFG 则只能取自参考实现。
+      注意 HF 的 `createdAt` 是 2024-11-02，比卡上的发布日期早 6 天，本记录用卡上的
+  - kind: paper
+    url: https://arxiv.org/abs/2408.06072
+    locator: 卡上给的 arxiv 链接
+    accessed: '2026-10-31'
+    note: >-
+      **本轮没有读。** 那是 CogVideoX 初代（2024-08）的报告，1.5 代是否另有报告未确认。
+      按本仓来源优先级技术报告在模型卡之上，所以 3D 全注意力、expert-adaLN、
+      3D VAE 这三处设计的原始论证要以报告为准，届时需重核
+  - kind: repo
+    url: https://github.com/huggingface/diffusers/blob/main/src/diffusers/pipelines/cogvideo/pipeline_cogvideox.py
+    locator: CogVideoXPipeline.__call__ 第 680–687 行与第 786 行 @ main
+    accessed: '2026-10-31'
+    note: >-
+      **latent 口径的一手依据，而且它解释了 `patch_size_t` 的一个坑。**
+      `latent_frames = (num_frames - 1) // vae_scale_factor_temporal + 1`；
+      紧接着：
+      `if patch_size_t is not None and latent_frames % patch_size_t != 0:`
+      `    additional_frames = patch_size_t - latent_frames % patch_size_t`
+      `    num_frames += additional_frames * vae_scale_factor_temporal`，
+      去噪跑完之后 `latents = latents[:, additional_frames:]` 把补的那段丢掉。
+
+      默认档 81 帧：latent 21（奇数）→ 补 1 → **DiT 实际在 22 个 latent 帧上工作**
+      → 时间维 patch 2 → **11 个时间位置**。见 R2。
+
+      **来源档位**：CogVideoX 以 diffusers 格式发布（仓里就是 `model_index.json`
+      加组件目录），但按本仓的优先级 diffusers 仍是第四档「引擎实现」。
+      这里引它是因为补齐逻辑**只在这条链上写着** —— 模型卡没有提。
+      官方 SAT 实现（THUDM/CogVideo）本轮没对照，见 open_questions
+  - kind: modelcard
+    url: https://huggingface.co/zai-org/CogVideoX1.5-5B
+    locator: transformer 3 分片 + text_encoder 4 分片 + vae 单文件的头 @ fdc5267c90b5
+    accessed: '2026-10-31'
+    note: >-
+      权重清单逐文件读头取全。transformer 1024 张量 / 5,570,676,352 参数（全 BF16），
+      **与 HF 自己的 safetensors tally 逐位相同**。
+      text_encoder（T5-XXL）219 张量 / 4,762,310,656 参数，**全 F32**。
+      vae 436 张量 / 215,583,907 参数，全 F32。
+      三者都在同一个仓、都是 safetensors。
+      九份里能把 DiT、文本编码器、VAE **三块都实测**的有三份：这一份、
+      minimax-h3 与 ltx-2；wan 三份的 VAE 与 T5 是 `.pth`、
+      hunyuanvideo-1.5 的三个编码器要去别处取、stepvideo 的 HunyuanCLIP 是 pickle
+
+hf:
+  repo: zai-org/CogVideoX1.5-5B
+  sha: fdc5267c90b5c06492985b966e43aae984e189e0
+  last_modified: '2025-03-28T06:00:10.000Z'
+  pipeline_tag: text-to-video
+  gated: false
+
+lineage:
+  track: main
+  # cogvideo family 的最新也是最后一份：zai-org 的视频线自 2024-11 之后
+  # 没有新的 CogVideoX（2026-06 的 SCAIL-2 是姿态驱动角色动画，
+  # 2025-12 的 RealVideo 是 Wan2.2-S2V 微调），所以这条线停在这里。
+  # 前代 CogVideoX-5b / -2b 按视频线 policy 不单开记录：
+  # 相对它们，这一份的差分是「加时间维 patchify（patch_size_t 2）+ 分辨率档变大」，
+  # 主干与 VAE 的形态未变。那条差分等 changed_from_predecessor 有对象时再补。
+  #
+  # 与同厂语言模型 family `glm` 没有任何共用组件 —— 文本编码器是 T5-XXL。
+
+params:
+  total: 5570676352
+  active_decode: 5570676352
+  active_prefill: 5570676352
+  breakdown:
+    ffn: 3171538944
+    self_attention: 1585973760
+    adaln_modulation: 799259648
+    text_proj: 12585984
+    patch_embed: 789632
+    norm: 528384
+  counting_note: >-
+    **只含 DiT 主干**，按完整权重清单（3 分片 1024 张量）逐项统计。
+    全 BF16，无 scale 容器、无打包容器：5,570,676,352 × 2 B = 11,141,352,704 B。
+    **与 HF 自己的 safetensors tally 逐位相同**，那是不依赖本仓代码的外部锚。
+
+    **两块不在这个数里，但都在同一个仓、都是 safetensors**：
+    文本编码器 T5-XXL 4,762,310,656 参数 / 19,049,242,624 B（**全 F32**）、
+    VAE 215,583,907 参数 / 862,335,628 B（全 F32）。
+    三者相加 31,052,930,956 B（28.92 GiB）——
+    **文本编码器按字节是 DiT 的 1.71 倍**，因为它是 F32 而 DiT 是 BF16；
+    按参数则是 0.85 倍。这两个比值方向相反，是「不同口径之间不算倍数」的一个小例子。
+
+    分桶口径：`self_attention` 是每层一套 q/k/v/o（各 [3072,3072] 带 bias）
+    加两对 [64] 的 QK-norm；**没有 attn2** —— 文本与视频在同一条序列里，
+    只有一套自注意力（见 backbone.note）；
+    `ffn` 是 [12288,3072] + [3072,12288]，12288 = 4×3072，非门控；
+    `adaln_modulation` 含每层**两套** `norm1.linear` / `norm2.linear`
+    （各 [18432, 512]，18432 = 6×3072）、`time_embedding` 与 `norm_out.linear`。
+
+generation:
+  backbone:
+    stream_design: in_sequence
+    layers: 42
+    double_blocks: 0
+    single_blocks: 42
+    hidden: 3072
+    heads: 48
+    head_dim: 64
+    ffn: 12288
+    text_conditioning: in_sequence
+    patch_size: [2, 2, 2]
+    position: "3D RoPE（config 的 use_rotary_positional_embeddings 为 true）"
+    param_scaling:
+      per_sample: 799259648
+      per_video_token: 4758830720
+      per_text_token: 12585984
+      note: >-
+        三桶相加等于实测总量 5,570,676,352。
+
+        **`per_sample` 占 14.35%，而这一份是九份里发布最早的（2024-11）** ——
+        所以 AdaLN 的占比**不是一条随时间单调上升的线**，见 bottlenecks 第二条。
+        它之所以比 hunyuanvideo-1.5（32.71%）和 h3（39.41%）低得多，
+        不是因为早，而是因为**条件向量只有 512 维**：
+        `norm1.linear` 是 [18432, **512**]，入口是 `time_embedding` 的出口宽度，
+        不是 hidden 3072。h3 那边入口 2688、hy15 那边 2048（= hidden），所以贵得多。
+
+        **入口 512 ≠ hidden 3072，所以光凭形状就能断定它吃的是条件向量、
+        每次前向只过一遍** —— 和 h3 的判法相同，不用读实现。
+
+        `per_text_token` 只有 `patch_embed.text_proj`（[3072, 4096]）：
+        文本进序列之后与视频 token 走同一套注意力和 FFN，
+        所以除了这个投影，文本不再有专属参数。
+        **这与 stepvideo 的 cross-attn 和 hunyuanvideo-1.5 的双流都不同** ——
+        同一个字段在三种流设计下语义不同，填的时候要看 `stream_design`
+    note: >-
+      **文本与视频拼进同一条注意力序列。** 九份里还有 minimax-h3 也这样
+      （其余七份走 cross-attn 或双流），但那一份是文本+视频+音频三模态 packed，
+      这一份只有文本+视频。权重上的判据很干净：每层**只有 `attn1`**，
+      没有 `attn2`，而 `patch_embed` 里把 `text_proj` 的输出与 patch 后的视频
+      token `torch.cat` 起来。`max_text_seq_length` 226。
+      后果是注意力序列是 n+226 而不是 n，且文本 token 也吃 O(n²) 那一项。
+
+      **`patch_size` 是 (2,2,2) —— 九份里唯一在时间维也 patchify 的**
+      （其余八份 patch 的 t 都是 1，逐份核过）。
+      判据：`patch_embed.proj.weight` 是 [3072, **128**]，
+      而 128 = 16（latent 通道）× 2 × 2 × 2，三个维度各 2。
+      所以有效压缩是空间 8×2 = 16、时间 4×2 = 8。
+      时间维 patchify 带来一个别家没有的麻烦：latent 帧数必须是偶数，
+      而因果 VAE 给出的是奇数，于是要补一帧再丢掉（见 R2）
+
+  vae:
+    spatial_compression: 8
+    temporal_compression: 4
+    latent_channels: 16
+    causal: true
+    decoder_arch: conv3d
+    params: 215583907
+    name: AutoencoderKLCogVideoX（3D 因果 VAE）
+    note: >-
+      215,583,907 参数 / 862,335,628 B，436 张量全 F32（逐条实测）。
+      **在 VAE 参数量已知的六份里最小**（215.6M，其次 stepvideo 498.8M、
+      ltx-2.3 726.1M、ltx-2 1222.5M、hunyuanvideo-1.5 1260.6M、h3 2603.9M；
+      wan 三份的 VAE 是 `.pth` 量不到）。
+      VAE 自身的压缩率 8×/4× **与 wan2.1-t2v-14b、wan2.2-t2v-a14b 并列最低**，
+      不是独自最低。16 latent 通道。
+      `use_quant_conv` 与 `use_post_quant_conv` 都是 false。
+
+      **压缩率低的代价由 DiT 的时间维 patchify 补回来一半**：
+      VAE 只压 8×8×4，但 DiT 的 patch 是 (2,2,2)，
+      所以有效压缩 16×16×8 —— 和 stepvideo 的 16×16×8 **正好相同**，
+      只是一个全压在 VAE 里、一个 VAE 与 DiT 各压一半。
+      两种分法的差别在 VAE 的大小（0.22B vs 0.50B）与 latent 通道数（16 vs 64）
+
+  text_encoders:
+    - role: primary
+      name: T5-XXL（encoder-only）
+      params: 4762310656
+      hidden: 4096
+      shipped_with_weights: true
+      gated: false
+      release_dtype: FP32
+      substitutable: false
+      note: >-
+        **随仓发布且是 safetensors，所以参数量是实测不是推算** ——
+        4,762,310,656，219 张量**全 F32**。
+        九份里文本编码器参数能实测的有这一份、minimax-h3 与 ltx-2；
+        wan 的 umT5 是 .pth 只能按文件大小推、
+        hunyuanvideo-1.5 的三个编码器全要去别处取（其中一个在 gated 仓）、
+        stepvideo 的 HunyuanCLIP 是 pickle、ltx-2.3 的没单独量。
+        hidden 4096 与 DiT config 的 `text_embed_dim` 以及
+        `patch_embed.text_proj.weight` 的 [3072, 4096] 三处一致。
+
+        **它按字节比 DiT 还大**（19.05 GB vs 11.14 GB），因为 F32 对 BF16；
+        按参数则小（4.76B vs 5.57B）。两个方向相反的比值，别混用
+
+  sampling:
+    steps: 50
+    cfg:
+      scale: 6.0
+      distilled: false
+      embedded: false
+      forwards_per_step: 2
+    scheduler: CogVideoXDDIMScheduler（DDIM，v_prediction，zero-SNR rescale，trailing spacing）
+    note: >-
+      **调度器是 DDIM + v_prediction，不是 flow matching** ——
+      九份里唯一一个（截至 2026-10-31，逐份核过），其余八份全是 flow matching。
+      config 里 `prediction_type: v_prediction`、`rescale_betas_zero_snr: true`、
+      `timestep_spacing: trailing`、`beta_schedule: scaled_linear`。
+      这一条影响的是**步数能压到多少**：v-prediction + zero-SNR 是 2023–2024 的做法，
+      与后来各家普遍转向 flow matching 的理由（少步采样更稳）直接相关。
+
+      步数 50 与 CFG 6 取自**模型卡自己的代码块**（第二档来源），不是参考实现。
+      端到端是 50 步 × 2 次前向 = **100 次 5.57B 主干前向**
+
+  buckets:
+    - width: 1360
+      height: 768
+      frames: 81
+      latent_frames: 22
+      fps: 16
+      duration_s: 5.0625
+      default: true
+      note: >-
+        卡的规格表给分辨率 1360×768、帧率 16 fps，§Quick Start 的示例给 `num_frames=81`。
+        **`latent_frames` 声明 22 而不是 21**：因果 VAE 给的是
+        (81−1)/4+1 = **21**，但 `patch_size_t` 是 2 要求偶数，
+        pipeline 补一帧到 **22** 再在解码前丢掉。
+        DiT 实际工作在 22 个 latent 帧上，所以进 token 数的是 22（见 R2）。
+        latent 空间 768/8 × 1360/8 = 96×170，patch 2 → 48×85；
+        时间 22/2 = 11 → 视频 token **44,880**，加文本 226 → 序列 **45,106**
+
+  constraints:
+    width_divisor: 16
+    height_divisor: 16
+    frame_formula: 16n+1
+    note: >-
+      除数 16 = VAE 空间压缩 8 × DiT patch 2。卡的规格表也写
+      「Max(W, H) % 16 = 0」，两处一致。
+      **帧数 16N+1（N ≤ 10）是卡上写的**，上限 161 帧。
+      但 16 这个因子**比结构要求的大一倍**：VAE 时间 4 × patch_t 2 = 8，
+      按结构只需 8N+1。多出来的那个 2 卡上没有解释 —— 见 open_questions。
+      **视频线至此五种帧数约束**：这一份 16n+1、wan 与 hunyuanvideo-1.5 的 4n+1、
+      minimax-h3 的 17n+5、stepvideo 的 17n
+
+precision:
+  weights_release: [BF16, FP32]
+  weights_release_scope:
+    BF16:
+      manifest_taken: true
+      in_precision_table: true
+      repo: zai-org/CogVideoX1.5-5B
+      note: DiT 的 1024 张量全部 BF16，无一例外
+    FP32:
+      manifest_taken: true
+      in_precision_table: false
+      repo: zai-org/CogVideoX1.5-5B
+      note: >-
+        文本编码器 219 张量与 VAE 436 张量**全部** F32，逐条读头实测过。
+        **不在本仓的 `shapes.json` 里**：取数用 `--include 'transformer/*'` 收窄了，
+        所以 `in_precision_table: false` —— 精度表里只有 DiT 的 BF16。
+        这与 wan（主干 F32）、stepvideo（主干 BF16 / VAE F32）
+        构成三种不同的发布精度组合
+  inference_default: BF16
+
+bottlenecks:
+  - dimension: compute
+    finding: >-
+      文本 token 进了同一条注意力序列，所以它们也吃 O(n²) 那一项 ——
+      与 cross-attn 的设计（wan、stepvideo）相比，这是把 226 个文本 token
+      的代价从 O(n·m) 抬到了 O((n+m)²) 里
+    quantified: >-
+      默认档视频 token 44,880、文本 226，序列 45,106。
+      文本占序列的 0.50%，但因为是平方项，它让注意力多出
+      (45,106² − 44,880²) / 44,880² = **1.01%** 的计算。
+      量很小，**但它说明「文本便宜」这个直觉在 in-sequence 设计下不成立** ——
+      文本长度一旦上去（这一份上限只有 226），代价是平方增长的
+    fix: >-
+      这一份的 226 上限把问题压住了。真正要留意的是同类设计里文本更长的模型 ——
+      minimax-h3 也是 in-sequence，而它的文本来自 Context-IR 的长结构化 prompt
+    visibility: public
+  - dimension: compute
+    finding: >-
+      **AdaLN 的占比与年份无关 —— 驱动它的是「是否逐层」与条件向量的宽度。**
+      这一份 2024-11 发布却占 14.35%，而后来的四份都在 1.6% 以下；
+      更能说明问题的是 ltx-2（2026-01）只有 1.60%，
+      却比早它两个月的 hunyuanvideo-1.5（32.71%）低 20 倍
+    quantified: >-
+      九份按发布时间排，AdaLN 占比（七份可算，两份缺数）：
+      cogvideox-1.5-5b（2024-11）**14.35%**、stepvideo-t2v-30b（2025-02）0.91%、
+      wan2.1-t2v-14b（2025-02）1.30%、wan2.2-ti2v-5b（2025-07）1.35%、
+      hunyuanvideo-1.5（2025-11）**32.71%**、ltx-2（2026-01）**1.60%**、
+      minimax-h3（2026-07）**39.41%**；
+      wan2.2-t2v-a14b 未分桶、ltx-2.3 的 params.total 为空（单文件打包），两份算不出。
+
+      **两个方向都不单调**：最早的这一份（14.35%）高于其后两年的四份；
+      而 **ltx-2（2026-01）只有 1.60%，比早它两个月的 hunyuanvideo-1.5 低 20 倍**。
+      真正的驱动是「是否逐层 × 条件向量入口宽度」：
+      stepvideo 与 ltx-2 用全局调制；这一份逐层但入口只有 **512**；
+      hunyuanvideo-1.5 逐层、入口 2048（= hidden）；h3 逐层、入口 2688
+    fix: >-
+      看到「参数量」时要问的不是「哪一代」，而是
+      「调制是不是逐层的、条件向量多宽」。两个问题的答案就决定了
+      参数量里有多大一块不参与 token 计算。
+      **本条修正了 stepvideo 记录里「按发布时间排是一条干净的代际线」那句**——
+      那句话只在它当时数到的那几份里成立；把九份摆齐之后，两个方向都破了
+    visibility: public
+  - dimension: weight-bandwidth
+    finding: >-
+      文本编码器以 **F32** 发布，按字节比 BF16 的 DiT 还大 —— 而它每次生成只跑一遍。
+      记 weight-bandwidth 而不是容量，是因为真正的代价在载入与搬运：
+      28.92 GiB 本身放得下 80 GB 的卡
+    quantified: >-
+      T5-XXL 19,049,242,624 B vs DiT 11,141,352,704 B，**1.71 倍**；
+      按参数则是 4,762,310,656 vs 5,570,676,352，**0.85 倍**。
+      两个方向相反的比值，三块相加 31,052,930,956 B（28.92 GiB）
+    fix: >-
+      载入时转 BF16 可以把文本编码器那一块减半（9.5 GB），
+      代价是卡上没有说这样做是否影响质量（规格表把 BF16 列为推荐精度，
+      但那说的是 DiT 的推理精度，没有单独讲文本编码器）
+    visibility: public
+
+infra_signals:
+  - text: >-
+      **「有效压缩率」可以由 VAE 与 DiT patch 按不同比例分担，而分法会改变别的账。**
+      这一份与 stepvideo 的有效压缩**完全相同**（空间 16×、时间 8× —— 九份里
+      只有这两份是 16×8，另有 ltx-2 / ltx-2.3 是 32×8，其余五份时间维都只有 4×），
+      但这一份是 VAE 8×4 + patch (2,2,2)、stepvideo 是 VAE 16×8 + patch 1。
+      后果：VAE 大小差 2.3 倍（0.22B vs 0.50B）、latent 通道差 4 倍（16 vs 64）、
+      而且时间维 patchify 逼出了「latent 帧数必须是偶数」这个约束。
+      **token 数相同不等于系统相同**
+    evidence: derived
+  - text: >-
+      **调制分支的开销由设计决定，与年代无关。** 九份记录里七份可算 AdaLN 占比，
+      按发布时间排是 14.35% → 0.91% → 1.30% → 1.35% → 32.71% → **1.60%** → 39.41%，
+      两个方向都不单调 —— 尤其 ltx-2（2026-01，1.60%）比早它两个月的
+      hunyuanvideo-1.5（32.71%）低 20 倍。
+      决定它的是「是否逐层」与「条件向量入口多宽」：
+      这一份逐层但入口只有 512 所以便宜，hunyuanvideo-1.5 与 h3 的入口
+      等于或接近 hidden 所以贵，stepvideo 与 ltx-2 干脆用全局调制
+    evidence: derived
+  - text: >-
+      这一份是九份里唯一还用 DDIM + v-prediction 的，其余八份全是 flow matching。
+      它也是唯一一个步数压不下去的 —— 没有官方蒸馏档，而同期之后的几家
+      都发了 CFG 蒸馏或步数蒸馏。**采样范式的迁移与「步数能压到几步」
+      是同一件事的两面**，排产能时要把它和架构分开看
+    evidence: judgement
+
+evidence:
+  id: official
+  family: judgement
+  kind: judgement
+  display_name: official
+  released: official
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  generation: official
+  generation.backbone.param_scaling: derived
+  generation.backbone.note: derived
+  generation.vae.params: derived
+  generation.vae.note: derived
+  generation.text_encoders: derived
+  generation.sampling: official
+  generation.sampling.note: derived
+  # buckets 是混合口径：宽高、帧数、fps 来自模型卡（official），
+  # 而 latent_frames 22 是从 pipeline 的补齐逻辑推出来的（见 R2）。
+  # 证据路径不支持数组下标，所以整块按较低的那一档标 derived
+  generation.buckets: derived
+  generation.constraints: derived
+  precision: derived
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: derived
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-31'
+  method: >-
+    Gate B 三路：组件 config（4 份）、权重清单（transformer 3 分片 + text_encoder
+    4 分片 + vae 单文件，逐文件读头）、以及 diffusers pipeline 的补齐逻辑。
+    结构字段三路一致：42 层 / 48 头 / head_dim 64（48×64 = 3072 = hidden）
+    在 config 与清单两处相同；`patch_embed.proj.weight [3072, 128]` 里
+    128 = 16×2×2×2 同时坐实 latent 16 通道与三维各 2 的 patch，与 config 的
+    `in_channels: 16` / `patch_size: 2` / `patch_size_t: 2` 对上；
+    `ff [12288,3072]` = 4×hidden；`norm1.linear [18432, 512]` 里
+    18432 = 6×3072 而入口 512 = `time_embedding` 出口，**不等于 hidden**，
+    据此断定调制是逐样本的（与 h3 同一个判法，不依赖读实现）。
+    外部对账：实测 5,570,676,352 与 **HF 自己的 safetensors tally 逐位相同**。
+    专门验了一件：`patch_size_t` 为 2 而因果 VAE 给奇数 latent 帧时怎么办（R2）。
+    Gate C：判断类字段 7 处，逐条在 evidence 里标了 judgement。
+
+review:
+  - id: R1
+    field: generation.backbone.stream_design
+    severity: miscategorized
+    claim: >-
+      CogVideoX 的文本条件和别家一样走 cross-attention
+    finding: >-
+      **不是。文本与视频拼进同一条自注意力序列。**
+      权重上的判据很干净：每层**只有 `attn1`**，没有 `attn2`；
+      而 `CogVideoXPatchEmbed.forward` 里
+      `torch.cat([text_embeds, image_embeds], dim=1)`。
+      `max_text_seq_length` 226。
+
+      后果有两个：注意力序列是 n+226 而不是 n（文本也吃 O(n²)）；
+      以及 `param_scaling.per_text_token` 在这一份上只剩
+      `patch_embed.text_proj` 一项 —— 文本进序列之后与视频 token 共用
+      同一套注意力与 FFN，没有专属参数。
+      **同一个字段在三种流设计下语义不同**：这一份 in_sequence、
+      stepvideo 是 cross-attn、hunyuanvideo-1.5 是双流
+    resolution: corrected
+    changed_to: >-
+      `stream_design` 与 `text_conditioning` 都填 `in_sequence`，
+      `param_scaling.note` 里写明三种流设计下这个桶的语义差别
+  - id: R2
+    field: generation.buckets.0.latent_frames
+    severity: wrong
+    claim: 81 帧的 latent 帧数是 (81−1)/4+1 = 21，DiT 在 21 个 latent 帧上工作
+    finding: >-
+      **21 是 VAE 的输出，但 DiT 工作在 22 个上。**
+      `patch_size_t` 是 2，要求 latent 帧数是偶数，而因果 VAE 给的是奇数。
+      pipeline 的做法（`pipeline_cogvideox.py` 680–687 行）是**补**：
+      `additional_frames = patch_size_t - latent_frames % patch_size_t` = 1，
+      `num_frames += 1 × 4`，于是按 85 帧去生成、latent 22；
+      去噪跑完再 `latents = latents[:, additional_frames:]` 把补的那段丢掉，
+      解码出 81 帧。
+
+      **所以进 token 数的是 22 不是 21**，时间位置 22/2 = 11。
+      按 21 算会得 10.5（非整数，推导会报警告）或被整除成 10，
+      两种都比真值低 —— token 数差 9%。
+      而且端到端的时间压缩比因此不是 8 而是 81/11 = **7.364**
+    resolution: corrected
+    changed_to: >-
+      `buckets[0].latent_frames` 声明 **22** 并在 note 与本条写明 21 与 22 的区别；
+      `vae.temporal_compression` 仍填 4、`patch_size` 的 t 仍填 2（都是一手事实），
+      不为了凑端到端比值去改
+  - id: R3
+    field: generation.constraints.frame_formula
+    severity: unsupported
+    claim: 帧数约束 16N+1 可以从结构推出来
+    finding: >-
+      **推不出来，只能照抄卡。** 结构上的要求是：
+      因果 VAE 的 (F−1)/4+1 要能被 `patch_size_t` 2 整除 ⇒ F = 8N+1。
+      而卡上写的是 **16N+1（N ≤ 10）**，因子比结构要求的大一倍。
+      多出来的那个 2 卡上没有解释 —— 可能与 VAE 的分块、位置编码表的预生成
+      或训练时的档位有关，但都是猜
+    resolution: open
+    changed_to: >-
+      `frame_formula` 照卡填 16n+1 并在 note 写明「比结构要求的 8N+1 严一倍，
+      原因卡上没说」。**没有去填结构推出来的 8N+1** ——
+      卡是第二档来源，而这里只有卡说了话
+  - id: R4
+    field: '-'
+    severity: stale
+    claim: >-
+      stepvideo-t2v-30b 的 infra_signal：「AdaLN 的代价是一条清晰的代际线，
+      按发布时间排 2025-02 与 2025-07 在 1% 上下、2025-11 与 2026-07 在三分之一」
+    finding: >-
+      **把九份摆齐之后这条线两个方向都破了。**
+      这一份 2024-11 发布，比那两个「1% 上下」的都早，AdaLN 却占 **14.35%**；
+      而 ltx-2（2026-01）比那两个「三分之一」里早的那个还晚，却只有 **1.60%**。
+      完整序列（九份里七份可算）：14.35%（2024-11）→ 0.91%（2025-02）
+      → 1.30%（2025-02）→ 1.35%（2025-07）→ 32.71%（2025-11）
+      → **1.60%（2026-01，ltx-2）** → 39.41%（2026-07），**两个方向都不单调**。
+      ltx-2 比早它两个月的 hunyuanvideo-1.5 低 20 倍，这一条比「更早的一代偏高」更致命。
+
+      真正的驱动不是年份，是**「是否逐层」× 「条件向量入口宽度」**：
+      stepvideo 用 AdaLN-Single（全局一套）所以最便宜；
+      这一份逐层但入口只有 512；hunyuanvideo-1.5 逐层、入口 2048（= hidden）；
+      h3 逐层、入口 2688。
+
+      这正是 CLAUDE.md 「结构规律写进记录时钉住代际，零例外在下一代通常就不成立」
+      说的那回事 —— 只是这次失效的方向是**更早的一代**，不是更晚的
+    resolution: open
+    changed_to: >-
+      本记录的 bottlenecks 与 infra_signals 按「设计决定而非年代决定」写。
+      **stepvideo 那份的 infra_signal 需要同步更正** —— 本次只写本记录，
+      已报主会话（那份已在 main 上）
+  - id: R5
+    field: '-'
+    severity: wrong
+    claim: >-
+      stepvideo-t2v-30b 的 VAE note：「压缩率在已录的五份里最激进 ——
+      16×16 空间 / 8× 时间 / 64 latent 通道」
+    finding: >-
+      **这一条在写下它的那一刻就是错的，不是过期。** 它自己的表头就列了
+      ltx-2 与 ltx-2.3 已录在先，而这两份的 VAE 是 **32× 空间 / 8× 时间** ——
+      时间维持平、空间维高一倍。stepvideo 的 16×16 空间在九份里只排到并列第四。
+      它还把计数写成「已录 5 份」，而连它自己的表头都列了 5 个前序记录
+      （所以至少是第 6 份）；真实数字是第 8 份 ——
+      wan2.1-t2v-14b 与 wan2.2-t2v-a14b 没被数进去。
+
+      与 R4 不同：R4 那条是**后来被新数据推翻**（severity `stale`），
+      这一条是**当时手边就有全量数据却没去数**（severity `wrong`）。
+      后者更坏，因为它不需要发生任何事就已经是错的
+    resolution: open
+    changed_to: >-
+      本记录只在自己的字段里给出核过的九份对照（见 notes 的压缩率表）。
+      **stepvideo 那份要改的是三处**：VAE note 的「最激进」、
+      全文的「五份」计数、以及 R6 那条 BF16 的说法 —— 那份已在 main 上，已报主会话
+  - id: R6
+    field: '-'
+    severity: stale
+    claim: >-
+      stepvideo-t2v-30b 的 precision note：「已录五份里第一份主干以 BF16 发布的」
+    finding: >-
+      **写的时候成立，现在不成立。** 当时已录的五份里带 BF16 的
+      （minimax-h3 2026-07、ltx-2 2026-01、ltx-2.3 2026-03）都晚于
+      stepvideo 的 2025-02，所以那句话当时是对的。
+      这一份 2024-11 发布、`weights_release: [BF16, FP32]`、
+      `inference_default: BF16`，比它早一年多 —— 现在最早的那份是这一份
+    resolution: open
+    changed_to: >-
+      本记录不去抢「第一份」这个说法（它随下一份记录就会再变一次），
+      只记事实：主干 BF16、VAE 与文本编码器 F32。已报主会话
+
+notes: >-
+  **字节对账。** transformer 11,141,352,704 + text_encoder 19,049,242,624
+  + vae 862,335,628 = 31,052,930,956 B，而 HF 的 usedStorage 是
+  31,053,918,980 B，**差 988,024 B** —— 就是 tokenizer 的 spiece.model、
+  各 config 与 README。**这是我亲手核过 usedStorage 的四份里最干净的一个仓**
+  （hunyuanvideo-1.5 差 13.6 MB 也算干净；stepvideo 高 75%、minimax-h3 高 146%。
+  wan 与 ltx 那几份不是我录的，没核过它们的 usedStorage，所以不参与这个比较）。
+
+  **九份记录的有效压缩率与分法对照**（空间 / 时间，括号内是 VAE 与 patch 各担多少）：
+  这一份 16×（8 VAE × 2 patch）/ 8×（4 × 2）；stepvideo 16×（16 × 1）/ 8×（8 × 1）；
+  wan2.1-t2v-14b 16×（8 × 2）/ 4×（4 × 1）；wan2.2-t2v-a14b 16×（8 × 2）/ 4×（4 × 1）；
+  wan2.2-ti2v-5b 32×（16 × 2）/ 4×（4 × 1）；hunyuanvideo-1.5 16×（16 × 1）/ 4×（4 × 1）；
+  ltx-2 与 ltx-2.3 32×（32 × 1）/ 8×（8 × 1）；minimax-h3 32×（16 × 2）/ 4×（4 × 1）。
+  **这一份与 stepvideo 的有效压缩完全相同而分法相反** —— 见 infra_signals 第一条。
+  空间压缩最高的是 ltx 两份与 wan2.2-ti2v-5b、h3（32×）；时间维到 8× 的只有
+  这一份、stepvideo 与 ltx 两份。
+
+  **卡上的「推理精度」不是发布格式。** 规格表写「BF16（推荐）、FP16、FP32、
+  FP8、INT8，**不支持 INT4**」—— 那是**支持跑**的精度，不是仓里有的权重。
+  仓里只有 BF16 的 DiT 与 F32 的两个附属组件，没有任何量化权重，
+  所以本记录没有 `precision.quantization` 块。
+  「不支持 INT4」是卡上少见的否定式声明，值得记一笔：它说明厂商试过。
+
+  **取数提醒。** 这个仓是视频线九份里最规整的：标准 diffusers 布局、
+  `model_index.json` 列全四个组件、三块权重都是 safetensors 都能实测、
+  没有并列布局也没有同名不同形的文件。
+  `fetch_hf.py --include 'transformer/*'` 取 DiT 即可；
+  文本编码器与 VAE 要单独量（本记录就是这么做的）。
+
+open_questions:
+  - >-
+    **技术报告 arXiv 2408.06072 没读**，而且那是 CogVideoX 初代（2024-08）的报告，
+    1.5 代是否另有报告未确认。3D 全注意力、expert-adaLN、3D VAE 这三处设计的
+    原始论证要以报告为准
+  - >-
+    **官方 SAT 实现（THUDM/CogVideo）没对照。** 本记录的 latent 补齐逻辑（R2）
+    取自 diffusers 的 pipeline，按本仓来源优先级那是**第四档「引擎实现」**。
+    引它是因为补齐逻辑只在这条链上写着、模型卡没有提；
+    但 SAT 那边是否同样处理、或者根本是另一套，没有核对。
+    **这是本记录证据链上最弱的一环**
+  - >-
+    `generation.constraints.frame_formula` 的 16N+1 比结构要求的 8N+1 严一倍（R3），
+    多出来的那个因子 2 卡上没有解释
+  - >-
+    `stepvideo-t2v-30b` 的 infra_signal 被本记录证伪（R4），**那份记录需要同步更正**。
+    本次只写本记录，已报主会话
+  - >-
+    前代 CogVideoX-5b / -2b 没录，所以 `lineage.changed_from_predecessor` 为空。
+    与它们的差分（加 `patch_size_t` 2、分辨率档从 720×480 到 1360×768、
+    帧数从 8N+1 到 16N+1）现在只有线索没有对账
+  - >-
+    训练精度无一手来源。发布权重 DiT 全 BF16、文本编码器与 VAE 全 F32 是实测，
+    卡上「BF16（推荐）…不支持 INT4」说的是**支持的推理精度**，不是训练格式
+  - >-
+    **推导给的序列长度与 FLOPs 都是下界**，因为 schema 没有地方声明文本 token 数
+    （与 stepvideo 的 R6 同一个缺口，但这一份影响更大）：
+    这一份是 in-sequence，226 个文本 token 既进线性项也进注意力的平方项。
+    手算真值：序列 44,880 + 226 = 45,106，注意力因此比推导给的高 **1.01%**，
+    线性项高 2×12,585,984×226 = 5.7e9（可忽略）。
+    `max_text_seq_length` 是 226，已写在 backbone.note 里 ——
+    等 schema 有了 `text_tokens` 就能填
+  - >-
+    没有任何性能数据。卡上既没有耗时也没有显存，
+    `performance[]` 因此是空的 —— 这与 stepvideo（卡上有两行实测）
+    和 hunyuanvideo-1.5（报告有 Table 7/8）不同

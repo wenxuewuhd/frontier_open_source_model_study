@@ -1,0 +1,117 @@
+{
+ "id": "cogvideox-1.5-5b",
+ "generated_by": "scripts/derive.py",
+ "generated_at": "2026-10-30T17:07:07+00:00",
+ "inputs": {
+  "facts_dir": "/Users/yuan/Work/frontier-llm-tracking/frontier_open_source_model_study/facts/cogvideox-1.5-5b",
+  "config_present": false,
+  "shapes_present": true,
+  "model_yaml": null,
+  "ep_size": 1
+ },
+ "gate_b": {
+  "config": false,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 1,
+  "why": "仓里没有任何 config（顶层与组件目录都没有）。结构字段只有清单一路，config 侧的交叉核对整条跳过"
+ },
+ "from_shapes": {
+  "available": true,
+  "complete": true,
+  "tensor_count": 1024,
+  "params_total": 5570676352.0,
+  "params_by_subsystem": {
+   "norm": 797962752.0,
+   "other": 3186750592.0,
+   "attention": 1585963008.0
+  },
+  "params_total_container": 5570676352.0,
+  "params_container_by_subsystem": {
+   "norm": 797962752.0,
+   "other": 3186750592.0,
+   "attention": 1585963008.0
+  },
+  "scale_elements": 0.0,
+  "weight_bytes_total": 11141352704.0,
+  "weight_bytes_by_subsystem": {
+   "norm": 1595925504.0,
+   "other": 6373501184.0,
+   "attention": 3171926016.0
+  },
+  "weight_bytes_by_dtype": {
+   "BF16": 11141352704.0
+  },
+  "weight_dtype_containers": {},
+  "experts_seen": 0,
+  "expert_storage": null,
+  "layers_present": 42,
+  "mtp_layers_seen": [],
+  "mtp_attention_suffixes": [],
+  "draft_blocks_seen": 0,
+  "layer_index_max": 42,
+  "layers_missing": [],
+  "moe_layers_seen": 0,
+  "unknown_dtypes": [],
+  "packing_applied": {},
+  "packing_suspect": [],
+  "incomplete_note": null
+ },
+ "kv_cache": {
+  "status": "unknown",
+  "why": "config 里没有 num_hidden_layers"
+ },
+ "kv_capacity_bytes_at_context": {},
+ "kv_capacity_basis": null,
+ "active_params": {
+  "status": "ok",
+  "total": 5570676352.0,
+  "total_with_embed": 5570676352.0,
+  "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的输入词表）；total_with_embed 含输入词表，用于和各家公布的「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
+  "expert_active": 0.0,
+  "expert_total": 0.0,
+  "expert_ratio": "dense，无 MoE",
+  "always_active": 5570676352.0,
+  "lm_head": 0.0,
+  "dense": true,
+  "excluded": {
+   "embed_tokens": 0.0,
+   "retrieval_table": 0.0,
+   "vision": 0.0,
+   "draft": 0.0
+  },
+  "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
+ },
+ "flops": {
+  "linear_per_token": 11141352704.0,
+  "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
+ },
+ "arithmetic_intensity": {},
+ "ep_communication": {
+  "status": "ok",
+  "bytes_per_token": 0,
+  "why": "dense 模型，无专家并行通信"
+ },
+ "reconciliation": [
+  {
+   "item": "路由专家数",
+   "status": "ok",
+   "why": "dense 模型，无 MoE"
+  },
+  {
+   "item": "层数",
+   "status": "skip",
+   "why": "config 缺失"
+  },
+  {
+   "item": "参数总量",
+   "status": "skip",
+   "why": "YAML 声明 缺失"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "ok",
+   "why": "与 HF 的 safetensors tally 逐位相同（5,570,676,352）"
+  }
+ ]
+}
