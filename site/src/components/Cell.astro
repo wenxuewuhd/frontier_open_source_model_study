@@ -11,6 +11,7 @@
  * 闸口（validate.py 第 5 道）也能机械校验。所以页面一律用这个组件，
  * 不要自己调 field.get()。
  */
+import Prose from './Prose.astro';
 import { cell, isAbsent, type Model, type TrackedField } from '../lib/data';
 
 interface Props {
@@ -23,6 +24,9 @@ const v = cell(field, model);
 {
   isAbsent(v) ? (
     <span class={`absent ${v.state}`} title={v.why}>{v.label}</span>
+  ) : typeof v === 'string' ? (
+    /* 值也可能带行内标记：arch.moe.routing、arch.residual.type 都是散文字段 */
+    <Prose text={v} />
   ) : (
     v
   )

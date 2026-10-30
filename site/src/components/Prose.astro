@@ -1,0 +1,32 @@
+---
+/**
+ * 记录散文的一段 —— 行内的 `**粗体**` 与 `` `代码` `` 渲染成真的元素。
+ *
+ * 散文字段一律走这个组件，**不要直接 `{x.text}`**：记录是按 Markdown 写的，
+ * 直接插进去就会把 `**…**` 原样显示给读者（出过一次，全站 3,665 处）。
+ * 闸口 `scripts/check_rendered.py` 扫构建产物，查的就是这件事。
+ *
+ * 用词元渲染，不用 `set:html` —— 片段都是纯文本，由 Astro 自己转义，
+ * 注入在构造上不可能发生。
+ */
+import { inlineTokens } from '../lib/prose';
+
+interface Props {
+  text?: unknown;
+}
+const { text } = Astro.props as Props;
+const tokens = inlineTokens(text);
+---
+{
+  tokens.map((t) =>
+    t.kind === 'bold' ? (
+      <strong>
+        {t.parts.map((q) => (q.kind === 'code' ? <code>{q.text}</code> : q.text))}
+      </strong>
+    ) : t.kind === 'code' ? (
+      <code>{t.text}</code>
+    ) : (
+      t.text
+    ),
+  )
+}

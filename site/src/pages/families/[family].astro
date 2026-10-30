@@ -14,6 +14,7 @@
 import Base from '../../layouts/Base.astro';
 import Evidence from '../../components/Evidence.astro';
 import Cell from '../../components/Cell.astro';
+import Prose from '../../components/Prose.astro';
 import {
   familyModels, axisMatrix, changeMatrix, allModels, url, fmtSci,
   TRACKED_FIELDS, SUBSYSTEM_FIELD_PREFIX, FAMILY_LABEL, FAMILY_ORDER,
@@ -93,9 +94,9 @@ const sideCls = (m: any) => (m.lineage?.track === 'side' ? 'side' : undefined);
                   c.changes.map((ch) => (
                     <div class="chg">
                       <span class="muted">{ch.field.label}</span>{' '}
-                      <span class="from">{ch.from ?? '无'}</span>
+                      <span class="from"><Prose text={ch.from ?? '无'} /></span>
                       <span class="arrow"> → </span>
-                      <span class="to">{ch.to ?? '取消'}</span>
+                      <span class="to"><Prose text={ch.to ?? '取消'} /></span>
                     </div>
                   ))
                 )}
@@ -144,10 +145,10 @@ const sideCls = (m: any) => (m.lineage?.track === 'side' ? 'side' : undefined);
                   <td>
                     {c.entries.map((e: any) => (
                       <div class="evo">
-                        <div>{e.text} <Evidence tag="derived" /></div>
+                        <div><Prose text={e.text} /> <Evidence tag="derived" /></div>
                         {e.benefit && (
                           <div class="benefit">
-                            <span class="muted">收益 ·</span> {e.benefit}
+                            <span class="muted">收益 ·</span> <Prose text={e.benefit} />
                             <Evidence tag="judgement" />
                           </div>
                         )}
@@ -280,7 +281,7 @@ const sideCls = (m: any) => (m.lineage?.track === 'side' ? 'side' : undefined);
           .filter((m) => m.precision?.quantization?.block_size_note)
           .map((m) => (
             <>
-              <strong>{short(m)}</strong>：{m.precision!.quantization.block_size_note}
+              <strong>{short(m)}</strong>：<Prose text={m.precision!.quantization.block_size_note} />
             </>
           ))}
       </p>
@@ -299,7 +300,7 @@ const sideCls = (m: any) => (m.lineage?.track === 'side' ? 'side' : undefined);
                 {s.axis && ` · ${s.axis}`}
                 <Evidence tag={s.evidence} />
               </div>
-              <div>{s.text}</div>
+              <div><Prose text={s.text} /></div>
               <div class="small muted" style="margin-top:6px">
                 <a href={url(`/models/${s.model.id}/`)}>{short(s.model)}</a>
               </div>
