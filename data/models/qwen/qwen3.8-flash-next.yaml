@@ -443,6 +443,73 @@ arch:
       linear_fc2 [2560, 4608]。deepstack_visual_indexes 是空列表，
       只在输入侧并入。与 Qwen3.5 两档的视觉塔同构，只有 out_hidden 不同
 
+    tokens:
+      reference_resolution: 672x672
+      patch_grid: 42x42
+      encoder_tokens: 1764
+      llm_tokens: 441
+      compression_ratio: 4
+      compression_stage: >-
+        merger 入口一步到位：2×2 相邻 patch 在通道维拼接（linear_fc1 的输入维
+        4608 = 1152 × 4 就是这个拼接），**压缩在 projector 之前**，
+        所以两层 merger 的 GEMM 只跑 441 次而不是 1764 次
+      dynamic_resolution: true
+      derivation: >-
+        patch 16（config.vision_config.patch_size，并由
+        model.visual.patch_embed.proj.weight [1152, 3, 2, 16, 16] 的后两维印证）、
+        2×2 空间合并（config 的 spatial_merge_size 2，由 merger.linear_fc1
+        输入维 4608 = 1152 × 4 印证）、时间维 1（patch_embed 是 Conv3d、
+        时间核 2，单张静态图补成 2 帧才喂得进去，所以一张图 1 个时间 patch）。
+        672 / 16 = 42，42² = 1764；42 / 2 = 21，21² = 441。
+        塔与 Qwen3.5 两档只差 merger.linear_fc2（本轮逐名逐形状比过 333 个张量），
+        所以 encoder 侧的 token 数与 FLOPs 跨四档相同。
+        672×672 是本仓为跨模型比较选的参考分辨率，不是厂商默认值
+      scope_note: >-
+        只覆盖单张静态图。视频每 2 帧并成 1 个时间 patch，
+        所以 t 帧的 encoder token 数是 1764 × ⌈t/2⌉
+    prefill:
+      encoder_linear_gflops: 1456.5
+      projector_linear_gflops: 29.13
+      backbone_token_budget: 441
+      backbone_linear_gflops_per_token: 114.47
+      image_as_text_tokens: 454
+      attention_excluded: >-
+        被排除的是 encoder 自注意力的 QK^T 与 AV，形式
+        4 × n² × hidden × layers。跨度定不下来：vision_config 里没有
+        window_size、也没有 fullatt_block_indexes（前代 Qwen2.5-VL 有），
+        参考实现本轮没读。按整图一段取 n = 1764 约 387 GFLOPs
+      derivation: >-
+        encoder 线性项 = 2 × 1764 × (patch_embed 1,769,472 + 27 层 ×
+        每层 15,224,832 = 411,070,464) = 1,456,499,294,208，与同代三档相同。
+        projector 线性项 = 2 × 441 × (4608² + 2560 × 4608) = 29,132,587,008
+        —— 出口 2560 是四档里最窄的，这一项比 27B 档的 39.54 小 26%。
+        主干分母 = 2 × (active_params.total 57,871,541,155 −
+        active_params.lm_head 635,699,200) = 114,471,683,910；
+        **不能用 flops.linear_per_token 115,743,082,310**，那一项含 lm_head。
+        换算 = 441 + 1,485,631,881,216 / 114,471,683,910 = 441 + 13.0 = 454。
+        **这是本仓 12 份 vlm 里塔开销占比最低的一档**（454 / 441 = 1.03）：
+        主干每 token 114.5 GFLOPs 是四档里最大的，同一座 4.5 亿参数的塔
+        摊到这个主干上只值 13 个 token 的位置当量。
+        注意 active_params.total 本身带一个已知偏差 —— PLE 查表与
+        hyper-connections 被 subsystems.py 的正则错分（见 notes 与
+        open_questions），所以这个分母是上界，真实值略小、换算值略大
+    separability:
+      weight_prefix: >-
+        model.visual.（333 个张量，含 merger）；主干在 model.language_model.
+        与 mtp. / lm_head.。两个前缀不相交
+      shard_isolation: mixed
+      shard_note: >-
+        实测 index 的 weight_map：333 个视觉张量全部落在**第 1 个分片**
+        model-00001-of-00131，同片只有 16 个非视觉张量
+        （model.language_model 的 hyper_connection_mixer 与第 0 层的注入权重）。
+        131 个分片里只有这一个含视觉张量，且混进来的只有 16 个 ——
+        **同代四档里最接近「单文件装下一座塔」的一档**
+        （对比：qwen3.8-27b 同片混 59 个、qwen3.5-27b 混 503 个、
+        397B 档被切到两个分片）。但严格说仍是 mixed，不是 dedicated
+      cross_prefix_sharing: >-
+        weight_map 的名字里没有任何一个同时匹配 model.visual. 与主干前缀，
+        即没有重名共享。落盘层面的 tied weights 要看数据偏移，本轮没读
+
 precision:
   weights_release: [BF16]
   quantization:
@@ -600,6 +667,14 @@ evidence:
   arch.vision.encoder: judgement
   arch.vision.params: derived
   arch.vision.fusion: derived
+  arch.vision.tokens: derived
+  arch.vision.tokens.scope_note: judgement
+  arch.vision.prefill: derived
+  arch.vision.prefill.attention_excluded: judgement
+  arch.vision.prefill.derivation: judgement
+  arch.vision.separability: derived
+  arch.vision.separability.shard_note: judgement
+  arch.vision.separability.cross_prefix_sharing: judgement
   precision: official
   precision.weights_release: derived
   precision.quantization.per_subsystem: derived
@@ -672,6 +747,25 @@ open_questions:
     本轮按任务约定不改共享脚本（另有家族会话在并行跑），
     需要的最小改动已写进交接报告：retrieval 正则加 ngram_embedding|ple_embedding，
     residual 正则加 hyper_connection。改完要重跑本记录的 derive
+
+  - >-
+    **视觉塔自注意力的跨度没有来源。** vision_config 里没有 window_size、
+    也没有 fullatt_block_indexes（前代 Qwen2.5-VL 两个都有），所以一张图是
+    整图一段注意力还是分窗，config 层面判不了，参考实现本轮没读。
+    arch.vision.prefill 因此只装线性项
+  - >-
+    **「一张图」的厂商默认分辨率未知。** arch.vision.tokens 钉在本仓选的参考
+    分辨率 672×672 上，真正的动态分桶规则在 preprocessor_config.json 里，
+    那个文件不在 facts/。所以 tokens 下的数只能和同样钉在 672 的其它记录比
+  - >-
+    **arch.vision.prefill 的主干分母带着 PLE / hyper-connections 的错分偏差。**
+    它取 2 × (active_params.total − lm_head)，而 active_params.total 里
+    PLE 查表被算成常驻、hyper-connections 被归进 attention / dense_ffn
+    （见 notes）。所以 114.47 GFLOPs/token 是上界，
+    image_as_text_tokens 454 相应是下界。subsystems.py 的正则修好后要重算这两格
+  - >-
+    视觉塔与主干**落盘层面**是否有 tied weights 未查。weight_map 里两个前缀
+    不重名，这只排除了重名；存储共享要看 safetensors 头的数据偏移，本轮没读
 
 reviewed:
   date: '2026-10-30'
@@ -909,3 +1003,35 @@ review:
       这个前提；arch.residual.note 另补报告 §2.2 的两件 decode 侧处理
       （残差状态 FP8 存储使搬运字节减半、decode 时丢掉 H_res）；
       decoding 的 mtp_layers_note 补「草稿块的注意力也换成 QSA」与「多步 MTP 复用 top-k 下标」
+  - id: R12
+    field: arch.vision.prefill.image_as_text_tokens
+    severity: missing
+    claim: >-
+      视觉塔的结构侧与参数量都有，但 prefill 负载、token 压缩比、
+      encoder 可分离性三件事一格都没有
+    finding: >-
+      补 arch.vision 下 tokens / prefill / separability 三组，逐因子核过。
+      本档是**本仓 12 份 vlm 里塔开销占比最低的一档**：一张 672² 的图
+      相当于 454 个文本 token，只比它占的 441 个位置多 3%。
+      根因不在塔（塔与同代三档只差 merger.linear_fc2 一项，encoder 侧
+      1456.5 GFLOPs 四档相同），在主干：扣掉 lm_head 后每 token 114.5 GFLOPs
+      是四档里最大的，同一座 4.5 亿参数的塔摊上去只值 13 个位置当量。
+      和 397B 档（+11%）放在一起看，同一座塔的相对成本在同代内就差了近 4 倍 ——
+      **这个比值描述的是主干，不是视觉塔**。
+      分片上本档反而是四档里最好的：333 个视觉张量全在第 1 个分片、
+      同片只混了 16 个非视觉张量（131 个分片里只有这一个含视觉张量）；
+      对比 qwen3.8-27b 混 59 个、qwen3.5-27b 混 503 个、397B 被切成两片。
+      仍记 mixed 而不是 dedicated —— 有混入就不是纯视觉分片。
+      **一处要往下传的不确定**：主干分母来自 active_params.total，
+      而本档的 PLE 查表与 hyper-connections 被 subsystems.py 的正则错分
+      （notes 已记），所以 114.47 是上界、454 是下界，
+      正则修好后这两格要重算。evidence 把 prefill.derivation 标成 judgement
+      就是为了让它进 Gate C、别被当成纯 derived 数
+    resolution: corrected
+    changed_to: >-
+      新增 arch.vision.tokens（1764 → 441，压缩比 4）、
+      arch.vision.prefill（一张图 ≈ 454 个文本 token，并写明这是四档最低
+      以及分母带 PLE/hyper-connections 偏差）、
+      arch.vision.separability（shard_isolation: mixed，但只混 16 个非视觉张量）；
+      evidence 加八条，四格判断类进 Gate C；
+      注意力跨度、默认分辨率、分母偏差、落盘 tied weights 四件事进 open_questions
