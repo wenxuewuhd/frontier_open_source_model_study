@@ -1,0 +1,367 @@
+id: step-1
+family: stepfun
+kind: llm
+display_name: Step-1-130B
+aliases: [Step-Audio-Chat]
+released: '2025-02-13'
+license: apache-2.0
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/stepfun-ai/Step-Audio-Chat
+    locator: config.json / README.md @ e0335e2510b2
+    accessed: '2026-10-30'
+    note: >-
+      模型卡自称「130 billion parameter multimodal LLM」，但仓里 27 个分片、795 个张量
+      **全部是一个纯文本 Transformer**：embed_tokens / 88 层 (q,k,v,o + mlp.gate,up,down +
+      input_layernorm + post_attention_layernorm) / model.norm / lm_head，没有任何音频
+      编码器或适配器张量。音频前端在另一个仓（stepfun-ai/Step-Audio-Tokenizer），
+      音频以离散 token 进 74752 的词表。本记录覆盖的是 Step-1 语言主干本身
+  - kind: repo
+    url: https://huggingface.co/stepfun-ai/Step-Audio-Chat/tree/e0335e2510b20d8b10e0ac1e07b159ef86681f14
+    locator: modeling_step1.py（StepAttention / StepRMSNorm / build_alibi_cache）、configuration_step1.py
+    accessed: '2026-10-30'
+    note: >-
+      厂商随仓发布的 remote-code 实现，下载到本地只读、未执行。head_dim、位置编码形态与
+      缓存精度从这里读。仓里另有 lib/liboptimus_ths-torch{2.2,2.3,2.5}-cu12{1,4}.cpython-310-x86_64-linux-gnu.so
+      三个预编译二进制，注意力快路径调它；**未执行、未反编译**
+
+hf:
+  repo: stepfun-ai/Step-Audio-Chat
+  sha: e0335e2510b20d8b10e0ac1e07b159ef86681f14
+  last_modified: '2025-02-17T15:51:26.000Z'
+  pipeline_tag: audio-text-to-text
+  gated: false
+
+lineage:
+  track: main
+  successor: step-3
+
+params:
+  total: 131946590208.0
+  breakdown:
+    dense_ffn: 101317607424.0
+    attention: 28789702656.0
+    embed: 918552576.0
+    lm_head: 918552576.0
+    norm: 2174976.0
+  counting_note: >-
+    按 index 的 weight_map 全量清单（27 个分片、795 个条目，逐分片读头取全）逐项统计，无读失败分片。
+    全部 BF16，无 scale 张量、无打包容器，numel 即参数数。
+    **与 HF 的 safetensors tally 131,946,590,208 逐位相同** —— 这一族到 Step-3.5 都没有
+    Step-5-Preview 那种跨文件重名张量（见 notes）。
+    厂商声明值是模型卡原文「130 billion」，实测 131.95B 比它高 1.5%，口径没写。
+    逐因子：dense_ffn = 88 层 × 3 × 12288 × 31232；attention = 88 层 ×
+    (2 × 12288² + 2 × 1024 × 12288)；embed 与 lm_head 各 74752 × 12288（不共享，两份独立张量）
+
+context:
+  max: 32768
+
+arch:
+  layers: 88
+  hidden: 12288
+  vocab: 74752
+  norm: >-
+    常规 RMSNorm：x × rsqrt(mean(x²) + eps) × w，权重落盘 BF16、以 1 为中心
+    （参考实现 StepRMSNorm，方差在 FP32 里算）。**不是**后两代的零中心写法
+    （Step-3.5 / Step-5 是 × (1 + w)），按零中心读会把每层激活乘以约 2
+  norm_eps: 1.0e-05
+  activation: SwiGLU，无截断（参考实现 StepMLP：silu(gate) × up，无 clamp）
+  position: >-
+    **不是 RoPE** —— config 与参考实现里都没有 rope_theta、没有 rotary embedding 模块。
+    Python 侧唯一的位置信号在 eager 回退路径：build_alibi_cache 造一个逐头斜率的加性偏置，
+    斜率 2^(-8k/n)（n = 2^floor(log2(96)) = 64，96 > 64 所以另 32 头用 2^(-4/64) 的奇数次幂补齐），
+    而衰减按距离的**平方根**：bias[q, k] = -m_h × √(q − k)，不是标准 ALiBi 的线性距离。
+    快路径 torch.ops.Optimus.fwd(q, k, v, None, dropout, scale, causal, …) 签名里没有 bias 形参，
+    偏置是否在算子内部加无法从可读源码判定（见 open_questions）
+
+  attention:
+    type: GQA
+    num_heads: 96
+    num_kv_heads: 8
+    head_dim: 128
+    head_dim_note: >-
+      head_dim **不在 config 里**，参考实现按 hidden_size // num_heads = 12288 / 96 = 128 算；
+      权重穷举一致：q_proj / o_proj 全 88 层都是 [12288, 12288]（96 × 128），
+      k_proj / v_proj 全 88 层都是 [1024, 12288]（8 × 128），0 例外。
+      没有 q_norm / k_norm，没有输出门 —— 写缓存的 K 就是 k_proj 的输出，8 × 128 = 1024 维
+    layer_pattern: >-
+      88 层全部同一种注意力：无滑窗、无稀疏、无跨层共享，层间投影形状完全相同（88 层一个签名）。
+      config 里没有 layer_types，参考实现也不按层分型。作用域：本代
+    kv_sharing:
+      layer_coverage: >-
+        88 层**全部**产出随上下文线性增长的全量 K/V，没有每序列固定的分量。
+        这是这一族唯一一份不需要分两个分量记账的记录
+
+  ffn:
+    type: dense
+    intermediate: 31232
+    layer_pattern: 88 层全部稠密 SwiGLU（mlp.gate_proj / up_proj [31232, 12288]、down_proj [12288, 31232]），无 MoE、无共享专家
+
+  decoding:
+    mtp_layers: 0
+    mtp_layers_note: >-
+      config 没有 num_nextn_predict_layers，清单里也没有 eh_proj / enorm / hnorm / shared_head
+      任何一类 MTP 胶水张量，层索引止于 87（= num_hidden_layers − 1）。无投机解码模块
+
+precision:
+  weights_release: [BF16]
+  kv_cache: BF16
+  kv_cache_components:
+    global_kv:
+      dtype: BF16
+      note: 无 scale 张量
+    source: >-
+      读参考实现（二手于部署 kernel）：StepAttention 直接把 k_proj / v_proj 的输出交给
+      past_key_value.update()，用的是 transformers 的 DynamicCache —— 它原样保留传入 dtype，
+      而 q/k/v 投影权重全是 BF16、路径上没有任何量化或 cast。参考实现里缓存精度不可配置
+  quantization:
+    per_subsystem:
+      attention: BF16
+      dense_ffn: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+    subsystem_method: >-
+      全量清单穷举（795/795 个张量），不是抽样：**单一 dtype**，795 个条目全部 BF16，
+      没有 FP32、没有 FP8、没有 scale。norm 也是 BF16 —— 与 Step-3.5（norm BF16）同、
+      与 Step-5（norm FP32）不同
+
+platforms:
+  - engine: Transformers
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    caveat: >-
+      注意力快路径是随仓发布的预编译 torch.ops.Optimus.fwd，只有
+      torch 2.2/2.3/2.5 × cu121/cu124 × cpython-310 × x86_64-linux 这几个组合的 .so；
+      其余环境落到 eager 的 SDPA + ALiBi 回退路径。两条路径的位置偏置是否一致未验（见 open_questions）
+    ref:
+      kind: repo
+      url: https://huggingface.co/stepfun-ai/Step-Audio-Chat/tree/e0335e2510b20d8b10e0ac1e07b159ef86681f14
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      88 层全部产出全量 GQA K/V，没有滑窗、没有压缩、没有跨层共享 ——
+      这一族后面三代每一代都在削这一项，起点就在这里
+    quantified: >-
+      元素口径：每层 2 × 8 组 × 128 = 2048 元素（k_proj / v_proj 输出维，逐层穷举一致），
+      × 88 层 = **180,224 元素/token**，无每序列固定分量。
+      按参考实现的 BF16 折算 360,448 B/token，32K 上下文满长度 11.00 GiB/序列（单份逻辑 KV 的下限，
+      不含分页与对齐粒度）。对照同口径的后代：Step-3 31,232、Step-3.5-Flash 24,576、
+      Step-5-Preview 36,064 元素/token —— 元素口径跨代可比，与各代缓存精度无关
+    visibility: public
+  - dimension: weight-bandwidth
+    finding: >-
+      稠密 130B：每 token 搬运除输入词表以外的全部权重。MoE 之前这一项无从优化，
+      只能靠量化或减层 —— 下一代（Step-3）用 48 专家 top-3 把它压到 38B 激活
+    quantified: >-
+      权重存储 245.77 GiB（全 BF16，实测自清单）。带宽口径激活 = 总量 − 输入词表 =
+      131,028,037,632（dense_ffn + attention + lm_head + norm），即 99.3% 的权重每 token 都要过一遍
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      位置编码既不是 RoPE 也不是标准 ALiBi：可读的回退路径按 **-m_h × √(距离)** 加偏置。
+      按标准 ALiBi（线性距离）实现的 kernel 在这里分布会错，而且错得不报错。
+      另一侧是快路径的预编译算子签名里根本没有 bias 形参，两条路径对不对得上无法从源码判定
+    visibility: public
+
+infra_signals:
+  - text: >-
+      这一族的起点是一个 88 层稠密 GQA，没有任何缓存侧设计 ——
+      每 token 180,224 个 KV 元素是本仓目前所有记录里最高的一档。
+      后三代（MFA 单 KV 组 / 滑窗混合 / DSA 稀疏）都可以读成对这一个数的连续攻击
+    evidence: judgement
+    horizon: settled
+    axis: attention
+  - text: >-
+      快路径依赖随仓发布的预编译 .so（torch 版本 × CUDA 版本 × cp310 × x86_64 四重绑定），
+      换硬件或换框架版本就只剩 eager 回退。这类「算子随模型发布」的做法在
+      昇腾一侧没有对应物，适配时等于要从 Python 回退路径的语义重新实现一遍
+    evidence: judgement
+    horizon: settled
+    axis: precision
+
+evidence:
+  id: official
+  family: official
+  kind: judgement
+  display_name: official
+  aliases: official
+  released: official
+  license: official
+  hf: official
+  lineage: official
+  params: derived
+  params.counting_note: derived
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.head_dim: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.attention.kv_sharing.layer_coverage: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.decoding.mtp_layers: derived
+  arch.decoding.mtp_layers_note: derived
+  precision: official
+  precision.weights_release: derived
+  precision.kv_cache: judgement
+  precision.kv_cache_components: judgement
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-30'
+  scope: [official, derived, judgement]
+  reviewer: 本会话复算 + 两个独立核查代理分片对抗式复核
+  method: >-
+    按 .claude/skills/model-audit 的取数与提问顺序过一遍。元素数一律**穷举全量清单**
+    （facts/step-1/shapes.json，27 个分片逐分片读头、795 个张量），不用抽样产物。
+    本会话独立复核的是：795 个张量的 dtype 普查与 HF 的逐 dtype tally 逐位相同；
+    88/88 层的 q/k/v/o 投影宽度；KV 乘式的每一个因子；
+    以及**另起一轮 HTTP range 读全部 27 个分片的头、逐名计数**，确认
+    per-file 求和 == 按 weight_map 去重 == HF tally 三者逐位相同、跨文件重名张量 0 个
+    （Step-5-Preview 上那种重复发布习惯在本代不存在）。
+    位置编码、head_dim 来源、缓存精度来自直接读厂商 remote-code 实现
+    （modeling_step1.py / configuration_step1.py，只读未执行），行号记在各条 finding 里。
+    预编译的 lib/liboptimus_ths-*.so 未执行、未反编译 —— 相关结论只到「可读源码判不出来」为止。
+    Gate B：derive.py --model 0 处不一致（层数、参数总量、外部 tally 三项全 ok）
+
+review:
+  - id: R1
+    field: arch.position
+    severity: imprecise
+    claim: 位置编码不是 RoPE，而是 ALiBi 式偏置、衰减按距离的平方根
+    finding: >-
+      两半都成立。(a) `rope`/`rotary` 在 modeling_step1.py 与 configuration_step1.py 里
+      各 0 次出现，config.json 里也没有 rope_theta —— 这一族后三代全是 RoPE，只有本代不是。
+      (b) build_alibi_cache（第 22–44 行）里 `bias = -torch.sqrt(bias_cols - bias_rows)`（第 39 行），
+      bias_cols 是 dim 0、bias_rows 是 dim 1，在 SDPA 的 attn_mask 里 dim −2 是 query、
+      dim −1 是 key，故元素 [q, k] = −m_h × √(q − k)，**不是**标准 ALiBi 的线性距离。
+      斜率：m0 = 2^(−8/64)（n = 2^floor(log2 96) = 64）取 1…64 次幂，
+      另 32 头用 m1 = 2^(−4/64) 取 1,3,…,63 次幂补齐，合计 96 个，与 96 个 query 头对齐
+    resolution: confirmed
+    changed_to: 原值成立，不改
+  - id: R2
+    field: arch.attention.head_dim
+    severity: imprecise
+    claim: head_dim 128，来源是 hidden_size // num_heads 而不是 config
+    finding: >-
+      config.json 里确实没有 head_dim；modeling_step1.py 第 66 行
+      `self.head_dim = hidden_size // num_heads` = 12288 / 96 = 128。
+      权重侧穷举 88 层、0 例外：q_proj 与 o_proj 全是 [12288, 12288]、
+      k_proj 与 v_proj 全是 [1024, 12288]。1024 = 8 × 128 与 num_attention_groups 8 吻合，
+      而这一代的 num_attention_groups **是被实现读的**
+      （第 152 行 `num_groups=config.num_attention_groups`）—— 与下一代 Step-3 相反，
+      那一份把 KV 头数写死成 1、完全不读这个键
+    resolution: confirmed
+    changed_to: 原值成立，不改
+  - id: R3
+    field: arch.attention.kv_sharing.layer_coverage
+    severity: imprecise
+    claim: 88 层全部产出随上下文线性增长的全量 K/V，每 token 180,224 个元素
+    finding: >-
+      三个因子各自独立找了来源，全部成立：条目宽 2 × 8 组 × 128 = 2048
+      （k_proj / v_proj 的输出维 1024，88/88 层穷举一致，没有 q_norm / k_norm 改宽度）；
+      层覆盖 88 层（config 无 layer_types，StepLayer 不按层分型，清单里 88 层一个签名）；
+      一个条目覆盖 1 个 token（StepAttention 第 97 行把 k_proj / v_proj 的输出直接
+      past_key_value.update，没有压缩、没有窗口、没有跨层共享）。
+      2048 × 88 = 180,224，与 derive.py 的公式路一致
+    resolution: confirmed
+    changed_to: 原值成立，不改
+  - id: R4
+    field: arch.position
+    severity: unsupported
+    claim: 快路径与 eager 回退路径的位置偏置一致
+    finding: >-
+      **判不出来，所以记录里没有这么说。** 快路径是 modeling_step1.py 第 82 行
+      `torch.ops.Optimus.fwd(q, k, v, None, dropout_p, softmax_scale, causal,
+      return_attn_probs, None, tp_group_rank, tp_group_size)` —— 签名里没有 bias 形参，
+      而 build_alibi_cache 只在 except 分支（第 112 行）被调用。
+      两种可能（偏置烘在算子里 / 快路径不加偏置）都与可读源码相容。
+      承载它的是三个预编译 .so（torch 2.2/2.3/2.5 × cu121/cu124 × cp310 × x86_64），
+      **未执行、未反编译**，按 skill 规则 6 留二手、不关
+    resolution: open
+    changed_to: 作为第一条 open_question 保留，并在 platforms[0].caveat 里写明两条路径未验
+  - id: R5
+    field: precision.quantization.subsystem_method
+    severity: imprecise
+    claim: 全量清单穷举，795 个条目全部 BF16
+    finding: >-
+      穷举 facts/step-1/shapes.json 的 795 条，dtype 直方图是 {BF16: 795} ——
+      单一 dtype，没有 FP32、没有 FP8、没有任何 scale 叶名。
+      与 repoinfo.json 的 `safetensors.parameters` {BF16: 131,946,590,208} 逐位相同。
+      norm 也是 BF16（177 个 norm 张量全 BF16），这一点与 Step-3.5 同、与 Step-5（norm FP32）不同，
+      是跨代可查的差别而不是本记录的笔误
+    resolution: confirmed
+    changed_to: 原值成立，不改
+  - id: R6
+    field: kind
+    severity: miscategorized
+    claim: kind 记 llm，而模型卡自称「130 billion parameter multimodal LLM」
+    finding: >-
+      按仓里的东西判，llm 是对的：795 个张量的名字族只有 embed_tokens / 88 层
+      (q,k,v,o + mlp.gate,up,down + input_layernorm + post_attention_layernorm) /
+      model.norm / lm_head —— **没有任何音频编码器、适配器或 projector 张量**，
+      arch.audio 一格都填不出来。音频以离散 token 进 74752 的词表，前端在
+      stepfun-ai/Step-Audio-Tokenizer 另一个仓。记 omni 会让人期待一个不存在的编码器。
+      措辞差异已写进 notes 与最后一条 open_question
+    resolution: confirmed
+    changed_to: kind 保持 llm，evidence 标 judgement（不是 official —— 这是本仓的判断，不是厂商的说法）
+  - id: R7
+    field: params.total
+    severity: imprecise
+    claim: 131,946,590,208，按 index 的 weight_map 去重后逐项求和
+    finding: >-
+      去重与不去重在本代**是同一个数**：另起一轮 HTTP range 读全部 27 个分片的头、
+      按名计数，跨文件重名张量 **0 个**，per-file 求和 131,946,590,208 ==
+      按 weight_map 去重 131,946,590,208 == HF tally 131,946,590,208，三者逐位相同；
+      weight_map 795 条与 shapes.json 795 条名字集合相等，仓里只有 1 个 index 文件。
+      即 Step-5-Preview 上那条「18 个跨文件重名张量」的发布习惯在本代不存在 ——
+      这一条是**特意反向验的**，不是从「条目数相等」推的
+    resolution: confirmed
+    changed_to: 原值成立，不改；counting_note 里写明三者逐位相同
+
+notes: >-
+  阶跃星辰家族的公开起点，也是这一族唯一的稠密代。model_type step1、
+  architectures Step1ForCausalLM。Step-1 本体从未单独开源，这份权重发布在
+  Step-Audio-Chat 仓里 —— 仓名与模型名不同，但仓里的 795 个张量是纯语言主干，
+  不含音频编码器（见 sources[0]）。kind 记 llm 而不是 omni，就是因为模态前端整个在记录之外。
+  层数、层集合、投影宽度、单一 dtype 对照完整权重清单穷举核过；
+  head_dim、位置编码形态、缓存精度来自厂商随仓的 remote-code 实现，不是部署 kernel。
+  **同架构的小档位 Step-Audio-EditX（2025-10-29，32 层 / hidden 3072 / 同 74752 词表）
+  按「参数量缩放」不另起记录。**
+  这一族的发布习惯在 Step-5-Preview 变过：那一版有 18 个跨文件重名张量，而本代到
+  Step-3.5-Flash 三代的 HF tally 与按 weight_map 去重后的数逐位相同
+
+open_questions:
+  - >-
+    两条注意力路径的位置偏置是否一致，未定（arch.position，核查 R4）。eager 回退用 build_alibi_cache 的
+    -m_h × √(q − k)；快路径 torch.ops.Optimus.fwd 的签名里没有 bias 形参，
+    偏置要么烘在算子里、要么快路径根本不加。二进制 .so 未执行、未反编译，
+    从可读源码判不出来 —— 要钉死得读 kernel 或做数值比对，那是独立一轮的事
+  - >-
+    缓存精度取自参考实现：DynamicCache 原样保留 k_proj / v_proj 的 BF16，
+    路径上没有量化。但这是 remote-code 实现，不是部署 kernel；
+    没有任何引擎给这一代做过官方 FP8 KV 配方，也没查
+  - >-
+    厂商「130 billion」与实测 131.95B 差 1.5%，口径没写（是否含词表、是否按 1 GiB 口径算，
+    都解释不了 1.5%）
+  - >-
+    训练精度无一手声明，precision.training 不填。发布权重全 BF16，但这不能反推训练精度
+  - >-
+    模型卡把这一份称作「multimodal LLM」，而仓里没有音频张量。音频 token 占 74752 词表里的
+    哪一段、Step-Audio-Tokenizer 的码本如何映射进来，本记录没查 —— 它不影响语言主干的结构与显存账
