@@ -105,11 +105,16 @@ def absence(key: str, rec: dict, derived: dict | None = None) -> dict:
     """
     col = column(key) or {}
     a = col.get("absent") or {}
-    state, why = a.get("state", "unsurveyed"), a.get("why")
+    state, why, label = a.get("state", "unsurveyed"), a.get("why"), a.get("label")
     for rule in a.get("rules") or []:
         if test(rule, rec, derived):
-            state, why = rule["state"], rule.get("why", why)
+            state = rule["state"]
+            why = rule.get("why", why)
+            label = rule.get("label", label)
             break
     meta = absence_states().get(state) or {}
-    return {"state": state, "label": meta.get("label", state),
+    # label 可以逐列覆盖：态是同一个，说法可以更贴切（KV 精度那一列的
+    # confirmed_absent 说「未公布」比通用的「确认无」准）。覆盖的是说法不是态 ——
+    # 闸口与比较逻辑一律按 state 走，不看 label
+    return {"state": state, "label": label or meta.get("label", state),
             "why": why or meta.get("meaning", ""), "is_gap": bool(meta.get("is_gap"))}

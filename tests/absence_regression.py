@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import collections
 import copy
 import glob
 import json
@@ -185,6 +186,20 @@ def _():
             f"{mid} 的 KV 精度判成了 {a['state']}，而真相是厂商没公布、字节按权重 dtype 兜底"
         assert not a["is_gap"], f"{mid}：这一态是信息，不该算成缺口"
         assert a["why"], f"{mid}：判成「查了但没有」却说不出凭什么"
+
+
+@case("二·正例：契约判出来的和站点侧手写的 kvCachePrecision 一致")
+def _():
+    # 站点侧 data.ts 的 kvCachePrecision 是手写的、只管 KV 这一行，注释里写着
+    # 「当前 47 份里 45 份走『未公布』、0 份走『不适用』」。契约要能复现同一个结论 ——
+    # 复现不了就说明两边在说不同的话，而这条线存在的理由就是消灭这种口径不一致。
+    seen = collections.Counter()
+    for mid, d in RECS.items():
+        if (d.get("precision") or {}).get("kv_cache"):
+            continue
+        seen[columns.absence("kv_dtype", d, derived(mid))["label"]] += 1
+    assert seen == collections.Counter({"未公布": 45}), \
+        f"契约判出来是 {dict(seen)}，站点侧手写的结论是 45 份「未公布」、0 份「不适用」"
 
 
 @case("二·正例：三态都真的用得上 —— 没有一态是摆设")
