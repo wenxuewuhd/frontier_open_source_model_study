@@ -1,0 +1,297 @@
+id: minimax-m3
+family: minimax
+kind: vlm
+display_name: MiniMax-M3
+released: '2026-06-02'
+license: other
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/MiniMaxAI/MiniMax-M3
+    locator: config.json / README.md @ d95e30cb912f
+    accessed: '2026-10-30'
+    note: >-
+      BF16 发布，59 分片。权重清单逐分片读头取全，23416 个张量，无读失败分片。
+      仓里只有 configuration_minimax_m3_vl.py，没有 modeling 代码
+  - kind: repo
+    url: https://github.com/huggingface/transformers/blob/main/src/transformers/models/minimax_m3_vl/modeling_minimax_m3_vl.py
+    locator: MiniMaxM3VLAttention / MiniMaxM3VLIndexer / MiniMaxM3VLSparseCacheLayer
+    accessed: '2026-10-30'
+    note: >-
+      transformers 的参考实现（非厂商部署 kernel），只读未执行。缓存形状从这里核：
+      K/V 与 index K 都是逐 token 追加，块 max-pool 只发生在打分时
+
+hf:
+  repo: MiniMaxAI/MiniMax-M3
+  sha: d95e30cb912fe3021bb9c2ba66a8ce60b6c937a9
+  last_modified: '2026-10-26T07:08:14.000Z'
+  pipeline_tag: image-text-to-text
+  gated: false
+
+lineage:
+  track: main
+
+params:
+  total: 427040140160.0
+  breakdown:
+    expert: 413122166784.0
+    attention: 6417285120.0
+    shared_expert: 3227516928.0
+    lm_head: 1229193216.0
+    embed: 1229193216.0
+    vision: 865567232.0
+    dense_ffn: 679477248.0
+    indexer: 224133120.0
+    router: 44833920.0
+    norm: 773376.0
+  counting_note: >-
+    按完整权重清单（59 分片 23416 条目）逐项统计。BF16 发布、无量化，23416 条目
+    全是权重张量（没有 scale 容器、没有打包容器），numel 即参数数。
+    total 是本仓按清单求和的**实测值**，含视觉塔与投影（0.87B）；它与 HF 平台自己从
+    分片头统计的 safetensors tally（427,040,140,160）逐位相同，所以 Gate B 的参数总量
+    一项是实测比实测。厂商声明值是模型卡原文「~428B parameters and ~23B activated
+    parameters」，比实测高 0.23%，口径没写（清单里没有 MTP 权重，见 arch.decoding）。
+    激活参数有带宽口径与可比官方口径两套，见 data/derived/，这里不写单一值。
+    归类上视觉侧包括 multi_modal_projector 与 patch_merge_mlp（后者名字带 mlp，
+    扩展 subsystems.py 之前会落进 dense_ffn）
+
+context:
+  max: 1048576
+
+arch:
+  layers: 60
+  hidden: 6144
+  vocab: 200064
+  norm: RMSNorm（Gemma 式，use_gemma_norm）
+  norm_eps: 1.0e-06
+  activation: >-
+    swigluoai：带截断的 SwiGLU，swiglu_alpha 1.702、swiglu_limit 7.0（config 声明）
+  position: RoPE theta 5e6，partial rotary 0.5（每头 128 维里 64 维带旋转）
+
+  attention:
+    type: GQA
+    num_heads: 64
+    num_kv_heads: 4
+    head_dim: 128
+    partial_rotary_factor: 0.5
+    head_dim_note: >-
+      每头 QK 与 V 同为 128：q_proj [8192, 6144] = 64×128，k_proj / v_proj
+      [512, 6144] = 4×128，o_proj [6144, 8192]。q_norm / k_norm 是 [128] 的逐头 RMSNorm
+      （qk_norm_type per_head），所以写进缓存的 K 条目是 k_norm 之后的 4×128 = 512 维，
+      与 k_proj 输出维相同。config 的 attention_output_gate=false，清单里也没有门控投影
+    layer_pattern: >-
+      L0–L2 是全量 GQA（config sparse_attention_freq 前三项为 0），L3–L59 共 57 层
+      叠加 MSA 稀疏选块。两类层的 K/V 投影同形，都每层存自己的 KV，无跨层共享
+    sparse:
+      mechanism: >-
+        MiniMax Sparse Attention（MSA）：每个稀疏层有自己的 indexer，index K 逐 token
+        存入缓存，打分后按 128 个 token 一块做 max-pool，每个 index 头独立选 topk 16 块，
+        另加查询所在块之前的 1 个局部块（sparse_local_block 1，sparse_init_block 0）。
+        选的是「读哪些块」，主 K/V 全量保留 —— transformers 参考实现里 KV 照常
+        update、index K 由 MiniMaxM3VLSparseCacheLayer.update_index 逐 token 拼接
+      index_n_heads: 4
+      index_head_dim: 128
+      index_kv_dim: 128
+      index_kv_source: >-
+        language_model.model.layers.N.self_attn.index_k_proj.weight [128, 6144]，57 层
+        全是 128；之后 index_k_norm [128] 归一化，写缓存的仍是 128 维。index_q_proj 是
+        [512, 6144] = 4 头 × 128 —— index K 在 4 个 index 头之间共享（参考实现 view 成
+        1 头），按 index_n_heads × index_head_dim = 512 算会高估 4 倍
+      block_size: 128
+      selected_blocks: 16
+    kv_sharing:
+      index_kv_source_layers:
+        [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+         23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42,
+         43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59]
+      layer_coverage: >-
+        两类覆盖面不同。GQA 的 K/V 在 60/60 层（k_proj / v_proj 逐层都在、宽度都是 512，
+        fetch_kv_widths 逐层读过）；index K 只在 57 层（L3–L59，index_k_proj 在 L0–L2
+        零命中）。没有 MTP 块，所以主干口径就是全部口径
+
+  ffn:
+    type: moe
+    layer_pattern: >-
+      L0–L2 稠密（mlp.gate_proj [12288, 6144]，dense_intermediate_size 12288），
+      L3–L59 共 57 层 MoE（block_sparse_moe）。稠密层 FFN 是单个专家的 4 倍宽
+
+  moe:
+    routed_experts: 128
+    shared_experts: 1
+    top_k: 4
+    intermediate: 3072
+    first_k_dense: 3
+    dense_intermediate: 12288
+    routing: >-
+      sigmoid 打分，e_score_correction_bias 修正选路，routed_scaling_factor 2.0；
+      gate.weight [128, 6144] 落盘就是 FP32（57 份），不是 BF16
+    balance: e_score_correction_bias（无辅助损失式偏置，config use_routing_bias）
+    storage_note: >-
+      逐专家独立张量（block_sparse_moe.experts.N.w1/w2/w3），不是堆叠的 3 维权重。
+      共享专家中间维 3072，与路由专家同宽
+
+  decoding:
+    mtp_layers: 0
+    mtp_layers_note: >-
+      config 写 num_mtp_modules 7、num_nextn_predict_layers 1，但发布的清单里一个
+      MTP 张量都没有（层索引 0–59 连续，无 mtp.* 前缀）；transformers 参考实现的
+      _keys_to_ignore_on_load_unexpected 恰是 (^|\.)mtp\..* —— 训练侧有 MTP，
+      发布权重没带。按权重记 0
+
+  vision:
+    encoder: CLIP 式 ViT（vision_tower.vision_model），3D RoPE
+    layers: 32
+    hidden: 1280
+    num_heads: 16
+    patch_size: 14
+    intermediate: 5120
+    spatial_merge_size: 2
+    temporal_patch_size: 2
+    out_hidden: 6144
+    params: 865567232.0
+    fusion: >-
+      multi_modal_projector 两层 MLP（1280 → 6144 → 6144，带 bias）先投到主干宽度，
+      再由 patch_merge_mlp 把 2×2 相邻 token 拼成 24576 维降回 6144（linear_1 [6144, 24576]）。
+      patch_embedding [1280, 3, 2, 14, 14] 是时间维 2 帧的 3D 卷积，落盘 FP32
+
+precision:
+  weights_release: [BF16, FP32]
+  quantization:
+    per_subsystem:
+      expert: BF16
+      shared_expert: BF16
+      attention: BF16
+      indexer: BF16
+      dense_ffn: BF16
+      router: FP32
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+      vision: BF16
+    subsystem_method: >-
+      代表精度由 fetch_dtypes.py 抽样（读 59 个分片里的 10 个）得出；FP32 的分布按完整清单
+      核过：FP32 只有三类，共 46,339,200 元素 —— 57 个 gate.weight [128, 6144]
+      （44,826,624）、57 个 e_score_correction_bias [128]（7,296）与视觉的
+      patch_embedding（1,505,280），合计与 HF tally 的 F32 一项逐位相同。
+      其余 426,993,800,960 个参数全是 BF16，无量化
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/MiniMaxAI/MiniMax-M3
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      MSA 省的是读，不是存：60 层全部存完整 GQA KV，57 个稀疏层另存一份 index K。
+      和 GLM-5.3 是同一条路线（每层都存、topk 选读），与 DeepSeek V4.1 的「少数层产出
+      KV」相反。缓存随层数与上下文线性增长
+    quantified: >-
+      逐因子：GQA 每层 2（K、V）× 4 KV 头 × 128 = 1024 元素（k_proj / v_proj 输出 512，
+      写缓存前的 k_norm 是逐头 [128]，宽度不变），× 60 层 = 61440；index K 每层 128
+      （index_k_proj 输出 128、index_k_norm [128]）× 57 层 = 7296；合计 68736 元素/token。
+      条目数按 1:1 逐 token 计，依据是参考实现的 update / update_index 逐 token 拼接，
+      块 max-pool 只在打分时做。无 MTP 块，没有主干口径与开草稿口径之分。
+      落盘精度未披露，按 config torch_dtype=bfloat16 兜底（2 B/元素）得 137472 B/token、
+      1M 上下文 134.25 GiB —— dtype_fallback 口径，不是实测
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      index K 只有 1 个头、index Q 4 个头，每个 index 头独立选块（参考实现输出
+      [B, H_idx, S_q, topk]），选块结果再映射到 4 个 KV 组上。按「每层一份选择、
+      所有头共用」写的块稀疏核对不上这个形状
+    visibility: public
+
+infra_signals:
+  - text: >-
+      本代（M3）的「1M 上下文」与 DeepSeek V4.1 是两种做法：M3 全层全量存 KV、
+      靠选块省读带宽，单序列 1M 时 BF16 兜底下约 134 GiB 的 KV；
+      容量规划不能按「稀疏注意力 = 少存」去推
+    evidence: judgement
+    horizon: now
+    axis: attention
+  - text: >-
+      config 声明的 MTP（7 个模块）在发布权重里不存在。要用 MTP 投机解码的引擎
+      拿不到草稿权重 —— 读 config 判断「支持 MTP」会落空
+    evidence: judgement
+    horizon: now
+    axis: decoding
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: judgement
+  license: official
+  hf: official
+  lineage: official
+  params: derived
+  params.counting_note: derived
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.attention.type: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.attention.sparse.mechanism: judgement
+  arch.attention.sparse.index_kv_dim: derived
+  arch.attention.sparse.index_kv_source: derived
+  arch.attention.kv_sharing.index_kv_source_layers: derived
+  arch.attention.kv_sharing.layer_coverage: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.first_k_dense: derived
+  arch.moe.routing: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.decoding.mtp_layers: derived
+  arch.decoding.mtp_layers_note: derived
+  arch.vision.params: derived
+  arch.vision.fusion: derived
+  precision: official
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  MiniMax 家族的旗舰，model_type minimax_m3_vl，原生多模态。本仓第一份 MiniMax 记录，
+  也是第三种「稀疏注意力」：GQA 主干 + 块级选读（MSA），与 GLM-5.3 的 DSA 同属
+  「全存、选读」一类，但选的是 128-token 块而不是单 token。
+  层数、宽度、注意力几何、indexer 层集合、专家分布与 FP32 分布对照完整权重清单核过；
+  top_k、routed_scaling_factor、topk 块数、swiglu 参数这类运行期标量只有 config 一个来源。
+  released 取 HF 仓的 createdAt（2026-06-02，与 arXiv 2606.13392 吻合）；
+  tracking.yaml 写的 2026-10-26 是仓的 lastModified
+
+open_questions:
+  - >-
+    KV 落盘精度未披露，137472 B/token 是 BF16 兜底口径，不能与 DeepSeek V4.1 的理论下限
+    （890 B/token）比倍数。跨族系比结构用元素口径（68736 元素/token）
+  - >-
+    缓存形状取自 transformers 参考实现，不是厂商部署 kernel（MiniMax topk_sparse / MSA 仓）。
+    部署侧若按块压缩存 index K（块 max-pool 后只存每块一份），index K 一项会降到 1/128 ——
+    参考实现没这么做，部署实现未读
+  - >-
+    config 的 sparse_disable_index_value（逐层 0/1，与稀疏层位置相同）语义不明，
+    参考实现里没找到用处
+  - >-
+    厂商「~23B activated」的口径未说明。本仓带宽口径 24.7B（含 lm_head）、
+    可比官方口径 26.0B（再含输入词表），两者都比 23B 高；扣掉 lm_head 与输入词表
+    两张词表矩阵约 23.5B，最接近 —— 这是推测，不是读到的
+  - >-
+    厂商「~428B」比实测 427.04B 高约 0.96B（0.23%），口径没有一手说明。
+    若差值是未发布的 MTP，它比一层主干 MoE 层（实测约 7.4B：专家 413.12B / 57 层
+    加注意力与共享专家）小得多，不是「再一层 transformer」；也可能只是取整
+  - >-
+    训练精度无一手声明（config 只有 torch_dtype bfloat16），precision.training 不填

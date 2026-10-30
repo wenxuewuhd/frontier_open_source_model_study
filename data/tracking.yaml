@@ -33,7 +33,8 @@ families:
     flagship: MiniMax-M3
     hf_repo: MiniMaxAI/MiniMax-M3
     released: 2026-10-26
-    status: pending
+    model_id: minimax-m3
+    status: recorded
     note: 另有更新的 M3.1-Flash，但无完整 M3.1，故旗舰仍取 M3
 
   - family: kimi

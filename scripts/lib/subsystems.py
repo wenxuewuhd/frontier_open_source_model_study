@@ -12,20 +12,28 @@ import re
 
 SUBSYSTEM = [
     ("retrieval", re.compile(r"engram|memory_table|retriev", re.I)),
-    ("vision", re.compile(r"vision|visual|vit\.|aligner|image_", re.I)),
+    # projector / patch_merge 是视觉到语言主干的投影（MiniMax-M3 的 multi_modal_projector 与
+    # patch_merge_mlp、Kimi-K3 的 mm_projector、Step-5 的 vit_large_projector）。不加的话
+    # patch_merge_mlp 因为带 mlp 落进 dense_ffn，其余落进 other
+    ("vision", re.compile(r"vision|visual|vit\.|aligner|image_|projector|patch_merge", re.I)),
     ("audio", re.compile(r"audio|speech|whisper", re.I)),
     # eh_proj / enorm / hnorm / shared_head 是 DeepSeek V3 一代 MTP 模块的名字 ——
     # 那一代 MTP 借用层索引（第 61 层），名字里没有 mtp，只按 mtp 匹配会把它算进主干
     ("draft", re.compile(r"mtp|draft|dspark|eagle|eh_proj|enorm|hnorm|shared_head", re.I)),
-    ("expert", re.compile(r"\.experts?\.\d+\.|\bexperts\.", re.I)),
-    ("shared_expert", re.compile(r"shared_expert", re.I)),
+    # \.moe\.(gate|up|down)_proj 是 Step-5 的 3 维堆叠专家 [352, …]，名字里没有 experts ——
+    # 不认它就落进 dense_ffn，激活参数会把全部专家算成常驻
+    ("expert", re.compile(r"\.experts?\.\d+\.|\bexperts\.|\.moe\.(gate|up|down)_proj\b", re.I)),
+    # Step-5 写成 share_expert（单数、无 d）
+    ("shared_expert", re.compile(r"shared?_expert", re.I)),
     ("router", re.compile(r"\bgate\b|router|e_score|expert_bias", re.I)),
     ("lm_head", re.compile(r"\blm_head\b|output_layer|^head\.weight$", re.I)),
     ("embed", re.compile(r"embed_tokens|\bwte\b|embed_in|^embed\.weight$", re.I)),
     # 必须排在 attention / dense_ffn 之前：mHC 的系数叫 hc_attn_* / hc_ffn_*，
     # 名字里带 attn 和 ffn，但它们是残差系数不是注意力或 FFN 权重，
     # 而且往往是 FP32 —— 混进去会把那两个子系统的精度带偏
-    ("residual", re.compile(r"\bhc_[a-z]+_(base|fn|scale)\b|^hc_|residual", re.I)),
+    # _res_proj 是 Kimi-K3 的 Attention Residuals 系数（self_attention_res_proj / mlp_res_proj /
+    # output_attn_res_proj，均 [1, hidden]）；对应的 *_res_norm 仍归 norm
+    ("residual", re.compile(r"\bhc_[a-z]+_(base|fn|scale)\b|^hc_|residual|_res_proj\b", re.I)),
     # norm 必须排在 attention / dense_ffn 之前：attn_norm、ffn_norm、kv_norm、q_norm
     # 名字里带 attn / ffn / kv / q，按那两条先匹配会把归一化算成注意力或 FFN 权重。
     # 带 norm 的就是归一化，没有例外，所以提前判定是安全的
@@ -35,7 +43,9 @@ SUBSYSTEM = [
     # indexer.wk 却是 BF16，并成一桶后表上只剩 FP8，看不出 BF16 那一截。
     # indexer 又必须排在 compressor 之前：attn.indexer.compressor.* 是 indexer
     # 自己产出 index K 的投影，归 indexer，不归产出全局 KV 的压缩器
-    ("indexer", re.compile(r"indexer", re.I)),
+    # index_[qk]_proj 是 MiniMax-M3 的 MSA 索引投影（挂在 self_attn 下、名字带 k_proj）；
+    # 它的 index_[qk]_norm 照上面的规则归 norm，与 GLM 的 indexer.k_norm 同口径
+    ("indexer", re.compile(r"indexer|\bindex_[qk]_proj\b", re.I)),
     ("compressor", re.compile(r"compressor", re.I)),
     ("attention", re.compile(r"attn|\bwq|\bwk|\bwv|\bwo\b|q_proj|k_proj|v_proj|o_proj|kv_[ab]|q_[ab]", re.I)),
     ("dense_ffn", re.compile(r"mlp|ffn|gate_proj|up_proj|down_proj|w1|w2|w3", re.I)),
