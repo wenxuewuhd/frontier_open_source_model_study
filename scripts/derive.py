@@ -668,7 +668,7 @@ def reconcile(cfg_t: dict, shp: dict, declared: dict, external: dict = None,
         blocks = shp.get("draft_blocks_seen") or 0
         # 混合结构只有 full attention 层累积 KV，「主干 N 层 + 草稿块」会把 N 读成 KV 层数、
         # 高估好几倍。草稿块匹配的是主干注意力的同名投影，所以它加的是 full 层
-        full = kv.get("full_attention_layers") if kv else None
+        full = kv.get("full_attention_layers") if kv and kv.get("linear_attention_layers") else None
         if mtp_attn and blocks and full:
             out.append({"item": "KV 层覆盖口径", "status": "ok",
                         "why": f"公式按主干 {full} 层 full attention 算（主干共 {kv['layers']} 层，"
