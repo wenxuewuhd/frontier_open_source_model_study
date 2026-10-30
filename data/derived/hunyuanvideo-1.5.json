@@ -1,0 +1,193 @@
+{
+ "id": "hunyuanvideo-1.5",
+ "generated_by": "scripts/derive.py",
+ "generated_at": "2026-10-30T16:22:42+00:00",
+ "inputs": {
+  "facts_dir": "/Users/yuan/Work/frontier-llm-tracking/frontier_open_source_model_study/facts/hunyuanvideo-1.5",
+  "config_present": true,
+  "shapes_present": true,
+  "model_yaml": "data/models/hunyuan-video/hunyuanvideo-1.5.yaml",
+  "ep_size": 1
+ },
+ "from_shapes": {
+  "available": true,
+  "complete": true,
+  "tensor_count": 1793,
+  "params_total": 8326608160.0,
+  "params_by_subsystem": {
+   "other": 2774911008.0,
+   "norm": 46976.0,
+   "attention": 1846394880.0,
+   "dense_ffn": 3701559296.0,
+   "vision": 3696000.0
+  },
+  "params_total_container": 8326608160.0,
+  "params_container_by_subsystem": {
+   "other": 2774911008.0,
+   "norm": 46976.0,
+   "attention": 1846394880.0,
+   "dense_ffn": 3701559296.0,
+   "vision": 3696000.0
+  },
+  "scale_elements": 0.0,
+  "weight_bytes_total": 33306432640.0,
+  "weight_bytes_by_subsystem": {
+   "other": 11099644032.0,
+   "norm": 187904.0,
+   "attention": 7385579520.0,
+   "dense_ffn": 14806237184.0,
+   "vision": 14784000.0
+  },
+  "weight_bytes_by_dtype": {
+   "FP32": 33306432640.0
+  },
+  "weight_dtype_containers": {},
+  "experts_seen": 0,
+  "expert_storage": null,
+  "layers_present": 54,
+  "mtp_layers_seen": [],
+  "mtp_attention_suffixes": [],
+  "draft_blocks_seen": 0,
+  "layer_index_max": 54,
+  "layers_missing": [],
+  "moe_layers_seen": 0,
+  "unknown_dtypes": [],
+  "packing_applied": {},
+  "packing_suspect": [],
+  "incomplete_note": null
+ },
+ "kv_cache": {
+  "status": "not_applicable",
+  "why": "非自回归生成模型：推理过程中无跨步复用的 KV，不适用本口径"
+ },
+ "kv_capacity_bytes_at_context": {},
+ "kv_capacity_basis": null,
+ "active_params": {
+  "status": "not_applicable",
+  "why": "生成类每步对全部 latent token 做一次前向，没有「每 token 激活」这个量；单步负载见 generation_workload"
+ },
+ "flops": {},
+ "arithmetic_intensity": {},
+ "ep_communication": {
+  "status": "not_applicable",
+  "why": "生成类不做 EP all-to-all；对应的通信是序列并行(Ulysses)的 all-to-all，口径不同，本脚本未建模"
+ },
+ "reconciliation": [
+  {
+   "item": "路由专家数",
+   "status": "ok",
+   "why": "dense 模型，无 MoE"
+  },
+  {
+   "item": "层数",
+   "status": "skip",
+   "why": "config 缺失"
+  },
+  {
+   "item": "参数总量",
+   "YAML 声明": 8326608160.0,
+   "shapes 实测": 8326608160.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "skip",
+   "why": "repoinfo.json 里没有 safetensors tally"
+  }
+ ],
+ "generation_workload": {
+  "status": "ok",
+  "bucket": {
+   "width": 1280,
+   "height": 720,
+   "frames": 121,
+   "fps": 24,
+   "duration_s": 5.0416667,
+   "default": true,
+   "note": "**算出来的，不是抄的**：厂商的分桶逻辑 `target_size_config['720p']` 给 base 960 / stride 16，`generate_crop_size_list(960, 16)` 枚举面积约 960²、 两边被 16 整除的档，再取与 16:9 最近的一档 —— 结果比值恰好是 0.5625， 正中 16:9。121 帧与 24 fps 取自 `generate.py` 的默认值。 latent 31 × 45 × 80 = 111,600 token"
+  },
+  "effective_compression": {
+   "temporal": 4,
+   "spatial_h": 16,
+   "spatial_w": 16,
+   "note": "VAE 压缩率 × DiT patch。两者在记录里分开存，只在这里相乘 —— 合成一个数存进记录是范畴错误"
+  },
+  "latent_tokens": 111600.0,
+  "latent_tokens_terms": {
+   "formula": "[(F - 1) / t_vae + 1  （时间因果 VAE：首帧单独编码）] / p_t × (H / s_vae / p_h) × (W / s_vae / p_w)",
+   "factors": {
+    "frames": 121,
+    "height": 720,
+    "width": 1280,
+    "vae_temporal_compression": 4,
+    "vae_spatial_compression": 16,
+    "vae_causal": true,
+    "patch_t": 1,
+    "patch_h": 1,
+    "patch_w": 1
+   },
+   "per_axis": {
+    "t": 31.0,
+    "h": 45.0,
+    "w": 80.0
+   },
+   "latent_frames": 31.0,
+   "latent_frames_source": "formula_causal",
+   "effective_temporal_ratio": 3.903225806451613
+  },
+  "sequence_tokens": 111600.0,
+  "sequence_tokens_is_lower_bound": false,
+  "flops_per_step": {
+   "linear": 1858498941312000.0,
+   "linear_terms": {
+    "formula": "2 × 激活参数 × 序列 token 数",
+    "factors": {
+     "active_params": 8326608160,
+     "source": "params.active_decode（记录声明）",
+     "tokens": 111600.0
+    }
+   },
+   "attention": 5509498798080000.0,
+   "attention_terms": {
+    "formula": "每层 QK^T 2·n²·d + (softmax·V) 2·n²·d = 4·n²·d，再乘层数",
+    "factors": {
+     "layers": 54,
+     "hidden": 2048,
+     "tokens": 111600.0
+    },
+    "note": "稠密全注意力口径。块稀疏（SSTA）或线性注意力要另按其形态折算，本函数不替你折 —— 折算比例是记录里的事实，不是公式里的常数"
+   },
+   "total": 7367997739392000.0,
+   "attention_share": 0.7477606526158678
+  },
+  "end_to_end_terms": {
+   "formula": "Σ各阶段(步数 × 每步前向次数) × 单步 FLOPs",
+   "stages": [
+    {
+     "name": "DiT 去噪",
+     "steps": 50,
+     "forwards_per_step": 2
+    },
+    {
+     "name": "720p 超分",
+     "steps": 6,
+     "forwards_per_step": 1
+    },
+    {
+     "name": "1080p 超分",
+     "steps": 8,
+     "forwards_per_step": 1
+    }
+   ],
+   "stages_skipped": [],
+   "note": "各阶段按同一个单步 FLOPs 估算；分辨率不同的阶段（SR、上采样）实际 token 数不同，这里是粗估，不要当精确值"
+  },
+  "flops_end_to_end": 8.39951742290688e+17,
+  "excluded": [
+   "文本编码一次（编码器参数量在 generation.text_encoders，本函数不计）",
+   "VAE decode 一次（VAE 结构不在 config 里，解码器是 Transformer 时这一项不是小量）",
+   "音频 VAE 与声码器"
+  ]
+ }
+}
