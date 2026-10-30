@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""校验：schema 合规、证据覆盖、防泄漏。
+"""校验：schema 合规、证据覆盖、防泄漏、声明与实测对账。
 
-三道检查，任一失败就非零退出，供 CI 直接用：
+四道检查，前三道任一失败就非零退出，供 CI 直接用：
 
   1. schema   每份 YAML 按 data/schema/*.json 校验
   2. 证据     每个手写叶子字段都要能在 evidence 里找到归属（支持前缀继承）；
               derived 的字段不允许手写；judgement 的字段列出来给人看
   3. 防泄漏   公开仓里不允许出现 visibility: internal 或 source.type: self
+  4. 声明对账 precision.weights_release 里声明的每种精度，都要在实测清单里出现（告警）
 
 第 3 条是公开站与私有数据仓分离的最后一道闸。脱敏做不干净，所以这里不做
 字段级脱敏，而是整条记录拒绝。
@@ -37,6 +38,52 @@ from lib import yamlio  # noqa: E402
 
 def load_yaml(path):
     return yamlio.load(path)
+
+
+def check_release_vs_measured(doc, path, derived_dir, warnings):
+    """precision.weights_release 声明的精度，实测清单里有没有。
+
+    参数量那边有 HF 的 safetensors tally 当外部锚，缓存那边有厂商公布的每 token 字节。
+    这一道是第三个方向：**拿厂商的发布声明去查本仓的实测**。前两个锚都是「外面的数
+    校验本仓算的」，这一个是「本仓实测校验外面声明的」，合起来才闭合。
+
+    比的是 data/derived/<id>.json 的 weight_bytes_by_dtype，不是 facts/ 下的清单 ——
+    facts/ 在 gitignore 里，CI 上没有；而 derived 是提交过的。
+
+    **容器情况自己豁免自己，这里不写白名单。** derive.py 在打包成立时已经把容器换成了
+    逻辑精度（packing_factor > 1 时 label 取 logical），所以 FP4 装 INT8、INT4 装 INT32、
+    MXFP4 装 UINT8 这些在 by_dtype 里本来就显示成 FP4 / INT4 / MXFP4，对得上。
+    写死白名单的话，下次出现新的打包格式就会被当成真不一致；而一个真的声明错了的，
+    反倒可能被某条白名单捞走。判据交给 packing_factor 是唯一不会随版本腐烂的办法。
+
+    报 warning 不报 error：声明里出现本仓没取过数的那个仓的精度，不一定是写错 ——
+    厂商常把量化变体发在独立仓。但两种情况在字段上长得一模一样，所以必须提示。
+    weights_release 的口径（要不要带「本仓取没取过数」的标记）定下来之后，
+    这一条可以收紧成 error。
+    """
+    wr = ((doc.get("precision") or {}).get("weights_release")) or []
+    mid = doc.get("id")
+    if not wr or not mid:
+        return
+    dp = os.path.join(derived_dir, f"{mid}.json")
+    if not os.path.exists(dp):
+        return
+    try:
+        fs = (json.load(open(dp)) or {}).get("from_shapes") or {}
+    except (ValueError, OSError):
+        return
+    by = fs.get("weight_bytes_by_dtype")
+    if not by:
+        return  # 没有逐 dtype 统计（抽样快照等），这一项无从对账
+    measured = {str(k).upper() for k in by}
+    missing = [str(x) for x in wr if str(x).upper() not in measured]
+    if missing:
+        warnings.append(
+            f"{path}: precision.weights_release 声明了 {missing}，但实测清单里没有"
+            f"（实测 {sorted(measured)}）。要么这些变体在本仓没取过数的独立仓里 —— "
+            f"那就在记录里写明是哪个仓、本记录的实测口径只覆盖主仓；"
+            f"要么声明本身不对。两种在字段上长得一样，页面会并排显示"
+            f"「声明发了 X」和「实测全是 Y」，读者会当成数据错")
 
 
 def leaf_paths(obj, prefix=""):
@@ -262,6 +309,7 @@ def main():
         check_evidence(doc, p, errors, warnings, judgements)
         check_review(doc, p, errors, warnings)
         check_leak(doc, p, errors, args.allow_internal)
+        check_release_vs_measured(doc, p, os.path.join(args.data_dir, "derived"), warnings)
     check_review_pointers(loaded, errors, warnings)
 
     ops = sorted(glob.glob(os.path.join(args.data_dir, "ops", "**", "*.yaml"), recursive=True))
