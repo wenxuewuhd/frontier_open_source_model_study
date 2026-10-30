@@ -29,6 +29,72 @@ hf:
 
 lineage:
   track: main
+  predecessor: kimi-k2.5
+  changed_from_predecessor:
+    - axis: attention
+      text: >-
+        61/61 层 MLA 变成 69 层 KDA + 24 层 MLA 的 3:1 混合，MLA 改成 NoPE，
+        93/93 层都加输出门（g_proj [12288, 7168]：MLA 层 sigmoid 门、KDA 层满秩门）。
+        这套结构不是本代新发明的，它来自支线 kimi-linear-48b（2025-10-30，
+        同样的 3:1、同样的 kernel 4 短卷积、同样的 head_dim 128 状态、同样的 NoPE MLA）；
+        本代把它放大到 93 层并改了三处：KDA 的衰减从**逐头**变**逐通道**
+        （A_log 首维 32 = num_heads → 128 = head_dim），门从低秩两段变满秩且覆盖全部层，
+        MLA 的 Q 侧改回 K2 线的两段式降维（q_lora_rank 1536）
+      benefit: >-
+        随上下文线性增长的 KV 从 35,136 元素/token（61 层 × 576）降到 13,824
+        （24 层 × 576），2.54 倍，两侧同为 BF16 兜底口径可比；
+        代价是多出每序列固定的 226.41 MiB 递归状态（69 个 KDA 层）。
+        在前代的上限 256K 上两者合计 6.97 GiB，而前代是 17.16 GiB。
+        算子侧要同时养两条路径（KDA kernel 与 MLA），且 KDA 的衰减从逐头变逐通道
+        之后，按 kimi-linear-48b 那一代写的 kernel 不能直接复用
+    - axis: residual
+      text: 普通 pre-norm 残差改成 AttnRes（attn_res_block_size 12，每子层一次块表示打分与加权平均）
+      benefit: >-
+        前代主干的数据流是「残差 + 子层输出」逐层累加，本代在 8 个块边界上存块表示
+        并把累加器清零重开，每个子层的 layernorm 输入改成「已存块 + 当前累加」的加权平均。
+        代价是 93 层都要保活块表示：decode 每 token 最多 8 × 7168（BF16 114,688 B = 112 KiB），
+        prefill 按 chunk 长度线性放大。这是前代完全没有的一类常驻激活
+    - axis: moe
+      text: >-
+        路由专家 384 → 896、top-8 → top-16、共享专家 1 → 2，
+        并改成 latent MoE：专家在 3584 维上算（routed_expert_down_proj [3584, 7168]
+        + routed_expert_norm [3584] + routed_expert_up_proj [7168, 3584]），
+        MoE 层数 60 → 92
+      benefit: >-
+        dispatch / combine 发生在 3584 维而不是 hidden 7168 上，载荷因此只有一半：
+        2 × 16 × 3584 × 2 B × 92 = 21.10 MB/token，若按 hidden 算是 42.21 MB。
+        但**跨代仍然是涨的** —— 前代是 2 × 8 × 7168 × 2 B × 60 = 13.76 MB/token，
+        本代 21.10 MB 是它的 1.53 倍（top_k 翻倍、MoE 层数多 53%，latent 只抵掉一半）。
+        另一笔新开销是 latent 投影本身：每 MoE 层常驻 51.4M 参数、92 层共 4.73B，
+        不随 top-k 变
+    - axis: precision
+      text: >-
+        INT4（pack-quantized、8 个装一个 I32 容器、BF16 scale）改成 MXFP4
+        （mxfp4-pack-quantized、2 个装一个 U8 容器、U8/E8M0 scale），group 32 不变，
+        「只量化路由专家 + 从 SFT 起 QAT」这两条原则也不变；本代另外声明激活走 MXFP8
+      benefit: >-
+        scale 开销减半：前代 BF16 scale 在 group 32 下是 0.0625 B/参数（全模型 63.42 GB），
+        本代 U8 是 0.03125 B/参数。代价是解包位宽与容器类型整换
+        （I32/8 个 → U8/2 个），两代的反量化 kernel 不通用。
+        权重存储 554.27 GiB → 1.42 TiB，但那是总量涨了 2.7 倍的结果，不是精度变差
+    - axis: context
+      text: 262144（YaRN factor 64）→ 1048576，且**取消了外推机制**（全模型 NoPE，config 里没有任何 rope 超参）
+      benefit: >-
+        上下文 4 倍，而且 1M 是原生训练长度，不再依赖 YaRN 的 factor；
+        与支线 kimi-linear-48b 的 1M 同一种形态。
+        代价是部署期没有旋钮：前代可以调 factor 换长度，本代要更长只能等下一版权重
+    - axis: scale
+      text: >-
+        1.027T → 2.78T（实测），61 → 93 层，激活（带宽口径）31.69B → 104.19B；
+        视觉塔从 MoonViT（1152 / 16 头 / 带 bias / LayerNorm）换成 MoonViT-V2
+        （1024 / 12 头 / intermediate 4096 / RMSNorm / 无 bias / patchmergerv2），
+        并且 **qkv 宽度与 hidden 解耦**：1024 / 12 不是整数，而 qkv_hidden_size 1536 / 12 = 128，
+        即每头 128 维、qkv 投影比 hidden 宽 1.5 倍（前代是 1152 / 16 = 72，qkv 就等于 hidden）
+      benefit: >-
+        总量 2.7 倍而激活 3.3 倍 —— 稀疏度几乎没变（3.09% → 3.75%，带宽口径），
+        所以这一代不是靠更稀疏换规模，而是把激活也放大了。
+        视觉侧是整条 Kimi 线上视觉塔的**第一次换代**：kimi-vl-a3b 的那套 MoonViT
+        在 K2.5 上还是逐张量复用的，到本代才换掉，所以视觉算子要重新适配
 
 params:
   total: 2779931837184.0
@@ -178,7 +244,7 @@ arch:
       所以 AttnRes 替代的是**块边界上的累加**，不是残差相加本身 —— 照「加权组合代替残差相加」
       实现会改掉主干数据流。
       块表示只在同一 token 的层间传递，不跨 token，不进 KimiDynamicCache，不占 KV 容量；
-      但它要跨全部 93 层保活：decode 每 token 最多 8 × 7168（BF16 114.7 KiB），
+      但它要跨全部 93 层保活：decode 每 token 最多 8 × 7168（BF16 114,688 B = 112 KiB），
       prefill 按 chunk 长度线性放大（4096 token 的 chunk 满载 448 MiB）
 
   decoding:
@@ -347,7 +413,7 @@ evidence:
   released: judgement
   license: official
   hf: official
-  lineage: official
+  lineage: judgement
   params: derived
   params.counting_note: derived
   context: official
@@ -400,7 +466,12 @@ reviewed:
     而非 hidden 7168）、Gate B 的外部参数量对账（derive.py --model 带上后 0 处不一致、
     与 HF tally 逐位相同）、以及 derive.py:758-767 的算术强度折算公式确为按参数数等比例。
     其余计数（493 层逐张量形状、AttnRes 的行号与数据流、1M 读量与状态容量的三种情形）
-    依据的是代理在完整清单与参考实现上的枚举，未逐项重跑
+    依据的是代理在完整清单与参考实现上的枚举，未逐项重跑。
+    **同日第二轮**（补 Kimi 历史线时）另核了 lineage 一项：predecessor 的选取判据、
+    六条 changed_from_predecessor 里的每个数、以及「混合结构来自 kimi-linear-48b」这个判断，
+    留痕见 R17；KDA 的 A_log 在两代的含义差异也在那一轮用两边的参考实现与清单双向验过。
+    那一轮另派了一个独立核查代理对抗式复核 lineage 的每个数与 kimi-linear-48b /
+    kimi-k2-thinking / kimi-k2.5 三份新记录，它在这份记录上报了两条：R18（口径）与 R19（单位）
 
 review:
   - id: R1
@@ -593,6 +664,54 @@ review:
     resolution: corrected
     changed_to: >-
       context 下补 extension_method（标 derived），infra_signals 补一条 axis: context
+
+  - id: R17
+    field: lineage
+    severity: missing
+    claim: lineage 下只有一个 track（值 main），没有 predecessor，也没有 changed_from_predecessor
+    finding: >-
+      本轮补 Kimi 历史线时补上。predecessor 取 **kimi-k2.5**：K2.6（2026-04-14）与
+      K2.7-Code（2026-06-11）相对 K2.5 一个规格字段都没动（三者张量名清单各 208,550 条、
+      两两差集为空，HF tally 逐位相同，config 规格字段相同），按本仓惯例不单独立记录，
+      所以链直接接到 K2.5。
+      六条变化逐个复算过：注意力 35,136 → 13,824 元素/token（两侧同为 BF16 兜底口径）、
+      256K 下 17.16 → 6.97 GiB、EP 13.76 → 21.10 MB/token（若按 hidden 7168 算是 42.21）、
+      scale 开销 0.0625 → 0.03125 B/参数、稀疏度 3.09% → 3.75%、
+      权重存储 554.27 GiB → 1.42 TiB。
+      另一件要写进 lineage 的事：**这套混合注意力不是本代发明的**，
+      它来自支线 kimi-linear-48b（2025-10-30，同样的 3:1、kernel 4 短卷积、head_dim 128、
+      NoPE MLA），本代改的是三处 —— KDA 衰减从逐头变逐通道（A_log 首维 32 → 128）、
+      门从低秩两段变满秩且覆盖 93/93 层、MLA 的 Q 侧改回 K2 线的两段式降维。
+      视觉侧则是整条线上视觉塔的第一次换代（K2.5 还在逐张量复用 kimi-vl-a3b 的 MoonViT）
+    resolution: corrected
+    changed_to: >-
+      新增 lineage.predecessor = kimi-k2.5 与六条 changed_from_predecessor
+      （axis: attention / residual / moe / precision / context / scale），每条的数都可复算
+
+  - id: R18
+    field: evidence
+    severity: miscategorized
+    claim: evidence 里 lineage 标 official（R17 补进来的整块 predecessor / changed_from_predecessor 继承了它）
+    finding: >-
+      lineage 原来只有一个 track 字段，标 official 还说得过去；R17 补进来的六条
+      changed_from_predecessor 里全是判断（「这套混合结构来自支线 kimi-linear-48b」、
+      「latent MoE 让 dispatch 发生在 3584 维」是部署含义而不是落盘事实、
+      「稀疏度几乎没变」是解读），继承 official 就让整块绕过了 --list-judgements。
+      同族其余五份新记录的 lineage 都标 judgement，只有这一份不一致 ——
+      正是 CLAUDE.md 点名的那条绕过路径
+    resolution: corrected
+    changed_to: evidence 的 lineage 从 official 改成 judgement（本份记录因此多出 3 条判断类字段）
+  - id: R19
+    field: arch.residual.note
+    severity: wrong
+    claim: 「decode 每 token 最多 8 × 7168（BF16 114.7 KiB）」（上一轮就在这份记录里，R17 补 lineage 时又抄了一遍）
+    finding: >-
+      单位串了：8 × 7168 × 2 B = 114,688 B = **112.0 KiB**（114.7 **kB**）。
+      数值本身对，块数 8 也核过（attn_res_block_size 12，93 层里 layer_idx % 12 == 0
+      命中 L0/12/24/36/48/60/72/84）。两处都写着同一个错单位，
+      而「跨记录搬句子时数字要跟着重算」这条教训在本轮的 kimi-linear-48b R2 上刚犯过一次
+    resolution: corrected
+    changed_to: 两处都改成「114,688 B = 112 KiB」
 
 notes: >-
   Kimi 家族的旗舰，model_type kimi_k3（语言主干 kimi_linear），原生多模态。本仓第一份 Kimi 记录，
