@@ -175,7 +175,10 @@ const shortName = (m: Model, label: string) =>
   lead="各家族逐代的注意力类型与缓存账形状。每一格都从记录与 derive.py 的产物算出来，页面不存数字。"
 >
   <p class="small muted">
-    口径：<strong>KV 元素 / token</strong> 只计随上下文增长的分量，与精度无关，跨代、跨族系可比；
+    口径：本页的数一律是<strong>元素</strong>，不是字节 —— 字节 = 元素 × 每元素字节，
+    两者差一个精度因子。和别处的字节数并排读，会以为其中一个算错了，
+    所以每个数后面都带着「元素」两个字。
+    <strong>KV 元素 / token</strong> 只计随上下文增长的分量，与精度无关，跨代、跨族系可比；
     <strong>每序列固定</strong>（滑窗局部 KV、线性递归状态）不随上下文增长，单独列，不折进每 token。
     字节由落盘精度决定，而各记录的精度来源不一（<code>theoretical_floor</code> 是查到落盘格式的理论下限，
     <code>dtype_fallback</code> 是按权重 dtype 兜底的占位值），<strong>本页不出字节倍数</strong>；
@@ -213,8 +216,8 @@ const shortName = (m: Model, label: string) =>
               <td>{m.arch?.attention?.type ?? '—'}<Evidence tag={evidenceFor('arch.attention.type', m.evidence)} /></td>
               <td>{perTokenComps(kv).join(' + ') || '—'}</td>
               <td class="num">
-                {kv.per_token_elems_bound === 'upper_bound' && '≤ '}{fmtInt(kv.per_token_elems)}<Evidence tag="derived" />
-              </td>
+                {kv.per_token_elems_bound === 'upper_bound' && '≤ '}{fmtInt(kv.per_token_elems)}
+                <span class="unit">元素</span><Evidence tag="derived" /></td>
               <td>{seq.length ? seq.map((s) => <div>{s.text}</div>) : <span class="dash">无</span>}</td>
               <td>{basisOf(kv).map((b) => <code>{b}</code>)}</td>
             </tr>
@@ -263,7 +266,8 @@ const shortName = (m: Model, label: string) =>
                       {kv?.per_token_elems ? (
                         <>
                           {kv.per_token_elems_bound === 'upper_bound' && '≤ '}
-                          {fmtInt(kv.per_token_elems)}<Evidence tag="derived" />
+                          {fmtInt(kv.per_token_elems)}
+                          <span class="unit">元素</span><Evidence tag="derived" />
                           <div class="bar" aria-hidden="true">
                             <span style={`width:${(100 * kv.per_token_elems) / (f.max || 1)}%`} />
                           </div>
@@ -361,5 +365,8 @@ const shortName = (m: Model, label: string) =>
     overflow: hidden;
   }
   .bar span { display: block; height: 100%; background: var(--accent); }
+  /* 单位跟着数字，不只写在表头：裸数字被当成字节读过一次。
+     压小并调淡，是为了让它不抢数字本身，而不是为了让它可以被略过 */
+  .unit { font-size: 11.5px; color: var(--ink-3); margin-left: 2px; }
   td code + code { margin-left: 4px; }
 </style>

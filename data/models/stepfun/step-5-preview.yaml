@@ -237,6 +237,125 @@ arch:
     fusion: >-
       两级 3×3 卷积下采样（vit_downsampler1 1536 → 3072、vit_downsampler2 3072 → 6144），
       再经 vit_large_projector [4096, 6144] 投到主干宽度；image_token_len 169
+    tokens:
+      reference_resolution: 728x728
+      patch_grid: 52x52
+      encoder_tokens: 2704
+      llm_tokens: 169
+      compression_ratio: 16
+      compression_stage: >-
+        两级跨步卷积，不是拼接式 merger（与上一代 step-3 同一路子）。
+        压缩全部在 vit_large_projector **之前**，那一层只跑 169 次；
+        但**两级卷积自己落在不同的输出位置数上**：
+        vit_downsampler1 [3072, 1536, 3, 3] 跑 676 次（26² 个输出位置）、
+        vit_downsampler2 [6144, 3072, 3, 3] 跑 169 次。
+        两级合计 2704 / 169 = **16:1，与上一代相同、全批最高**
+        （DeepSeek 两档 9、其余九份 4）。
+        把两级都按 169 算会少算第一级 4 倍
+      dynamic_resolution: false
+      scope_note: >-
+        **169 只是全局视图，不是「一张图」。** config 另有
+        patch_token_len 81，与上一代 step-3 两个值逐位相同；
+        上一代的 R3 已判过「169 不是单图上限、单图是 169 + 81 × patch 数」，
+        而本代 config 的这两项与上一代同值，所以同一个护栏在本代照用 ——
+        但**本代的模型卡本轮没读**，「多 patch 预处理默认开启」这句
+        是上一代卡上的话，没有本代的一手来源，所以本代只记
+        「两个 config 值相同」这个事实，不替厂商声明默认行为。
+        上面 tokens 与下面 prefill 的每一格都只覆盖全局视图那一路。
+        另外本档是**固定分辨率**（vision_config.image_size 728），
+        位置表 [2704, 1536] 把它钉死，
+        所以**不能换算到本仓的 672×672 参考分辨率**——
+        和那十份比 token 数是范畴错误，要比只能比压缩比与塔开销占比
+      derivation: >-
+        因子：
+        (1) 输入 728×728 —— config.vision_config.image_size；
+        (2) patch 14 —— config.vision_config.patch_size，并由
+        vision_model.conv1.weight [1536, 3, 14, 14] 的后两维印证；
+        (3) 728 / 14 = 52，52² = 2704，**没有 cls token**
+        （config 的 use_cls_token 为 false），
+        与位置表 vision_model.positional_embedding [2704, 1536] 的行数
+        逐位相同 —— 这一致性同时闭合了 (1)(2)(3) 三项，
+        也和上一代 step-3 的 2705 = 1 cls + 52² 形成对照；
+        (4) 两级卷积的 **stride 是推出来的、不是读来的**：
+        两端都有官方值（输入网格 52² 由位置表钉住、输出 169 =
+        config 的 image_token_len），两个 3×3 卷积要把 52 变成 13
+        只有「各 stride 2」一条路（52 → 26 → 13），所以 stride 2 是
+        被两个官方端点逼出来的。通道数 1536 → 3072 → 6144 每级翻倍，
+        与上一代 step-3 同一个模式，算旁证。
+        **上一代的 stride 有实现行号可引**（modeling_step3.py 686–698），
+        本代参考实现本轮没读，所以这里只能靠两端闭合 ——
+        结论相同但依据弱一档，padding 也因此没有来源
+    prefill:
+      encoder_linear_gflops: 9399.8
+      projector_linear_gflops: 123.34
+      backbone_token_budget: 169
+      backbone_linear_gflops_per_token: 52.11
+      image_as_text_tokens: 352
+      attention_excluded: >-
+        被排除的是 encoder 自注意力的 QK^T 与 AV，形式
+        4 × n² × hidden × layers。本档是固定分辨率，所以 n 恒为 2704。
+        跨度没有一手来源：vision_config 里没有窗口一类的键，
+        Perception Encoder 的参考实现本轮没读。
+        按整图一段取 n = 2704 约 2704² × 4 × 1536 × 47 = 2.11 TFLOPs，
+        是线性项 9.40 TFLOPs 的 22%。
+        没有加进上面几格，因为主干那侧的分母也是线性项、不含注意力
+      derivation: >-
+        encoder 线性项 = 2 × 2704 × (conv1 903,168 + 47 层 ×
+        每层 36,962,304 = 1,737,228,288) = 2 × 2704 × 1,738,131,456
+        = 9,399,814,914,048 ≈ 9.40 **T**FLOPs。
+        每层 36,962,304 逐因子核过：in_proj 3 × 1536² + out_proj 1536² +
+        fc1 8960 × 1536 + fc2 1536 × 8960，四项相加与清单里 188 个
+        transformer.resblocks 线性张量的求和逐位相同
+        （注意本代 qkv 是**融合的 in_proj_weight**，不是三个分开的张量）。
+        **这是 12 份里第二大的 encoder 线性项**，只有上一代 step-3 的
+        23.1 TFLOPs 更大 —— 本代塔从 63 层 × 1792 降到 47 层 × 1536，
+        线性项降到 41%。
+        projector 线性项按各自的输出位置数分三项算（见
+        tokens.compression_stage）：
+        2 × 676 × (3072 × 1536 × 3²) = 57.42 +
+        2 × 169 × (6144 × 3072 × 3²) = 57.42 +
+        2 × 169 × (4096 × 6144) = 8.51，合计 123.34 GFLOPs。
+        主干分母 = 2 × (active_params.total 26,583,227,840 −
+        active_params.lm_head 527,958,016) = 52,110,539,648 ——
+        **不能用 derived 里的 flops.linear_per_token 53,166,455,680**，
+        那一项含 lm_head（decode 口径）。
+        换算 = 169 + 9,523,153,047,552 / 52,110,539,648 = 169 + 182.7 = 352
+        （分子 = encoder 9,399,814,914,048 + projector 123,338,133,504）。
+        **塔开销占比 2.08，是 12 份里第二高**（只有上一代 step-3 的 2.86 更高）：
+        一张图的 prefill 成本 52% 花在视觉塔上。
+        **跨代看这是一次有意的再平衡**：压缩比没动（仍是 16:1、
+        主干仍只收 169 个 token），塔砍到 41%，于是占比从 2.86 降到 2.08
+        —— 塔和主干这两侧**只动了塔**，主干 73.99 → 52.11 反而也小了，
+        所以降幅全部来自塔
+    separability:
+      weight_prefix: >-
+        vision_model.（666 个张量，含两级 vit_downsampler）与
+        vit_large_projector（1 个），共 667 个；主干在 model. / lm_head.。
+        前缀不相交。
+        **注意两级下采样在本代挪进了 vision_model. 之下**
+        （vision_model.vit_downsampler1 / _2），而上一代 step-3 的
+        vit_downsampler / vit_downsampler2 是顶层前缀 ——
+        按上一代的前缀去筛本代会漏，反之会把下采样算成塔外
+      shard_isolation: dedicated
+      shard_note: >-
+        实测 index 的 weight_map：667 个视觉张量全部落在
+        **model-vit-00001.safetensors** 这一个分片里，非视觉张量 **0 个**，
+        而主干的 26 个分片叫 model-000NN.safetensors。
+        **这是本仓 12 份里唯一一个用文件名就标出视觉塔的发布**——
+        不必读 index、不必按前缀筛，文件名本身就是边界。
+        对比上一代 step-3：765 个视觉张量被切到前两个分片、
+        两片都混着主干张量（mixed），塔还跨了文件边界。
+        同族系一代之内从「最难分离」变成「最易分离」。
+        另记：本仓另有 18 个跨文件重名张量的发布习惯（见 R8/R9），
+        那是参数量对账的事，与这里的分片隔离无关
+      cross_prefix_sharing: >-
+        weight_map 的名字里没有任何一个同时匹配 vision_model. /
+        vit_large_projector 与 model. / lm_head.，即没有重名共享；
+        两侧连分片都不重合，所以也排除了同片内的加载期耦合。
+        落盘层面的 tied weights 要看 safetensors 头的数据偏移是否重合，
+        weight_map 答不了，本轮没读偏移 ——
+        **本记录对重名张量尤其要当心**：R8/R9 已查明本仓有 18 个跨文件
+        重名张量，不过那 18 个都在主干侧，没有一个跨视觉–主干边界
 
 precision:
   weights_release: [FP8_E4M3, BF16, FP32]
@@ -394,6 +513,16 @@ evidence:
   arch.decoding.mtp_layers_note: derived
   arch.vision.params: derived
   arch.vision.fusion: derived
+  arch.vision.tokens: derived
+  arch.vision.tokens.llm_tokens: official
+  arch.vision.tokens.scope_note: judgement
+  arch.vision.tokens.derivation: judgement
+  arch.vision.prefill: derived
+  arch.vision.prefill.attention_excluded: judgement
+  arch.vision.prefill.derivation: judgement
+  arch.vision.separability: derived
+  arch.vision.separability.shard_note: judgement
+  arch.vision.separability.cross_prefix_sharing: judgement
   precision: official
   precision.weights_release: derived
   precision.quantization.per_subsystem: derived
@@ -427,6 +556,52 @@ reviewed:
     Gate B：参数总量 YAML 声明 = shapes 实测；外部对账仍报 MISMATCH，但根因已查清为口径差
 
 review:
+  - id: R14
+    field: arch.vision.separability.shard_isolation
+    severity: missing
+    claim: >-
+      视觉侧只有结构尺寸、params 与一句 fusion（「两级 3×3 卷积下采样…
+      image_token_len 169」），infra 三组一格都没有
+    finding: >-
+      补 arch.vision 下 tokens / prefill / separability 三组，逐因子核过。
+      三件事值得记：
+      (1) **这是本仓 12 份里唯一一个用文件名就标出视觉塔的发布**：
+      667 个视觉张量全在 **model-vit-00001.safetensors**、非视觉张量 0 个，
+      而主干的 26 个分片叫 model-000NN.safetensors。
+      不必读 index、不必按前缀筛，文件名本身就是边界。
+      对比上一代 step-3：765 个视觉张量被切到前两片、两片都混主干，
+      塔还跨文件边界 —— **同族系一代之内从「最难分离」变成「最易分离」**。
+      (2) **跨代是一次有意的再平衡**：压缩比没动（仍 16:1、主干仍只收
+      169 个 token），塔从 63 层 × 1792 砍到 47 层 × 1536、线性项降到 41%
+      （23.1 → 9.40 TFLOPs），于是塔开销占比从 2.86 降到 2.08。
+      主干那侧 73.99 → 52.11 反而也小了，**所以降幅全部来自塔**。
+      一张图仍有 52% 的 prefill 成本在塔上，是 12 份里第二高。
+      (3) **两级卷积的 stride 在本代是推出来的、不是读来的。**
+      两端都有官方值（输入网格 52² 由位置表 [2704, 1536] 钉住、
+      输出 169 = config 的 image_token_len），两个 3×3 卷积把 52 变成 13
+      只有「各 stride 2」一条路，所以 stride 2 被两个官方端点逼出来；
+      通道 1536 → 3072 → 6144 每级翻倍与上一代同模式，算旁证。
+      但**上一代的 stride 有实现行号可引**（modeling_step3.py 686–698），
+      本代参考实现本轮没读 —— 结论相同、依据弱一档，padding 没有来源。
+      derivation 因此标 judgement 进 Gate C。
+      两处护栏：**没有 cls token**（use_cls_token false，位置表 2704 行
+      而不是上一代的 2705），所以 encoder_tokens 填 2704；
+      169 只是全局视图 —— config 的 patch_token_len 81 与上一代逐位相同，
+      上一代 R3 的护栏照用，但**本代模型卡本轮没读**，
+      「多 patch 默认开启」是上一代卡上的话，所以本代只记
+      「两个 config 值相同」这个事实，不替厂商声明默认行为。
+      另：两级下采样在本代挪进了 vision_model. 之下，
+      上一代是顶层前缀 —— 按上一代前缀筛本代会漏掉下采样链
+    resolution: corrected
+    changed_to: >-
+      新增 arch.vision.tokens（2704 → 169，压缩比 16；derivation 写明
+      stride 是两端闭合推出的、依据比上一代弱一档；scope_note 写明
+      169 只是全局视图、固定分辨率不可换算到 672）、
+      arch.vision.prefill（encoder 线性 9.40 TFLOPs、projector 123.34 GFLOPs
+      分三项给出、一张图 ≈ 352 个文本 token，并写明跨代再平衡的归因）、
+      arch.vision.separability（**dedicated**，model-vit-00001 专用文件，
+      并与上一代的 mixed 对照；另注明 R8/R9 那 18 个重名张量都在主干侧、
+      没有跨视觉边界）；evidence 加十条，五格判断类进 Gate C
   - id: R1
     field: params.counting_note
     severity: wrong

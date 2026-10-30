@@ -230,6 +230,123 @@ arch:
       multi_modal_projector 两层 MLP（1280 → 6144 → 6144，带 bias）先投到主干宽度，
       再由 patch_merge_mlp 把 2×2 相邻 token 拼成 24576 维降回 6144（linear_1 [6144, 24576]）。
       patch_embedding [1280, 3, 2, 14, 14] 是时间维 2 帧的 3D 卷积，落盘 FP32
+    tokens:
+      reference_resolution: 672x672
+      patch_grid: 2x2 块 × 每块 24x24
+      encoder_tokens: 2304
+      llm_tokens: 576
+      compression_ratio: 4
+      compression_stage: >-
+        **本档的压缩在 projector 之后，这是它和另外十一份的根本差别。**
+        张量形状逼出这个次序，不是推测：
+        multi_modal_projector.linear_1 是 [6144, 1280]，输入维 1280 =
+        encoder hidden，所以它跑在**未合并**的 encoder 宽度上；
+        patch_merge_mlp.linear_1 是 [6144, 24576]，而 24576 = 4 × 6144，
+        所以它合并的是**已投影过**的 4 个 6144 维 token。
+        于是两层 projector 的 GEMM 跑 2304 次、两层 merge 的跑 576 次 ——
+        别家（Qwen / Kimi / DeepSeek / StepFun）一律是先压后投，
+        projector 只跑压缩后的次数。
+        代价见 prefill.projector_linear_gflops：427.62 对 Qwen 同口径的 39.54，
+        **10.8 倍**
+      dynamic_resolution: true
+      derivation: >-
+        本档不是整图一张网格，而是**按 image_grid_pinpoints 分块**
+        （process_image_mode: dynamic_res）。因子：
+        (1) 每块 336×336 —— pinpoints 列表里每一项的两维都是 336 的倍数，
+        最小项 (336, 336)；
+        (2) patch 14 —— config.vision_config.patch_size，并由
+        vision_tower.vision_model.embeddings.patch_embedding.weight
+        [1280, 3, 2, 14, 14] 的后两维印证；
+        (3) 时间维 1 —— 同一个权重的第三维是 2，即 Conv3d 的时间核 2，
+        单张静态图补成 2 帧才喂得进去，所以一张图 1 个时间 patch；
+        (4) 2×2 空间合并 —— vision_config.img_token_compression_config
+        的 spatial_merge_size 2，并由 patch_merge_mlp.linear_1 的输入维
+        24576 = 4 × 6144 印证。
+        **每块独立闭合**：336 / 14 = 24，24² = 576 =
+        config 顶层的 image_seq_length 576，逐位相同 ——
+        这一项因此是「每块的 encoder token 数」而不是「每图的」，
+        当成每图读会在多块输入上少算块数倍。
+        672×672 恰好是 pinpoints 里的 (672, 672) 一项 = 2×2 块：
+        encoder 4 × 576 = 2304，主干 4 × (24/2)² = 4 × 144 = 576。
+        上限是 pinpoints 的 (2016, 2016) = 6×6 = 36 块，
+        即 encoder 20,736、主干 5184 个 token。
+        672×672 是本仓为跨模型比较选的参考分辨率，这里它正好落在厂商的分桶上
+      scope_note: >-
+        **不含可能的全局缩略视图。** 上面的数只算 2×2 个 336 块本身。
+        LLaVA-NeXT 一系的分块预处理通常还会另加一张整图缩略视图
+        （再加 576 / 144 个 token），而 config 里
+        vision_feature_select_strategy 是 full、image_seq_length 是每块的数，
+        都判不出有没有这一张，预处理器配置不在 facts/ 里 ——
+        所以 2304 / 576 是**下界**，有缩略视图则各加 576 / 144。
+        视频另有 vision_segment_max_frames 4，每 2 帧并成 1 个时间 patch，
+        帧数怎么进 token 账本轮没核
+    prefill:
+      encoder_linear_gflops: 2906.0
+      projector_linear_gflops: 427.62
+      backbone_token_budget: 576
+      backbone_linear_gflops_per_token: 47.01
+      image_as_text_tokens: 647
+      attention_excluded: >-
+        被排除的是 encoder 自注意力的 QK^T 与 AV，形式
+        4 × n² × hidden × layers。**本档的 n 有两种可能且后果差很多**：
+        每块各成一段则 n = 576（4 块合计
+        4 × 576² × 4 × 1280 × 32 = 217 GFLOPs），
+        四块连成一段则 n = 2304（单段
+        2304² × 4 × 1280 × 32 = 869 GFLOPs）—— 差 4 倍，
+        而且随分辨率继续分叉（36 块时分别是 1.95 TFLOPs 对 70 TFLOPs）。
+        config 里只有 3D RoPE 与 rope_mode 这类键，判不出注意力怎么分段；
+        参考实现 modeling_minimax_m3_vl.py 本仓读过注意力与路由部分
+        （见 R1），但**视觉塔的分段本轮没读**。
+        所以这一项不写进上面几格。
+        **分块本身是对 O(n²) 的结构性缓解**：别家动态分辨率是整图一段，
+        n 随面积线性增长、注意力随面积平方增长；分块让 n 卡在每块 576，
+        总成本随块数线性增长 —— 高分辨率下两者会拉开量级。
+        这一点成立与否恰好取决于上面那个未核的分段方式
+      derivation: >-
+        encoder 线性项 = 2 × 2304 × (patch_embedding 1,505,280 + 32 层 ×
+        每层 19,660,800 = 629,145,600) = 2 × 2304 × 630,650,880
+        = 2,905,998,254,080 ≈ 2906.0 GFLOPs。
+        每层 19,660,800 逐因子核过：qkv 3 × 1280² + o 1280² +
+        fc1 5120 × 1280 + fc2 1280 × 5120，四项相加与清单里 192 个
+        encoder.layers 线性张量的求和逐位相同。
+        **这是 12 份里最大的 encoder 线性项**（塔 32 层 × hidden 1280，
+        比 Kimi/Qwen 的 27 层 × 1152 大 53%）。
+        projector 线性项按**各自的 token 数**分四项算，次序见
+        tokens.compression_stage：
+        2 × 2304 × 6144 × 1280 = 36.24 +
+        2 × 2304 × 6144² = 173.95 +
+        2 × 576 × 6144 × 24576 = 173.95 +
+        2 × 576 × 6144² = 43.49，合计 427.62 GFLOPs。
+        **按别家的「先压后投」口径算这一项只有 106.9 GFLOPs，会少算 4 倍** ——
+        这正是把压缩位置当成细节的代价。
+        主干分母 = 2 × (active_params.total 24,733,280,640 −
+        active_params.lm_head 1,229,193,216) = 47,008,174,848 ——
+        **不能用 derived 里的 flops.linear_per_token 49,466,561,280**，
+        那一项含 lm_head（decode 口径）。
+        换算 = 576 + 3,333,615,935,488 / 47,008,174,848 = 576 + 70.9 = 647。
+        塔占 11%（647 / 576 = 1.12）
+    separability:
+      weight_prefix: >-
+        vision_tower.（515 个张量）、multi_modal_projector.（4 个）与
+        patch_merge_mlp.（4 个），共 523 个；主干在 language_model.。
+        三个视觉前缀与主干前缀不相交。
+        注意 patch_merge_mlp 是**顶层前缀**、不在 multi_modal_projector 下 ——
+        按单一 projector 前缀去筛会漏掉压缩那一级
+      shard_isolation: mixed
+      shard_note: >-
+        实测 index 的 weight_map：523 个视觉张量**被切到两个分片，两片都混着主干**——
+        model-00059-of-00059（最后一片）装 516 个（塔加 patch_merge_mlp
+        的一部分），同片另有 401 个非视觉张量；
+        model-00026-of-00059 装 7 个（multi_modal_projector 两层 +
+        patch_merge_mlp 两层，即**整个 projector 链**），
+        同片另有 401 个非视觉张量（第 26 层的 MoE 专家）。
+        即 projector 和塔分家、各自与主干同片 ——
+        **12 份里分离加载代价最高的一档**：要凑齐视觉入口得读两个混合分片，
+        而 kimi-k2.5 / kimi-k3 / step-5-preview 只要读纯视觉分片
+      cross_prefix_sharing: >-
+        weight_map 的 23,416 个名字里没有任何一个同时匹配三个视觉前缀与
+        language_model.，即没有重名共享。落盘层面的 tied weights 要看
+        safetensors 头的数据偏移是否重合，weight_map 答不了，本轮没读偏移
 
 precision:
   weights_release: [BF16, FP32]
@@ -357,6 +474,14 @@ evidence:
   arch.decoding.mtp_layers_note: derived
   arch.vision.params: derived
   arch.vision.fusion: derived
+  arch.vision.tokens: derived
+  arch.vision.tokens.scope_note: judgement
+  arch.vision.prefill: derived
+  arch.vision.prefill.attention_excluded: judgement
+  arch.vision.prefill.derivation: judgement
+  arch.vision.separability: derived
+  arch.vision.separability.shard_note: judgement
+  arch.vision.separability.cross_prefix_sharing: judgement
   precision: official
   precision.weights_release: derived
   precision.quantization.per_subsystem: derived
@@ -390,6 +515,50 @@ reviewed:
     未重新核查
 
 review:
+  - id: R17
+    field: arch.vision.tokens.compression_stage
+    severity: missing
+    claim: >-
+      fusion 已经写出「先投到主干宽度，再由 patch_merge_mlp 把 2×2 相邻
+      token 拼成 24576 维降回 6144」—— 次序是对的，但**没有人算过这个次序
+      值多少钱**，infra 三组也一格没有
+    finding: >-
+      补 arch.vision 下 tokens / prefill / separability 三组，逐因子核过。
+      本档最重要的一条是**压缩位置的代价**：
+      本档是 12 份里唯一「先投后压」的一份，张量形状逼出这个次序
+      （multi_modal_projector.linear_1 [6144, 1280] 的输入维 1280 是
+      encoder hidden，跑在未合并的 token 上；patch_merge_mlp.linear_1
+      [6144, 24576] 的 24576 = 4 × 6144，合并的是已投影过的 token），
+      于是两层 projector 的 GEMM 跑 2304 次而不是 576 次。
+      projector 线性项因此是 **427.62 GFLOPs，Qwen 同口径 39.54 的 10.8 倍**；
+      **按别家「先压后投」的口径算本档只有 106.9，会少算 4 倍**。
+      次序这件事原来只是 fusion 里的一句描述，现在它是一个能复算的数。
+      另外两件：
+      (1) **image_seq_length 576 是「每块」而不是「每图」**：
+      336 / 14 = 24，24² = 576 与它逐位相同。当成每图读，
+      在多块输入上会少算块数倍（672² 是 2×2 块、2016² 是 6×6 = 36 块）。
+      (2) **encoder 线性项 2906.0 GFLOPs 是 12 份里最大的**
+      （塔 32 层 × hidden 1280，比 Kimi/Qwen 的 27 层 × 1152 大 53%），
+      但塔只占一张图 prefill 的 11% —— 主干 47.0 GFLOPs/token 够大。
+      两件**没钉住**的进了 scope_note 与 attention_excluded：
+      有没有额外的全局缩略视图（LLaVA-NeXT 一系通常有，config 判不出，
+      预处理器配置不在 facts/），所以 2304 / 576 是下界；
+      以及注意力分段方式 —— 每块各成一段是 217 GFLOPs、四块连一段是
+      869 GFLOPs，差 4 倍，36 块时差 36 倍。参考实现本仓读过注意力与路由
+      （见 R1），但视觉塔的分段本轮没读。
+      分片上本档是 **12 份里分离加载代价最高的一档**：523 个视觉张量被切到
+      两个分片、两片都混着主干，而且 projector 链整条在第 26 片
+      （和该层 MoE 专家同住）、塔在第 59 片。要凑齐视觉入口得读两个混合分片
+    resolution: corrected
+    changed_to: >-
+      新增 arch.vision.tokens（672² 是 2×2 块、2304 → 576，压缩比 4；
+      compression_stage 写明「压在 projector 之后」及其张量形状依据；
+      scope_note 写明不含可能的缩略视图、是下界）、
+      arch.vision.prefill（encoder 线性 2906.0、projector 427.62 GFLOPs
+      并给出四项分别的 token 数、一张图 ≈ 647 个文本 token）、
+      arch.vision.separability（mixed，塔与 projector 分家各自与主干同片，
+      并点明 patch_merge_mlp 是顶层前缀、按单一 projector 前缀筛会漏）；
+      evidence 加八条，四格判断类进 Gate C
   - id: R1
     field: arch.attention.sparse.mechanism
     severity: wrong

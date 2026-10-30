@@ -342,6 +342,15 @@ export interface TrackedField {
    *                    读者会把它整个算成架构的功劳
    */
   diff?: boolean | 'both-measured' | 'same-basis';
+  /**
+   * diff 为 'same-basis' 时的第二道闸：两侧口径相同，但这个差**本身不含这个字段要说的信息**，
+   * 返回 true 就不出 from → to。
+   *
+   * 守卫拦住的是「口径不同还算倍数」，拦不住「口径相同但倍数是空的」。
+   * KV 字节正是后者：兜底口径下字节 = 元素 × 2，于是 2a 比 2b 和 a 比 b 是同一个数，
+   * 而元素那一行就在同一张矩阵里。两行并排显示同一个倍数，读者会把下面那行当成精度结论。
+   */
+  uninformative?: (prev: Model, m: Model) => boolean;
   /** diff 为 'same-basis' 时的口径。取不到或为 mixed 都不比：mixed 两边可能是不同的混法 */
   basis?: (m: Model) => string | undefined;
   get: (m: Model) => string | number | undefined;
@@ -349,11 +358,84 @@ export interface TrackedField {
 
 const dtype = (v: unknown) => (typeof v === 'string' ? v.toUpperCase() : undefined);
 
+/**
+ * KV 缓存精度的显示值 —— 把「取不到」拆成两种说法。
+ *
+ * 以前取不到就渲染 `—`，而那一个符号同时背着「厂商没公布」和「这一代不建 KV」。
+ * 对 infra 决策这是两个结论：前者说明字节那一列是本仓按模型 dtype 兜底填的占位值，
+ * 真实落盘精度可能更省，容量规划要留余量；后者说明根本没有这笔账要规划。
+ *
+ * 判据只认记录里已经有的东西，不从别处推：
+ *   记录里有值                                        → 照报
+ *   没值，且缓存账已经算过、每 token 与每序列字节都是零 → 不适用（没有 KV 要落盘）
+ *   其余（含没 derive、status unknown）                → 未公布
+ *
+ * 「没 derive」归到「未公布」而不是单列一类，是因为这一格说的是**厂商公布了什么**，
+ * 而不是本仓算到了哪一步 —— 调研进度由字节那一列的 basis 和 derive 状态承担。
+ *
+ * 当前 47 份里 45 份走「未公布」、0 份走「不适用」：五个家族逐份查过模型卡与技术报告，
+ * DeepSeek 之外没有任何厂商公布过 KV 落盘精度。「不适用」这一支现在是空的，
+ * 留着是因为判据得先立住 —— 真出现一份不建 KV 的记录时，它不能和那 45 份共用一个符号。
+ */
+export function kvCachePrecision(m: Model): { text: string; declared: boolean } {
+  const v = dtype(m.precision?.kv_cache);
+  if (v) return { text: v, declared: true };
+  const kv = m.derived?.kv_cache;
+  const accounted = kv?.status && kv.status !== 'unknown';
+  if (accounted && !kv!.per_token_bytes && !kv!.per_sequence_bytes) {
+    return { text: '不适用', declared: false };
+  }
+  return { text: '未公布', declared: false };
+}
+
+// derive.py 能出五个 basis，这里要五个都有。少一个的后果不是「少一个标签」：
+// 没登记的值走 `KV_BASIS_LABEL[b] ?? ''`，那一格字节就成了整表里唯一没有口径标注的数，
+// 读起来像「这个是实打实的」，而 vendor_declared 恰恰是本仓算不出来、照抄厂商的那一行。
+// 取值的定义见 docs/kv-cache-accounting.md
+/**
+ * 这一份的「KV 字节 / token」是不是**元素数的改写**，不含任何精度信息。
+ *
+ * 兜底口径的字节 = 元素 × 每元素字节，而那个「每元素字节」是本仓按模型 dtype 假设的，
+ * 不是查到的。当它恰好是 BF16 的 2 B 时，字节这一列就只是元素列乘了个常数：
+ * 两版相比，2a / 2b 与 a / b 是同一个数。
+ *
+ * 逐份判而不是「凡 dtype_fallback 都算」：兜底 dtype 不一定是 BF16 ——
+ * 一份按 FP8 兜底的记录字节是元素 × 1，和按 BF16 兜底的前代相比，
+ * 字节的倍数就**不**等于元素的倍数，那个差是有内容的，要留着。
+ * 本轮 40 份 dtype_fallback 全部是 ×2（零例外），但这条规律钉在这一代，
+ * 下一代未必成立，所以判据写成逐份算，不写成常数。
+ */
+function bytesAreRewrittenElements(m: Model): boolean {
+  const kv = m.derived?.kv_cache;
+  if (!kv || kv.bytes_basis !== 'dtype_fallback') return false;
+  return Boolean(kv.per_token_elems) && kv.per_token_bytes === kv.per_token_elems * 2;
+}
+
 export const KV_BASIS_LABEL: Record<string, string> = {
   theoretical_floor: '理论下限',
-  dtype_fallback: '精度兜底',
+  vendor_declared: '厂商公布',
   declared_dtype: '声明精度',
+  dtype_fallback: '精度兜底',
   mixed: '口径混合',
+};
+
+/**
+ * 每个 basis 的一句话解释，给需要展开说的地方用（逐层图的表头说明那类）。
+ *
+ * 和 KV_BASIS_LABEL 放在一起是有意的：短标签和长解释是同一件事的两种长度，
+ * 分开放就会出现「标签查表、解释写 ternary」的半吊子状态 —— 逐层图原先正是这样，
+ * `basis === 'theoretical_floor' ? 理论下限 : 按模型 dtype 兜底`，
+ * 于是 vendor_declared 的那一行被解释成「记录没给落盘精度」，
+ * 而那恰恰是厂商公布、本仓算不出来的那一行。**不是漏标签，是标反。**
+ */
+export const KV_BASIS_NOTE: Record<string, string> = {
+  theoretical_floor:
+    '精确计数，但不含分页、环页与对齐粒度，实际部署在它之上，不能直接当显存预算',
+  vendor_declared:
+    '采用厂商公布值，本仓按分量算不出同一个数（差额落在落盘格式未公布的那个分量上）',
+  declared_dtype: '按记录里声明的 KV 精度算，不是兜底假设',
+  dtype_fallback: '记录没给落盘精度，按模型 dtype 兜底，不是实际格式',
+  mixed: '各分量口径不同，整行不能当作单一口径读，也不能和别的代比倍数',
 };
 
 export const TRACKED_FIELDS: TrackedField[] = [
@@ -393,8 +475,11 @@ export const TRACKED_FIELDS: TrackedField[] = [
     get: (m) => {
       const kv = m.derived?.kv_cache;
       if (!kv?.per_token_elems) return undefined;
-      // 公式路径里层数或宽度是上界的，数字前标 ≤，比较时读者能看出哪一侧不精确
-      return `${kv.per_token_elems_bound === 'upper_bound' ? '≤ ' : ''}${fmtInt(kv.per_token_elems)}`;
+      // 公式路径里层数或宽度是上界的，数字前标 ≤，比较时读者能看出哪一侧不精确。
+      // 单位跟着数字走，不只写在表头：裸的「1,600」被当成字节读过一次 ——
+      // 和它并排的字节列是「890 B（理论下限）」，两个数差 1.8 倍，看起来像哪一边算错了，
+      // 而实际是 1600 元素 × 0.5563 B/元素 = 890 B，两个口径
+      return `${kv.per_token_elems_bound === 'upper_bound' ? '≤ ' : ''}${fmtInt(kv.per_token_elems)} 元素`;
     } },
   { key: 'experts', label: '路由专家 / top-k', axis: 'moe', group: 'spec',
     get: (m) => (m.arch?.moe?.routed_experts
@@ -440,12 +525,19 @@ export const TRACKED_FIELDS: TrackedField[] = [
     get: (m) => m.precision?.quantization?.scale_format },
   { key: 'act_scheme', label: '激活量化', axis: 'precision', group: 'precision',
     get: (m) => m.precision?.quantization?.activation_scheme },
+  // 永远有值：缺口径时报「未公布」或「不适用」，不留 `—`（判据见 kvCachePrecision）。
+  // 值刻意只有这两种说法，不带「按 dtype 兜底 / 厂商只公布字节」这类后缀 ——
+  // 带了的话，兜底的前代与厂商公布的后代会比出一条 from → to，
+  // 而那是本仓查到了什么的差别，不是模型的差别。兜底来源看同表的「KV 字节 / token」
   { key: 'kv_dtype', label: 'KV 缓存精度', axis: 'precision', group: 'precision',
-    get: (m) => dtype(m.precision?.kv_cache) },
-  // 字节随精度假设变，口径写在数字旁边；口径不同的两版不进变化矩阵 —— 结构变化看上面的元素行
+    get: (m) => kvCachePrecision(m).text },
+  // 字节随精度假设变，口径写在数字旁边；口径不同的两版不进变化矩阵 —— 结构变化看上面的元素行。
+  // 口径相同也未必比得出东西：两侧都是「元素在 BF16 假设下的改写」时，字节的倍数
+  // 恒等于元素的倍数，而元素那一行就在同一张矩阵里（见 uninformative）
   { key: 'kv_bytes', label: 'KV 字节 / token', axis: 'precision', group: 'precision',
     diff: 'same-basis',
     basis: (m) => m.derived?.kv_cache?.bytes_basis,
+    uninformative: (a, b) => bytesAreRewrittenElements(a) && bytesAreRewrittenElements(b),
     get: (m) => {
       const kv = m.derived?.kv_cache;
       if (!kv?.per_token_bytes) return undefined;
@@ -501,6 +593,9 @@ export function changesFor(m: Model): FieldChange[] {
         return false;
       }
       if (c.field.diff === 'same-basis') {
+        // 口径相同但差是空的：不出。守卫只管「口径不同不算倍数」，
+        // 管不到「口径相同、倍数却只是另一行的改写」
+        if (c.field.uninformative?.(prev, m)) return false;
         const a = c.field.basis?.(prev);
         const b = c.field.basis?.(m);
         if (!a || !b || a !== b || a === 'mixed') return false;

@@ -1,7 +1,7 @@
 {
  "id": "step-5-preview",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T02:49:32+00:00",
+ "generated_at": "2026-10-30T09:24:39+00:00",
  "inputs": {
   "facts_dir": "facts/step-5-preview",
   "config_present": true,

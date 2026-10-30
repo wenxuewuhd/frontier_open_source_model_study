@@ -477,7 +477,56 @@
             "out_hidden": { "type": "integer", "description": "投影到主干前的输出维度" },
             "max_image_tokens": { "type": "integer" },
             "params": { "type": "number" },
-            "fusion": { "type": "string", "description": "projector 结构与 token 压缩方式" }
+            "fusion": { "type": "string", "description": "projector 结构与 token 压缩方式" },
+
+            "tokens": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "一张图产出多少 token。**跨模型比较必须同分辨率** —— 各家默认的「一张图」分辨率不同，不同分辨率之间比 token 数是范畴错误。所以每组数都钉在 reference_resolution 上",
+              "properties": {
+                "reference_resolution": { "type": "string", "description": "下面所有数字所在的输入分辨率，如 672x672。固定分辨率的模型填它自己的那一个" },
+                "patch_grid": { "type": "string", "description": "该分辨率下的 patch 网格，如 48x48；分块预处理的模型写成「N×N 块 × 每块 g×g」" },
+                "encoder_tokens": { "type": "integer", "description": "进 encoder 堆叠的 token 数（patch embed 之后、压缩之前）" },
+                "llm_tokens": { "type": "integer", "description": "进语言主干的 token 数。这是主干侧真正的位置预算" },
+                "compression_ratio": { "type": "number", "description": "encoder_tokens / llm_tokens" },
+                "compression_stage": { "type": "string", "description": "压在哪一步、由哪个模块做（merger 拼接 / pixel-shuffle / 跨步卷积 / 时间池化），以及它在 projector 之前还是之后 —— 次序决定 projector 的 FLOPs 落在哪个 token 数上" },
+                "dynamic_resolution": { "type": "boolean", "description": "true=按输入尺寸分桶，token 数随图变；false=预处理固定到一个分辨率" },
+                "max_llm_tokens_declared": { "type": "integer", "description": "厂商声明的单图 token 上限（config 的 max_image_tokens 一类）" },
+                "scope_note": { "type": "string", "description": "这组数覆盖的范围，以及它**不**覆盖什么 —— 例如只算全局视图、多图块预处理另外加；视频的帧数怎么进来" },
+                "derivation": { "type": "string", "description": "逐因子推导：每个因子的值与来源（config 键 / 张量形状 / 实现）" }
+              }
+            },
+
+            "prefill": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "一张图的 prefill 负载。**口径：只算线性 GEMM**，与 data/derived 里主干那侧的 flops 口径一致 —— 注意力项两侧都不含，否则分子分母不是一套口径",
+              "properties": {
+                "encoder_linear_gflops": { "type": "number", "description": "一张图过 encoder 堆叠的线性 GFLOPs（含 patch embed，按 2×MAC）" },
+                "projector_linear_gflops": { "type": "number", "description": "projector / 压缩模块的线性 GFLOPs" },
+                "backbone_token_budget": { "type": "integer", "description": "这张图在主干序列里占的位置数，等于 tokens.llm_tokens" },
+                "backbone_linear_gflops_per_token": { "type": "number", "description": "主干每 token 的 prefill 线性 GFLOPs。**不是 derived JSON 的 flops.linear_per_token** —— 那一项含 lm_head（decode 口径，每步对全词表做 GEMM），prefill 只在最后一个位置算 logits。取 2 × (active_params.total − active_params.lm_head)" },
+                "image_as_text_tokens": { "type": "number", "description": "一张图相当于多少个文本 token = backbone_token_budget + (encoder + projector 的 GFLOPs) / backbone_linear_gflops_per_token。infra 侧真正关心的换算" },
+                "attention_excluded": { "type": "string", "description": "被排除的 O(n²) 注意力项：它的形式，以及 encoder 的注意力跨度（整图一段 / 分块 / 窗口）是否有一手来源。跨度没钉住就不要把这一项乘进来" },
+                "derivation": { "type": "string", "description": "逐因子推导，每个因子给出值与来源" }
+              }
+            },
+
+            "separability": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "encoder 能不能分离部署。**「结构上可分」与「有实现支持」是两件事** —— 前者看权重落盘，后者要一手来源；没有一手来源就不填 runtime_support",
+              "properties": {
+                "weight_prefix": { "type": "string", "description": "视觉侧张量的前缀，以及它与主干前缀是否不相交" },
+                "shard_isolation": {
+                  "description": "视觉张量在 safetensors 分片里的隔离程度。dedicated=有纯视觉分片且视觉张量全在其中；partial=有纯视觉分片，但少量视觉张量溢出到混合分片；mixed=没有纯视觉分片，视觉与主干同片",
+                  "enum": ["dedicated", "partial", "mixed"]
+                },
+                "shard_note": { "type": "string", "description": "逐分片的实测：哪几个分片含视觉张量、各含多少、同片的非视觉张量是谁。来源是 model.safetensors.index.json 的 weight_map" },
+                "cross_prefix_sharing": { "type": "string", "description": "有没有跨 encoder–主干的张量共享。注意：张量名不相交只能说明**没有重名**，落盘层面的存储共享（tied weights）要看 index 的偏移，weight_map 答不了" },
+                "runtime_support": { "type": "string", "description": "厂商参考实现 / 部署文档里 encoder 是否可独立成服务。**只在有一手来源时填**，并写出那个来源" }
+              }
+            }
           }
         },
 

@@ -241,6 +241,125 @@ arch:
       config 的 vision_config.intermediate_size 15360 与权重 mlp.fc1 [15360, 1792] 一致
       （注意 configuration_step3.py 里这一项的**默认值**写的是 3072，仓里的 config.json 覆盖成 15360，
       按默认值读会少算 5 倍）
+    tokens:
+      reference_resolution: 728x728
+      patch_grid: 52x52
+      encoder_tokens: 2705
+      llm_tokens: 169
+      compression_ratio: 16
+      compression_stage: >-
+        **两级跨步卷积，不是拼接式 merger** —— 这是本族系和另外十份的根本差别。
+        vit_downsampler [4096, 1792, 2, 2] 是 kernel 2 / stride 2
+        （stride 取自 config 的 understand_projector_stride 2）：52 → 26；
+        vit_downsampler2 [8192, 4096, 3, 3] 是 kernel 3 / stride 2 / padding 1
+        （两者都写死在 modeling_step3.py 第 686–698 行）：26 → 13。
+        13² = 169。两级合计 2704 / 169 = **16:1，全批最高**
+        （DeepSeek 两档 9、其余九份 4）。
+        压缩全部在 vit_large_projector **之前**，所以那一层只跑 169 次；
+        但**两级卷积自己的成本落在不同的 token 数上**：
+        第一级跑 676 次（26² 个输出位置）、第二级跑 169 次 ——
+        把两级都按 169 算会少算第一级 4 倍
+      dynamic_resolution: false
+      scope_note: >-
+        **169 只是全局视图，不是「一张图」。** config 另有
+        patch_token_len 81，而模型卡原文说多 patch 预处理默认开启
+        （"multi-patch for image preprocessing is supported by default"），
+        所以单图是 **169 + 81 × patch 数**（这正是 R3 删掉
+        max_image_tokens 的理由）。
+        上面 tokens 与下面 prefill 的每一格都**只覆盖全局视图那一路**，
+        实际单图要按 patch 数加倍 —— 用它们做 prefill 预算会低估。
+        81 背后的像素几何本轮没钉住（81 = 9²，但 9 反推到输入边长需要
+        知道 crop 的尺寸，预处理器配置不在 facts/）。
+        另外本档是**固定分辨率**（vision_config.image_size 728），
+        位置表 [2705, 1792] = 1 个 cls + 52² 把它钉死了，
+        所以**不能换算到本仓的 672×672 参考分辨率**——
+        和另外十份比 token 数是范畴错误，要比只能比压缩比与塔开销占比
+      derivation: >-
+        因子：
+        (1) 输入 728×728 —— config.vision_config.image_size；
+        (2) patch 14 —— config.vision_config.patch_size，并由
+        vision_model.embeddings.patch_embedding.weight [1792, 3, 14, 14]
+        的后两维印证；
+        (3) 728 / 14 = 52，52² = 2704，**加 1 个 cls token**
+        （vision_model.embeddings.class_embedding [1, 1792]）= 2705，
+        与位置表 vision_model.embeddings.position_embedding.weight
+        [2705, 1792] 的行数逐位相同 —— 这一致性同时闭合了 (1)(2) 两项；
+        (4) 两级卷积 52 →（k2, s2）→ 26 →（k3, s2, p1）→ 13，
+        13² = 169 = config 的 image_token_len，逐位相同。
+        cls token 进 encoder 堆叠（所以 encoder_tokens 填 2705），
+        但不进卷积网格（卷积要 52×52 的方阵），所以它在下采样前被丢掉。
+        **2705 对 2704 只差 0.037%**，对 FLOPs 结论无影响，
+        这里填 2705 是为了和位置表对得上
+    prefill:
+      encoder_linear_gflops: 23146.5
+      projector_linear_gflops: 161.61
+      backbone_token_budget: 169
+      backbone_linear_gflops_per_token: 73.99
+      image_as_text_tokens: 484
+      attention_excluded: >-
+        被排除的是 encoder 自注意力的 QK^T 与 AV，形式
+        4 × n² × hidden × layers。本档是固定分辨率，所以 n 至多 2705、
+        不随输入变 —— 这是分析上的便利，别家动态分辨率没有。
+        跨度没有一手来源：塔被委托给 vision_encoder.py 的
+        StepCLIPVisionTransformer，而**那个文件至今没下载、类体没读**
+        （见 arch.vision.encoder 与 R21）。
+        按整图一段取 n = 2705 约 2705² × 4 × 1792 × 63 = 3.30 TFLOPs，
+        是线性项 23.1 TFLOPs 的 14%。
+        没有加进上面几格，因为主干那侧的分母也是线性项、不含注意力
+      derivation: >-
+        encoder 线性项 = 2 × 2705 × (patch_embedding 1,053,696 + 63 层 ×
+        每层 67,895,296 = 4,277,403,648) = 2 × 2705 × 4,278,457,344
+        = 23,146,454,231,040 ≈ 23.1 **T**FLOPs。
+        每层 67,895,296 逐因子核过：qkv 3 × 1792² + o 1792² +
+        fc1 15360 × 1792 + fc2 1792 × 15360，四项相加与清单里 252 个
+        transformer.layers 线性张量的求和逐位相同。
+        **这是 12 份里最大的 encoder 线性项，比第二位的 minimax-m3
+        （2906.0 GFLOPs）还大 8 倍** —— 塔 63 层 × hidden 1792 × inter 15360，
+        光塔就 4.3B 参数。
+        projector 线性项按**各自的输出位置数**分三项算（见
+        tokens.compression_stage）：
+        2 × 676 × (4096 × 1792 × 2²) = 39.69 +
+        2 × 169 × (8192 × 4096 × 3²) = 102.07 +
+        2 × 169 × (7168 × 8192) = 19.85，合计 161.61 GFLOPs。
+        主干分母 = 2 × (active_params.total 37,917,982,720 −
+        active_params.lm_head 923,345,920) = 73,989,273,600 ——
+        **不能用 derived 里的 flops.linear_per_token 75,835,965,440**，
+        那一项含 lm_head（decode 口径）。
+        换算 = 169 + 23,308,069,152,768 / 73,989,273,600 = 169 + 315.0 = 484
+        （分子 = encoder 23,146,454,231,040 + projector 161,614,921,728）。
+        **分母在 main 的 e394525 之后从 74.65 降到 73.99**（−0.89%）：
+        两级 `vit_downsampler` 的 3.31 亿参数原先被 `subsystems.py` 归进
+        `other`，而 `other` 在 `derive.py` 的常驻名单里 —— 等于把视觉塔的
+        下采样算成了语言主干的激活权重。修正后它们进 `vision`、不计激活。
+        换算值 481 → 484，占比 2.846 → 2.864，结论方向不变
+        **这是 12 份里塔开销占比最高的一档**（484 / 169 = 2.86）：
+        一张图的 prefill 成本有 **65% 花在视觉塔上**、只有 35% 在主干。
+        根因是 16:1 压缩把主干位置预算压到了 169（全批最低），
+        而买下这个预算的代价是一座 4.3B 参数、63 层的塔。
+        **这是整批里 token 压缩比权衡最极端的一例**：
+        和 kimi-k2.5（压缩比 4、主干 576 个 token、塔占 5.3%）比，
+        主干位置少占 3.4 倍，塔的占比高 12 倍。
+        所以本档是最该做 encoder 分离部署的一档之一
+    separability:
+      weight_prefix: >-
+        vision_model.（760 个张量）、vit_downsampler / vit_downsampler2
+        （各 2 个）与 vit_large_projector（1 个），共 765 个；
+        主干在 model. / lm_head.。前缀不相交。
+        注意三个 vit_* 是**顶层前缀**、不在 vision_model. 下 ——
+        按单一前缀去筛会漏掉整条下采样链
+      shard_isolation: mixed
+      shard_note: >-
+        实测 index 的 weight_map：765 个视觉张量**被切到两个分片，两片都混着主干**——
+        model-00001 装 106 个（同片另有 103 个非视觉张量）、
+        model-00002 装 659 个（同片另有 56 个）。
+        没有纯视觉分片，而且塔本身跨了文件边界。
+        **下一代 step-5-preview 彻底改了这件事**：那边有一个专门命名的
+        model-vit-00001.safetensors，667 个视觉张量全在里面、
+        非视觉张量 0 个，是本仓 12 份里唯一一个**用文件名就标出视觉塔**的发布
+      cross_prefix_sharing: >-
+        weight_map 的 1663 个名字里没有任何一个同时匹配四个视觉前缀与
+        model. / lm_head.，即没有重名共享。落盘层面的 tied weights 要看
+        safetensors 头的数据偏移是否重合，weight_map 答不了，本轮没读偏移
 
 precision:
   weights_release: [BF16]
@@ -419,6 +538,15 @@ evidence:
   arch.vision.out_hidden: derived
   arch.vision.params: derived
   arch.vision.fusion: derived
+  arch.vision.tokens: derived
+  arch.vision.tokens.llm_tokens: official
+  arch.vision.tokens.scope_note: judgement
+  arch.vision.prefill: derived
+  arch.vision.prefill.attention_excluded: judgement
+  arch.vision.prefill.derivation: judgement
+  arch.vision.separability: derived
+  arch.vision.separability.shard_note: judgement
+  arch.vision.separability.cross_prefix_sharing: judgement
   precision: official
   precision.weights_release: derived
   precision.quantization.per_subsystem: derived
@@ -451,6 +579,53 @@ reviewed:
     其中 R18 把一条 open_question 解掉了（视觉塔的下采样链）。
 
 review:
+  - id: R23
+    field: arch.vision.tokens.compression_ratio
+    severity: missing
+    claim: >-
+      fusion 里已经有完整的 token 推导链（52 →(k2,s2)→ 26 →(k3,s2,p1)→ 13，
+      13² = 169 = image_token_len），R3 也判过「169 不是单图上限」——
+      但这些只活在一段散文里，没有可查的字段，infra 三组一格都没有
+    finding: >-
+      把 fusion 里那条链落成 tokens / prefill / separability 三组字段，
+      逐因子核过，并补两件原来没算的事。
+      (1) **两级卷积的成本落在不同的 token 数上。** 第一级
+      vit_downsampler 跑 676 次（26² 个输出位置）、第二级跑 169 次，
+      vit_large_projector 跑 169 次。三项分别是 39.69 / 102.07 / 19.85 GFLOPs。
+      **把两级都按 169 算会少算第一级 4 倍** —— 这是跨步卷积式压缩
+      特有的坑，拼接式 merger 没有（那种只有一个位置数）。
+      (2) **塔开销占比是 12 份里最高的**：一张图（全局视图那一路）
+      相当于 484 个文本 token（本条写时是 481，分母修正后见 R24），
+      而它只占 169 个位置 —— prefill 成本 65% 花在视觉塔上、只有 35% 在主干。
+      encoder 线性项 23.1 TFLOPs 是 12 份里最大的，
+      比第二位 minimax-m3 的 2906.0 GFLOPs 还大 8 倍（塔 63 层 ×
+      hidden 1792 × inter 15360，光塔 4.3B 参数）。
+      **这是 token 压缩比权衡最极端的一例**：16:1 把主干位置预算压到 169
+      （全批最低），代价是这座塔。和 kimi-k2.5（压缩比 4、576 个 token、
+      塔占 5.3%）比，主干位置少占 3.4 倍、塔的占比高 12 倍。
+      两处**口径护栏**写进了 scope_note：
+      169 只是全局视图，单图是 169 + 81 × patch 数（R3 的结论），
+      所以 prefill 那几格是全局视图一路的数、做预算会低估；
+      以及本档是**固定分辨率**（image_size 728，位置表 [2705, 1792] =
+      1 cls + 52² 钉死），**不能换算到本仓的 672×672 参考分辨率**——
+      和另外十份比 token 数是范畴错误，只能比压缩比与占比。
+      encoder_tokens 填 2705 而不是 2704：cls token 进 encoder 堆叠、
+      不进卷积网格（卷积要 52×52 方阵），两者只差 0.037%，
+      填 2705 是为了和位置表的行数对得上。
+      分片是 mixed 且塔跨了文件边界（765 个视觉张量分在前两片、
+      两片都混主干）；**下一代 step-5-preview 改成了一个专门命名的
+      model-vit-00001.safetensors**，667 个视觉张量全在里面、非视觉 0 个 ——
+      本仓唯一一个用文件名标出视觉塔的发布
+    resolution: corrected
+    changed_to: >-
+      新增 arch.vision.tokens（2705 → 169，压缩比 16 全批最高；
+      compression_stage 写明两级跨步卷积各自的输出位置数；
+      scope_note 写明 169 只是全局视图、以及固定分辨率不可换算到 672）、
+      arch.vision.prefill（encoder 线性 23.1 TFLOPs、projector 161.61 GFLOPs
+      分三项给出、一张图 ≈ 481 个文本 token —— 该值已由 R24 改为 484）、
+      arch.vision.separability（mixed，塔跨两个混合分片，
+      并与下一代的 model-vit 专用文件对照）；
+      evidence 加九条，四格判断类进 Gate C
   - id: R1
     field: arch.moe.routing
     severity: imprecise
@@ -791,6 +966,43 @@ review:
       bytes_basis 落回 dtype_fallback；元素数一个没动（31,232 元素/token）；
       卡上那两句各自讲什么写进 open_questions
 
+  - id: R24
+    field: arch.vision.params
+    severity: miscategorized
+    claim: >-
+      arch.vision.params 4,675,374,592（本记录早先实测自权重清单）
+    finding: >-
+      **这个数现在有三路独立闭合，而且刚刚接住了一个 derive.py 侧的归类错。**
+      本轮（R23）为算 encoder FLOPs 重做了视觉张量的分区，
+      按 shapes.json 求和得 encoder 4,285,292,032 + projector 390,082,560
+      = 4,675,374,592，与 YAML 里原有的值逐位相同 —— 这是第二路。
+      而当时 `data/derived/step-3.json` 的
+      `params_by_subsystem.vision` 是 **4,208,158,720**，少 4.67 亿，
+      同时凭空多出 `draft` 1.36 亿与 `other` 3.31 亿两个桶 ——
+      **本记录是一个没有 MTP 的模型，draft 桶本不该存在。**
+      main 的 e394525 查清了根因（两处）：
+      (1) `vision` 正则是 `vit\\.`，认不出 Step-3 裸的 `vit_downsampler` /
+      `vit_downsampler2`（4 个张量、331,362,304 参数），它们落进了 `other`；
+      (2) 层号捷径把塔自己的 `layers.N.` 判成 `draft` —— 本代塔有 **63 层**
+      而语言主干只有 **61 层**，于是塔的第 61、62 层共 24 个张量被判成草稿块。
+      修正后 `vision` 升到 4,675,374,592、`draft` 与 `other` 双双归零，
+      与 YAML 和本轮的分区三方一致。
+      **第三路是厂商声明**：总量 320,969,912,832 − 4,675,374,592
+      = 316,294,538,240，对上模型卡的「Total Parameters (LLM) 316B」，
+      而总量对上「Total Parameters (VLM) 321B」——
+      两个公布值同时闭合，这一路完全不依赖本仓代码。
+      **顺带被纠正的还有 prefill 的主干分母**：`other` 在 `derive.py` 的
+      常驻名单里，所以那 3.31 亿下采样参数原先被算成语言主干的激活权重，
+      分母虚高 0.89%（74.65 对 73.99）。见 R23 改后的 derivation。
+      记一条方法上的话：本轮做 encoder 参数量时**没有去读 derived JSON 的
+      vision 桶、而是自己从 shapes.json 重分区**，所以两边的差额才暴露出来。
+      如果当时图省事引了那个桶，encoder FLOPs 会跟着少算 4.67 亿参数的塔，
+      而 YAML 里那个正确的 params 就成了孤证、没人会发现它和 derived 不一致
+    resolution: confirmed
+    changed_to: >-
+      params 原值成立、不改。prefill 的 backbone_linear_gflops_per_token
+      74.65 → 73.99、image_as_text_tokens 481 → 484（占比 2.846 → 2.864，
+      方向不变），derivation 里写明分母修正的根因
 notes: >-
   这一族第一个 MoE、也是唯一一代用 MFA 的。model_type step3_vl，
   architectures Step3VLForConditionalGeneration。
