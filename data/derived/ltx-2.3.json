@@ -1,13 +1,20 @@
 {
  "id": "ltx-2.3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T16:09:08+00:00",
+ "generated_at": "2026-10-30T16:29:06+00:00",
  "inputs": {
   "facts_dir": "facts/ltx-2.3",
   "config_present": false,
   "shapes_present": true,
   "model_yaml": "data/models/ltx/ltx-2.3.yaml",
   "ep_size": 1
+ },
+ "gate_b": {
+  "config": false,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 1,
+  "why": "仓里没有任何 config（顶层与组件目录都没有）。结构字段只有清单一路，config 侧的交叉核对整条跳过"
  },
  "from_shapes": {
   "available": true,
@@ -159,7 +166,9 @@
     "h": 16.0,
     "w": 24.0
    },
-   "latent_frames": 16.0
+   "latent_frames": 16.0,
+   "latent_frames_source": "formula_causal",
+   "effective_temporal_ratio": 7.5625
   },
   "audio_tokens": 504.16667000000007,
   "audio_tokens_terms": {
@@ -196,23 +205,31 @@
    "attention_share": 0.12100935350229086
   },
   "end_to_end_terms": {
-   "formula": "Σ各阶段(步数 × 每步前向次数) × 单步 FLOPs",
+   "formula": "Σ各阶段(步数 × 每步前向次数 × 该段单步 FLOPs)",
    "stages": [
     {
      "name": "stage-1 低分辨率去噪（蒸馏档）",
      "steps": 8,
-     "forwards_per_step": 1
+     "forwards_per_step": 1,
+     "tokens": 6648.1666700000005,
+     "flops_per_step": 287240737666471.8,
+     "flops": 2297925901331774.5,
+     "tokens_source": "default_bucket"
     },
     {
      "name": "stage-2 高分辨率精修（蒸馏调度）",
      "steps": 3,
-     "forwards_per_step": 1
+     "forwards_per_step": 1,
+     "tokens": 6648.1666700000005,
+     "flops_per_step": 287240737666471.8,
+     "flops": 861722212999415.5,
+     "tokens_source": "default_bucket"
     }
    ],
    "stages_skipped": [
     "latent 空间上采样 ×2"
    ],
-   "note": "各阶段按同一个单步 FLOPs 估算；分辨率不同的阶段（SR、上采样）实际 token 数不同，这里是粗估，不要当精确值"
+   "note": "这几段没给 out_width / out_height，按主干段的 token 数估：stage-1 低分辨率去噪（蒸馏档）、stage-2 高分辨率精修（蒸馏调度）。分辨率不同的段（SR、上采样）实际 token 数不同，而注意力是 O(n²)，所以这个数是粗估，不要当精确值"
   },
   "flops_end_to_end": 3159648114331190.0,
   "excluded": [
@@ -221,6 +238,7 @@
    "音频 VAE 与声码器"
   ],
   "notes": [
+   "2 个阶段缺 out_width / out_height，按主干段 token 数估算，端到端是粗估",
    "1 个阶段缺步数或前向次数，未计入端到端：latent 空间上采样 ×2"
   ]
  }

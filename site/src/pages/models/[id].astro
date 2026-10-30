@@ -735,6 +735,21 @@ const rv = reviewStatus(m);
   <p class="small muted">
     config 公式与权重清单两条路都能算的量在这里核对。这是人工复核的主要入口。
   </p>
+  {/* **两路还剩几路，必须在表的上面说。** 下面那张表只列「两路都能算的量」，
+      所以少一路时它会安静地变短 —— 看起来和「核对过、都一致」长得一样。
+      这个事实 derive 一直知道（inputs.config_present / shapes_present），
+      但此前埋在产物里没人读。 */}
+  {d?.gate_b && d.gate_b.paths < 2 && (
+    <div class="warn" style="margin-bottom:12px">
+      <strong>这份记录的 Gate B 只剩 {d.gate_b.paths} 路</strong>
+      （{d.gate_b.config ? 'config 有' : 'config 无'} ·
+       {d.gate_b.manifest ? '权重清单有' : d.gate_b.manifest_incomplete ? '权重清单不完整' : '权重清单无'}）。
+      {d.gate_b.why && <> <Prose text={d.gate_b.why} /></>}
+      <br />
+      <span class="small">少一路不等于记录不可信，等于<strong>这一类断言没有第二个来源可对</strong>。
+      下表会相应变短。</span>
+    </div>
+  )}
   <table>
     <thead><tr><th>条目</th><th>结论</th><th>说明</th></tr></thead>
     <tbody>

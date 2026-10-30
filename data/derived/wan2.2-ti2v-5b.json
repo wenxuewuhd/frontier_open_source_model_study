@@ -1,13 +1,19 @@
 {
  "id": "wan2.2-ti2v-5b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T16:08:52+00:00",
+ "generated_at": "2026-10-30T16:29:06+00:00",
  "inputs": {
   "facts_dir": "facts/wan2.2-ti2v-5b",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/wan/wan2.2-ti2v-5b.yaml",
   "ep_size": 1
+ },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
  },
  "from_shapes": {
   "available": true,

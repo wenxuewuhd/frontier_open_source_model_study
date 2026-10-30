@@ -1,13 +1,19 @@
 {
  "id": "hunyuanvideo-1.5",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T16:28:23+00:00",
+ "generated_at": "2026-10-30T16:29:06+00:00",
  "inputs": {
   "facts_dir": "facts/hunyuanvideo-1.5",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/hunyuan-video/hunyuanvideo-1.5.yaml",
   "ep_size": 1
+ },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
  },
  "from_shapes": {
   "available": true,

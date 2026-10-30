@@ -1070,6 +1070,32 @@ def load_yaml(path):
     return yamlio.load(path)
 
 
+def _gate_b(cfg: dict, shapes: dict, shp: dict) -> dict:
+    """Gate B 的两路还剩几路，以及缺的那一路为什么缺。
+
+    判据只看「这一路的原料在不在」，不替记录判断结论可不可信 —— 后者是人的事。
+    清单不完整（抽样快照）算半路：形状可用、参数量不可用，所以单独标出来。
+    """
+    has_cfg = bool(cfg)
+    has_shapes = bool(shapes)
+    incomplete = bool(shp.get("incomplete_note")) if has_shapes else False
+    paths = (1 if has_cfg else 0) + (1 if (has_shapes and not incomplete) else 0)
+    why = None
+    if not has_cfg and not has_shapes:
+        why = "config 与权重清单都没有，两路都走不了"
+    elif not has_cfg:
+        why = ("仓里没有任何 config（顶层与组件目录都没有）。"
+               "结构字段只有清单一路，config 侧的交叉核对整条跳过")
+    elif not has_shapes:
+        why = ("仓里零 safetensors（权重是 .pt / .pth 这类 pickle），读头拿不到清单。"
+               "参数量与权重存储只能取厂商声明，**不是本仓实测**")
+    elif incomplete:
+        why = shp.get("incomplete_note")
+    return {"config": has_cfg, "manifest": has_shapes and not incomplete,
+            "manifest_incomplete": incomplete, "paths": paths,
+            **({"why": why} if why else {})}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--id", required=True)
@@ -1234,6 +1260,16 @@ def main():
             "model_yaml": args.model,
             "ep_size": args.ep,
         },
+        # Gate B 还剩几路。**这个事实一直在 inputs 里（config_present / shapes_present），
+        # 但埋着、没人渲染，于是「这份只对过一路」只能靠人在 reviewed.method 的散文里写** ——
+        # 写不写全看记录的人记不记得。现在由 derive 直接报。
+        #   两路   config 与权重清单互相对账，本仓的常态
+        #   仅 config  仓里零 safetensors（权重是 .pt / .pth），读头拿不到清单
+        #              —— hunyuanvideo-13b、sana-video-2.0-5b
+        #   仅清单    仓里没有任何 config —— ltx-2.3
+        # **「仅一路」不等于不能录，等于这份记录的某一类断言没有第二个来源可对。**
+        # 它必须在页面上看得见，否则读者会以为所有记录的可信度是一样的。
+        "gate_b": _gate_b(cfg, shapes, shp),
         "from_shapes": shp,
         "kv_cache": kv,
         "kv_capacity_bytes_at_context": kv_at,
