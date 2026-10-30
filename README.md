@@ -156,7 +156,7 @@ Astro 静态站，直接读 `data/` 下的 YAML 与 derived JSON，**不另定�
 | Qwen | `Qwen3.8-2.4T-A95B` | 2026-08-12 | 已录 |
 | GLM | `GLM-5.3` | 2026-10-14 | 待录 |
 | MiniMax | `MiniMax-M3` | 2026-10-26 | 已录 |
-| Kimi | `Kimi-K3` | 2026-09-02 | 待录 |
+| Kimi | `Kimi-K3` | 2026-09-02 | 已录 |
 | 阶跃星辰 | `Step-5-Preview` | 2026-10-15 | 待录 |
 
 较小档位只在有结构对照价值时才录，并标 `lineage.track: side`（如 `qwen3.8-27b`）。

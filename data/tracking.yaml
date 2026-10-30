@@ -41,7 +41,8 @@ families:
     flagship: Kimi-K3
     hf_repo: moonshotai/Kimi-K3
     released: 2026-09-02
-    status: pending
+    model_id: kimi-k3
+    status: recorded
 
   - family: stepfun
     flagship: Step-5-Preview

@@ -87,7 +87,7 @@ V4 一代的字节是按模型权重 dtype（BF16）兜底来的，V4.1 的是 F
 | Qwen3.8-2.4T-A95B | HYBRID | full attention KV + 线性递归状态 | **47,104** | 94,208 B | 573.56 MiB | `dtype_fallback` |
 | GLM-5.3 | MLA | full attention KV + index K | **47,616** | 95,232 B | 0.00 MiB | `dtype_fallback` |
 | MiniMax-M3 | GQA | full attention KV + index K | **68,736** | 137,472 B | 0.00 MiB | `dtype_fallback` |
-| Kimi-K3 | *待录* | | | | | |
+| Kimi-K3 | HYBRID | full attention KV + 线性递归状态 | **13,824** | 27,648 B | 226.41 MiB | `dtype_fallback` |
 | Step-5-Preview | *待录* | | | | | |
 <!-- kv-roster 生成区结束 -->
 

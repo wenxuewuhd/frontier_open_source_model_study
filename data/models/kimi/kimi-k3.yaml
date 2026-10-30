@@ -1,0 +1,359 @@
+id: kimi-k3
+family: kimi
+kind: vlm
+display_name: Kimi-K3
+released: '2026-09-02'
+license: other
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/moonshotai/Kimi-K3
+    locator: config.json / README.md @ f831ab668142
+    accessed: '2026-10-30'
+    note: >-
+      MXFP4 发布（compressed-tensors，mxfp4-pack-quantized），96 分片。权重清单逐分片读头取全，
+      497220 个张量，无读失败分片。license_name kimi-k3
+  - kind: repo
+    url: https://huggingface.co/moonshotai/Kimi-K3/blob/f831ab66814297da540d832a5235f8e904f29d06/modeling_kimi_linear.py
+    locator: KimiMLAAttention / KimiDeltaAttention / KimiDynamicCache / KimiSparseMoeBlock / KimiDecoderLayer
+    accessed: '2026-10-30'
+    note: 厂商随仓发布的参考实现，下载到本地只读、未执行
+
+hf:
+  repo: moonshotai/Kimi-K3
+  sha: f831ab66814297da540d832a5235f8e904f29d06
+  last_modified: '2026-09-02T02:22:41.000Z'
+  pipeline_tag: image-text-to-text
+  gated: false
+
+lineage:
+  track: main
+
+params:
+  total: 2779931837184.0
+  breakdown:
+    expert: 2722740830208.0
+    attention: 36190737024.0
+    shared_expert: 12155092992.0
+    dense_ffn: 5453643776.0
+    lm_head: 1174405120.0
+    embed: 1174405120.0
+    router: 590955008.0
+    vision: 447358976.0
+    norm: 3068544.0
+    residual: 1340416.0
+  counting_note: >-
+    按完整权重清单（96 分片 497220 条目）逐项统计。497220 是 safetensors 条目数，其中
+    247296 条是路由专家的 weight_scale（U8 容器，MX 的逐 32 元素 scale）—— 不计入参数、
+    只计入权重存储；真权重张量 249924 条。路由专家的 weight_packed 是 U8 容器、每字节两个
+    FP4（w1 [3072, 1792] 还原为 [3072, 3584]），参数量按 2 还原，字节不还原。
+    total 是本仓按清单求和的**实测值**，含视觉塔与投影（0.45B）；它与 HF 平台的 safetensors
+    tally（2,779,931,837,184）逐位相同 —— HF 那边同样还原了打包、同样排了 scale（它把还原后的
+    专家数记在「U8」名下，2,722,740,830,208 恰等于本仓 expert 一项），所以 Gate B 的参数总量
+    一项是实测比实测。厂商声明值是模型卡原文「2.8T」总参数、「104B」激活参数、视觉编码器
+    「401M」：实测总量比 2.8T 低 0.72%（取整）；视觉 447.36M = 编码器 401.2M + mm_projector 46.1M，
+    与 401M 对得上编码器那一半。
+    归类上 block_sparse_moe.routed_expert_{down,up}_proj（latent MoE 的进出投影，每 MoE 层一对、
+    常驻）记在 dense_ffn：5.45B 里 4.73B 是它们（92 层 × 2 × 7168 × 3584），L0 稠密 MLP 只有 0.73B。
+    这么记是为了让激活参数按常驻计（归 expert 会被按 16/896 折算），代价是「稠密 FFN」一栏
+    混了两样东西
+
+context:
+  max: 1048576
+
+arch:
+  layers: 93
+  hidden: 7168
+  vocab: 163840
+  norm: RMSNorm
+  norm_eps: 1.0e-05
+  activation: >-
+    SiTU-GLU（config hidden_act situ）：β·tanh(gate/β)·sigmoid(gate) × β'·tanh(up/β')，
+    β = 4.0、β' = 25.0，在 FP32 里算（参考实现 SituAndMul）
+  position: >-
+    MLA 层不用位置编码（mla_use_nope=true，参考实现里 rotary_emb 为 None、k_rot 不旋转）；
+    KDA 层靠短卷积与递归状态携带位置信息
+
+  attention:
+    type: hybrid
+    num_heads: 96
+    num_kv_heads: 96
+    head_dim: 192
+    v_head_dim: 128
+    qk_rope_head_dim: 64
+    qk_nope_head_dim: 128
+    kv_lora_rank: 512
+    q_lora_rank: 1536
+    head_dim_note: >-
+      MLA 层：每头 QK 192（nope 128 + 名为 rope 的 64，本代不旋转）、V 128。
+      q_b_proj [18432, 1536] = 96×192，kv_b_proj [24576, 512] = 96×(K-nope 128 + V 128)，
+      o_proj [7168, 12288] = 96×128；按 head_dim 192 推 o_proj 入口会高 50%。
+      num_kv_heads=96 是 query 侧可见的头数，不是缓存宽度：最小缓存是
+      kv_a_proj_with_mqa [576, 7168] 的输出 —— 512 维 latent 经 kv_a_layernorm [512]、
+      加 64 维 k_rot，每层 576。注意厂商参考实现的 KimiDynamicCache 存的是**解压后**的
+      K（96×192）与 V（96×128），每层 30720 元素，照抄它规划显存高估 53.3 倍。
+      KDA 层：q/k/v_proj 都是 [12288, 7168] = 96 头 × 128，o_proj 同上
+    layer_pattern: >-
+      69 KDA + 24 MLA。MLA 在 L3, L7, …, L91（每 4 层一个）加上 L92，最后两层连续都是 MLA；
+      其余 69 层是 KDA。config 的 linear_attn_config.full_attn_layers / kda_layers 是
+      **1 起计**的（full_attn_layers 为 [4, 8, …, 92, 93]），按 0 起计读会得到一个不存在的
+      L93，并把 L3 认成 KDA。层集合以清单为准：kv_a_proj_with_mqa 恰在上述 24 层，
+      q_conv1d 恰在其余 69 层
+    output_gate:
+      enabled: true
+      type: >-
+        93/93 层都有 self_attn.g_proj [12288, 7168]：MLA 层是 sigmoid 输出门
+        （mla_use_output_gate），KDA 层是满秩门（use_full_rank_gate），两者同形不同义
+    hybrid:
+      layer_types_count:
+        linear: 69
+        full: 24
+      note: >-
+        只有 24 个 MLA 层累积 KV，69 个 KDA 层携带每序列固定的递归状态。无 MTP 块，
+        主干口径就是全部口径
+    linear_state:
+      mechanism: >-
+        Kimi Delta Attention（KDA）：带逐通道衰减门的 delta rule 线性注意力，q/k/v 各自
+        先过一个 depthwise 短卷积（kernel 4，SiLU）
+      num_key_heads: 96
+      num_value_heads: 96
+      key_head_dim: 128
+      value_head_dim: 128
+      conv_kernel_dim: 4
+      state_layout_note: >-
+        递归状态按参考实现是 fla 的 chunk_kda / fused_recurrent_kda 的 recurrent_state，
+        每层 [96, 128, 128]。conv 状态是三份（q / k / v 各一个 ShortConvolution），
+        通道数取自清单：69/69 层 q_conv1d / k_conv1d / v_conv1d 都是 [12288, 1, 4]，
+        合计 36864 = 2×96×128 + 96×128，与 derive.py 的 qkv 通道数公式逐位相等。
+        与 Qwen3.8 不同，K3 的 key 与 value 头数相同（96:96），状态按哪个头数展开不影响容量。
+        但 A_log 是 [128]（69 层一致），与 96 头对不上 —— b_proj [96, 7168]、
+        f_b_proj / dt_bias 的 12288 = 96×128 都指向 96 头，A_log 的第一维另有含义，未核
+
+  ffn:
+    type: moe
+    layer_pattern: >-
+      L0 稠密（mlp.gate_proj [33792, 7168]），L1–L92 共 92 层 MoE。
+      MoE 是 latent 式的：路由专家在 3584 维上算（routed_expert_down_proj [3584, 7168]
+      先把 hidden 降到 3584，经专家后 routed_expert_norm [3584] 再由 routed_expert_up_proj
+      [7168, 3584] 升回）；共享专家不走 latent，直接吃 7168 维 hidden
+
+  moe:
+    routed_experts: 896
+    shared_experts: 2
+    top_k: 16
+    intermediate: 3072
+    first_k_dense: 1
+    dense_intermediate: 33792
+    routing: >-
+      sigmoid 打分、noaux_tc 选路，routed_scaling_factor 1.0，moe_renormalize；
+      参考实现的 KimiMoEGate 把 hidden 与 gate 权重都转 FP32 再打分，而 gate.weight 落盘是 BF16。
+      num_expert_group 1 / topk_group 1，分组路由实际未启用
+    balance: e_score_correction_bias（每 MoE 层一个 [896] FP32）
+    storage_note: >-
+      逐专家独立张量（experts.N.w1/w2/w3，各带 weight_packed 与 weight_scale），不是堆叠的
+      3 维权重。专家形状是 latent 维的：w1/w3 逻辑 [3072, 3584]、w2 [3584, 3072]。
+      两个共享专家在清单里合并成一个 MLP（shared_experts.gate_proj [6144, 7168]，
+      6144 = 2 × 3072）
+
+  residual:
+    type: AttnRes（Block Attention Residuals）
+    coef_proj: >-
+      每层 self_attention_res_proj 与 mlp_res_proj 各一个 [1, 7168]，另有模型级
+      output_attn_res_proj [1, 7168]；对应的 *_res_norm [7168] 是 RMSNorm
+    note: >-
+      attn_res_block_size 12：每 12 层把当前累加结果存成一个块表示，之后每个子层用
+      res_proj 打分、在已存块表示上做加权组合来代替单纯残差相加。块表示只在同一 token 的
+      层与层之间传递，不跨 token —— 参考实现里 block_residual 是 forward 内的局部变量，
+      不进 KimiDynamicCache，所以它不占 KV 容量，只是 decode 时每 token 最多 8 份 7168 维的激活
+
+  decoding:
+    mtp_layers: 0
+    mtp_layers_note: config num_nextn_predict_layers 0，清单里也没有任何草稿块
+
+  vision:
+    encoder: MoonViT-V2（vision_tower.encoder.blocks），模型卡称 401M
+    layers: 27
+    hidden: 1024
+    num_heads: 12
+    patch_size: 14
+    intermediate: 4096
+    out_hidden: 7168
+    params: 447358976.0
+    fusion: >-
+      mm_projector（patchmergerv2，merge_type sd2_tpool）：proj.0 [4096, 4096]、
+      proj.2 [7168, 4096]，即先把 2×2 相邻 patch 拼成 4096 维、两层 MLP 投到 7168；
+      另有 post_norm [7168]。wqkv [4608, 1024] = 3 × 1536（qkv_hidden_size 1536，比 hidden 1024 宽）
+
+precision:
+  weights_release: [MXFP4, BF16, FP32]
+  quantization:
+    method: compressed-tensors（mxfp4-pack-quantized）
+    expert_dtype: MXFP4
+    packing_note: >-
+      路由专家的 FP4 权重两个一字节装进 U8 容器（weight_packed 末维是逻辑维的一半），
+      scale 同样是 U8 容器（weight_scale）。参数量按 per_subsystem 的 MXFP4 还原，字节不还原
+    per_subsystem:
+      expert: MXFP4
+      shared_expert: BF16
+      attention: BF16
+      dense_ffn: BF16
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+      residual: BF16
+      vision: BF16
+    per_subsystem_scale:
+      expert: UINT8
+    per_subsystem_block:
+      expert: '[1,32]'
+    block_size_note: >-
+      实测：w1 weight_scale [3072, 112] 对逻辑 [3072, 3584]、w2 weight_scale [3584, 96] 对
+      [3584, 3072]，即逐输出行、沿 K 每 32 个一个 scale —— 与 config 的 group_size 32、
+      strategy group 一致。scale 容器 dtype 是 U8；按 MX 规范它是 E8M0 指数，但那是格式声明
+      （config format mxfp4、scale_dtype torch.uint8），形状与 dtype 区分不了
+    subsystem_method: >-
+      代表精度由 fetch_dtypes.py 抽样（读 96 个分片里的 10 个）得出；scale 精度与量化块是对完整
+      清单手工量的 —— fetch_dtypes.py 的 scale 正则不认 weight_scale 这个叶名，抽样结果里专家的
+      scale 一栏是空的（lib/dtypes.py 的 is_scale_tensor 认，所以参数量不受影响）。
+      量化只覆盖路由专家：config 的 ignore 列表排除了 self_attn / shared_experts / mlp / lm_head /
+      vision_tower / mm_projector，清单上也只有专家带 weight_packed。
+      FP32 只有 7 类，共 11,122,432 元素：e_score_correction_bias（92 × 896）、KDA 的 A_log、
+      dt_bias、o_norm 与 q/k/v_conv1d（69 层），合计与 HF tally 的 F32 一项逐位相同。
+      模型卡称 MXFP4 权重是从 SFT 起做量化感知训练得到的（「quantization-aware training」）
+  qat: true
+
+platforms:
+  - engine: vLLM
+    hardware: NVIDIA
+    status: supported
+    precision: MXFP4
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/moonshotai/Kimi-K3
+    visibility: public
+  - engine: SGLang
+    hardware: NVIDIA
+    status: supported
+    precision: MXFP4
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/moonshotai/Kimi-K3
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      混合结构，两个分量要分开建模：24 个 MLA 层的 latent KV 随上下文线性增长，
+      69 个 KDA 层的递归状态每序列固定。按厂商参考实现的缓存写法（解压后的 K/V）去规划
+      会高估 53 倍，要按 latent 存
+    quantified: >-
+      逐因子。per-token：每 MLA 层 576 元素（kv_a_proj_with_mqa 输出 576 = kv_a_layernorm [512]
+      + k_rot 64），× 24 层 = 13824 元素/token，BF16 兜底 27648 B/token、1M 上下文 27.0 GiB。
+      per-sequence：每 KDA 层矩阵状态 96 × 128 × 128 = 1,572,864 元素，加 conv 状态
+      4 × 36864 = 147,456 元素，合计 1,720,320，× 69 层，BF16 兜底 226.41 MiB/序列。
+      两边精度都是 dtype_fallback（config dtype bfloat16）；fla 的递归状态常以 FP32 保存，
+      若如此矩阵状态那一项翻倍（见 open_questions）。参考实现的解压缓存是每层
+      96×192 + 96×128 = 30720 元素，30720 / 576 = 53.3 倍
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      三种本仓此前没有的算子同时出现：KDA（fla 的 chunk_kda / fused_recurrent_kda，逐通道衰减
+      而非逐头标量衰减），AttnRes（每子层一次块表示打分与加权组合，替代残差相加），
+      latent MoE（专家前后各一个 7168↔3584 的稠密投影加一个 norm）。
+      latent 投影每 MoE 层常驻 51.4M 参数，92 层共 4.73B，是激活参数里不随 top-k 变的一块
+    visibility: public
+  - dimension: ep-comm
+    finding: >-
+      latent MoE 让 dispatch / combine 发生在 3584 维而不是 7168 维上（down_proj 在路由之前、
+      up_proj 在合并之后），all-to-all 载荷减半。derive.py 的 ep_communication 按 hidden
+      7168 算，是这个模型的上界
+    visibility: public
+
+infra_signals:
+  - text: >-
+      本代（K3）把 MXFP4 当成训练产物而非部署后量化（模型卡称从 SFT 起 QAT），
+      且只量化路由专家。按「BF16 发布、部署时自己量化」写的流程在这里要倒过来：
+      反量化路径是必需的，BF16 主权重并不存在
+    evidence: judgement
+    horizon: now
+    axis: precision
+  - text: >-
+      厂商参考实现的 MLA 缓存存的是解压后的 K/V。引擎若照参考实现搭缓存，
+      1M 上下文的 MLA 部分会从 27 GiB 涨到约 1.4 TiB（BF16 兜底）；容量规划要按 latent 算
+    evidence: judgement
+    horizon: now
+    axis: attention
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: judgement
+  license: official
+  hf: official
+  lineage: official
+  params: derived
+  params.counting_note: derived
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.v_head_dim: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.attention.output_gate: derived
+  arch.attention.hybrid: derived
+  arch.attention.linear_state.mechanism: judgement
+  arch.attention.linear_state.state_layout_note: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.routing: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.moe.first_k_dense: derived
+  arch.residual: derived
+  arch.residual.note: judgement
+  arch.decoding.mtp_layers: derived
+  arch.vision.params: derived
+  arch.vision.fusion: derived
+  precision: official
+  precision.weights_release: derived
+  precision.quantization.packing_note: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.per_subsystem_scale: derived
+  precision.quantization.per_subsystem_block: derived
+  precision.quantization.block_size_note: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  Kimi 家族的旗舰，model_type kimi_k3（语言主干 kimi_linear），原生多模态。本仓第一份 Kimi 记录，
+  也是第一份「三样新结构叠在一起」的旗舰：KDA 线性注意力与 MLA 3:1 混合、AttnRes 残差、
+  latent MoE。层数、层集合、宽度、专家分布、量化块与 FP32 分布对照完整权重清单核过；
+  top_k、situ 的 β、routed_scaling_factor 这类运行期标量只有 config 一个来源。
+  released 取 tracking.yaml 的 2026-09-02（= 仓的 lastModified）；仓的 createdAt 是
+  2026-06-13，但模型卡引用了「as of July 23, 2026」的评测，所以 createdAt 不是发布日
+
+open_questions:
+  - >-
+    KV 与递归状态的落盘精度都未披露，两个分量都按 config dtype bfloat16 兜底。fla 的递归状态
+    通常以 FP32 保存（本仓 Qwen3.8 的 linear_state 就是 FP32），若 K3 亦然，每序列状态的
+    矩阵项翻倍 —— 没读 fla kernel，不填 state_dtype
+  - >-
+    A_log 是 [128] 而注意力是 96 头，第一维的含义未核（b_proj、dt_bias、f_b_proj 都按 96 头）
+  - >-
+    激活参数实测 104.19B（带宽口径，含 lm_head）、105.36B（再含输入词表），厂商 104B。
+    带宽口径恰好取整到 104B，但厂商口径没写，不确定它扣没扣输入词表
+  - >-
+    MLA 层的「rope」64 维不旋转（NoPE），它是否还需要和 latent 分开存、能否并进 latent
+    压缩，参考实现定不了，要看部署 kernel
+  - >-
+    训练精度无一手声明（模型卡只说 SFT 起做 MXFP4 QAT），precision.training 不填
