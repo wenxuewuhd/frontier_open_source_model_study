@@ -1,0 +1,168 @@
+{
+ "id": "step-3",
+ "generated_by": "scripts/derive.py",
+ "generated_at": "2026-10-30T06:48:07+00:00",
+ "inputs": {
+  "facts_dir": "facts/step-3",
+  "config_present": true,
+  "shapes_present": true,
+  "model_yaml": "data/models/stepfun/step-3.yaml",
+  "ep_size": 4
+ },
+ "from_shapes": {
+  "available": true,
+  "complete": true,
+  "tensor_count": 1663,
+  "params_total": 320969912832.0,
+  "params_by_subsystem": {
+   "lm_head": 923345920.0,
+   "norm": 1006592.0,
+   "router": 19267584.0,
+   "attention": 10330046464.0,
+   "shared_expert": 6165626880.0,
+   "dense_ffn": 1981808640.0,
+   "embed": 923345920.0,
+   "vision": 4208158720.0,
+   "other": 331362304.0,
+   "expert": 295950090240.0,
+   "draft": 135853568.0
+  },
+  "scale_elements": 0.0,
+  "weight_bytes_total": 641939825664.0,
+  "weight_bytes_by_subsystem": {
+   "lm_head": 1846691840.0,
+   "norm": 2013184.0,
+   "router": 38535168.0,
+   "attention": 20660092928.0,
+   "shared_expert": 12331253760.0,
+   "dense_ffn": 3963617280.0,
+   "embed": 1846691840.0,
+   "vision": 8416317440.0,
+   "other": 662724608.0,
+   "expert": 591900180480.0,
+   "draft": 271707136.0
+  },
+  "weight_bytes_by_dtype": {
+   "BF16": 641939825664.0
+  },
+  "weight_dtype_containers": {},
+  "experts_seen": 48,
+  "expert_storage": "stacked",
+  "layers_present": 61,
+  "mtp_layers_seen": [
+   61,
+   62
+  ],
+  "mtp_attention_suffixes": [],
+  "draft_blocks_seen": 2,
+  "layer_index_max": 61,
+  "layers_missing": [],
+  "moe_layers_seen": 56,
+  "unknown_dtypes": [],
+  "packing_applied": {},
+  "packing_suspect": [],
+  "incomplete_note": null
+ },
+ "kv_cache": {
+  "status": "ok",
+  "attention_type": "MQA",
+  "kv_dtype": "BF16",
+  "layers": 61,
+  "full_attention_layers": 61,
+  "linear_attention_layers": 0,
+  "per_token_bytes": 62464,
+  "per_sequence_bytes": 0,
+  "per_token_elems": 31232,
+  "per_token_elems_bound": "exact",
+  "components": {
+   "full_attention": {
+    "layers": 61,
+    "bytes_per_layer": 1024,
+    "bytes_per_token": 62464,
+    "dtype": "BF16",
+    "elements_per_token": 31232,
+    "terms": {
+     "num_kv_heads": 1,
+     "head_dim": 256,
+     "formula": "2 * num_kv_heads * head_dim * bytes"
+    }
+   }
+  },
+  "notes": [],
+  "bytes_basis": "declared_dtype"
+ },
+ "kv_capacity_bytes_at_context": {
+  "4096": 255852544,
+  "32768": 2046820352,
+  "65536": 4093640704
+ },
+ "kv_capacity_basis": "declared_dtype",
+ "active_params": {
+  "status": "ok",
+  "total": 38249345024.0,
+  "total_with_embed": 39172690944.0,
+  "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的输入词表）；total_with_embed 含输入词表，用于和各家公布的「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
+  "expert_active": 18496880640.0,
+  "expert_total": 295950090240.0,
+  "expert_ratio": "3/48",
+  "always_active": 19752464384.0,
+  "lm_head": 923345920.0,
+  "dense": false,
+  "excluded": {
+   "embed_tokens": 923345920.0,
+   "retrieval_table": 0.0,
+   "vision": 4208158720.0,
+   "draft": 135853568.0
+  },
+  "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
+ },
+ "flops": {
+  "linear_per_token": 76498690048.0,
+  "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
+ },
+ "arithmetic_intensity": {
+  "decode_weight_bytes_per_token": 76498690048.0,
+  "decode_flops_per_byte": 1.0,
+  "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
+ },
+ "ep_communication": {
+  "status": "ok",
+  "ep_size": 4,
+  "moe_layers": 57,
+  "bytes_per_token": 4902912,
+  "bytes_per_layer": 86016,
+  "formula": "2(dispatch+combine) * top_k * hidden * bytes * moe_layers",
+  "note": "EP=1 时为 0；跨机时该量按互联带宽折算成时间，是 decode 尾延迟的主因之一"
+ },
+ "reconciliation": [
+  {
+   "item": "路由专家数",
+   "status": "skip",
+   "why": "config 缺失"
+  },
+  {
+   "item": "专家存储布局",
+   "status": "ok",
+   "why": "stacked（一个张量装一层全部专家，grouped GEMM 吃 3 维权重）"
+  },
+  {
+   "item": "层数",
+   "config": 61.0,
+   "shapes": 61.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "参数总量",
+   "YAML 声明": 320969912832.0,
+   "shapes 实测": 320969912832.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "ok",
+   "why": "与 HF 的 safetensors tally 逐位相同（320,969,912,832）"
+  }
+ ]
+}
