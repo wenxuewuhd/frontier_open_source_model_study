@@ -1,6 +1,12 @@
-# facts/ 是取数缓存，可由 scripts/fetch_hf.py 按 pinned sha 复现。
+# facts 是取数缓存，可由 scripts/fetch_hf.py 按 pinned sha 复现。
 # shapes.json 每模型数 MB，不进仓库；data/derived/*.json 才是提交物。
-facts/
+#
+# 这里和下面的 .venv 都**不带尾斜杠**，是有意的：带尾斜杠只匹配目录，
+# 挡不住同名的符号链接。而 facts 与 .venv 在 worktree 里恰恰常是软链
+# （facts 不随分支走、.venv 只建在主 checkout，会话要跑 derive 就得链过去），
+# 于是它们会被当成普通文件提交进去 —— 已经真实发生过一次，一个会话用
+# git add -A 带了 16 个提交才发现。不带尾斜杠对真目录照样生效，实测过。
+facts
 
 # 内部数据 overlay：算子表、自测性能、硬件相关瓶颈分析。
 # 公开仓库永不包含，validate.py 另有防泄漏检查。
@@ -11,7 +17,7 @@ __pycache__/
 .DS_Store
 node_modules/
 site/dist/
-.venv/
+.venv
 
 # Astro 生成的类型与构建产物
 site/.astro/
