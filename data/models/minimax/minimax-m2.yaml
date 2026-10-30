@@ -1,0 +1,505 @@
+# 机械字段来自 config（official），结构、参数量、量化块与精度来自完整权重清单
+# facts/minimax-m2/shapes.json（96103 条，130 个分片逐个读头，无失败分片）。
+# 「零例外」一类的说法都是对这 96103 条穷举出来的，不是抽样。
+id: minimax-m2
+family: minimax
+kind: llm
+display_name: MiniMax-M2
+released: '2025-10-22'
+license: other
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/MiniMaxAI/MiniMax-M2
+    locator: config.json / README.md @ 04312f0cfbde
+    accessed: '2026-10-30'
+    note: >-
+      FP8 blockwise 发布，130 分片。权重清单逐分片读头取全，96103 个张量
+      （其中 47864 条是 weight_scale_inv 容器），无读失败分片。
+      模型卡原文：230B 总参数 / 10B 激活，定位是 agent/coding 的「compact」档。
+      cardData 的 license_name 是 modified-mit
+  - kind: repo
+    url: https://huggingface.co/MiniMaxAI/MiniMax-M2/blob/main/modeling_minimax_m2.py
+    locator: MiniMaxM2Attention.forward / MiniMaxM2SparseMoeBlock.route_tokens_to_experts
+    accessed: '2026-10-30'
+    note: >-
+      厂商随仓发布的参考实现（非部署 kernel），只读未执行。核过两件事：
+      q_norm / k_norm 作用在**展平后的整条 q / k 上**（RMSNorm(head_dim × 头数)），
+      在 view 成多头与 RoPE **之前**；写进缓存的是过完 norm 与 RoPE 的 K，宽度仍是 8 × 128。
+      全文没有任何 MTP 模块的定义
+
+hf:
+  repo: MiniMaxAI/MiniMax-M2
+  sha: 04312f0cfbdeefb912575595b7c045512a29293c
+  last_modified: '2026-10-26T07:08:10.000Z'
+  pipeline_tag: text-generation
+  gated: false
+
+lineage:
+  track: main
+  predecessor: minimax-m1-80k
+  successor: minimax-m3
+  # 每条都对照过 facts/minimax-m1-80k 与 facts/minimax-m2 的 config 差异与
+  # 张量名差异，不是从模型卡抄的
+  changed_from_predecessor:
+    - axis: attention
+      text: >-
+        **线性注意力整条去掉**。attn_type_list 从「70 个 0 + 10 个 1」变成 62 个 1 ——
+        全部层都是 softmax GQA。权重侧零例外地对上：lightning 层那套
+        qkv_proj / out_proj / output_gate / self_attn.norm 在 96103 条清单里**零命中**，
+        62/62 层都是 q_proj / k_proj / v_proj / o_proj。
+        同时新增逐层 qk-norm（use_qk_norm，qk_norm_type per_layer）：
+        q_norm [6144]、k_norm [1024]，62/62 层都有
+      benefit: >-
+        换掉的是显存账的形状。每序列固定的递归状态归零（M1 是 280.0 MiB/序列），
+        代价是随上下文增长的那一项涨 6.2 倍：KV 元素/token 从 20480（10 个 softmax 层）
+        涨到 126976（62 层全部），因为每层的 KV 宽度两代相同（都是 2 × 8 × 128 = 2048），
+        变的只是「哪些层存」。工程上简单很多 —— 一套标准 GQA 核、
+        一种 cache 布局、没有状态要在抢占/迁移时搬，但长上下文的容量帐全额付
+    - axis: scale
+      text: >-
+        总规模砍到约一半、形状完全重排：hidden 6144 → 3072，层数 80 → 62，
+        q 头 64 → 48（KV 头仍是 8），专家中间维 9216 → 1536。
+        总参数实测 456.09B → 228.69B
+      benefit: >-
+        hidden 减半让每层的注意力与 FFN 的 GEMM 形状都变瘦，但 **KV 头数没跟着减** ——
+        num_kv_heads 两代都是 8、head_dim 都是 128，所以每层 KV 宽度不变。
+        模型小一半而 KV/token 大 6.2 倍 —— 按参数量推容量会推反方向
+    - axis: moe
+      text: >-
+        专家细粒度化：32 个取 2 → 256 个取 8，单专家从 3 × 9216 × 6144
+        = 169,869,312 参数缩到 3 × 1536 × 3072 = 14,155,776（12.0 倍细）。
+        打分从 softmax 换成 sigmoid + e_score_correction_bias 修正选路
+        （参考实现：sigmoid 后加 bias 再 topk，取回的权重按和归一），
+        负载均衡从辅助损失改成无辅助损失式偏置
+      benefit: >-
+        激活专家参数每层 2 × 169,869,312 = 339,738,624 → 8 × 14,155,776 = 113,246,208，
+        配合层数与 hidden 的变化，带宽口径激活参数 47,174,113,280 → 10,415,956,480
+        （47.17B → 10.42B，4.53 倍）。
+        代价在通信与调度：每 token 的落点从 2 个变成 8 个，
+        all-to-all 载荷 = 2 · top_k · hidden · bytes 逐层算，见 data/derived/ 的 ep_communication
+    - axis: precision
+      text: >-
+        首次量化发布：FP8 blockwise（quant_method fp8、fmt float8_e4m3fn、
+        activation_scheme dynamic），modules_to_not_convert 列了 gate /
+        e_score_correction_bias / lm_head。实测与声明一致 —— 全部 47864 个被量化的
+        权重（47616 个专家 + 248 个注意力投影）都是 F8_E4M3 配 **[128, 128]**
+        的 FP32 scale，零例外（逐张量算 weight.shape ÷ scale.shape，96103 条穷举）
+      benefit: >-
+        权重存储 849.56 GiB → 214.32 GiB。注意 scale 张量落盘是 **FP32** 不是 8 bit
+        （config 没有 scale_fmt 键），13,880,064 个 scale 元素占 52.95 MiB ——
+        按「块量化的 scale 一定是 8 bit」去算会少算 4 倍
+    - axis: context
+      text: max_position_embeddings 10,240,000 → 196,608；模型卡不再宣称百万级上下文
+      benefit: >-
+        和去掉线性注意力是同一件事的两面：62 层全量 KV 下 196,608 token 单序列
+        按 BF16 兜底已是 46.50 GiB，再往上就不是容量能承受的
+    - axis: decoding
+      text: >-
+        config 开始声明 MTP（use_mtp true、num_mtp_modules 3、mtp_transformer_layers 1），
+        但发布的清单里一个 MTP 张量都没有（层号 0–61 连续、无 mtp.* 前缀），
+        参考实现里也没有任何 MTP 模块的定义
+      benefit: >-
+        对 infra 是个陷阱而不是能力：按 config 判断「支持 MTP」的引擎拿不到草稿权重。
+        这个声明/权重的落差从本代开始，一直延续到 M3（那边声明 7 个模块、同样没带）
+
+params:
+  total: 228689764864.0
+  breakdown:
+    expert: 224680476672.0
+    attention: 2730491904.0
+    embed: 614596608.0
+    lm_head: 614596608.0
+    router: 48774656.0
+    norm: 828416.0
+  counting_note: >-
+    按完整权重清单（130 分片 96103 条目）逐项统计。条目数不等于参数张量数：
+    其中 47864 条是 weight_scale_inv 量化容器（13,880,064 个元素），按本仓口径
+    **排除在参数量之外、计入权重存储**。FP8_E4M3 每元素一字节、没有低位打包，
+    所以剩下 48239 条的 numel 即参数数，合计 228,689,764,864。
+    total 是实测值不是声明值，Gate B 的「参数总量」一项因此是实测比实测；
+    外部那一路是 HF 平台自己从分片头统计的 safetensors tally，与实测 **逐位相同** ——
+    说明 HF 那边的 tally 这一次同样排了 scale（ds-v3.2-exp 那边是算进去的，
+    两种口径 derive.py 都接受）。厂商声明「230 billion」，比实测高 0.57%。
+    清单层号 0–61 连续，无 MTP 块（见 arch.decoding），没有 excludes。
+    激活参数两套口径见 data/derived/
+
+context:
+  max: 196608
+
+arch:
+  layers: 62
+  hidden: 3072
+  vocab: 200064
+  norm: RMSNorm
+  norm_eps: 1.0e-06
+  activation: SwiGLU（hidden_act silu，专家是 w1 门 / w3 上投 / w2 下投三件套）
+  position: RoPE theta 5e6，rotary_dim 64 —— head_dim 128 的一半，即 partial rotary 0.5，62/62 层都用
+
+  attention:
+    type: GQA
+    num_heads: 48
+    num_kv_heads: 8
+    head_dim: 128
+    partial_rotary_factor: 0.5
+    head_dim_note: >-
+      每头 QK 与 V 同为 128：q_proj [6144, 3072] = 48×128，k_proj / v_proj
+      [1024, 3072] = 8×128，o_proj [3072, 6144]。写进缓存的 K 条目是 k_norm 与 RoPE
+      之后的 8×128 = 1024 维，与 k_proj 输出维相同 —— q_norm [6144] / k_norm [1024]
+      是**逐层**（qk_norm_type per_layer）作用在展平后整条 q / k 上的 RMSNorm，
+      不是逐头的，所以不改变宽度。M3 改成了 per_head
+    layer_pattern: >-
+      62/62 层都是全量 GQA（config 的 attn_type_list 62 项全为 1），
+      没有线性层、没有稀疏选块、没有滑窗、没有跨层 KV 共享。
+      清单零例外：q/k/v/o_proj 各 62 条、层号连续，lightning 层特有的
+      qkv_proj / out_proj / output_gate 零命中
+    kv_sharing:
+      layer_coverage: >-
+        只有一类缓存，覆盖面就是全部 62 层：k_proj / v_proj 逐层都在、
+        宽度在 62/62 层上都是 [1024, 3072] 一种 shape（96103 条全量穷举，非抽样）。
+        没有 MTP 块，主干口径就是全部口径
+
+  ffn:
+    type: moe
+    layer_pattern: >-
+      62/62 层都是 MoE（block_sparse_moe），**没有稠密层也没有共享专家**：
+      config 的 first_k_dense 一类键不存在、shared_intermediate_size 0，
+      清单里 mlp.* 与 shared_expert* 都零命中。config 里的 mlp_intermediate_size 8192
+      没有任何权重与之对应（M2.1 起这个键就从 config 里消失了）
+
+  moe:
+    routed_experts: 256
+    shared_experts: 0
+    top_k: 8
+    intermediate: 1536
+    routing: >-
+      sigmoid 打分 + e_score_correction_bias 修正选路，取回的 top-8 权重按和归一
+      （参考实现 route_tokens_to_experts）。无 routed_scaling_factor。
+      gate.weight [256, 3072] 与 e_score_correction_bias [256] 落盘都是 FP32（各 62 份），
+      与 config 的 modules_to_not_convert 一致
+    balance: e_score_correction_bias（无辅助损失式偏置，config use_routing_bias）
+    storage_note: >-
+      逐专家独立张量（block_sparse_moe.experts.N.w1/w2/w3），不是堆叠的 3 维权重；
+      grouped GEMM 因此吃 2 维权重列表而非 3 维张量。256 这个数在清单里独立成立：
+      `.experts.` 的权重张量 47616 条 = 62 层 × 256 × 3，每层的专家下标集合都恰为
+      {0..255}，零例外（全量穷举）。derive.py 的专家数对账报 skip（它找
+      n_routed_experts / num_experts，MiniMax 写的是 num_local_experts），
+      Gate B 的「0 处不一致」不含这一项
+
+  decoding:
+    mtp_layers: 0
+    mtp_layers_note: >-
+      config 写 use_mtp true、num_mtp_modules 3、mtp_transformer_layers 1，
+      但发布的清单里一个 MTP 张量都没有（层索引 0–61 连续、无 mtp.* 前缀，96103 条穷举），
+      参考实现 modeling_minimax_m2.py 里也没有任何 MTP 模块的类定义。
+      训练侧可能有，发布权重没带。按权重记 0 —— M3 同样如此
+
+precision:
+  weights_release: [FP8_E4M3, BF16, FP32]
+  quantization:
+    method: FP8 blockwise（quant_method fp8）
+    activation_scheme: dynamic
+    weight_block_size: [128, 128]
+    weight_format: float8_e4m3fn
+    block_size_note: >-
+      这一代 config 声明的块是对的，与实测逐张量一致：按 weight.shape ÷ scale.shape
+      逐张量算，47616 个专家权重与 248 个注意力投影**全部**是 [128, 128]，
+      零例外、无末块不满（1536/12、3072/24、6144/48、1024/8 都整除）。
+      记这一条是因为 DeepSeek V4 一代的同名字段对 FP4 专家错了 128 倍 ——
+      块必须实测，不能抄 config；本代实测与声明相符这件事本身也要量过才能说
+    per_subsystem:
+      expert: FP8_E4M3
+      attention: FP8_E4M3
+      embed: BF16
+      lm_head: BF16
+      router: FP32
+      norm: BF16
+    per_subsystem_scale:
+      expert: FP32
+      attention: FP32
+    per_subsystem_block:
+      expert: '[128, 128]'
+      attention: '[128, 128]'
+    subsystem_method: >-
+      不是抽样：完整清单 96103 条逐项统计。被量化的只有两个子系统
+      （专家 47616 条、注意力投影 248 条 = 62 层 × 4），各自配一份同名
+      weight_scale_inv；FP8 张量**无一例外**都有 scale（零漏配）。
+      未量化的是 router（124 条 FP32：62 个 gate + 62 个 e_score_correction_bias）、
+      norm（249 条 BF16）、embed 与 lm_head（各 1 条 BF16）。
+      三者的元素数合计与 HF tally 的 F8_E4M3 / BF16 / F32 三项逐位相同
+      （F32 一项需扣掉 scale：HF 那边的 tally 排了 scale）
+
+platforms:
+  - engine: vLLM
+    hardware: NVIDIA
+    status: day0
+    precision: FP8_E4M3
+    caveat: 模型卡点名 vLLM 为 day-0 支持并给了部署指南；本仓未实测
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/MiniMaxAI/MiniMax-M2
+    visibility: public
+  - engine: SGLang
+    hardware: NVIDIA
+    status: supported
+    precision: FP8_E4M3
+    caveat: 仓内 docs/sglang_deploy_guide.md；本仓未实测
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/MiniMaxAI/MiniMax-M2
+    visibility: public
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: FP8_E4M3
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/MiniMaxAI/MiniMax-M2
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      去掉线性注意力之后，缓存只剩一类、覆盖全部 62 层，随上下文线性增长，
+      没有任何压缩、共享或选读机制在上面。模型比上一代小一半，
+      每 token 的 KV 反而大 6.2 倍 —— 因为 KV 只由「层数 × KV 头数 × head_dim」决定，
+      而这一代只减了 hidden 和 q 头数，KV 头数与 head_dim 一个没动
+    quantified: >-
+      逐因子：每层 2（K、V）× 8 KV 头 × 128 = 2048 元素（k_proj / v_proj 输出维
+      都是 1024；k_norm 是作用在整条 1024 上的 RMSNorm，不改宽度），
+      × 62 层 = **126976 元素/token**。这一种 shape 在 62/62 层上零例外
+      （96103 条全量穷举，非抽样）。条目按 1:1 逐 token 计，依据是参考实现走标准
+      Cache.update。落盘精度无一手声明，按 config 推得的 BF16 兜底 2 B/元素得
+      253952 B/token；config 上限 196,608 token 单序列 = 46.50 GiB。
+      对照同族：M1 是 20480 元素/token（只有 10 个 softmax 层）+ 280.0 MiB/序列，
+      M3 是 68736（60 层 × 4 KV 头 + index K）。
+      口径边界：bytes_basis 是 dtype_fallback，字节那一列不能跨记录比；
+      另外 derive.py 的 full_attention 分量只走 config 公式、不读实测宽度，
+      本例两者恰好都是 1024，Gate B 的「0 处不一致」没有覆盖这一项
+    visibility: public
+  - dimension: ep-comm
+    finding: >-
+      专家细粒度化（32 取 2 → 256 取 8）把每 token 的 all-to-all 落点数翻了 4 倍。
+      载荷字节 = 2 · top_k · hidden · bytes 逐层算，hidden 同时减半，
+      两个因子方向相反，净效果要算而不能猜
+    quantified: >-
+      每层每 token：M1 是 2 × 2 × 6144 × 2 B = 49,152 B，M2 是 2 × 8 × 3072 × 2 B
+      = 98,304 B，正好 2 倍；乘层数（80 → 62）后全模型是 3,932,160 → 6,094,848 B/token，
+      1.55 倍。但「落点数」这个与带宽无关的量涨了 4 倍（2 → 8），
+      它约束的是连接数与同步面，不是字节数。两者分开看，见 data/derived/ 的 ep_communication
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      相对上一代，算子侧是**大幅简化**而不是新增：一套标准 GQA + RoPE(partial 0.5)
+      + 标准 Cache，lightning attention 的两个专用核（分块衰减 prefill、
+      递归 decode）、输出门、逐层衰减表全部不再需要。新增的只有两个小项
+    quantified: >-
+      新增项一：逐层 qk-norm 作用在**展平后的整条 q / k** 上
+      （RMSNorm(48×128) 与 RMSNorm(8×128)），在 view 成多头与 RoPE 之前 ——
+      按「逐头 RMSNorm」写的融合核会在归一化的规约轴上算错（M3 那一代才是 per_head）。
+      新增项二：FP8 blockwise 反量化，块 [128, 128]、scale 为 FP32，
+      每个 FP8 张量都配一份，无例外
+    visibility: public
+
+infra_signals:
+  - text: >-
+      这一代是一次**路线回撤**：MiniMax 在 Text-01 / M1 上做了两代线性混合之后，
+      M2 把线性注意力整条去掉，回到 62 层全量 GQA。
+      对 infra 的直接含义是「线性注意力的算子投入在这一代没有回报」——
+      但它换来的不是更小的缓存：KV 元素/token 从 20480 涨到 126976，
+      只是形状从「两个分量」变回「一个分量」，容量帐全额付、工程复杂度大降
+    evidence: judgement
+    horizon: settled
+    axis: attention
+  - text: >-
+      模型缩小不等于 KV 缩小。hidden 与层数都降了而 num_kv_heads × head_dim 没动，
+      所以每层 KV 宽度两代相同，KV/token 只随「全量 KV 层数」走。
+      给一个新模型做容量规划时，先看 KV 头数与产出 KV 的层集合，不要先看参数量
+    evidence: judgement
+    horizon: settled
+    axis: attention
+  - text: >-
+      config 声明 MTP 而权重里没有，从本代开始，到 M3 仍是如此
+      （那边声明 7 个模块）。引擎按 config 开投机解码会落空 ——
+      MTP 的有无要以权重清单为准
+    evidence: judgement
+    horizon: now
+    axis: decoding
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  params.counting_note: derived
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.attention.kv_sharing.layer_coverage: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.routed_experts: derived
+  arch.moe.shared_experts: derived
+  arch.moe.routing: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.decoding.mtp_layers: derived
+  arch.decoding.mtp_layers_note: derived
+  precision: official
+  precision.quantization.weight_block_size: derived
+  precision.weights_release: derived
+  precision.quantization.block_size_note: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.per_subsystem_scale: derived
+  precision.quantization.per_subsystem_block: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  MiniMax 这条线的拐点：两代线性混合之后回到全量 softmax GQA，同时把模型缩到一半、
+  专家细化 8 倍、首次 FP8 发布。层数、层形态、投影形状、专家分布、量化块与各子系统精度
+  都对照完整清单穿过一遍，「零例外」一类的说法都是对 96103 条穷举出来的。
+  top_k、rope_theta、activation_scheme 这类运行期标量只有 config 一个来源。
+  released 取 HF 仓的 createdAt 2025-10-22（lastModified 2026-10-26 是后来的元数据刷新，
+  不是发布日）。
+  M2 之后到 M3 之前还有三个发布：M2.1（2025-12-20）、M2.5（2026-02-12）、
+  M2.7（2026-04-09）。三者的张量名集合与本记录**逐条相同**（各 96103 条），
+  HF safetensors tally 三项 dtype 的元素数也**逐位相同**。config 的差别只有两处：
+  M2.1 起删掉 13 个键并把 transformers_version 写回 4.46.1 —— 13 个里 6 个
+  （attention_dropout / initializer_range / output_router_logits /
+  router_aux_loss_coef / router_jitter_noise / sliding_window）与 MiniMaxM2Config
+  的类默认值相同，bos_token_id / eos_token_id 在 M2 里是 null 而类默认是 1 / 2，
+  其余 5 个（mlp_intermediate_size / shared_moe_mode 与三个 layernorm_*_beta）
+  **根本不是这个 config 类的参数**、走 kwargs，所以「删掉的都是默认值」并不成立；
+  M2.7 把 max_position_embeddings 从 196,608 改成 204,800（+4%）并加了一个 dtype 键。按仓内「零结构差异的权重刷新
+  不单独立记录」的办法，三者都折叠进本记录；能力变化全部来自后训练
+
+open_questions:
+  - >-
+    KV 落盘精度无一手声明。config 的 quantization_config 只说权重量化，
+    没有 kv_cache 相关键，也没有 torch_dtype；本仓按未量化子系统的落盘 dtype（BF16）
+    兜底，253952 B/token 与 46.50 GiB 都是**上界**，basis 记 dtype_fallback。
+    若部署按 FP8 存 KV 则减半。跨代或跨族系比结构请用元素口径（126976 元素/token）
+  - >-
+    M2.7 把 max_position_embeddings 从 196,608 提到 204,800，而权重与张量名
+    与 M2 逐条相同、模型卡没有提到上下文变化。这个 +4% 是真的服务窗口变化、
+    还是只改了一个声明，没有一手来源；本记录的 context.max 取 M2 自己的 196,608
+  - >-
+    config 的 mlp_intermediate_size 8192 是个死键：权重里没有任何对应张量
+    （62/62 层都是 MoE，mlp.* 零命中），参考实现 modeling_minimax_m2.py 全文也
+    **零引用**它（唯一的 MiniMaxM2MLP 类是逐专家 FFN，读的是 intermediate_size 1536），
+    M2.1 起这个键从 config 消失。它为什么出现在 M2 的 config 里没有一手说明 ——
+    「没有被读」是核过的，「是训练侧遗留」只是猜测，不写进记录
+  - >-
+    厂商「230B / 10B」两个数都与实测不同口径：总量实测 228,689,764,864（−0.57%），
+    激活两套口径见 data/derived/。10B 这个数更接近带宽口径而不是含输入词表的口径，
+    但厂商没有说明扣了什么，不细推
+  - 训练精度无一手声明（config 只有权重量化配置），precision.training 不填
+
+reviewed:
+  date: '2026-10-30'
+  scope: [official, derived, judgement]
+  reviewer: 一个独立核查代理 + 本会话复算
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序，对判断类字段与全部 open_questions 逐条过。
+    代理穷举了 facts/minimax-m2/shapes.json 全部 96103 条（非抽样）核层覆盖、
+    条目宽度、专家下标分布、量化块（逐张量算 weight.shape ÷ scale.shape）与 dtype 分布，
+    并与 facts/minimax-m2.1 / m2.5 / m2.7 的名单和 repoinfo 比对。
+    本会话独立复核（不只是读代理的结论）的是：写进缓存的 K 是什么 —— 直接读
+    modeling_minimax_m2.py:276-289，q_norm / k_norm 是
+    RMSNorm(head_dim × 头数) 作用在**展平后的整条 q / k** 上、在 view 成多头与
+    RoPE 之前，之后走标准 Cache.update，所以条目宽度仍是 k_proj 的输出维 1024；
+    全文没有任何 MTP 模块的类定义；唯一的 MiniMaxM2MLP 类只被
+    MiniMaxM2Experts 用作逐专家 FFN、读的是 intermediate_size 1536，
+    mlp_intermediate_size 全文零引用。层集合、宽度唯一性、126976 元素/token
+    与 46.50 GiB 也在本会话独立穷举复算过。
+    Gate B：derive.py 0 处不一致，外部 safetensors tally 逐位相同（HF 那边这一次
+    与本仓一样排了 scale）；专家数那一项是 skip（derive 找 n_routed_experts /
+    num_experts，MiniMax 写的是 num_local_experts），不在覆盖内
+
+review:
+  - id: R1
+    field: notes
+    severity: imprecise
+    claim: 「M2.1 删掉了一批**与默认值相同的键**」
+    finding: >-
+      逐键对照 configuration_minimax_m2.py 的 __init__ 签名：删掉的 13 个键里只有 6 个
+      （attention_dropout / initializer_range / output_router_logits /
+      router_aux_loss_coef / router_jitter_noise / sliding_window）与类默认值相同；
+      bos_token_id / eos_token_id 在 M2 里是 null 而类默认是 1 / 2；
+      其余 5 个（mlp_intermediate_size / shared_moe_mode 与三个 layernorm_*_beta）
+      根本不是这个 config 类的参数、走 kwargs。
+      而且 mlp_intermediate_size 8192 与 shared_moe_mode "sigmoid" 不是平凡默认值 ——
+      同一份记录的 open_questions 正是拿它的消失当线索，两处口径不一致
+    resolution: corrected
+    changed_to: 把 13 个键按三类分开写明，并说明「删掉的都是默认值」不成立
+  - id: R2
+    field: evidence
+    severity: miscategorized
+    claim: precision.quantization.weight_block_size 继承 precision.official 前缀
+    finding: >-
+      这个字段的值虽然 config 里也声明了，但记录对它的**断言**是实测的
+      （block_size_note 说的就是「与实测逐张量一致」），而它恰是 DeepSeek V4 一代
+      对 FP4 专家错了 128 倍的那个字段。挂在 official 前缀下，它永远不会被单独看一眼
+    resolution: corrected
+    changed_to: 单列 precision.quantization.weight_block_size 为 derived（与 m3 的 R6 同一处理）
+  - id: R3
+    field: lineage.changed_from_predecessor
+    severity: wrong
+    claim: 起草时写「带宽口径激活参数 47.17B → 11.25B」
+    finding: 11.25B 是起草时估的，derive 的实际值是 10,415,956,480（10.42B）；11.25B 更接近含输入词表的 11,030,553,088 但也不等于它
+    resolution: corrected
+    changed_to: 改成 47,174,113,280 → 10,415,956,480（4.53 倍），两侧都写整数
+  - id: R4
+    field: open_questions
+    severity: imprecise
+    claim: 「mlp_intermediate_size 8192 ……推测是训练代码里稠密分支的遗留」
+    finding: >-
+      「没有被读」可以从两处钉死（权重清单 mlp.* 零命中；参考实现全文零引用，
+      唯一的 MiniMaxM2MLP 读的是 intermediate_size），是事实；
+      「是训练侧遗留」没有任何来源，是猜测，两者并列会让猜测借事实的信用
+    resolution: corrected
+    changed_to: 把「零引用」写成事实，明说动机未知、不写进记录
+  - id: R5
+    field: lineage.changed_from_predecessor
+    severity: overreach
+    claim: 「模型小一半而 KV/token 大 6.2 倍，是这一代**最**违直觉的一处」
+    finding: 最高级没有依据，也不增加信息
+    resolution: corrected
+    changed_to: 改成「按参数量推容量会推反方向」
+  - id: R6
+    field: precision.quantization
+    severity: imprecise
+    claim: 量化块「零例外」、FP8 张量全部配 scale
+    finding: >-
+      全量穷举成立：47864 个 F8_E4M3 权重（47616 个专家 = 62 × 256 × 3，
+      248 个注意力投影 = 62 × 4），每一个都有同名 weight_scale_inv，
+      scale 全是 F32，逐张量 weight.shape ÷ scale.shape 全部恰为 [128, 128]、
+      无末块不满（1536/12、3072/24、6144/48、1024/8 都整除）；
+      零 FP8 缺 scale、零孤立 scale。13,880,064 个 scale 元素 = 52.95 MiB。
+      作用域是本代：下一代 M3 退回不量化，这条规律不往后传
+    resolution: confirmed
+  - id: R7
+    field: arch.decoding.mtp_layers
+    severity: imprecise
+    claim: config 声明 MTP 而权重里零个
+    finding: >-
+      成立：层索引 0–61 连续恰等于 num_hidden_layers，
+      对 96103 条扫 mtp|nextn|draft|eh_proj|enorm|hnorm|predict 零命中，
+      参考实现里也没有 MTP 类。M3 同样如此（那边声明 7 个模块）。数值不改
+    resolution: confirmed
