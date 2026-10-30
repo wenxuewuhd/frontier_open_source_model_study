@@ -769,7 +769,7 @@ review:
       desc_act false，且逐 dtype tally 说明**只量化主干稠密 FFN**
       （I32 17,112,760,320 与本记录 dense_ffn 逐位相同），其余仍 BF16；
       open question 收窄为「清单没取，所以实测量化块仍未知」
-  - id: R9
+  - id: R10
     field: precision.quantization
     severity: unsupported
     claim: >-
