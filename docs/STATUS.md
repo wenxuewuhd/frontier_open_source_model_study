@@ -44,6 +44,10 @@ main            babf717   未推 21
 - **A2 已并分支与 worktree 清理** —— **现在可以拆了**：E2 四条与 p1-minimax 都已并入，
   九条 `p1-*` / `p2-video-gate-a` / `p3-vlm-infra` / `p4-units` / `p4-fieldstate`
   全部领先 main 0，连同它们的 worktree 一起拆。
+  **拆之前先查每个 worktree 的 `facts/`**：它们各有一套独立的（不是软链），
+  里头可能囤着主库没有的实测清单。这一轮查出 `wt-p1-minimax` 独有两份 ——
+  `minimax-m3-mxfp8`（45,838 条）与 **`minimax-m3.1-flash`（89,729 条，
+  已发布记录的清单来源）**。照单拆会让那条记录无法复算。两份已拷进主库 `facts/`。
 - **A3 `--ep` 没有记录在任何地方** —— `derive.py` 默认 1，而已提交的 derived 里有 1 / 4 / 8 三种，
   重跑全靠人记得读 HEAD。**一天内踩了四次**（我自己两次把别人的值改掉，
   p1-minimax 又发现 minimax-m3.json 的 ep_size 被默认值 1 覆盖过、已恢复成 4）。
@@ -57,6 +61,11 @@ main            babf717   未推 21
 - **B2 MiniMax M2.1 / M2.5 / M2.7 三个仓本仓一份没录** —— **M2.5 下载量 1,392,282，是旗舰 M3 的 7 倍**。
   需 `p1-minimax` 回看自己 Gate A 的排除依据还成不成立。
 - ~~B3 站点侧两份 basis 标签表~~ —— **已收口**，见上面「做完了的」。
+- **B6 minimax-m3 记录里有一句现在是错的** —— 第 360 行「MXFP8 变体**本仓没有取过它的清单**」。
+  清单其实取了（45,838 条，原先搁在 `wt-p1-minimax/facts/`，已拷进主库）。
+  粗看 dtype 分布：`F8_E4M3` 22,422 + `U8` 22,422（1:1，U8 是 e8m0 scale 容器）
+  + `BF16` 879 + `F32` 115。所以那句不只是过时，它挡着一件能实测的事。
+  归 `p1-minimax`，它取的数它最清楚。
 - **B4 音频 / Omni** —— `docs/omni-audio-field-gap.md` 已给出需求与落地顺序，字段还没建。归 `mm-infra`。
 - **B5 两道闸口的设计题（p1-minimax 留给主会话的）** —— 两件事同一个形状：
   **产物错了而五道闸全绿**，而且补闸的难点都是「怎么分开『印出了 X』与『在讲 X』」。
@@ -154,8 +163,11 @@ main            babf717   未推 21
 1. **`--ep` 不在任何地方记着** —— 见 A3。一天三次。
 2. **用名字当锚，锚到别处同名词** —— 三次：抠键锚到注释、证据行锚到 `platforms` 里的
    `precision: FP8_E4M3`、层号捷径咬到视觉塔。判据要按结构不按词。
-3. **worktree + 符号链接** —— 三次：`facts` 不随分支走；`.gitignore` 带尾斜杠挡不住同名软链
-   （已修，去掉尾斜杠）；`site/node_modules` 软链会让 dev server 服务另一个 checkout 的代码。
+3. **worktree + 符号链接** —— 四次：`facts` 不随分支走；`.gitignore` 带尾斜杠挡不住同名软链
+   （已修，去掉尾斜杠）；`site/node_modules` 软链会让 dev server 服务另一个 checkout 的代码；
+   **第四次是反向的** —— 有些 worktree 的 `facts/` 是独立目录而不是软链，于是在那边取的
+   清单**永远到不了主库**，而且因为 `facts` 在 gitignore 里，git 完全看不见这件事。
+   拆 worktree 等于删数据。先 `comm -23` 对一遍再拆。
 4. **闸口的盲区** —— 见 `.claude/skills/model-audit/SKILL.md` 规则 11。
    锚在内侧只守得住内侧；闸全锚在数据和代码上时，产物可以三千多处出错而全绿。
 5. **生成物冲突不要手合** —— 从合并后的源重算。
