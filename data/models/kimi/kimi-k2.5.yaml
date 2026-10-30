@@ -200,6 +200,100 @@ arch:
       所以 prefill 的两段成本随帧数的增长率完全不同（编码器 O(t²) 注意力 + O(t) MLP，
       语言侧 O(1) token），不能用一个 token 数推全程
 
+    tokens:
+      reference_resolution: 672x672
+      patch_grid: 48x48
+      encoder_tokens: 2304
+      llm_tokens: 576
+      compression_ratio: 4
+      compression_stage: >-
+        projector 入口一步到位：2×2 相邻 patch 在通道维拼接
+        （proj.0 的输入维 4608 = 4 × 1152 就是这个拼接，config 的
+        merge_kernel_size [2, 2] 是同一件事），**压缩在两层 MLP 之前**，
+        所以 projector 的两个 GEMM 只跑 576 次而不是 2304 次。
+        **视频另有第二级压缩**：merge_type sd2_tpool 在 2×2 空间合并之后
+        对时间轴取 mean，t 帧被平均成一张 —— 这一级的压缩比是 t 本身，
+        它作用在 token 数上而不是宽度上
+      dynamic_resolution: true
+      derivation: >-
+        静态图两个因子：
+        (1) patch 14 —— config.vision_config.patch_size，并由
+        vision_tower.patch_embed.proj.weight [1152, 3, 14, 14] 的后两维印证。
+        这是 Conv2d、没有时间维，时间轴由那条固定 sin-cos 的 time_weight
+        承担（不进 checkpoint，见 fusion）；
+        (2) 2×2 空间合并 —— config 的 merge_kernel_size [2, 2]，
+        并由 mm_projector.proj.0.weight 的输入维 4608 = 1152 × 4 印证。
+        672 / 14 = 48，48² = 2304 个 encoder token；
+        48 / 2 = 24，24² = 576 个主干 token。
+        672×672 是本仓为跨模型比较选的参考分辨率，不是厂商默认值
+      scope_note: >-
+        上面的数覆盖单张静态图。**视频的主干 token 数与帧数无关** ——
+        tpool 对时间轴取 mean，t 帧合成一张，所以仍是 576（见 fusion，
+        这一条来自本仓读过的参考实现）。
+        但 encoder 侧随帧数增长：t 帧是 2304 × t 个 encoder token，
+        且它们在**同一个变长注意力段内**（cu_seqlens 按 t×h×w 切），
+        注意力成本随 t 平方增长。帧数上限 4（init_pos_emb_time，
+        forward 里 assert t <= num_frames）。
+        所以一个 4 帧媒体单元：主干仍只收 576 个 token，
+        encoder 要跑 9216 个 —— **不能用主干那个 token 数推 encoder 负载**
+    prefill:
+      encoder_linear_gflops: 1897.3
+      projector_linear_gflops: 62.51
+      backbone_token_budget: 576
+      backbone_linear_gflops_per_token: 61.03
+      image_as_text_tokens: 608
+      attention_excluded: >-
+        被排除的是 encoder 自注意力的 QK^T 与 AV，形式
+        4 × n² × hidden × layers。本档的跨度**有一手来源**：
+        参考实现 modeling_kimi_k25.py 的 MoonViT3dEncoder 按 t×h×w 切
+        cu_seqlens、且 video_attn_type 只允许 spatial_temporal
+        （记录里原有的结论，本仓读过），即一张静态图是整图一段、
+        n = 2304。按这个跨度算约 2304² × 4 × 1152 × 27 = 660 GFLOPs，
+        是线性项 1897.3 的 35%。
+        **它没有被加进上面几格**，理由不是钉不住跨度（这里钉住了），
+        而是口径：主干那侧的分母也是线性项、不含注意力，
+        把 encoder 的注意力算进分子而分母不算，两侧就不是一套口径了。
+        要连注意力一起比，两侧都得重算，那是独立一轮的事
+      derivation: >-
+        encoder 线性项 = 2 × 2304 × (patch_embed 677,376 + 27 层 ×
+        每层 15,224,832 = 411,070,464) = 2 × 2304 × 411,747,840
+        = 1,897,335,951,360。每层 15,224,832 = wqkv 3 × 1152² + wo 1152²
+        + fc0 4304 × 1152 + fc1 1152 × 4304，与清单里 108 个 blocks
+        线性张量的求和逐位相同。
+        projector 线性项 = 2 × 576 × (4608² + 7168 × 4608) = 62,511,906,816。
+        主干分母 = 2 × (active_params.total 31,687,095,808 −
+        active_params.lm_head 1,174,405,120) = 61,025,381,376 ——
+        **不能用 derived 里的 flops.linear_per_token 63,374,191,616**，
+        那一项含 lm_head（decode 口径，每步对全词表做 GEMM），
+        prefill 只在最后一个位置算 logits。
+        换算 = 576 + 1,959,847,858,176 / 61,025,381,376 = 576 + 32.1 = 608。
+        即一张图的 prefill 成本 94.7% 来自它占的 576 个位置、
+        只有 5.3% 来自视觉塔。
+        **和同塔的 kimi-vl-a3b 对照**：那边 vision_tower 与本档逐张量相同，
+        但主干只有 4.49 GFLOPs/token，于是塔值 431 个位置当量、占比 43%。
+        同一座塔占比差 7.7 倍，差的全是主干
+    separability:
+      weight_prefix: >-
+        vision_tower.（329 个张量）与 mm_projector.（6 个），共 335 个；
+        主干在 language_model.。两个前缀不相交
+      shard_isolation: dedicated
+      shard_note: >-
+        实测 index 的 weight_map：64 个分片里**最后两个是纯视觉分片**——
+        model-00063-of-000064 装 6 个 mm_projector. 张量、
+        model-00064-of-000064 装 329 个 vision_tower. 张量，
+        两片的非视觉张量都是 **0 个**，且 335 个视觉张量全在这两片里。
+        即只读这两个文件就能单独加载整座塔加 projector，不必按前缀筛。
+        **这是发布习惯的代际变化**：上一代 kimi-vl-a3b 把 335 个视觉张量
+        塞在第 1 个分片里、同片还有 583 个主干张量（mixed）。
+        本仓 12 份 vlm 里只有 kimi-k2.5 / kimi-k3 / step-5-preview 三份
+        做到了 dedicated
+      cross_prefix_sharing: >-
+        weight_map 的 208,550 个名字里没有任何一个同时匹配 vision_tower. /
+        mm_projector. 与 language_model.，即没有重名共享；
+        而且两侧连分片都不重合，所以也排除了「同片内共享缓冲区」这类
+        加载期耦合。落盘层面的 tied weights 仍要看 safetensors 头的
+        数据偏移是否重合，weight_map 答不了，本轮没读偏移
+
 precision:
   weights_release: [INT4, BF16, FP32]
   quantization:
@@ -323,6 +417,14 @@ evidence:
   arch.vision.out_hidden: derived
   arch.vision.spatial_merge_size: derived
   arch.vision.layers: official
+  arch.vision.tokens: derived
+  arch.vision.tokens.scope_note: judgement
+  arch.vision.prefill: derived
+  arch.vision.prefill.attention_excluded: judgement
+  arch.vision.prefill.derivation: judgement
+  arch.vision.separability: derived
+  arch.vision.separability.shard_note: judgement
+  arch.vision.separability.cross_prefix_sharing: judgement
   precision: official
   precision.weights_release: derived
   precision.quantization.expert_dtype: derived
@@ -455,6 +557,43 @@ review:
       「逐项相同」这个说法比实际强
     resolution: corrected
     changed_to: 改成「几乎逐项相同，唯一的差是 attention 少 15,616 B，舍入后相同」
+
+  - id: R8
+    field: arch.vision.tokens.llm_tokens
+    severity: missing
+    claim: >-
+      视频路径的机制已按参考实现核实（固定 sin-cos 时间位置编码、
+      tpool 的 mean、cu_seqlens 按 t×h×w 切），结论「进语言主干的视觉 token 数
+      与帧数无关」也写在 fusion 里 —— 但**没有一个具体的 token 数**，
+      所以 prefill 的计算量和主干的位置预算仍然答不出来
+    finding: >-
+      补 arch.vision 下 tokens / prefill / separability 三组，逐因子核过。
+      本档把前一轮读出来的机制落成了可复算的数：
+      672² 单图 2304 → 576（压缩比 4）；4 帧视频主干**仍是 576**，
+      而 encoder 要跑 9216 个 token 且在同一个变长注意力段内。
+      一张图相当于 608 个文本 token，即 prefill 成本 94.7% 来自位置预算、
+      只有 5.3% 来自视觉塔。
+      **本档的 attention_excluded 和其它记录不同**：这里跨度是钉住的
+      （参考实现读过，整图一段 n = 2304，约 660 GFLOPs），
+      排除它的理由因此不是「钉不住」而是**口径**——
+      主干那侧的分母也是线性项、不含注意力，只在分子加注意力两侧就不是
+      一套口径了。这一点单独写进了 attention_excluded，免得读者以为
+      和别的记录是同一个原因。
+      分片上本档是本仓三份 dedicated 之一：64 个分片的**最后两个是纯视觉分片**
+      （第 63 片 6 个 projector、第 64 片 329 个塔，非视觉张量都是 0），
+      只读这两个文件就能单独加载整座塔。上一代 kimi-vl-a3b 是 mixed
+      （335 个视觉张量塞在第 1 片、同片还有 583 个主干张量）——
+      **发布习惯的代际变化**，直接决定分离加载的工程成本。
+      顺带：因为两侧连分片都不重合，本档还能额外排除「同片内共享缓冲区」
+      这类加载期耦合，这是别的 mixed 记录排除不掉的
+    resolution: corrected
+    changed_to: >-
+      新增 arch.vision.tokens（单图 2304 → 576；scope_note 写明视频主干
+      token 数与帧数无关、而 encoder 侧是 2304 × t 且注意力随 t 平方增长、
+      帧数上限 4）、arch.vision.prefill（encoder 线性 1897.3 GFLOPs、
+      一张图 ≈ 608 个文本 token，并与同塔的 kimi-vl-a3b 对照）、
+      arch.vision.separability（dedicated，最后两片纯视觉，
+      并记上一代是 mixed）；evidence 加八条，四格判断类进 Gate C
 
 notes: >-
   旗舰线与视觉线在这一代合流：语言主干 = kimi-k2-thinking（剥前缀后只差 61 个

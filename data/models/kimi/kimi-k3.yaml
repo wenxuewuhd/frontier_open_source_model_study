@@ -265,6 +265,97 @@ arch:
       proj.2 [7168, 4096]，即先把 2×2 相邻 patch 拼成 4096 维、两层 MLP 投到 7168；
       另有 post_norm [7168]。wqkv [4608, 1024] = 3 × 1536（qkv_hidden_size 1536，比 hidden 1024 宽）
 
+    spatial_merge_size: 2
+    tokens:
+      reference_resolution: 672x672
+      patch_grid: 48x48
+      encoder_tokens: 2304
+      llm_tokens: 576
+      compression_ratio: 4
+      compression_stage: >-
+        projector 入口一步到位：2×2 相邻 patch 在通道维拼接
+        （proj.0 的输入维 4096 = 4 × 1024 就是这个拼接，config 的
+        merge_kernel_size [2, 2] 是同一件事），**压缩在两层 MLP 之前**，
+        所以 projector 的两个 GEMM 只跑 576 次而不是 2304 次。
+        merge_type 同样是 sd2_tpool，所以视频还有第二级时间池化
+      dynamic_resolution: true
+      derivation: >-
+        两个因子：
+        (1) patch 14 —— config.vision_config.patch_size，并由
+        vision_tower.patch_embed.proj.weight [1024, 3, 14, 14] 的后两维印证。
+        Conv2d、没有时间维；
+        (2) 2×2 空间合并 —— config 的 merge_kernel_size [2, 2]，
+        并由 mm_projector.proj.0.weight 的输入维 4096 = 1024 × 4 印证。
+        672 / 14 = 48，48² = 2304 个 encoder token；
+        48 / 2 = 24，24² = 576 个主干 token。
+        **注意这里的 4096 = 4 × 1024 而不是 4 × 1152** —— 本代塔的 hidden
+        降到 1024（上一代 kimi-k2.5 是 1152），拼接后的宽度跟着变，
+        按上一代的 4608 读会以为 merge 不是 2×2。
+        位置编码 [64, 64, 1024]（init_pos_emb_height / _width 64）是插值基准网格，
+        不是分辨率上限。
+        672×672 是本仓为跨模型比较选的参考分辨率，不是厂商默认值
+      scope_note: >-
+        上面的数覆盖单张静态图。本代 vision_config 带 init_pos_emb_time 4
+        与 merge_type sd2_tpool，与 kimi-k2.5 同构，所以**时间池化的机制在**；
+        但本代**没有 video_attn_type 这个键**（k2.5 有，且参考实现 assert
+        只允许 spatial_temporal），而本代参考实现本轮没读 ——
+        所以「视频主干 token 数与帧数无关」这条结论**不往本代回填**，
+        视频的 token 账留空
+    prefill:
+      encoder_linear_gflops: 1829.2
+      projector_linear_gflops: 53.15
+      backbone_token_budget: 576
+      backbone_linear_gflops_per_token: 206.03
+      image_as_text_tokens: 585
+      attention_excluded: >-
+        被排除的是 encoder 自注意力的 QK^T 与 AV。
+        **本代这一项的形式和别家不同**：wqkv [4608, 1024] = 3 × 1536，
+        即 q/k/v 的宽度是 qkv_hidden_size 1536、比 hidden 1024 宽，
+        所以注意力那两个 matmul 按 1536 而不是 1024 算，
+        形式是 4 × n² × 1536 × 27（按 hidden 1024 算会低估 1/3）。
+        跨度没有一手来源：vision_config 里没有 window_size，
+        本代参考实现本轮没读。按整图一段取 n = 2304 约
+        2304² × 4 × 1536 × 27 = 880 GFLOPs。
+        它没有加进上面几格，因为主干那侧的分母也是线性项、不含注意力
+      derivation: >-
+        encoder 线性项 = 2 × 2304 × (patch_embed 602,112 + 27 层 ×
+        每层 14,680,064 = 396,361,728) = 2 × 2304 × 396,963,840
+        = 1,829,213,368,320。每层 14,680,064 逐因子核过：
+        wqkv 3 × 1536 × 1024 + wo 1024 × 1536 + fc0 4096 × 1024
+        + fc1 1024 × 4096，四项相加与清单里 108 个 blocks 线性张量的
+        求和逐位相同 —— **wqkv 与 wo 都按 1536 算**，照 hidden 1024
+        算这两项会少算。
+        projector 线性项 = 2 × 576 × (4096² + 7168 × 4096) = 53,150,220,288。
+        主干分母 = 2 × (active_params.total 104,188,274,432 −
+        active_params.lm_head 1,174,405,120) = 206,027,738,624 ——
+        **不能用 derived 里的 flops.linear_per_token 208,376,548,864**，
+        那一项含 lm_head（decode 口径）。
+        换算 = 576 + 1,882,363,588,608 / 206,027,738,624 = 576 + 9.1 = 585。
+        **这是本仓 12 份 vlm 里塔开销占比最低的一档**（585 / 576 = 1.016）：
+        塔 4.0 亿参数摊在每 token 206 GFLOPs 的主干上，只值 9 个位置当量，
+        即一张图的 prefill 成本 98.4% 来自它占的 576 个位置。
+        换句话说**在这一档上做 encoder 分离部署几乎没有收益** ——
+        对比同族 kimi-vl-a3b（塔几乎一样大、主干只有 4.49 GFLOPs/token），
+        那边塔占 43%。塔的相对成本由主干决定，不是塔的属性
+    separability:
+      weight_prefix: >-
+        vision_tower.（165 个张量）与 mm_projector.（3 个），共 168 个；
+        主干在 language_model.。两个前缀不相交
+      shard_isolation: dedicated
+      shard_note: >-
+        实测 index 的 weight_map：96 个分片里**最后两个是纯视觉分片**——
+        model-00095-of-000096 装 3 个 mm_projector. 张量、
+        model-00096-of-000096 装 165 个 vision_tower. 张量，
+        两片的非视觉张量都是 **0 个**，且 168 个视觉张量全在这两片里。
+        与上一代 kimi-k2.5 完全同一个做法（那边是第 63/64 片）——
+        **这条发布习惯在 Kimi 这一支连续两代成立**，但只到本代为止，
+        不往后推（本仓的规律一律钉代际）
+      cross_prefix_sharing: >-
+        weight_map 的 497,220 个名字里没有任何一个同时匹配 vision_tower. /
+        mm_projector. 与 language_model.，即没有重名共享；
+        两侧连分片都不重合，所以也排除了同片内的加载期耦合。
+        落盘层面的 tied weights 要看 safetensors 头的数据偏移，本轮没读
+
 precision:
   weights_release: [MXFP4, BF16, FP32]
   quantization:
@@ -439,6 +530,15 @@ evidence:
   arch.decoding.mtp_layers: derived
   arch.vision.params: derived
   arch.vision.fusion: derived
+  arch.vision.spatial_merge_size: official
+  arch.vision.tokens: derived
+  arch.vision.tokens.scope_note: judgement
+  arch.vision.prefill: derived
+  arch.vision.prefill.attention_excluded: judgement
+  arch.vision.prefill.derivation: judgement
+  arch.vision.separability: derived
+  arch.vision.separability.shard_note: judgement
+  arch.vision.separability.cross_prefix_sharing: judgement
   precision: official
   precision.weights_release: derived
   precision.quantization.packing_note: derived
@@ -712,6 +812,45 @@ review:
       而「跨记录搬句子时数字要跟着重算」这条教训在本轮的 kimi-linear-48b R2 上刚犯过一次
     resolution: corrected
     changed_to: 两处都改成「114,688 B = 112 KiB」
+
+  - id: R20
+    field: arch.vision.prefill.image_as_text_tokens
+    severity: missing
+    claim: >-
+      视觉塔有结构尺寸与参数量，但一张图几个 token、encoder 多少 FLOPs、
+      能不能分离部署三件事都没有；spatial_merge_size 这一格也空着，
+      而 config 的 merge_kernel_size [2, 2] 明摆着
+    finding: >-
+      补 arch.vision 下 tokens / prefill / separability 三组，逐因子核过。
+      本档有**一个本代特有的乘式坑**：wqkv [4608, 1024] = 3 × 1536，
+      q/k/v 的宽度是 qkv_hidden_size 1536、比 hidden 1024 宽。
+      所以每层线性 14,680,064 里 wqkv 与 wo 两项都要按 1536 算，
+      照 hidden 1024 算这两项会少算（四项相加与清单 108 个 blocks 张量
+      求和逐位相同，验过了）；encoder 注意力那一项同理按 1536 算，
+      按 1024 会低估 1/3。
+      还有一个**跨代不能照抄的宽度**：拼接后是 4096 = 4 × 1024 而不是
+      上一代的 4608 = 4 × 1152（本代塔 hidden 降到 1024），
+      照上一代读会以为 merge 不是 2×2。
+      结论侧：一张 672² 的图相当于 585 个文本 token，
+      **这是本仓 12 份 vlm 里塔开销占比最低的一档**（1.016）——
+      塔 4.0 亿参数摊在每 token 206 GFLOPs 的主干上只值 9 个位置当量，
+      prefill 成本 98.4% 来自位置预算。即**这一档做 encoder 分离部署
+      几乎没有收益**；对比同族 kimi-vl-a3b（塔几乎一样大、主干
+      4.49 GFLOPs/token）那边塔占 43%。
+      一件**明确不回填**的事：本代 vision_config 带 init_pos_emb_time 4
+      与 merge_type sd2_tpool（与 k2.5 同构，时间池化机制在），
+      但**没有 video_attn_type 这个键**，而本代参考实现本轮没读，
+      所以 k2.5 上「视频主干 token 数与帧数无关」那条结论不往本代回填，
+      视频的 token 账留空、写进 scope_note
+    resolution: corrected
+    changed_to: >-
+      补 arch.vision.spatial_merge_size 2（config 的 merge_kernel_size，official）；
+      新增 arch.vision.tokens（2304 → 576，压缩比 4，并写明 4096 = 4 × 1024
+      这个跨代差别）、arch.vision.prefill（encoder 线性 1829.2 GFLOPs、
+      一张图 ≈ 585 个文本 token，并写明 wqkv/wo 要按 1536 算、
+      以及本档分离部署收益极小）、arch.vision.separability（dedicated，
+      最后两片纯视觉，与上一代同一做法、规律钉在本代）；
+      evidence 加九条，四格判断类进 Gate C
 
 notes: >-
   Kimi 家族的旗舰，model_type kimi_k3（语言主干 kimi_linear），原生多模态。本仓第一份 Kimi 记录，

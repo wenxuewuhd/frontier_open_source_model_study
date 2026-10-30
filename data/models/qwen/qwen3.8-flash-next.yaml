@@ -444,6 +444,79 @@ arch:
       linear_fc2 [2560, 4608]。deepstack_visual_indexes 是空列表，
       只在输入侧并入。与 Qwen3.5 两档的视觉塔同构，只有 out_hidden 不同
 
+    tokens:
+      reference_resolution: 672x672
+      patch_grid: 42x42
+      encoder_tokens: 1764
+      llm_tokens: 441
+      compression_ratio: 4
+      compression_stage: >-
+        merger 入口一步到位：2×2 相邻 patch 在通道维拼接（linear_fc1 的输入维
+        4608 = 1152 × 4 就是这个拼接），**压缩在 projector 之前**，
+        所以两层 merger 的 GEMM 只跑 441 次而不是 1764 次
+      dynamic_resolution: true
+      derivation: >-
+        patch 16（config.vision_config.patch_size，并由
+        model.visual.patch_embed.proj.weight [1152, 3, 2, 16, 16] 的后两维印证）、
+        2×2 空间合并（config 的 spatial_merge_size 2，由 merger.linear_fc1
+        输入维 4608 = 1152 × 4 印证）、时间维 1（patch_embed 是 Conv3d、
+        时间核 2，单张静态图补成 2 帧才喂得进去，所以一张图 1 个时间 patch）。
+        672 / 16 = 42，42² = 1764；42 / 2 = 21，21² = 441。
+        塔与 Qwen3.5 两档只差 merger.linear_fc2（本轮逐名逐形状比过 333 个张量），
+        所以 encoder 侧的 token 数与 FLOPs 跨四档相同。
+        672×672 是本仓为跨模型比较选的参考分辨率，不是厂商默认值
+      scope_note: >-
+        只覆盖单张静态图。视频每 2 帧并成 1 个时间 patch，
+        所以 t 帧的 encoder token 数是 1764 × ⌈t/2⌉
+    prefill:
+      encoder_linear_gflops: 1456.5
+      projector_linear_gflops: 29.13
+      backbone_token_budget: 441
+      backbone_linear_gflops_per_token: 12.07
+      image_as_text_tokens: 564
+      attention_excluded: >-
+        被排除的是 encoder 自注意力的 QK^T 与 AV，形式
+        4 × n² × hidden × layers。跨度定不下来：vision_config 里没有
+        window_size、也没有 fullatt_block_indexes（前代 Qwen2.5-VL 有），
+        参考实现本轮没读。按整图一段取 n = 1764 约 387 GFLOPs
+      derivation: >-
+        encoder 线性项 = 2 × 1764 × (patch_embed 1,769,472 + 27 层 ×
+        每层 15,224,832 = 411,070,464) = 1,456,499,294,208，与同代三档相同。
+        projector 线性项 = 2 × 441 × (4608² + 2560 × 4608) = 29,132,587,008
+        —— 出口 2560 是四档里最窄的，这一项比 27B 档的 39.54 小 26%。
+        主干分母 = 2 × (active_params.total 6,671,295,360 −
+        active_params.lm_head 635,699,200) = 12,071,192,320；
+        **不能用 flops.linear_per_token 13,342,590,720**，那一项含 lm_head。
+        换算 = 441 + 1,485,631,881,216 / 12,071,192,320 = 441 + 123.1 = 564。
+        **本档的塔开销占比是 1.279，在 12 份里排第 8**（塔值 123 个位置当量、
+        占一张图 prefill 的 22%）—— 四档里**最高**的一档，不是最低。
+        根因是主干小：扣掉 lm_head 后每 token 只有 12.07 GFLOPs，
+        是四档里最小的（27B 两档 48.71、397B 档 30.63）。
+        **这一格在 2026-10-30 被改过一次，改动幅度 9.5 倍，见 R13。**
+        上一版把分母写成 114.47、换算写成 454，并据此说它是「四档最低、
+        12 份里第二低」—— 那是因为 PLE 查表的 512 亿参数被
+        `subsystems.py` 的正则归进 `other`、而 `other` 计进激活参数。
+        main 的 e394525 把 PLE 归进 `retrieval`（每 token 只 gather 少数行、
+        不计激活）、同时把 `residual` 的 6.40 亿计进常驻，
+        于是 active_params.total 从 578.7 亿掉到 66.7 亿。
+        **结论整个翻过来了**：它不是塔最轻的一档，是四档里塔最重的一档
+    separability:
+      weight_prefix: >-
+        model.visual.（333 个张量，含 merger）；主干在 model.language_model.
+        与 mtp. / lm_head.。两个前缀不相交
+      shard_isolation: mixed
+      shard_note: >-
+        实测 index 的 weight_map：333 个视觉张量全部落在**第 1 个分片**
+        model-00001-of-00131，同片只有 16 个非视觉张量
+        （model.language_model 的 hyper_connection_mixer 与第 0 层的注入权重）。
+        131 个分片里只有这一个含视觉张量，且混进来的只有 16 个 ——
+        **同代四档里最接近「单文件装下一座塔」的一档**
+        （对比：qwen3.8-27b 同片混 59 个、qwen3.5-27b 混 503 个、
+        397B 档被切到两个分片）。但严格说仍是 mixed，不是 dedicated
+      cross_prefix_sharing: >-
+        weight_map 的名字里没有任何一个同时匹配 model.visual. 与主干前缀，
+        即没有重名共享。落盘层面的 tied weights 要看数据偏移，本轮没读
+
 precision:
   weights_release: [BF16]
   quantization:
@@ -602,6 +675,14 @@ evidence:
   arch.vision.encoder: judgement
   arch.vision.params: derived
   arch.vision.fusion: derived
+  arch.vision.tokens: derived
+  arch.vision.tokens.scope_note: judgement
+  arch.vision.prefill: derived
+  arch.vision.prefill.attention_excluded: judgement
+  arch.vision.prefill.derivation: judgement
+  arch.vision.separability: derived
+  arch.vision.separability.shard_note: judgement
+  arch.vision.separability.cross_prefix_sharing: judgement
   precision: official
   precision.weights_release: derived
   precision.quantization.per_subsystem: derived
@@ -666,6 +747,27 @@ open_questions:
     训练精度没有一手来源：config 的 dtype: bfloat16 说的是发布权重，
     而**模型卡正文本轮已读**（README.md @ de4b8e4d43b9），Model Overview 只列结构与规模，
     没有训练精度声明，故不填 precision.training
+
+  - >-
+    **视觉塔自注意力的跨度没有来源。** vision_config 里没有 window_size、
+    也没有 fullatt_block_indexes（前代 Qwen2.5-VL 两个都有），所以一张图是
+    整图一段注意力还是分窗，config 层面判不了，参考实现本轮没读。
+    arch.vision.prefill 因此只装线性项
+  - >-
+    **「一张图」的厂商默认分辨率未知。** arch.vision.tokens 钉在本仓选的参考
+    分辨率 672×672 上，真正的动态分桶规则在 preprocessor_config.json 里，
+    那个文件不在 facts/。所以 tokens 下的数只能和同样钉在 672 的其它记录比
+  - >-
+    **（已解）arch.vision.prefill 的主干分母原先带着 PLE 的错分偏差。**
+    上一版分母 114.47 GFLOPs/token 是把 PLE 查表的 512 亿参数当成常驻算进去的。
+    main 的 e394525 把 PLE 归进 retrieval（每 token 只 gather 少数行、不计激活）、
+    并把 residual 的 6.40 亿计进常驻，active_params.total 从 578.7 亿掉到 66.7 亿，
+    分母落到 12.07。两格已按新值重算（564 / 1.279），见 R13。
+    **留着这一条是因为结论反过来了**：本档从「四档里塔最轻」变成「四档里塔最重」，
+    引过旧值的下游分析要跟着改
+  - >-
+    视觉塔与主干**落盘层面**是否有 tied weights 未查。weight_map 里两个前缀
+    不重名，这只排除了重名；存储共享要看 safetensors 头的数据偏移，本轮没读
 
 reviewed:
   date: '2026-10-30'
@@ -916,3 +1018,81 @@ review:
       这个前提；arch.residual.note 另补报告 §2.2 的两件 decode 侧处理
       （残差状态 FP8 存储使搬运字节减半、decode 时丢掉 H_res）；
       decoding 的 mtp_layers_note 补「草稿块的注意力也换成 QSA」与「多步 MTP 复用 top-k 下标」
+  - id: R12
+    field: arch.vision.prefill.image_as_text_tokens
+    severity: missing
+    claim: >-
+      视觉塔的结构侧与参数量都有，但 prefill 负载、token 压缩比、
+      encoder 可分离性三件事一格都没有
+    finding: >-
+      补 arch.vision 下 tokens / prefill / separability 三组，逐因子核过。
+      **本条当时报的占比结论已被 R13 推翻，数字看 R13、不要引本条。**
+      当时写的是「Qwen 同代四档里塔开销占比最低、一张图 ≈ 454 个文本 token」，
+      依据是分母 114.47 GFLOPs/token —— 而那个分母把 PLE 查表的 512 亿参数
+      当成了常驻。真值是 12.07，占比 1.279、四档里**最高**。
+      本条保留的仍然成立的部分：塔与同代三档只差 merger.linear_fc2 一项，
+      encoder 侧 1456.5 GFLOPs 四档相同，所以**这个比值描述的是主干、
+      不是视觉塔** —— 这个判断没变，而且 R13 把它推得更远了。
+      分片上本档反而是四档里最好的：333 个视觉张量全在第 1 个分片、
+      同片只混了 16 个非视觉张量（131 个分片里只有这一个含视觉张量）；
+      对比 qwen3.8-27b 混 59 个、qwen3.5-27b 混 503 个、397B 被切成两片。
+      仍记 mixed 而不是 dedicated —— 有混入就不是纯视觉分片。
+      **一处要往下传的不确定**（后来果然成真，见 R13）：主干分母来自
+      active_params.total，而本档的 PLE 查表与 hyper-connections 被
+      subsystems.py 的正则错分（notes 已记），所以 114.47 是上界、454 是下界，
+      正则修好后这两格要重算。evidence 把 prefill.derivation 标成 judgement
+      就是为了让它进 Gate C、别被当成纯 derived 数 ——
+      **这一步起了作用：正则一修好，这两格就被重算了**
+    resolution: corrected
+    changed_to: >-
+      新增 arch.vision.tokens（1764 → 441，压缩比 4）、
+      arch.vision.prefill（当时填一张图 ≈ 454 个文本 token，
+      并写明分母带 PLE/hyper-connections 偏差 —— 该值已由 R13 改为 564）、
+      arch.vision.separability（shard_isolation: mixed，但只混 16 个非视觉张量）；
+      evidence 加八条，四格判断类进 Gate C；
+      注意力跨度、默认分辨率、分母偏差、落盘 tied weights 四件事进 open_questions
+  - id: R13
+    field: arch.vision.prefill.backbone_linear_gflops_per_token
+    severity: wrong
+    claim: >-
+      114.47 GFLOPs/token，并据此说本档「Qwen 同代四档里塔开销占比最低、
+      跨族系 12 份里第二低」（一张图 ≈ 454 个文本 token，比值 1.029）
+    finding: >-
+      **错了 9.5 倍，而且结论整个反过来。**
+      114.47 取的是 2 × (active_params.total 57,871,541,155 − lm_head)，
+      而那个 active_params.total 把 **PLE 查表的 51,200,245,795 个参数
+      当成了常驻** —— `subsystems.py` 的正则认不出 PLE，把它归进 `other`，
+      而 `derive.py` 的常驻名单里有 `other`。
+      main 的 e394525 修了两处：PLE 归进 `retrieval`（每 token 只 gather
+      少数行、不计激活），`residual` 的 639,631,360 计进常驻。
+      于是 active_params.total 从 578.7 亿掉到 **66.7 亿**，
+      分母从 114.47 落到 **12.07**，一张图的文本 token 当量从 454 升到 **564**，
+      占比从 1.029 升到 **1.279**。
+      **方向是反的**：本档不是四档里塔最轻的，是四档里塔最**重**的
+      （27B 两档 1.070、397B 档 1.110），12 份里从第 2 低变成第 8。
+      塔占一张图 prefill 的 22%，不是 3%。
+      两件事值得记在这里：
+      (1) **这一条是 R12 自己预告的。** R12 当时把这个偏差写进了
+      `open_questions`、并特意把 `prefill.derivation` 标成 `judgement`
+      让它进 Gate C，理由就是「正则修好后这两格要重算」。
+      偏差没有被当成精修放过去，所以正则一落地就被抓回来了 ——
+      这是把已知不确定写成字段而不是埋在数里的直接收益。
+      (2) **但预告的方向写错了。** R12 说「114.47 是上界、454 是下界」，
+      意思是真值会小一点、换算会大一点 —— 幅度估成了「略」。
+      实际是 9.5 倍。根因是当时只看到「PLE 被错分」这个事实，
+      没有去看它的参数量占 active_params.total 多少
+      （512 亿 / 578.7 亿 = **88%**）。
+      **知道一个因子错了，不等于知道它错多少** —— 下次报「上界/下界」
+      要同时给出幅度，否则读者会按「不影响结论」处理。
+      分母变了之后，本档仍然成立的是 R12 那个判断本身：
+      塔与同代三档只差 `merger.linear_fc2` 一项、encoder 侧 1456.5 GFLOPs
+      四档相同，所以**占比描述的是主干、不是视觉塔**。
+      这次的变化恰恰是最强的一次证明：塔一个字没动，占比从 1.029 跳到 1.279
+    resolution: corrected
+    changed_to: >-
+      backbone_linear_gflops_per_token 114.47 → 12.07、
+      image_as_text_tokens 454 → 564；prefill.derivation 重写（给出新的
+      active_params 分解，并点明这一格被改过、幅度 9.5 倍）；
+      R12 里被推翻的那段加了指向本条的提示、不再可被单独引用；
+      对应的 open_question 从「待解」改成「已解 + 结论反转」，
+      保留它是因为引过旧值的下游分析要跟着改
