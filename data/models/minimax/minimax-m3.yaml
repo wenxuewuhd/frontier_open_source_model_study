@@ -2,7 +2,7 @@ id: minimax-m3
 family: minimax
 kind: vlm
 display_name: MiniMax-M3
-released: '2026-06-02'
+released: '2026-10-26'
 license: other
 visibility: public
 
@@ -271,8 +271,8 @@ notes: >-
   「全存、选读」一类，但选的是 128-token 块而不是单 token。
   层数、宽度、注意力几何、indexer 层集合、专家分布与 FP32 分布对照完整权重清单核过；
   top_k、routed_scaling_factor、topk 块数、swiglu 参数这类运行期标量只有 config 一个来源。
-  released 取 HF 仓的 createdAt（2026-06-02，与 arXiv 2606.13392 吻合）；
-  tracking.yaml 写的 2026-10-26 是仓的 lastModified
+  released 取 tracking.yaml 的 2026-10-26（= 仓的 lastModified）。仓的 createdAt 是
+  2026-06-02、技术报告是 arXiv 2606.13392，发布日可能更早，见 open_questions
 
 open_questions:
   - >-
@@ -295,3 +295,7 @@ open_questions:
     加注意力与共享专家）小得多，不是「再一层 transformer」；也可能只是取整
   - >-
     训练精度无一手声明（config 只有 torch_dtype bfloat16），precision.training 不填
+  - >-
+    发布日未钉死：tracking.yaml 取 2026-10-26（仓的 lastModified），而仓的 createdAt 是 2026-06-02、
+    技术报告 arXiv 编号 2606.13392（2026 年 6 月）。createdAt 不等于公开日 —— Kimi-K3 的仓
+    createdAt 2026-06-13，模型卡却引用 2026-07-23 的评测 —— 所以两者都不能单独作准
