@@ -1,7 +1,7 @@
 {
  "id": "minimax-m3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T09:24:39+00:00",
+ "generated_at": "2026-10-30T11:06:25+00:00",
  "inputs": {
   "facts_dir": "facts/minimax-m3",
   "config_present": true,

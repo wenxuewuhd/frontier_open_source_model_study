@@ -257,7 +257,7 @@ def _():
         assert cur, f"{mid} 有实测精度，却说不出测自哪个仓（{path} 是空的）"
 
 
-@case("三·正例：全仓真正「声明了而清单里没有」的就那三份通义")
+@case("三·正例：全仓真正「声明了而清单里没有」的那四份")
 def _():
     got = []
     for mid, d in RECS.items():
@@ -265,14 +265,20 @@ def _():
         bare.get("precision", {}).pop("weights_release_scope", None)
         if release_errors(bare):
             got.append(mid)
-    want = ["qwen3.5-27b", "qwen3.5-397b-a17b", "qwen3.8-2.4t-a95b"]
+    # 原先是三份通义。minimax-m3 是后加的第四份：厂商与主仓并行维护
+    # MiniMaxAI/MiniMax-M3-MXFP8（2026-10-30 查 HF API 确认存在，31 个分片、
+    # 下载 48,817），而本仓只取过主仓的清单。补进 weights_release 之后它
+    # 当然会落进这张名单 —— **这正是对的**：声明了、没测过、所以必须带
+    # measured: false 交代清楚。闸口照旧放行（它有 scope），这条用例查的是
+    # 更底下那一层：摘掉交代之后还认不认得出来。
+    want = ["minimax-m3", "qwen3.5-27b", "qwen3.5-397b-a17b", "qwen3.8-2.4t-a95b"]
     assert sorted(got) == want, f"实际是 {sorted(got)}，应当是 {want}"
 
 
 @case("三·负例：把 scope 摘掉，那一份立刻报错")
 def _():
-    # 这三份是全仓真正「声明了而清单里没有」的，交代摘掉就该拦住
-    for mid in ("qwen3.5-27b", "qwen3.5-397b-a17b", "qwen3.8-2.4t-a95b"):
+    # 这四份是全仓真正「声明了而清单里没有」的，交代摘掉就该拦住
+    for mid in ("minimax-m3", "qwen3.5-27b", "qwen3.5-397b-a17b", "qwen3.8-2.4t-a95b"):
         d = copy.deepcopy(RECS[mid])
         d["precision"].pop("weights_release_scope", None)
         assert release_errors(d), f"{mid} 摘掉 scope 之后应当报错"

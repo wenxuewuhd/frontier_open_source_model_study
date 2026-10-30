@@ -349,10 +349,23 @@ arch:
         safetensors 头的数据偏移是否重合，weight_map 答不了，本轮没读偏移
 
 precision:
-  weights_release: [BF16, FP32]
+  weights_release: [BF16, FP32, MXFP8]
   weights_release_scope:
     BF16: { measured: true }
     FP32: { measured: true }
+    MXFP8:
+      measured: false
+      repo: MiniMaxAI/MiniMax-M3-MXFP8
+      note: >-
+        厂商与主仓并行维护的 MXFP8 变体，**本仓没有取过它的清单**，所以本记录
+        precision 段下的一切实测结论（逐子系统 dtype、scale 张量零命中、
+        权重存储 795.51 GiB）只覆盖主仓 MiniMaxAI/MiniMax-M3 @ 2026-10-26。
+        该仓存在性与元数据 2026-10-30 查于 HF API：sha d2be410f483297907301ec94fdf0ca5385f9b169、
+        createdAt 2026-06-02、lastModified 2026-10-26、52 个文件含 31 个 safetensors 分片、
+        下载 48,817。config.json 的 quantization_config 声明
+        quant_method mxfp8 / activation_scheme dynamic / weight_block_size [1, 32]。
+        **这些来自仓库元数据与 config，不是权重实测** —— 要进逐子系统精度表
+        得单独对它取一次清单
   quantization:
     per_subsystem:
       expert: BF16
