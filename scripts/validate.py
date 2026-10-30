@@ -274,7 +274,7 @@ def label_table_hit(line):
 # 当前这 47 个基本是整个 generation 块 —— 视频线的记录里 VAE 规格、音频、
 # 文本编码器、采样口径、尺寸约束、checkpoint 矩阵都录了，而页面上只渲染了
 # 由它们推出来的负载，规格本身一格没有。
-_UNREAD_FIELD_BUDGET = 47
+_UNREAD_FIELD_BUDGET = 45
 
 
 def check_field_consumers(root, errors, warnings):

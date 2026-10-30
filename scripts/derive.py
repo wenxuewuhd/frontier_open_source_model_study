@@ -795,16 +795,45 @@ def gen_workload(gen: dict, kind: str, dit_params: float, dit_params_src: str,
     e2e = None
     if flops.get("total"):
         if runnable:
-            e2e = sum(st["steps"] * st["forwards_per_step"] for st in runnable) * flops["total"]
+            # **逐段按自己的分辨率算。** 原来是「Σ步数 × 同一个单步 FLOPs」——
+            # 对分辨率不变的流水线成立，对带超分的不成立：注意力是 O(n²)，
+            # HunyuanVideo-1.5 的 1080p SR 段输出 1904×1072，token 是主干段的 2.2 倍、
+            # 单步 4.2 倍，端到端因此差 18%。
+            # 段里给了 out_width / out_height 就用它自己的 token 数，没给才退回主干段的。
+            per_stage, est_only = [], []
+            for st in runnable:
+                ow, oh = st.get("out_width"), st.get("out_height")
+                of = st.get("out_frames") or F
+                if ow and oh:
+                    s_nt = ((of - 1) / t_c + 1 if causal else of / t_c) / p_t
+                    s_seq = s_nt * (oh / (s_c * p_h)) * (ow / (s_c * p_w)) + audio_tokens
+                    s_step = 2 * dit_params * s_seq + 4 * layers * hidden * s_seq * s_seq
+                else:
+                    s_seq, s_step = seq, flops["total"]
+                    est_only.append(st.get("name"))
+                per_stage.append({
+                    "name": st.get("name"), "steps": st["steps"],
+                    "forwards_per_step": st["forwards_per_step"],
+                    "tokens": s_seq, "flops_per_step": s_step,
+                    "flops": st["steps"] * st["forwards_per_step"] * s_step,
+                    "tokens_source": "stage" if (ow and oh) else "default_bucket",
+                })
+            e2e = sum(x["flops"] for x in per_stage)
             skipped = [st.get("name") for st in stages if st not in runnable]
             out["end_to_end_terms"] = {
-                "formula": "Σ各阶段(步数 × 每步前向次数) × 单步 FLOPs",
-                "stages": [{"name": st.get("name"), "steps": st["steps"],
-                            "forwards_per_step": st["forwards_per_step"]} for st in runnable],
+                "formula": "Σ各阶段(步数 × 每步前向次数 × 该段单步 FLOPs)",
+                "stages": per_stage,
                 "stages_skipped": skipped,
-                "note": "各阶段按同一个单步 FLOPs 估算；分辨率不同的阶段（SR、上采样）"
-                        "实际 token 数不同，这里是粗估，不要当精确值",
             }
+            if est_only:
+                out["end_to_end_terms"]["note"] = (
+                    "这几段没给 out_width / out_height，按主干段的 token 数估："
+                    + "、".join(str(x) for x in est_only)
+                    + "。分辨率不同的段（SR、上采样）实际 token 数不同，"
+                    "而注意力是 O(n²)，所以这个数是粗估，不要当精确值")
+                notes.append(
+                    f"{len(est_only)} 个阶段缺 out_width / out_height，按主干段 token 数估算，"
+                    "端到端是粗估")
             if skipped:
                 notes.append(f"{len(skipped)} 个阶段缺步数或前向次数，未计入端到端："
                              + "、".join(str(x) for x in skipped))

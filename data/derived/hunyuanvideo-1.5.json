@@ -1,9 +1,9 @@
 {
  "id": "hunyuanvideo-1.5",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T16:22:42+00:00",
+ "generated_at": "2026-10-30T16:25:08+00:00",
  "inputs": {
-  "facts_dir": "/Users/yuan/Work/frontier-llm-tracking/frontier_open_source_model_study/facts/hunyuanvideo-1.5",
+  "facts_dir": "facts/hunyuanvideo-1.5",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/hunyuan-video/hunyuanvideo-1.5.yaml",
@@ -162,28 +162,39 @@
    "attention_share": 0.7477606526158678
   },
   "end_to_end_terms": {
-   "formula": "Σ各阶段(步数 × 每步前向次数) × 单步 FLOPs",
+   "formula": "Σ各阶段(步数 × 每步前向次数 × 该段单步 FLOPs)",
    "stages": [
     {
      "name": "DiT 去噪",
      "steps": 50,
-     "forwards_per_step": 2
+     "forwards_per_step": 2,
+     "tokens": 111600.0,
+     "flops_per_step": 7367997739392000.0,
+     "flops": 7.367997739392e+17,
+     "tokens_source": "stage"
     },
     {
      "name": "720p 超分",
      "steps": 6,
-     "forwards_per_step": 1
+     "forwards_per_step": 1,
+     "tokens": 111600.0,
+     "flops_per_step": 7367997739392000.0,
+     "flops": 4.4207986436352e+16,
+     "tokens_source": "stage"
     },
     {
      "name": "1080p 超分",
      "steps": 8,
-     "forwards_per_step": 1
+     "forwards_per_step": 1,
+     "tokens": 247163.0,
+     "flops_per_step": 3.114012032667155e+16,
+     "flops": 2.491209626133724e+17,
+     "tokens_source": "stage"
     }
    ],
-   "stages_skipped": [],
-   "note": "各阶段按同一个单步 FLOPs 估算；分辨率不同的阶段（SR、上采样）实际 token 数不同，这里是粗估，不要当精确值"
+   "stages_skipped": []
   },
-  "flops_end_to_end": 8.39951742290688e+17,
+  "flops_end_to_end": 1.0301287229889244e+18,
   "excluded": [
    "文本编码一次（编码器参数量在 generation.text_encoders，本函数不计）",
    "VAE decode 一次（VAE 结构不在 config 里，解码器是 Transformer 时这一项不是小量）",

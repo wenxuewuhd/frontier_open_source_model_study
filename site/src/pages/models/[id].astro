@@ -567,6 +567,43 @@ const rv = reviewStatus(m);
             )}
           </div>
         </div>
+        {/* 多段流水线逐段摊开。端到端是个求和，而各段的 token 数可以差一倍以上
+            （超分段分辨率不同，注意力是 O(n²)）—— 只给总数读者无从判断它准不准。
+            `tokens_source` 说清这一段是按自己的分辨率算的还是借了主干段的。 */}
+        {Array.isArray(gw.end_to_end_terms?.stages) && gw.end_to_end_terms.stages.length > 1 && (
+          <div style="margin-top:14px">
+            <h3>端到端逐段</h3>
+            <table>
+              <thead><tr>
+                <th>阶段</th><th class="num">步数</th><th class="num">每步前向</th>
+                <th class="num">token</th><th class="num">单步 FLOPs</th><th class="num">本段 FLOPs</th>
+              </tr></thead>
+              <tbody>
+                {gw.end_to_end_terms.stages.map((st: any) => (
+                  <tr>
+                    <td>{st.name}{st.tokens_source === 'default_bucket'
+                      ? <span class="muted small">（借主干段的 token 数）</span> : ''}</td>
+                    <td class="num">{st.steps}</td>
+                    <td class="num">{st.forwards_per_step}</td>
+                    <td class="num">{Math.round(st.tokens).toLocaleString()}</td>
+                    <td class="num">{fl(st.flops_per_step)}</td>
+                    <td class="num">{fl(st.flops)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {/* derive 自己写的免责声明。它一直在产物里，而页面只显示结果和求和公式 ——
+            「这是粗估」这句话不渲染，等于没写 */}
+        {gw.end_to_end_terms?.note && (
+          <p class="small muted" style="margin-top:8px"><Prose text={gw.end_to_end_terms.note} /></p>
+        )}
+        {Array.isArray(gw.end_to_end_terms?.stages_skipped) && gw.end_to_end_terms.stages_skipped.length > 0 && (
+          <p class="small muted" style="margin-top:6px">
+            未计入端到端（缺步数或每步前向次数）：{gw.end_to_end_terms.stages_skipped.join('、')}
+          </p>
+        )}
         {/* excluded 是数组 —— 端到端那个数**不含**这几项，不写出来读者会当成全量 */}
         {Array.isArray(gw.excluded) && gw.excluded.length > 0 && (
           <p class="small muted" style="margin-top:10px">

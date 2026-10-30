@@ -270,6 +270,8 @@ generation:
   pipeline_stages:
     - name: DiT 去噪
       model: same-backbone
+      out_width: 1280
+      out_height: 720
       steps: 50
       cfg_scale: 6.0
       forwards_per_step: 2
@@ -278,6 +280,8 @@ generation:
       note: 本记录的负载推导覆盖的就是这一段
     - name: 720p 超分
       model: transformer/720p_sr_distilled + upsampler/720p_sr_distilled
+      out_width: 1280
+      out_height: 720
       steps: 6
       forwards_per_step: 1
       resolution: 480p → 720p
@@ -288,6 +292,8 @@ generation:
         21,461,152 参数（85.8 MB）。开 `--sr`（默认开）就要再驻留一套 33 GB
     - name: 1080p 超分
       model: transformer/1080p_sr_distilled + upsampler/1080p_sr_distilled
+      out_width: 1904
+      out_height: 1072
       steps: 8
       forwards_per_step: 1
       resolution: 720p → 1080p

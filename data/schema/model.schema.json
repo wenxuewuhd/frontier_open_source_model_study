@@ -711,6 +711,15 @@
               "steps": { "type": "integer" },
               "cfg_scale": { "type": "number" },
               "forwards_per_step": { "type": "integer", "enum": [1, 2] },
+              "out_width": {
+                "type": "integer",
+                "description": "这一段**输出**的像素宽。超分段与主干段分辨率不同，而注意力是 O(n²) —— 不给就只能按主干段的 token 数粗估，HunyuanVideo-1.5 的 1080p SR 那一段真值是主干段的 2.2 倍 token、单步 4.2 倍 FLOPs，端到端因此差 18%。`resolution` 那个字段是散文（「480p → 720p」），解析不了，所以另开结构化的两个"
+              },
+              "out_height": { "type": "integer" },
+              "out_frames": {
+                "type": "integer",
+                "description": "这一段输出的帧数。与默认档相同就不用填"
+              },
               "resolution": { "type": "string" },
               "open_source": { "type": "boolean", "description": "这一段的权重是否开源。false 的段在公开仓里算不出负载，必须显式标出来而不是留空" },
               "note": { "type": "string" }
