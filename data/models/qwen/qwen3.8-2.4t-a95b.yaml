@@ -36,6 +36,26 @@ sources:
       类型是「Causal Language Model」——**没有 Vision Encoder 那一级**，
       与清单里 visual.* 零命中一致。**卡里没有训练精度，也没有每 token 缓存字节数**
 
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B-FP8
+    locator: 'config.json @ d2dc35658bcf · quantization_config'
+    accessed: '2026-10-30'
+    note: >-
+      同模型的官方 FP8 发布仓，本轮补取了它的 config 与元数据（没取清单），
+      关掉了原来那条 open question（见 R12）。quantization_config：
+      **quant_method fp8、activation_scheme dynamic、weight_block_size [128, 128]、
+      weight_per_tensor false、act_per_tensor false** —— 即 block-wise 权重量化 +
+      动态激活量化，与 DeepSeek V3 一代的 FP8 同一路数。
+      关键在 **modules_to_not_convert 的 978 项**：router（mlp.gate，92 层）、
+      共享专家四项（92 层）、线性注意力的 6 个投影（69 层）、
+      full attention 的 q/k/v/o（23 层）、lm_head、embed_tokens、
+      以及草稿块除专家以外的全部，**都留 BF16**。
+      HF 的逐 dtype tally 把这件事钉死：F8_E4M3 **2,396,591,751,168**，
+      与「主干路由专家 2,370,821,947,392 + 草稿块路由专家 25,769,803,776」之和
+      **逐位相同**；BF16 那 49,590,974,336 与之相加又恰等于本记录的全量
+      2,446,182,725,504。所以 **FP8 只覆盖路由专家（主干 + 草稿块），占参数量 97.97%**。
+      usedStorage 4.45 → **2.27 TiB（1.96 倍）**
+
 hf:
   repo: Qwen/Qwen3.8-2.4T-A95B
   pipeline_tag: text-generation
@@ -368,7 +388,13 @@ open_questions:
     2.4T 是否含草稿块，名字未说明，两种读法都在取整范围内（含 +1.92%、扣 +0.83%）。
     excludes: draft 是按同代 27B 的口径做的判断，没有一手说明
   - KV cache 的实际存储精度未披露，推导时按模型 dtype 兜底
-  - FP8 发布版的量化配置与 BF16 版的差异未核对
+  - >-
+    （已关闭）FP8 发布版的量化配置本轮取了（sources[2]）：block-wise [128,128] +
+    动态激活量化，且 modules_to_not_convert 978 项说明**只有路由专家被量化**，
+    tally 逐位印证。**仍未取它的清单**，所以实测量化块
+    （权重形状 ÷ 同名 scale 形状）与 scale 的 dtype 都还不知道 ——
+    DeepSeek 那边正是在这一步上发现 config 声明的块对 FP4 专家错了 128 倍，
+    所以 [128,128] 目前只是声明值
   - >-
     训练精度没有一手来源：config 的 dtype: bfloat16 说的是发布权重，
     而**模型卡正文已读**（README.md @ 207bd685a7e3，P1 轮补取），Model Overview 只列结构与规模，
@@ -548,3 +574,27 @@ review:
       新增 sources 的 modelcard 条目；arch.moe.shared_experts 升 official；
       linear_state.mechanism 写上厂商名；补 context.train_native 与 extension_method；
       训练精度那条 open question 改为「卡已读、无声明」
+  - id: R12
+    field: precision.weights_release
+    severity: missing
+    claim: >-
+      weights_release 列了 [BF16, FP8_E4M3]，而 FP8 那一项只有「同代有这个仓」做依据；
+      open_questions 里挂着「FP8 发布版的量化配置与 BF16 版的差异未核对」
+    finding: >-
+      本轮补取了 Qwen3.8-2.4T-A95B-FP8 的 config，三件事定下来了：
+      (1) 量化方案是 **block-wise FP8（weight_block_size [128,128]）+ 动态激活量化**
+      （activation_scheme dynamic、weight_per_tensor 与 act_per_tensor 都是 false），
+      与 DeepSeek V3 一代同路数；
+      (2) **只有路由专家被量化** —— modules_to_not_convert 列了 978 项
+      （router 92 层、共享专家 92 层各四项、线性注意力 6 个投影 × 69 层、
+      full attention 的 q/k/v/o × 23 层、lm_head、embed_tokens、草稿块的非专家部分），
+      而 HF 的 F8_E4M3 tally 2,396,591,751,168 与「主干路由专家 + 草稿块路由专家」
+      之和**逐位相同**，BF16 的 49,590,974,336 与它相加又等于本记录全量 —— 三方闭合；
+      (3) 占比与存储：97.97% 的参数是 FP8，usedStorage 4.45 → 2.27 TiB（1.96 倍）。
+      **主仓仍是纯 BF16**（本记录的 config 没有 quantization_config，
+      本轮核过的 24 份 Qwen 主仓 config 无一例外），所以这些数不改本记录的任何字段，
+      只是把 weights_release 里 FP8 那一项的依据从「名单上有这个仓」换成了它自己的 config
+    resolution: corrected
+    changed_to: >-
+      新增 sources 的 FP8 仓条目；原 open question 改为「已关闭」并收窄到
+      「清单未取、所以实测量化块与 scale dtype 仍未知，[128,128] 只是声明值」
