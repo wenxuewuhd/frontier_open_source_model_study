@@ -487,9 +487,11 @@ arch:
         active_params.lm_head 635,699,200) = 114,471,683,910；
         **不能用 flops.linear_per_token 115,743,082,310**，那一项含 lm_head。
         换算 = 441 + 1,485,631,881,216 / 114,471,683,910 = 441 + 13.0 = 454。
-        **这是本仓 12 份 vlm 里塔开销占比最低的一档**（454 / 441 = 1.03）：
+        **这是 Qwen 同代四档里塔开销占比最低的一档**（454 / 441 = 1.029）：
         主干每 token 114.5 GFLOPs 是四档里最大的，同一座 4.5 亿参数的塔
         摊到这个主干上只值 13 个 token 的位置当量。
+        跨族系看它是 12 份 vlm 里第二低 —— kimi-k3 的 1.016 更低
+        （主干 206.0 GFLOPs/token，塔只值 9 个位置当量）。
         注意 active_params.total 本身带一个已知偏差 —— PLE 查表与
         hyper-connections 被 subsystems.py 的正则错分（见 notes 与
         open_questions），所以这个分母是上界，真实值略小、换算值略大
@@ -1011,8 +1013,9 @@ review:
       encoder 可分离性三件事一格都没有
     finding: >-
       补 arch.vision 下 tokens / prefill / separability 三组，逐因子核过。
-      本档是**本仓 12 份 vlm 里塔开销占比最低的一档**：一张 672² 的图
-      相当于 454 个文本 token，只比它占的 441 个位置多 3%。
+      本档是 **Qwen 同代四档里塔开销占比最低的一档**：一张 672² 的图
+      相当于 454 个文本 token，只比它占的 441 个位置多 3%
+      （跨族系是 12 份里第二低，kimi-k3 的 1.016 更低）。
       根因不在塔（塔与同代三档只差 merger.linear_fc2 一项，encoder 侧
       1456.5 GFLOPs 四档相同），在主干：扣掉 lm_head 后每 token 114.5 GFLOPs
       是四档里最大的，同一座 4.5 亿参数的塔摊上去只值 13 个位置当量。
