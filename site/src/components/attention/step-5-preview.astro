@@ -1,0 +1,221 @@
+---
+/**
+ * Step-5-Preview · SWA / global 3:1 + DSA 的生产侧与消费侧。
+ *
+ * 照 deepseek-v41-flash.astro 的形：两段式、横向分带、每个盒子带量、
+ * 加粗引导句、role="img"、marker id 带模型前缀（s5-*）、只用 attn-figure.css 的类。
+ *
+ * 和 DeepSeek 那张最大的不同在**分层方式**：那边是「源层产、下游层复用」的分组，
+ * 这边是「三层滑窗配一层全局」的固定交替，两类层的投影权重逐张量同形
+ * （95/95 层一个签名），差别只在 RoPE 参数与「缓存什么、按什么单位计」。
+ * 所以两张图里 ② 与 ③、⑤ 与 ⑥ 都特意排成同一条网格 —— 交替结构靠对齐看出来。
+ *
+ * **两个缓存量不在同一刻度上**：滑窗层每层定长 1.5 MiB（与上下文无关），
+ * 全局层每 token 每层 3,072 B（随上下文线性增长）。图上分带隔开、各自标单位，
+ * 没有并排成可比的长度 —— 相加或相除都是范畴错误。
+ *
+ * 数据来源：data/models/stepfun/step-5-preview.yaml 的 arch.attention 与 precision，
+ * 加 facts/step-5-preview/shapes.json（2,704 条，逐层核过 L0 滑窗 / L3 全局两类签名）。
+ * 图上每个数都能在那两处查到：
+ *   q_proj [12288,4096]=64×192、k_proj/v_proj [768,4096]=4×192、o_proj [4096,12288]、
+ *   q_norm/k_norm [192] FP32、g_proj [64,4096]、sparse_indexer_k [256,4096]、
+ *   sparse_indexer_k_norm [256]+bias、sparse_indexer_z [256,4096]、
+ *   sparse_indexer_q [4096,4096]=16×256、sparse_indexer_w [16,4096] FP32 —— 均实测自清单；
+ *   1536 元素/层、35,328 与 736 元素/token、54,263,808 元素/序列、71,392 B/token、
+ *   103.5 MiB/序列、1M→69.8 GiB —— 均取自 kv_sharing.measured_per_token 与
+ *   bottlenecks[kv-capacity].quantified；dtype 取自 precision.kv_cache_components。
+ */
+---
+
+<figure class="attn-fig">
+  <div class="figbox">
+    <svg class="dia" viewBox="0 0 940 376" role="img"
+         aria-label="Step-5-Preview 生产侧：95 层共用一套投影签名；69 个滑窗层把 K/V 存进定长 512 位置的环，23 个全局层保留全量 K/V 并额外产出每 8 token 一条的 FP8 区域摘要">
+      <defs>
+        <marker id="s5-pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead"/></marker>
+        <marker id="s5-pt" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead-t"/></marker>
+        <marker id="s5-pv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead-v"/></marker>
+      </defs>
+
+      <text x="18" y="18" class="lbl-s">① 共用投影 · 95 层一个签名 —— 滑窗层与全局层逐张量同形</text>
+      <rect x="18" y="40" width="62" height="46" rx="3" class="box"/>
+      <text x="49" y="68" class="lbl" text-anchor="middle">x 4096</text>
+      <path d="M80 56 L104 46" class="arr" marker-end="url(#s5-pa)"/>
+      <path d="M80 70 L104 94" class="arr" marker-end="url(#s5-pa)"/>
+
+      <rect x="106" y="26" width="212" height="36" rx="3" class="box"/>
+      <text x="212" y="48" class="lbl-s" text-anchor="middle">q_proj 12288×4096 = 64×192</text>
+      <rect x="106" y="78" width="212" height="36" rx="3" class="box"/>
+      <text x="212" y="100" class="lbl-s" text-anchor="middle">k_proj, v_proj 768×4096 = 4×192</text>
+
+      <path d="M318 44 L336 44" class="arr" marker-end="url(#s5-pa)"/>
+      <rect x="338" y="26" width="140" height="36" rx="3" class="box"/>
+      <text x="408" y="48" class="lbl-s" text-anchor="middle">q_norm 192 · FP32</text>
+      <path d="M318 96 L336 96" class="arr" marker-end="url(#s5-pa)"/>
+      <rect x="338" y="78" width="140" height="36" rx="3" class="box"/>
+      <text x="408" y="100" class="lbl-s" text-anchor="middle">k_norm 192 · FP32</text>
+
+      <text x="492" y="36" class="lbl-x">o_proj 4096×12288、g_proj 64×4096（逐头 sigmoid 门）</text>
+      <text x="492" y="52" class="lbl-x">这两个只在消费侧用，见图 2</text>
+      <text x="492" y="82" class="lbl-s">↓ 两类层只差两件事</text>
+      <text x="492" y="100" class="lbl-x">RoPE 参数，以及「缓存什么、按什么单位计」</text>
+
+      <line x1="18" y1="128" x2="922" y2="128" class="arr-d"/>
+
+      <text x="18" y="148" class="lbl-s">② 滑窗层 × 69 · L0–L2, L4–L6, …（layer_types sliding_attention）</text>
+      <rect x="18" y="166" width="122" height="42" rx="3" class="box"/>
+      <text x="79" y="192" class="lbl-s" text-anchor="middle">k, v 4 组 × 192</text>
+      <path d="M140 187 L156 187" class="arr" marker-end="url(#s5-pa)"/>
+      <rect x="158" y="166" width="142" height="42" rx="3" class="box"/>
+      <text x="229" y="183" class="lbl-s" text-anchor="middle">RoPE θ = 1e4</text>
+      <text x="229" y="199" class="lbl-x" text-anchor="middle">全旋转 192 维</text>
+      <path d="M300 187 L316 187" class="arr-t" marker-end="url(#s5-pt)"/>
+      <rect x="318" y="166" width="160" height="42" rx="3" class="box-t"/>
+      <text x="398" y="183" class="lbl-t" text-anchor="middle">window ring · 512 位置</text>
+      <text x="398" y="199" class="lbl-x" text-anchor="middle">BF16，无 scale</text>
+      <path d="M478 187 L494 187" class="arr-t" marker-end="url(#s5-pt)"/>
+      <rect x="496" y="166" width="180" height="42" rx="3" class="box-t"/>
+      <text x="586" y="183" class="lbl-t" text-anchor="middle">512 × 1536 = 786,432</text>
+      <text x="586" y="199" class="lbl-t" text-anchor="middle">元素 = 1.5 MiB / 层</text>
+      <text x="688" y="181" class="lbl-s">× 69 层 = 103.5 MiB</text>
+      <text x="688" y="197" class="lbl-x">每序列固定，不随上下文增长</text>
+
+      <line x1="18" y1="224" x2="922" y2="224" class="arr-d"/>
+
+      <text x="18" y="244" class="lbl-s">③ 全局层 × 23 · L3, L7, …, L91（full_attention；DSA 索引器只挂这 23 层）</text>
+      <rect x="18" y="262" width="122" height="40" rx="3" class="box"/>
+      <text x="79" y="287" class="lbl-s" text-anchor="middle">k, v 4 组 × 192</text>
+      <path d="M140 282 L156 282" class="arr" marker-end="url(#s5-pa)"/>
+      <rect x="158" y="262" width="142" height="40" rx="3" class="box"/>
+      <text x="229" y="279" class="lbl-s" text-anchor="middle">RoPE θ = 1e7</text>
+      <text x="229" y="294" class="lbl-x" text-anchor="middle">192 维里只旋 64</text>
+      <path d="M300 282 L316 282" class="arr-t" marker-end="url(#s5-pt)"/>
+      <rect x="318" y="262" width="160" height="40" rx="3" class="box-t"/>
+      <text x="398" y="279" class="lbl-t" text-anchor="middle">全量 K/V cache</text>
+      <text x="398" y="294" class="lbl-x" text-anchor="middle">BF16，无 scale</text>
+      <path d="M478 282 L494 282" class="arr-t" marker-end="url(#s5-pt)"/>
+      <rect x="496" y="262" width="180" height="40" rx="3" class="box-t"/>
+      <text x="586" y="279" class="lbl-t" text-anchor="middle">1536 元素/token · 3,072 B</text>
+      <text x="586" y="294" class="lbl-t" text-anchor="middle">× 23 层 = 70,656 B/token</text>
+      <text x="688" y="277" class="lbl-s">随上下文线性增长</text>
+      <text x="688" y="293" class="lbl-x">与 ② 的定长不同刻度，不可相加</text>
+
+      <rect x="18" y="312" width="122" height="42" rx="3" class="box-v"/>
+      <text x="79" y="331" class="lbl-v" text-anchor="middle">sparse_indexer_k</text>
+      <text x="79" y="346" class="lbl-x" text-anchor="middle">256×4096 · 1 头</text>
+      <path d="M140 333 L156 333" class="arr-v" marker-end="url(#s5-pv)"/>
+      <rect x="158" y="312" width="142" height="42" rx="3" class="box"/>
+      <text x="229" y="331" class="lbl-s" text-anchor="middle">k_norm LayerNorm</text>
+      <text x="229" y="346" class="lbl-x" text-anchor="middle">[256] + bias</text>
+      <path d="M300 333 L316 333" class="arr-v" marker-end="url(#s5-pv)"/>
+      <rect x="318" y="312" width="160" height="42" rx="3" class="box-o"/>
+      <text x="398" y="331" class="lbl-o" text-anchor="middle">区域摘要 8 token → 1</text>
+      <text x="398" y="346" class="lbl-x" text-anchor="middle">按 index_z 加权均值</text>
+      <path d="M478 333 L494 333" class="arr-v" marker-end="url(#s5-pv)"/>
+      <rect x="496" y="312" width="180" height="42" rx="3" class="box-v"/>
+      <text x="586" y="331" class="lbl-v" text-anchor="middle">摘要 cache · FP8_E4M3</text>
+      <text x="586" y="346" class="lbl-v" text-anchor="middle">32 元素/token · 736 B</text>
+      <text x="688" y="327" class="lbl-x">无 scale 张量</text>
+      <text x="688" y="343" class="lbl-x">sparse_indexer_z 只出 logits、不缓存</text>
+
+      <text x="18" y="370" class="lbl-x">主干口径（L0–L91），不含 3 个 MTP 层；全局层另有 pending key / z 缓冲 2 × 8 × 256 BF16（23 层共 94,208 元素、184 KiB/序列），未计入上面任何一格</text>
+    </svg>
+  </div>
+  <figcaption>
+    <b>图 1 · 生产侧。三层滑窗配一层全局，于是全部的缓存增长都压在那 1/4 的层上。</b>
+    69 个滑窗层每层是一个定长的 512 位置环，<b>合计 103.5 MiB / 序列，上下文再长也不变</b>；
+    23 个全局层每 token 每层 3,072 B，<b>合计 70,656 B / token，随上下文线性增长</b> ——
+    1M 上下文下约 69.8 GiB，那 103.5 MiB 只剩 0.1%。两个数<b>不在同一刻度上</b>，
+    不能相加也不能相除。DSA 的区域摘要按 1/8 增长，再加 736 B/token，占 1.0%。
+  </figcaption>
+</figure>
+
+<figure class="attn-fig">
+  <div class="figbox">
+    <svg class="dia" viewBox="0 0 940 330" role="img"
+         aria-label="Step-5-Preview 消费侧：全局层的索引器用区域摘要打分选出 topk 512 个区域，注意力只读这些区域的全量 K/V；滑窗层走同一套投影与逐头门，K/V 来自定长 512 的环且不挂索引器">
+      <defs>
+        <marker id="s5-qa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead"/></marker>
+        <marker id="s5-qt" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead-t"/></marker>
+        <marker id="s5-qv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="ahead-v"/></marker>
+      </defs>
+
+      <text x="18" y="18" class="lbl-s">④ DSA 选区域 · 只在 23 个全局层（摘要是被读的，不是这里产的）</text>
+      <rect x="18" y="40" width="150" height="50" rx="3" class="box-v"/>
+      <text x="93" y="60" class="lbl-v" text-anchor="middle">摘要 cache</text>
+      <text x="93" y="76" class="lbl-x" text-anchor="middle">每 8 token 一条 × 256</text>
+      <path d="M168 65 L186 65" class="arr-v" marker-end="url(#s5-qv)"/>
+      <rect x="188" y="40" width="200" height="50" rx="3" class="box"/>
+      <text x="288" y="60" class="lbl-s" text-anchor="middle">Σ relu(q·k) × w</text>
+      <text x="288" y="76" class="lbl-x" text-anchor="middle">加权 ReLU，不是 softmax</text>
+      <path d="M288 22 L288 38" class="arr-v" marker-end="url(#s5-qv)"/>
+      <path d="M388 65 L406 65" class="arr" marker-end="url(#s5-qa)"/>
+      <rect x="408" y="40" width="150" height="50" rx="3" class="box-r"/>
+      <text x="483" y="60" class="lbl-s" text-anchor="middle">topk 512 区域</text>
+      <text x="483" y="76" class="lbl-r" text-anchor="middle">4 组各自选</text>
+      <path d="M558 65 L576 65" class="arr-t" marker-end="url(#s5-qt)"/>
+      <rect x="578" y="40" width="170" height="50" rx="3" class="box-t"/>
+      <text x="663" y="60" class="lbl-t" text-anchor="middle">索引 → ≤ 4096 token</text>
+      <text x="663" y="76" class="lbl-x" text-anchor="middle">512 × 8</text>
+      <text x="760" y="52" class="lbl-x">q ← sparse_indexer_q 16×256</text>
+      <text x="760" y="68" class="lbl-x">w ← sparse_indexer_w FP32</text>
+      <text x="760" y="84" class="lbl-x">打分前 q/k 先 round 到 E4M3</text>
+
+      <line x1="18" y1="112" x2="922" y2="112" class="arr-d"/>
+
+      <text x="18" y="132" class="lbl-s">⑤ 全局层注意力 × 23 · 只读选中的区域，但 K/V 一条都没少存</text>
+      <path d="M663 90 L663 102 L103 102 L103 148" class="arr-t" marker-end="url(#s5-qt)"/>
+      <rect x="18" y="150" width="170" height="48" rx="3" class="box-t"/>
+      <text x="103" y="170" class="lbl-t" text-anchor="middle">gather 选中区域</text>
+      <text x="103" y="186" class="lbl-x" text-anchor="middle">全量 K/V · 4 组 × 192</text>
+      <path d="M188 174 L206 174" class="arr-t" marker-end="url(#s5-qt)"/>
+      <rect x="208" y="150" width="180" height="48" rx="3" class="box-t"/>
+      <text x="298" y="170" class="lbl" text-anchor="middle">attention</text>
+      <text x="298" y="186" class="lbl-x" text-anchor="middle">q 64 头 × 192</text>
+      <path d="M388 174 L406 174" class="arr" marker-end="url(#s5-qa)"/>
+      <rect x="408" y="150" width="160" height="48" rx="3" class="box"/>
+      <text x="488" y="170" class="lbl-s" text-anchor="middle">逐头 sigmoid 门</text>
+      <text x="488" y="186" class="lbl-x" text-anchor="middle">g_proj 64×4096</text>
+      <path d="M568 174 L586 174" class="arr" marker-end="url(#s5-qa)"/>
+      <rect x="588" y="150" width="160" height="48" rx="3" class="box"/>
+      <text x="668" y="179" class="lbl-s" text-anchor="middle">o_proj 4096×12288</text>
+      <text x="760" y="170" class="lbl-s">3,072 B/token/层</text>
+      <text x="760" y="186" class="lbl-x">× 23 层 = 70,656 B/token</text>
+
+      <line x1="18" y1="218" x2="922" y2="218" class="arr-d"/>
+
+      <text x="18" y="238" class="lbl-s">⑥ 滑窗层注意力 × 69 · 同一套投影、同一个门，只是不挂索引器</text>
+      <rect x="18" y="254" width="170" height="48" rx="3" class="box-t"/>
+      <text x="103" y="274" class="lbl-t" text-anchor="middle">window ring · 512</text>
+      <text x="103" y="290" class="lbl-x" text-anchor="middle">全量 K/V · 4 组 × 192</text>
+      <path d="M188 278 L206 278" class="arr-t" marker-end="url(#s5-qt)"/>
+      <rect x="208" y="254" width="180" height="48" rx="3" class="box-t"/>
+      <text x="298" y="274" class="lbl" text-anchor="middle">attention</text>
+      <text x="298" y="290" class="lbl-x" text-anchor="middle">q 64 头 × 192 · 无索引器</text>
+      <path d="M388 278 L406 278" class="arr" marker-end="url(#s5-qa)"/>
+      <rect x="408" y="254" width="160" height="48" rx="3" class="box"/>
+      <text x="488" y="274" class="lbl-s" text-anchor="middle">逐头 sigmoid 门</text>
+      <text x="488" y="290" class="lbl-x" text-anchor="middle">g_proj 64×4096（同款）</text>
+      <path d="M568 278 L586 278" class="arr" marker-end="url(#s5-qa)"/>
+      <rect x="588" y="254" width="160" height="48" rx="3" class="box"/>
+      <text x="668" y="283" class="lbl-s" text-anchor="middle">o_proj 4096×12288</text>
+      <text x="760" y="274" class="lbl-s">定长 1.5 MiB/层</text>
+      <text x="760" y="290" class="lbl-x">× 69 层 = 103.5 MiB/序列</text>
+
+      <text x="18" y="322" class="lbl-x">⑤ 与 ⑥ 的投影权重逐张量同形（95/95 层一个签名）—— 差别只在 RoPE 参数与 K/V 从哪来，所以同一套 kernel 能跑两类层</text>
+    </svg>
+  </div>
+  <figcaption>
+    <b>图 2 · 消费侧。稀疏只省读、不省存。</b>索引器用摘要打分选出 topk 512 个
+    <b>区域</b>（≤ 512 × 8 = 4096 个 token），注意力只读这些区域 ——
+    但全局层的全量 K/V <b>一条都没少存</b>，摘要只是选区域用的索引。
+    滑窗层走同一套投影、同一个逐头门，只是 K/V 来自定长 512 的环、且不挂索引器：
+    两类层对 kernel 来说只差「K/V 从哪来」。
+  </figcaption>
+</figure>
