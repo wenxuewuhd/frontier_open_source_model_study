@@ -269,6 +269,83 @@ def label_table_hit(line):
     return None
 
 
+# schema 里声明了、站点上没人读的字段数。**这是个棘轮，不是目标值。**
+# 它不该变大：新加字段时要么同时加消费点，要么把这个数改大并在提交信息里说清为什么。
+# 当前这 47 个基本是整个 generation 块 —— 视频线的记录里 VAE 规格、音频、
+# 文本编码器、采样口径、尺寸约束、checkpoint 矩阵都录了，而页面上只渲染了
+# 由它们推出来的负载，规格本身一格没有。
+_UNREAD_FIELD_BUDGET = 47
+
+
+def check_field_consumers(root, errors, warnings):
+    """schema 里的字段，站点上得有人读。
+
+    **一天之内撞上四次同一个形状**：字段/产物存在、没有消费点 ——
+    `weights_release_scope` 一处不渲染、`bottlenecks.fix` 不走 Prose、
+    `generation_workload` 整块没人读、`group_size` 加完没有列。
+    四次里三次是五道闸全绿的状态下混过去的，靠人翻页面才发现。
+
+    `check_rendered.py` 查的是「有没有没解开的标记」，不查「这个字段有没有消费点」——
+    **闸全绿不等于读者看得见**（这条是 p1-kimi 提的）。
+
+    判据粗：按叶字段名在 `site/src` 下 grep 标识符。会漏（同名标识符撞上就算读过），
+    也会误报（经由 `Object.entries` 整块渲染的字段查不到名字）。但它抓的是
+    「加了字段就以为完事」这个动作，宁可粗一点也要有。
+    所以是**棘轮不是零**：只比对数量有没有变大，不逐条报。
+    """
+    import re as _re
+    sp = os.path.join(root, "data", "schema", "model.schema.json")
+    try:
+        schema = json.load(open(sp, encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+
+    def leaves(node, path=""):
+        out = []
+        if not isinstance(node, dict):
+            return out
+        props = node.get("properties")
+        if props:
+            for k, v in props.items():
+                pp = f"{path}.{k}" if path else k
+                sub = leaves(v, pp)
+                out += sub if sub else [(pp, k)]
+        elif node.get("type") == "array" and isinstance(node.get("items"), dict):
+            out += leaves(node["items"], path)
+        return out
+
+    seen = set()
+    for dirpath, dirnames, filenames in os.walk(os.path.join(root, "site", "src")):
+        dirnames[:] = [d for d in dirnames if d not in ("node_modules", "dist", ".astro")]
+        for fn in filenames:
+            if not fn.endswith((".ts", ".astro")):
+                continue
+            try:
+                txt = open(os.path.join(dirpath, fn), encoding="utf-8").read()
+            except OSError:
+                continue
+            seen.update(_re.findall(r"[A-Za-z_][A-Za-z0-9_]*", txt))
+
+    watched = ("precision", "generation")
+    unread = [pp for pp, k in leaves(schema)
+              if pp.startswith(watched) and k not in seen]
+    n = len(unread)
+    if n > _UNREAD_FIELD_BUDGET:
+        errors.append(
+            # 不说「新增的是 X」—— 这里拿不到基线名单，只有数量，
+            # 说得出口的只有「当前这批是什么」。编一个具体的、可能错的断言，
+            # 正是本仓今天反复栽的那个形状
+            f"schema 里有 {n} 个字段站点上没人读，超过棘轮 {_UNREAD_FIELD_BUDGET} 个。"
+            f"当前没人读的（字母序前 6 个，不一定是你新加的那个）："
+            f"{sorted(unread)[:6]}…\n"
+            "    **加字段要同时加消费点** —— 否则值填进记录、闸口全绿、页面上看不见。"
+            "一天之内这个形状撞过四次。确实不该渲染就把 _UNREAD_FIELD_BUDGET 调大并说明理由")
+    elif n < _UNREAD_FIELD_BUDGET:
+        warnings.append(
+            f"站点没读的 schema 字段降到 {n} 个（棘轮是 {_UNREAD_FIELD_BUDGET}）。"
+            "把 _UNREAD_FIELD_BUDGET 改成这个数，棘轮才收得紧")
+
+
 def check_family_registry(root, errors):
     """schema 的 family 枚举与站点的 FAMILY_LABEL / FAMILY_ORDER 必须一一对应。
 
@@ -670,6 +747,7 @@ def main():
     check_renderers(_root(args.data_dir), errors)
     check_stray_labels(_root(args.data_dir), errors)
     check_family_registry(_root(args.data_dir), errors)
+    check_field_consumers(_root(args.data_dir), errors, warnings)
     models = sorted(glob.glob(os.path.join(args.data_dir, "models", "**", "*.yaml"),
                               recursive=True))
     loaded = {}
