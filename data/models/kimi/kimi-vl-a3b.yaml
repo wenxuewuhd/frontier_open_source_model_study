@@ -1,0 +1,390 @@
+# 手写记录。文本主干与 kimi-moonlight-16b 的同一性来自两份完整清单的逐条比对
+# （剥掉 language_model. 前缀后 5344 : 5344，名字集合双向差集为空，形状与 dtype 零差异）。
+id: kimi-vl-a3b
+family: kimi
+kind: vlm
+display_name: Kimi-VL-A3B-Instruct
+released: '2025-04-09'
+license: mit
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/moonshotai/Kimi-VL-A3B-Instruct
+    locator: config.json / README.md @ 398eede0903c
+    accessed: '2026-10-30'
+    note: >-
+      BF16 发布，7 分片、5679 个张量，逐分片读头取全，无读失败分片。
+      规格表给「#Total Params 16B / #Activated Params 3B / Context 128K」，
+      对照表另给「# Act. Params (LLM+VT) 2.8B+0.4B」
+  - kind: repo
+    url: https://huggingface.co/moonshotai/Kimi-VL-A3B-Instruct/blob/398eede0903cd983a2bfa0cc634e9ac1d843f375/modeling_kimi_vl.py
+    locator: KimiVLMultiModalProjector / MoonVitEncoder / Rope2DPosEmb / flash_attn_varlen_func 调用点
+    accessed: '2026-10-30'
+    note: >-
+      厂商随仓发布的参考实现，下载到本地只读、未执行。projector 的层序（LayerNorm → Linear →
+      GELU → Linear）与视觉塔的变长打包注意力、2D RoPE 都取自它
+  - kind: paper
+    url: https://arxiv.org/abs/2504.07491
+    locator: Kimi-VL Technical Report
+    accessed: '2026-10-30'
+    note: MoonViT（原生分辨率视觉编码器）与 MLP projector 的来源
+
+hf:
+  repo: moonshotai/Kimi-VL-A3B-Instruct
+  sha: 398eede0903cd983a2bfa0cc634e9ac1d843f375
+  last_modified: '2026-01-30T04:51:04.000Z'
+  pipeline_tag: image-text-to-text
+  gated: false
+
+lineage:
+  track: side
+  predecessor: kimi-moonlight-16b
+  changed_from_predecessor:
+    - axis: modality
+      text: >-
+        同一个文本主干外挂 MoonViT 视觉塔（27 层、hidden 1152、patch 14、
+        wqkv [3456, 1152] 融合投影、416.87M 参数）与一个 2×2 patch merge 的 MLP projector
+        （LayerNorm [1152] → linear_1 [4608, 4608] → GELU → linear_2 [2048, 4608]，30.68M），
+        合计 447.55M
+      benefit: >-
+        文本侧**零改动**：剥掉 language_model. 前缀后，5344 个张量与 Moonlight 名字集合
+        逐个相同、形状与 dtype 零差异 —— 已支持 Moonlight 的推理栈只需加视觉前端。
+        视觉塔是原生分辨率的：按 cu_seqlens 做变长打包注意力（参考实现走
+        flash_attn_varlen_func），位置编码是 [64, 64, 1152] 的学习式绝对位置做 **bicubic**
+        插值再叠 2D RoPE（bicubic 是参考实现 Learnable2DInterpPosEmb 的默认值，
+        config 里没有这个键；到 K3 才在 config 里出现 pos_emb_interpolation_mode: bilinear），
+        所以没有固定输入尺寸、也不靠 padding 对齐。
+        代价是 prefill 侧多一条变长 kernel 路径，且图像 token 数随分辨率变化、
+        不可预先定容
+    - axis: context
+      text: >-
+        8192 → 131072，靠 rope_theta 50000 → 800000 原生支持，
+        **没有 rope_scaling**（config 里该键为 null）
+      benefit: >-
+        与 K2 线靠 YaRN 外推 32 倍不是同一种工程形态：这一版没有部署期的外推旋钮，
+        128K 是训出来的。代价是满上下文的 MLA 缓存 3.80 GiB/序列
+        （15,552 元素/token × 2 B × 131072，BF16 兜底），而前代 8K 只有 243 MiB
+
+params:
+  total: 16407657776.0
+  breakdown:
+    expert: 14394851328.0
+    shared_expert: 449839104.0
+    vision: 447545840.0
+    attention: 371590848.0
+    embed: 335544320.0
+    lm_head: 335544320.0
+    dense_ffn: 69206016.0
+    router: 3409536.0
+    norm: 126464.0
+  counting_note: >-
+    total 与 breakdown 都是本仓按完整清单（5679 个张量）逐项求和的实测值；外部核对是 HF 的
+    safetensors tally，与实测 16,407,657,776 逐位相同。全清单 BF16，无 scale 容器、无打包。
+    vision 一项 447,545,840 = vision_tower 416,866,032 + multi_modal_projector 30,679,808，
+    数值上对得上模型卡的「VT 0.4B」，但口径不同：卡那个 0.4B 出现在
+    「# Act. Params (LLM+VT) 2.8B+0.4B」里，是**激活**口径，而本仓这一项是**总量**，
+    并且 derive.py 把视觉塔**排除在激活之外**；两者数值相同是因为有图像输入时整座塔都激活，
+    不是因为口径相同。
+    复算 attention 分项时注意 kv_a_layernorm [512] 按本仓归类在 norm 而不在 attention
+    （自己按名字算进去会多 27 × 512 = 13,824 个元素），每层还有一个
+    rotary_emb.inv_freq [64] 遗留 buffer（27 层共 1,728 个元素、不被加载，
+    见 kimi-moonlight-16b 的 counting_note）。
+    文本侧与 kimi-moonlight-16b 的分项逐位相同
+    （expert / shared_expert / attention / embed / lm_head / dense_ffn / router / norm 八项），
+    差额恰是视觉这一项。
+    厂商的「16B」是取整标签（实测 16.41B，+2.5%）。**激活参数对不上**：
+    实测带宽口径 2.58B（含 lm_head、不含输入词表）、含输入词表 2.91B，
+    而模型卡写 LLM 侧 2.8B —— 两个口径都复现不出这个值，见 open_questions。
+    视觉塔不计入激活（不在每 token 的主路径上，按 derive.py 的口径排除）
+
+context:
+  max: 131072
+  extension_method: >-
+    无部署期外推。config 的 rope_scaling 为 null，靠 rope_theta 800000（前代 50000）
+    与长上下文训练拿到 128K
+
+arch:
+  layers: 27
+  hidden: 2048
+  vocab: 163840
+  norm: RMSNorm
+  norm_eps: 1.0e-05
+  activation: SwiGLU（text_config hidden_act silu）
+  position: >-
+    文本侧 RoPE theta 800000，无 scaling；视觉侧 2D RoPE 叠学习式绝对位置
+    （[64, 64, 1152] 插值到实际 patch 网格）
+
+  attention:
+    type: MLA
+    num_heads: 16
+    num_kv_heads: 16
+    head_dim: 192
+    v_head_dim: 128
+    qk_rope_head_dim: 64
+    qk_nope_head_dim: 128
+    kv_lora_rank: 512
+    head_dim_note: >-
+      与 kimi-moonlight-16b 逐张量相同：缓存是 kv_a_proj_with_mqa [576, 2048] 的 576 维/层
+      （按 2 × 16 × 192 = 6144 折算高估 10.7 倍），o_proj [2048, 2048] 按 v_head_dim 128
+      展开（按 head_dim 192 推会高 50%），q 侧单段 q_proj [3072, 2048]、无 q_lora_rank
+    layer_pattern: 27/27 层都是 MLA；视觉塔内部是 27 层标准 MHA（head_dim 72），两套注意力互不共享权重
+
+  ffn:
+    type: moe
+    layer_pattern: L0 稠密（mlp.gate_proj [11264, 2048]），L1–L26 共 26 层 MoE
+
+  moe:
+    routed_experts: 64
+    shared_experts: 2
+    top_k: 6
+    intermediate: 1408
+    dense_intermediate: 11264
+    first_k_dense: 1
+    expert_groups: 1
+    routing: sigmoid 打分、noaux_tc 选路，routed_scaling_factor 2.446，n_group / topk_group 均为 1（分组未启用）
+    balance: e_score_correction_bias（每 MoE 层一个 [64] BF16，与前代一致）
+    storage_note: 逐专家独立张量；两个共享专家合并成一个 MLP（shared_experts.gate_proj [2816, 2048] = 2 × 1408）
+
+  decoding:
+    mtp_layers: 0
+    mtp_layers_note: text_config 没有 num_nextn_predict_layers，清单里也没有草稿块
+
+  vision:
+    encoder: >-
+      MoonViT（vision_tower.encoder.blocks，实测 416,866,032 参数 / 329 个张量）。
+      HF 上另有独立仓 moonshotai/MoonViT-SO-400M，本轮没取它的清单、没做张量比对，
+      所以不写「就是那一个」
+    layers: 27
+    hidden: 1152
+    num_heads: 16
+    patch_size: 14
+    intermediate: 4304
+    spatial_merge_size: 2
+    out_hidden: 2048
+    params: 447545840.0
+    fusion: >-
+      2×2 patch merge 后两层 MLP：pre_norm 是 **LayerNorm**（[1152] 带 bias，eps 1e-5，
+      不是主干用的 RMSNorm）→ linear_1 [4608, 4608]（4608 = 4 × 1152）→ GELU →
+      linear_2 [2048, 4608]，两层都带 bias。
+      视觉塔内部也带 bias（wqkv.bias [3456]、fc0.bias [4304]、norm0/norm1 带 bias），
+      与无 bias 的语言主干不是一套算子配置
+
+precision:
+  weights_release: [BF16]
+  quantization:
+    per_subsystem:
+      expert: BF16
+      shared_expert: BF16
+      attention: BF16
+      dense_ffn: BF16
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+      vision: BF16
+    subsystem_method: >-
+      对完整清单 5679 条穷举（不是抽样）：全部 BF16，零例外，没有 scale 容器也没有 FP32 张量 ——
+      视觉塔与 projector 同样是 BF16
+
+infra_signals:
+  - text: >-
+      视觉塔在本代定型后被原样复用了很久：Kimi-K2.5 的 vision_tower 与本代**逐张量相同**
+      （各 329 条，名字集合相同、形状与 dtype 零差异，各 416,866,032 参数）。
+      **算子形状**上 projector 也只差出口维（2048 → 7168）、层序同构；
+      但**张量名换了一套**：multi_modal_projector.{pre_norm, linear_1, linear_2}
+      → mm_projector.{pre_norm, proj.0, proj.2}，权重加载要改名，
+      按名字匹配的工具不能直接复用。
+      算子适配做一次能管两代，直到 K3 换成 MoonViT-V2（hidden 1024、12 头、RMSNorm、
+      无 bias、qkv_hidden_size 1536 与 hidden 解耦）才需要重做
+    evidence: derived
+    horizon: settled
+    axis: modality
+  - text: >-
+      原生分辨率 + 变长打包意味着 prefill 的图像 token 数不可预先定容，
+      显存峰值随输入分辨率走；而语言主干是 A3B 的小模型，
+      所以这一代的 prefill 压力主要来自视觉前端而不是主干
+    evidence: judgement
+    horizon: settled
+    axis: modality
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  context: official
+  context.extension_method: derived
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.head_dim: derived
+  arch.attention.v_head_dim: official
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.routing: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.moe.expert_groups: official
+  arch.decoding.mtp_layers: derived
+  arch.decoding.mtp_layers_note: derived
+  arch.vision: official
+  arch.vision.encoder: derived
+  arch.vision.params: derived
+  arch.vision.fusion: derived
+  arch.vision.out_hidden: derived
+  arch.vision.spatial_merge_size: derived
+  precision.weights_release: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+reviewed:
+  date: '2026-10-30'
+  scope: [official, derived, judgement]
+  reviewer: 本会话逐字段复算 + 一个独立核查代理
+  method: >-
+    按 .claude/skills/model-audit 的顺序对 facts/kimi-vl-a3b 逐字段核：config（含 text_config /
+    vision_config 两段）、完整清单 5679 个张量、repoinfo 的 tally，以及 derived 的分项。
+    本会话独立复算的：与 kimi-moonlight-16b 的文本主干同一性（剥掉 language_model. 前缀后
+    名字集合双向差集为空、5344 : 5344、形状与 dtype 零差异）、视觉两段求和
+    （vision_tower 416,866,032 + multi_modal_projector 30,679,808 = 447,545,840）、
+    与 kimi-k2.5 的 vision_tower 逐张量相同、KV 15,552 元素/token、
+    128K 满上下文 3.80 GiB，以及厂商「2.8B」的四种口径尝试（都复现不出）。
+    projector 的层序与视觉塔的变长打包注意力取自参考实现 modeling_kimi_vl.py（已列入 sources）。
+    另派一个独立核查代理做对抗式复核（它重算了全部分项、视觉两段、与 Moonlight / K2.5
+    的两组同一性，并逐张量核了 MoonViT 的结构与 bias 分布），五条发现见 R4–R8。
+review:
+  - id: R1
+    field: params.counting_note
+    severity: imprecise
+    claim: 「激活参数 2.58B / 2.91B，厂商称 2.8B」
+    finding: >-
+      厂商的 2.8B **用本仓定义过的任何口径都复现不出**，而原文只写了「对不上」没写试过什么。
+      逐项求和是确定的（每层 attention 13,762,560 × 27、专家 6/64 = 1,349,517,312、
+      共享专家 449,839,104、L0 稠密 69,206,016、router 3,409,536、norm 126,464），
+      组合起来只有三个值：含 lm_head 不含输入词表 2.58B、两张词表都含 2.91B、
+      两张词表都不含 2.24B（= 前代 Moonlight 论文表格的口径）；再加 projector 30,679,808
+      是 2.61B。2.8B 不等于其中任何一个，厂商也没写算法
+    resolution: corrected
+    changed_to: >-
+      counting_note 与 open_questions 都写明试过哪几种口径、各自的值，并写明不要引这个数；
+      记录自己的三个口径由 derive.py 给出、可复算
+  - id: R2
+    field: lineage.changed_from_predecessor
+    severity: imprecise
+    claim: 「文本侧零改动：5344 个张量与 Moonlight 名字集合逐个相同、形状与 dtype 零差异」
+    finding: >-
+      自己重算过：剥掉 language_model. 前缀后两边各 5344 条，双向差集都为空，
+      交集里 shape 或 dtype 不同的有 **0 条**。所以「加视觉」的全部代价确实落在 vision 这一项
+      （447,545,840），文本八个分项与 kimi-moonlight-16b 逐位相同。
+      顺带核了参数总量：16,407,657,776 与 HF tally 逐位相同
+    resolution: confirmed
+    changed_to: 原值成立，不改
+  - id: R3
+    field: infra_signals
+    severity: imprecise
+    claim: 「Kimi-K2.5 的 vision_tower 与本代逐张量相同，变的只有 projector 的出口维」
+    finding: >-
+      自己重算过：两边 vision_tower.* 的名字集合相同、交集里形状与 dtype 零差异，
+      各 416,866,032 参数。projector 侧 30,679,808（出口 2048）vs 54,277,888（出口 7168），
+      层序同构（LayerNorm [1152] → 4608×4608 → GELU → 出口×4608，两层都带 bias），
+      只是 K2.5 把张量名从 multi_modal_projector.linear_* 改成 mm_projector.proj.*。
+      这条跨了 9 个月与两个档位（A3B → 1T），所以作用域要写清楚：**到 K3 为止**，
+      K3 换成了 MoonViT-V2（1024 / 12 头 / RMSNorm / 无 bias / qkv_hidden_size 1536）
+    resolution: confirmed
+    changed_to: 原值成立；作用域（到 K3 为止）已写在同一条里
+
+  - id: R4
+    field: infra_signals
+    severity: imprecise
+    claim: 「K2.5 的 vision_tower 与本代逐张量相同，**变的只有 projector 的出口维**（2048 → 7168）」
+    finding: >-
+      vision_tower 那一半成立（各 329 条，名字集合相同、形状与 dtype 零差异）。
+      但 projector 不是「只换出口维」：张量名整套换了 ——
+      multi_modal_projector.{pre_norm, linear_1, linear_2} → mm_projector.{pre_norm, proj.0, proj.2}。
+      算子形状不变（LayerNorm 1152 → 4608×4608 → GELU → 出口×4608），所以 infra 结论
+      （适配管两代）站得住；但本仓别处正是把「名字集合双向差集为空」当成免做算子评估的硬判据，
+      这里说「只变出口维」会让人以为权重可以直接加载
+    resolution: corrected
+    changed_to: 分开说「算子形状不变」与「张量名换了一套、权重加载要改名」
+  - id: R5
+    field: lineage.changed_from_predecessor
+    severity: imprecise
+    claim: 「位置编码……做双线性/双三次插值」
+    finding: >-
+      本代参考实现只有一种：Learnable2DInterpPosEmb 的默认 interpolation_mode = "bicubic"，
+      实例化时不传这个参数，config 里也没有这个键。
+      「双线性」是**下一代**的事：K3 的 vision_config 里才出现 pos_emb_interpolation_mode: bilinear。
+      按 skill 规则 5，这类规律写进记录要钉代际
+    resolution: corrected
+    changed_to: 改成 bicubic（并注明是参考实现默认值、config 无此键、K3 起改成 bilinear）
+  - id: R6
+    field: arch.vision.encoder
+    severity: miscategorized
+    claim: 「MoonViT（vision_tower.encoder.blocks，SO-400M 级，实测 416.87M）」，口径 derived
+    finding: >-
+      「实测 416.87M」与路径都成立（329 条求和 416,866,032），但「SO-400M 级」是血统主张：
+      config 的 vision_config 里没有任何 SigLIP / SO400M 字样，模型卡也没写，
+      它只能来自技术报告（arXiv 2504.07491），而本轮没有读那篇、也没有拉
+      moonshotai/MoonViT-SO-400M 的清单做张量比对。标 derived 等于把二手说法算成了实测
+    resolution: corrected
+    changed_to: 删掉「SO-400M 级」这个限定，改成「HF 上另有独立仓 MoonViT-SO-400M，本轮没做张量比对」
+  - id: R7
+    field: params.counting_note
+    severity: imprecise
+    claim: 「vision 一项 447,545,840 …… 对得上模型卡的「VT 0.4B」」
+    finding: >-
+      数值对得上，但口径不同：卡里的 0.4B 出现在「# Act. Params (LLM+VT) 2.8B+0.4B」，
+      是**激活**口径；本仓这一项是**总量**，而且 derive.py 明确把视觉塔排除在激活之外
+      （active_params.excluded.vision = 447,545,840）。
+      两个数相同只是因为有图像输入时整座塔都被激活 —— 拿总量去对激活，是本仓反复栽过的那类口径错
+    resolution: corrected
+    changed_to: counting_note 写明两侧口径与「数值相同但不是同一个量」的原因
+  - id: R8
+    field: notes
+    severity: unsupported
+    claim: 「同一天发布的 Kimi-VL-A3B-Thinking 与 2506 刷新版本仓不单独立记录：……张量名集合逐个相同」
+    finding: >-
+      2506 那一半有依据（本轮取过 names.json，5679 : 5679 双向差集为空，config 逐键相同）；
+      但**非 2506 的 Kimi-VL-A3B-Thinking 本轮根本没取数**，那句话把两个版本的判据合在一起说，
+      等于给没验过的那个也发了证明
+    resolution: corrected
+    changed_to: 拆开写：2506 的判据列出来，非 2506 的注明「没有取数，只按共用 config 文件族推断，不作为依据」
+
+notes: >-
+  Kimi 的视觉线起点，本仓按支线收录（track: side）：它的档位比同期旗舰小，
+  但**它定义了这个家族的视觉前端**，而那套前端一直用到 K2.5，K3 才换代。
+  收录的另一个理由是它给出了一个干净的对照：文本主干与 Moonlight 逐张量相同，
+  所以「加视觉」这件事的全部代价都落在 vision 这一项里，可以单独读出来。
+  Kimi-VL-A3B-Thinking-2506 本仓不单独立记录，判据取过数：与本版 config 拍平后键集相同、
+  零个值不同，张量名集合逐个相同（5679 : 5679，双向差集为空），差异全在权重数值与后训练。
+  同一天发布的 Kimi-VL-A3B-Thinking（非 2506）**没有取数**，只是按它与 Instruct 共用
+  同一套 config 文件族推断同架构 —— 这条不作为依据。
+  released 取 HF 仓的 createdAt 2025-04-09。
+
+open_questions:
+  - >-
+    模型卡的「LLM 侧激活 2.8B」复现不出来。逐项求和（每层 attention 13.76M × 27 = 371.59M、
+    专家 6/64 → 1,349,517,312、共享专家 449.84M、L0 稠密 69.21M、router 3.41M、norm 0.13M）
+    之后试过的组合：含 lm_head 不含输入词表 2.58B（本仓带宽口径）、两张词表都含 2.91B、
+    两张词表都不含 2.24B（前代 Moonlight 论文表格的口径）、再加上 projector 的 30.68M
+    2.61B —— 没有一种得到 2.8B，厂商也没写算法。跨代比激活参数时不要引这个数；
+    本仓自己的三个口径由 derive.py 给出，可复算
+  - >-
+    KV cache 与视觉塔激活的实际存储精度都未披露，KV 按模型 dtype（BF16）兜底，
+    bytes_basis 是 dtype_fallback
+  - >-
+    视觉塔的 max_image_tokens / 单图上限不在 config 里（原生分辨率，按 patch 网格走），
+    prefill 的显存峰值因此只能按实际输入折算，本仓没有可引的上限值
