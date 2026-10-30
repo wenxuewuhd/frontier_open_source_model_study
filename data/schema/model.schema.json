@@ -85,7 +85,12 @@
       "description": "全仓唯一短 id，小写，用于文件名、URL 和跨表引用"
     },
     "family": {
-      "enum": ["deepseek", "glm", "minimax", "kimi", "qwen", "stepfun", "other"]
+      "description": "语言模型族系与生成类族系分开。生成类单开 family，不挂到同厂的语言模型族系下 —— CogVideoX 与 GLM、MiniMax-H3 与 MiniMax-M3 是互不相干的技术路线，混在一条家族时间线里只会互相干扰。minimax-video / hunyuan-video 带后缀是为了和同厂的语言模型族系区分",
+      "enum": [
+        "deepseek", "glm", "minimax", "kimi", "qwen", "stepfun",
+        "wan", "hunyuan-video", "minimax-video", "ltx", "cogvideo", "stepvideo", "sana-video", "magi",
+        "other"
+      ]
     },
     "kind": {
       "description": "llm=纯语言；vlm=图文理解；omni=全模态理解；dllm=扩散语言模型；image-gen/video-gen=生成类",
@@ -95,6 +100,10 @@
     "aliases": { "type": "array", "items": { "type": "string" } },
     "released": { "type": "string", "format": "date" },
     "license": { "type": "string" },
+    "license_restriction": {
+      "type": "string",
+      "description": "许可里会卡住部署的限定，如按地区另行申请、EU 不可用。这不是法务洁癖：它决定一个模型能不能进某个部署区域，属于 infra 可行性"
+    },
     "visibility": { "$ref": "#/$defs/visibility" },
 
     "sources": {
@@ -350,6 +359,10 @@
             "dense_intermediate": { "type": "integer" },
             "first_k_dense": { "type": "integer" },
             "routing": { "type": "string" },
+            "routing_axis": {
+              "description": "路由按什么轴选专家。token=每个 token 过 router 打分选 top-k（语言模型与 MAGI-2 的 MagiMoE 都是这种）；缺省即 token。按**去噪时间步**整体换一套专家的不填这里，填 generation.expert_switching —— 那里没有 router、没有 top-k、没有 all-to-all",
+              "enum": ["token"]
+            },
             "balance": { "type": "string", "description": "aux-loss / aux-loss-free bias 等" },
             "routing_bias": { "type": "string", "description": "路由偏置的套数与用途。多套偏置会改变融合 router 的算子签名" },
             "expert_groups": { "type": "integer" },
@@ -466,18 +479,237 @@
 
     "generation": {
       "type": "object",
-      "description": "仅生成类模型（image-gen / video-gen）。负载特征和 LLM 差别很大，单列",
+      "description": "仅生成类模型（image-gen / video-gen）。负载特征和 LLM 差别很大，单列。基本量不是「每 token」而是「单步 × 步数」：token 数由 latent 体积决定，而 latent 体积 = 分辨率/帧数 ÷ VAE 压缩率 ÷ DiT patch。这三者必须分开存，由 derive.py 相乘 —— 合成一个数就是范畴错误（见 CLAUDE.md 的口径一节）",
       "additionalProperties": false,
       "properties": {
-        "backbone": { "type": "string", "description": "DiT / MMDiT / UNet" },
-        "text_encoder": { "type": "string" },
-        "vae": { "type": "string" },
-        "vae_downsample": { "type": "string" },
-        "default_steps": { "type": "integer" },
-        "distilled_steps": { "type": "integer" },
-        "resolutions": { "type": "array", "items": { "type": "string" } },
-        "max_frames": { "type": "integer" },
-        "max_duration_s": { "type": "number" }
+
+        "backbone": {
+          "type": "object",
+          "description": "DiT 主干。一个字符串装不下：候选之间双流/单流的分段、文本条件注入方式、patch 都不同，而这几项都进 token 数与注意力序列长度",
+          "additionalProperties": false,
+          "properties": {
+            "stream_design": {
+              "description": "single=单流；dual_stream=全程双流 MMDiT；dual_then_single=先双流后单流（HunyuanVideo 13B 一代）；in_sequence=文本与视频 token 拼进同一条序列",
+              "enum": ["single", "dual_stream", "dual_then_single", "in_sequence", "unet", "other"]
+            },
+            "double_blocks": { "type": "integer", "description": "双流段层数。无双流段写 0" },
+            "single_blocks": { "type": "integer", "description": "单流段层数。无单流段写 0" },
+            "layers": { "type": "integer", "description": "主干总层数。双流/单流分段时等于两者之和" },
+            "hidden": { "type": "integer" },
+            "heads": { "type": "integer" },
+            "head_dim": { "type": "integer" },
+            "head_dim_note": { "type": "string", "description": "heads × head_dim 不等于 hidden 时必须写明。MiniMax-H3 是 56×128=7168 而 hidden 5376，拿 hidden 去推注意力投影会错" },
+            "ffn": { "type": "integer", "description": "FFN 中间维。MoE 层与稠密层不同时写稠密层的，MoE 的进 arch.moe" },
+            "text_conditioning": {
+              "description": "文本条件怎么进主干。它决定注意力序列长度是 n 还是 n+m —— 注意力是 O(n²)，所以这个字段进平方项。cross_attn=独立交叉注意力；in_sequence=文本 token 拼进主序列；dual_stream=双流 MMDiT；adaln=只经 adaLN 调制",
+              "enum": ["cross_attn", "in_sequence", "dual_stream", "adaln", "mixed"]
+            },
+            "patch_size": {
+              "type": "array",
+              "description": "DiT 侧的 patch (t, h, w)。**不是 VAE 压缩率**，两者相乘才是有效 token 压缩率。候选里取 (1,2,2)/(1,1,1)/(2,2,2)/1，不是常数，漏了就算不出 token 数",
+              "items": { "type": "integer" },
+              "minItems": 1,
+              "maxItems": 3
+            },
+            "refiner_layers": { "type": "integer", "description": "输入侧 refiner / token refiner 的层数，若与主干分开计" },
+            "position": { "type": "string", "description": "位置编码形态，如 3D RoPE、MM-RoPE (t,h,w)" },
+            "note": { "type": "string" }
+          }
+        },
+
+        "vae": {
+          "type": "object",
+          "description": "**整条线最关键的一组数**：它直接决定 latent token 数，进而决定单步 FLOPs。VAE 自身的参数量也要记 —— 解码器是 Transformer 时（MiniMax-H3 的 36 层 ViT 解码器，5.2B）VAE decode 不是边角料，是一次独立的大计算",
+          "additionalProperties": false,
+          "properties": {
+            "spatial_compression": { "type": "number", "description": "空间压缩倍数，如 8 / 16 / 32" },
+            "temporal_compression": { "type": "number", "description": "时间压缩倍数，如 4 / 8。image-gen 留空" },
+            "latent_channels": { "type": "integer", "description": "latent 通道数。候选里 16–128 跨 8 倍，决定 in/out 投影规模与每个 latent token 的字节数" },
+            "causal": { "type": "boolean", "description": "时间因果。编码器与解码器可以不同，不同时在 note 写明" },
+            "params": { "type": "number" },
+            "decoder_arch": {
+              "description": "解码器形态。transformer 时解码成本与卷积解码器不是一个量级",
+              "enum": ["conv3d", "transformer", "hybrid", "unknown"]
+            },
+            "name": { "type": "string" },
+            "hf_repo": { "type": "string" },
+            "ref_model_id": { "type": "string", "description": "直接复用本仓另一份记录的 VAE 时指过去，**不要把那边的数字抄一遍**。现成用例：sana-video-2.0-5b → ltx-2.3，magi-2-preview → wan2.2-ti2v-5b" },
+            "ref_external": { "type": "string", "description": "复用的是本仓没录的外部模型时写它的 hf_repo" },
+            "turbo_decoder": {
+              "type": "object",
+              "description": "单独蒸馏出来的快速解码器（MAGI-2 的 turbo_vae）。VAE decode 可以独立加速，这是别处没有的一根轴",
+              "additionalProperties": false,
+              "properties": {
+                "name": { "type": "string" },
+                "params": { "type": "number" },
+                "note": { "type": "string" }
+              }
+            },
+            "note": { "type": "string" }
+          }
+        },
+
+        "audio": {
+          "type": "object",
+          "description": "音视频联合生成模型的音频分支。音频 token 和视频 token 拼在同一条注意力序列里，所以序列长度要分两项记。输入与输出采样率可以不同（LTX-2 的 VAE 收 16 kHz、vocoder 出 24 kHz），单字段装不下",
+          "additionalProperties": false,
+          "properties": {
+            "in_channels": { "type": "integer", "description": "音频 latent 进 DiT 的通道数" },
+            "vae": { "type": "string" },
+            "vae_params": { "type": "number" },
+            "vae_hf_repo": { "type": "string" },
+            "sample_rate_in": { "type": "number" },
+            "sample_rate_out": { "type": "number" },
+            "latent_hz": { "type": "number", "description": "音频 latent 的时间分辨率，如 40 Hz" },
+            "channels": { "type": "integer", "description": "声道数。立体声且左右共用编解码器各跑一遍时在 note 写明" },
+            "vocoder": { "type": "string" },
+            "note": { "type": "string" }
+          }
+        },
+
+        "text_encoders": {
+          "type": "array",
+          "description": "**必须是数组** —— 多编码器并用是常态（StepVideo 用 Step-LLM + HunyuanCLIP，HunyuanVideo-1.5 用 MLLM + byT5 + SigLIP）。每项都要能回答「部署时要不要额外塞一个大模型进显存」「拿不拿得到」",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "role": { "type": "string", "description": "primary / pooled / glyph / vision 等" },
+              "name": { "type": "string" },
+              "hf_repo": { "type": "string" },
+              "params": { "type": "number" },
+              "hidden": { "type": "integer" },
+              "shipped_with_weights": { "type": "boolean", "description": "是否随模型仓一起发布。false 意味着部署前要另外凑权重" },
+              "gated": { "type": "boolean", "description": "是否要申请访问。HunyuanVideo-1.5 的 SigLIP 要从 gated 的 FLUX.1-Redux-dev 取" },
+              "release_dtype": { "$ref": "#/$defs/dtype" },
+              "hidden_layer_taken": { "type": "integer", "description": "取第几层的 hidden state 喂给 DiT。MiniMax-H3 取 Qwen3-VL-32B 的第 50 层 —— 不写就会以为用的是最后一层" },
+              "substitutable": { "type": "boolean", "description": "官方权重未发布、文档给了替代品时为 true，并在 note 写明替代的是什么。HunyuanVideo-1.5 的 HunyuanMLLM 就是这种" },
+              "ref_model_id": { "type": "string", "description": "该编码器本身是本仓已有记录时指过去" },
+              "ref_external": { "type": "string" },
+              "note": { "type": "string" }
+            }
+          }
+        },
+
+        "sampling": {
+          "type": "object",
+          "description": "采样口径。**CFG 与蒸馏必须结构化** —— 每步前向次数取 1 或 2，直接给端到端计算量乘 2；而 CFG 蒸馏与步数蒸馏是两根互相独立的轴（HunyuanVideo-1.5 的 CFG 蒸馏版把前向从 2 砍到 1，但卡上明确要求仍跑 50 步）",
+          "additionalProperties": false,
+          "properties": {
+            "steps": { "type": "integer", "description": "默认去噪步数。多阶段流水线写第一阶段的，各阶段的进 pipeline_stages" },
+            "cfg": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["forwards_per_step"],
+              "properties": {
+                "scale": { "type": "number" },
+                "distilled": { "type": "boolean", "description": "发布权重是否已做 CFG 蒸馏" },
+                "embedded": { "type": "boolean", "description": "嵌入式引导（guidance_embeds），引导强度作为条件喂进模型而不是跑两遍。HunyuanVideo 13B 一代是这种" },
+                "forwards_per_step": {
+                  "type": "integer",
+                  "description": "每个去噪步要跑几次主干前向。真 CFG = 2（条件 + 无条件），CFG 蒸馏或嵌入式引导 = 1。**漏掉这个字段会让一半候选的计算量算成一半**",
+                  "enum": [1, 2]
+                },
+                "note": { "type": "string" }
+              }
+            },
+            "step_distilled": {
+              "type": "object",
+              "description": "步数蒸馏。和 cfg.distilled 是两根独立的轴，不要合并",
+              "additionalProperties": false,
+              "properties": {
+                "available": { "type": "boolean" },
+                "steps": { "type": "integer" },
+                "checkpoint": { "type": "string", "description": "官方步数蒸馏权重的路径或仓名。只有第三方 LoRA 做到少步时 available 填 false 并在 note 说明" },
+                "note": { "type": "string" }
+              }
+            },
+            "scheduler": { "type": "string" },
+            "shift": { "type": "number", "description": "flow matching 的 shift / flow_shift" },
+            "note": { "type": "string" }
+          }
+        },
+
+        "pipeline_stages": {
+          "type": "array",
+          "description": "端到端不是一段。MiniMax-H3 = Context-IR + Base + Regenerate-2K（头尾两段未开源），HunyuanVideo-1.5 = DiT + 两级 SR，LTX-2 = stage1 + latent 上采样 + stage2。「端到端耗时」隐含单段假设，这里把各段拆开",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "model": { "type": "string", "description": "这一段用哪套权重。复用主干时写 same-backbone" },
+              "steps": { "type": "integer" },
+              "cfg_scale": { "type": "number" },
+              "forwards_per_step": { "type": "integer", "enum": [1, 2] },
+              "resolution": { "type": "string" },
+              "open_source": { "type": "boolean", "description": "这一段的权重是否开源。false 的段在公开仓里算不出负载，必须显式标出来而不是留空" },
+              "note": { "type": "string" }
+            }
+          }
+        },
+
+        "buckets": {
+          "type": "array",
+          "description": "支持的分辨率/帧数/时长档位，带默认标记。不要写成一个字符串列表 —— 这几个数要进 token 数推导",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "width": { "type": "integer" },
+              "height": { "type": "integer" },
+              "frames": { "type": "integer" },
+              "fps": { "type": "number" },
+              "duration_s": { "type": "number" },
+              "default": { "type": "boolean", "description": "推导用哪一档。有且只能有一档为 true" },
+              "note": { "type": "string" }
+            }
+          }
+        },
+
+        "constraints": {
+          "type": "object",
+          "description": "尺寸约束。LTX 要求宽高被 32 整除、帧数 8n+1；不记就会按任意分辨率去推 token 数",
+          "additionalProperties": false,
+          "properties": {
+            "width_divisor": { "type": "integer" },
+            "height_divisor": { "type": "integer" },
+            "frame_formula": { "type": "string", "description": "如 8n+1 / 4n+1" },
+            "note": { "type": "string" }
+          }
+        },
+
+        "checkpoint_variants": {
+          "type": "array",
+          "description": "同一次发布里的 checkpoint 矩阵。**权重存储要按「一次部署实际驻留几套」算，不是按单个 checkpoint 的文件大小** —— HunyuanVideo-1.5 有 11 个各 33 GB 的全量 checkpoint，Wan2.2 要两套专家，MiniMax-H3 的 Ref2VA 路径带第二套 33B transformer_ref",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "role": { "type": "string", "description": "base / cfg-distilled / step-distilled / sparse / sr / ref / expert-high-noise 等" },
+              "bytes": { "type": "number" },
+              "resident": { "type": "boolean", "description": "一次推理里是否必须与主干同时驻留。只是可选档位的写 false" },
+              "note": { "type": "string" }
+            }
+          }
+        },
+
+        "expert_switching": {
+          "type": "object",
+          "description": "按**时间步**切换整套专家（Wan2.2 的高噪/低噪两套 14B）。这不是 MoE：没有 router、没有 top-k、没有 all-to-all，填进 arch.moe 会让站点显示一个不存在的 EP 通信量。真 token 级路由的生成类模型（MAGI-2）用 arch.moe，并把 routing_axis 标成 token",
+          "additionalProperties": false,
+          "properties": {
+            "axis": { "enum": ["timestep"] },
+            "boundary": { "type": "number", "description": "切换点，如 0.875" },
+            "experts": { "type": "integer", "description": "几套。每套的参数量进 params.breakdown" },
+            "both_resident": { "type": "boolean", "description": "部署时是否必须同时驻留。未确认就留空并开 open question —— 这直接决定权重存储算 1 套还是 N 套" },
+            "note": { "type": "string" }
+          }
+        }
       }
     },
 
@@ -545,6 +777,10 @@
             }
           }
         },
+        "inference_default": {
+          "$ref": "#/$defs/dtype",
+          "description": "厂商自己的推理脚本默认用的精度。**生成类里它常常不等于 weights_release** —— Wan 全系与 HunyuanVideo-1.5 落盘 FP32 而脚本跑 BF16，照发布精度算权重存储会高 2 倍。语言模型侧没有这个现象，所以这个字段是生成类逼出来的"
+        },
         "qat": { "type": "boolean", "description": "官方是否做了量化感知训练，决定低位精度能不能直接用" }
       }
     },
@@ -567,7 +803,10 @@
         "required": ["engine", "hardware", "status"],
         "additionalProperties": false,
         "properties": {
-          "engine": { "type": "string" },
+          "engine": {
+            "type": "string",
+            "description": "引擎名，自由字符串（枚举会在每次出新引擎时卡住录入）。语言模型侧常见 vllm-ascend / MindIE / SGLang / vLLM / TensorRT-LLM / LMDeploy / llama.cpp / KTransformers；生成类基本是另一套：diffusers / ComfyUI / xDiT / vLLM-Omni / SGLang-diffusion / TensorRT-LLM-visualgen / LightX2V / Wan2GP，以及厂商自研（MAGI-2 的 MagiAttention + MagiCompiler）。**昇腾侧尤其要分清入口**：生成类目前查到的适配走 Ascend-SACT 与 ModelArts 的独立配方，不是 vllm-ascend，挂错名字会让平台矩阵把「昇腾能跑」记到错误的引擎上"
+          },
           "engine_version": { "type": "string" },
           "hardware": { "type": "string" },
           "precision": { "$ref": "#/$defs/dtype" },
@@ -735,7 +974,19 @@
   "allOf": [
     {
       "if": { "properties": { "kind": { "enum": ["image-gen", "video-gen"] } }, "required": ["kind"] },
-      "then": { "required": ["generation"] }
+      "then": {
+        "required": ["generation"],
+        "properties": {
+          "generation": {
+            "required": ["backbone", "vae", "sampling"],
+            "properties": {
+              "backbone": { "required": ["patch_size"] },
+              "vae": { "required": ["spatial_compression", "latent_channels"] },
+              "sampling": { "required": ["cfg"] }
+            }
+          }
+        }
+      }
     },
     {
       "if": { "properties": { "kind": { "enum": ["vlm", "omni"] } }, "required": ["kind"] },

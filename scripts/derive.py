@@ -26,7 +26,8 @@ from math import prod
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib import dtypes  # noqa: E402
-from lib.subsystems import classify  # noqa: E402
+from lib import subsystems  # noqa: E402
+from lib.subsystems import classify, classify2  # noqa: E402
 
 # 张量名 -> 子系统的归类在 lib/subsystems.py，fetch_dtypes.py 共用同一份 ——
 # 两边用不同的归类会让「参数量里的 expert」和「精度表里的 expert」指的不是同一批张量。
@@ -68,6 +69,11 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
     params = {}
     nbytes = {}
     by_dtype = {}
+    # 组件维：生成类的一份权重里同时装着 DiT / 文本编码器 / VAE / 声码器，
+    # 先分组件再分子系统，否则 text_encoder 的 mlp 会和 DiT 的 FFN 合成一桶。
+    # 语言模型的张量没有组件前缀，全部落 backbone —— 单组件时下面不输出这两个字段
+    params_comp = {}
+    bytes_comp = {}
     unknown_dtypes = set()
     packing_applied = {}
     dtype_containers = {}
@@ -90,7 +96,12 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
         b = dtypes.nbytes(dt)
         if b == 0.0:
             unknown_dtypes.add(meta.get("dtype"))
-        sub = classify(name, mtp_from)
+        comp, sub = classify2(name, mtp_from)
+
+        bytes_comp[comp] = bytes_comp.get(comp, 0.0) + n * b
+        if not dtypes.is_scale_tensor(name, dt):
+            params_comp[comp] = params_comp.get(comp, 0.0) + n * dtypes.packing_factor(
+                logical.get(sub, ""), dt)
 
         nbytes[sub] = nbytes.get(sub, 0.0) + n * b
         # 字节按逻辑精度归类。scale 张量不参与：它本身就是那个精度，没有打包
@@ -158,6 +169,10 @@ def from_shapes(shapes: dict, logical: dict = None, mtp_from: int = None) -> dic
         "scale_elements": scale_elems,
         "weight_bytes_total": sum(nbytes.values()),
         "weight_bytes_by_subsystem": nbytes,
+        # 只有真跨组件时才输出。语言模型全部落 backbone，多一个恒等于总量的字段
+        # 只会让页面多一行废话，也会让回归对比出现无意义的差异
+        **({"params_by_component": params_comp,
+            "weight_bytes_by_component": bytes_comp} if len(bytes_comp) > 1 else {}),
         "weight_bytes_by_dtype": by_dtype,
         # 哪些精度是打包存放的，以及装在什么容器里。页面要把两个值一起显示 ——
         # 只报 FP4 会让人以为能按 4 位寻址，只报 INT8 会让人以为专家是 8 位
@@ -558,6 +573,228 @@ def comm_per_token(t: dict, moe: dict, hidden: int, act_dtype: str, ep: int) -> 
     }
 
 
+# ---------------------------------------------------------------- 生成类负载
+#
+# LLM 那套一切围绕「每 token」：自回归一步出一个 token，瓶颈在权重带宽。
+# 生成类没有自回归 token，基本量是「单步 × 步数」：
+#   token 数 = latent 体积 ÷ DiT patch，而 latent 体积由 VAE 的时空压缩率决定
+#   单步注意力是 O(n²) 且 n 很大 —— 瓶颈是算力受限，不是 decode 那种带宽受限
+#   端到端 = Σ各阶段(步数 × 每步前向次数 × 单步) + 文本编码一次 + VAE decode 一次
+# 所以步数压缩（蒸馏、CFG 蒸馏、少步采样）是直接乘在总量上的。
+#
+# 口径纪律：VAE 压缩率与 DiT patch 分两个字段存，这里相乘；两者合成一个数存进记录
+# 是范畴错误（CLAUDE.md 的口径一节）。每个乘式都把因子连同来源一起输出，
+# 好让 Gate B 逐因子验 —— 只验一个因子的乘积不该被提交。
+
+GEN_KINDS = ("image-gen", "video-gen")
+
+
+def _patch3(gen: dict):
+    """DiT 侧 patch 归一成 (t, h, w)。标量与二元写法补齐，image-gen 的时间维记 1。"""
+    p = (gen.get("backbone") or {}).get("patch_size")
+    if p is None:
+        return None
+    if isinstance(p, (int, float)):
+        p = [p]
+    p = [x for x in p]
+    if len(p) == 1:
+        return [1, p[0], p[0]]
+    if len(p) == 2:
+        return [1, p[0], p[1]]
+    return p[:3]
+
+
+def _default_bucket(gen: dict):
+    """取标了 default 的那一档。没标就不猜 —— 猜错会让后面每个数都错。"""
+    bs = gen.get("buckets") or []
+    d = [b for b in bs if b.get("default")]
+    if len(d) == 1:
+        return d[0], None
+    if not bs:
+        return None, "generation.buckets 为空，没有可推导的分辨率/帧数档位"
+    if not d:
+        return None, f"generation.buckets 有 {len(bs)} 档但没有一档标 default，不替你选"
+    return None, f"generation.buckets 里有 {len(d)} 档标了 default，只能有一档"
+
+
+def gen_workload(gen: dict, kind: str, dit_params: float, dit_params_src: str,
+                 layers: int, hidden: int) -> dict:
+    """生成类的单步与端到端负载。
+
+    报不出来就说为什么，不返回 0 —— 空结果和「真的没有」在代码里长得一样。
+    """
+    if not gen:
+        return {"status": "unknown", "why": "记录里没有 generation 块"}
+
+    bucket, why = _default_bucket(gen)
+    if bucket is None:
+        return {"status": "unknown", "why": why}
+
+    vae = gen.get("vae") or {}
+    s_c = vae.get("spatial_compression")
+    t_c = vae.get("temporal_compression")
+    patch = _patch3(gen)
+    missing = [k for k, v in (("vae.spatial_compression", s_c),
+                              ("backbone.patch_size", patch)) if not v]
+    if kind == "video-gen" and not t_c:
+        missing.append("vae.temporal_compression")
+    if missing:
+        return {"status": "unknown", "why": "缺少 " + "、".join(missing) + "，token 数算不出"}
+
+    W, H = bucket.get("width"), bucket.get("height")
+    F = bucket.get("frames") or 1
+    if not W or not H:
+        return {"status": "unknown", "why": "默认档位缺 width/height"}
+
+    t_c = t_c or 1
+    p_t, p_h, p_w = patch
+    # 时间维不是简单的 F / t_c。**时间因果 VAE 的第一帧单独编码**，后面每 t_c 帧压成一帧：
+    #   latent 帧数 = (F - 1) / t_c + 1
+    # 这就是各家帧数都写成 4n+1 / 8n+1 的原因（Wan 的 121、HunyuanVideo 的 129、
+    # LTX 的 8n+1）。按 F / t_c 算，Wan2.2 的 121 帧会得到 30.25 这种非整数，
+    # 而真值是 31 —— 2% 的偏差不大，但它是个口径错误而不是精度误差，会一路传到 FLOPs。
+    causal = vae.get("causal")
+    if causal:
+        n_t_latent = (F - 1) / t_c + 1
+        t_formula = "(F - 1) / t_vae + 1  （时间因果 VAE：首帧单独编码）"
+    else:
+        n_t_latent = F / t_c
+        t_formula = "F / t_vae"
+    n_t = n_t_latent / p_t
+    n_h = H / (s_c * p_h)
+    n_w = W / (s_c * p_w)
+    latent_tokens = n_t * n_h * n_w
+
+    # 逐因子：每一项都写清来自哪个字段，Gate B 照着一项项核
+    factors = {
+        "frames": F, "height": H, "width": W,
+        "vae_temporal_compression": t_c, "vae_spatial_compression": s_c,
+        "vae_causal": causal,
+        "patch_t": p_t, "patch_h": p_h, "patch_w": p_w,
+    }
+
+    out = {
+        "status": "ok",
+        "bucket": bucket,
+        "effective_compression": {
+            "temporal": t_c * p_t,
+            "spatial_h": s_c * p_h,
+            "spatial_w": s_c * p_w,
+            "note": "VAE 压缩率 × DiT patch。两者在记录里分开存，只在这里相乘 —— "
+                    "合成一个数存进记录是范畴错误",
+        },
+        "latent_tokens": latent_tokens,
+        "latent_tokens_terms": {
+            "formula": f"[{t_formula}] / p_t × (H / s_vae / p_h) × (W / s_vae / p_w)",
+            "factors": factors,
+            "per_axis": {"t": n_t, "h": n_h, "w": n_w},
+            "latent_frames": n_t_latent,
+        },
+    }
+
+    frac = [k for k, v in (("t", n_t), ("h", n_h), ("w", n_w)) if abs(v - round(v)) > 1e-9]
+    if frac:
+        hint = ("；vae.causal 未填 —— 时间因果 VAE 的 latent 帧数是 (F-1)/t_vae+1，"
+                "填上 causal: true 多半就整除了" if "t" in frac and causal is None else "")
+        out.setdefault("_frac_axes", frac)
+        out["_frac_hint"] = (f"{'/'.join(frac)} 轴的 token 数不是整数，档位与压缩率对不齐"
+                             + hint)
+
+    # 音频 token：和视频 token 拼在同一条注意力序列里，所以要分两项记后相加
+    audio = gen.get("audio") or {}
+    audio_tokens = 0.0
+    if audio.get("latent_hz") and bucket.get("duration_s"):
+        audio_tokens = audio["latent_hz"] * bucket["duration_s"]
+        out["audio_tokens"] = audio_tokens
+        out["audio_tokens_terms"] = {
+            "formula": "latent_hz × duration_s",
+            "factors": {"latent_hz": audio["latent_hz"], "duration_s": bucket["duration_s"]},
+            "note": "单声道一条序列。左右声道各跑一遍编解码器的结构里，"
+                    "DiT 侧是否也翻倍取决于实现，未确认前不乘声道数",
+        }
+
+    seq = latent_tokens + audio_tokens
+    notes = []
+    tc = (gen.get("backbone") or {}).get("text_conditioning")
+    if tc == "in_sequence":
+        notes.append("文本 token 拼在同一条序列里，但记录没给文本长度 —— "
+                     "序列长度是下界，注意力 FLOPs 同样是下界")
+    out["sequence_tokens"] = seq
+    out["sequence_tokens_is_lower_bound"] = tc == "in_sequence"
+
+    # 单步 FLOPs。线性与注意力分开 —— 两者随 n 的增长阶不同（n vs n²），
+    # 合成一个数就看不出瓶颈在哪一侧
+    flops = {}
+    if dit_params:
+        flops["linear"] = 2 * dit_params * seq
+        flops["linear_terms"] = {
+            "formula": "2 × 激活参数 × 序列 token 数",
+            "factors": {"active_params": dit_params, "source": dit_params_src, "tokens": seq},
+        }
+    else:
+        notes.append("没拿到主干激活参数，单步线性 FLOPs 算不出")
+    if layers and hidden:
+        flops["attention"] = 4 * layers * hidden * seq * seq
+        flops["attention_terms"] = {
+            "formula": "每层 QK^T 2·n²·d + (softmax·V) 2·n²·d = 4·n²·d，再乘层数",
+            "factors": {"layers": layers, "hidden": hidden, "tokens": seq},
+            "note": "稠密全注意力口径。块稀疏（SSTA）或线性注意力要另按其形态折算，"
+                    "本函数不替你折 —— 折算比例是记录里的事实，不是公式里的常数",
+        }
+    else:
+        notes.append("缺 backbone.layers 或 backbone.hidden，单步注意力 FLOPs 算不出")
+    if "linear" in flops and "attention" in flops:
+        flops["total"] = flops["linear"] + flops["attention"]
+        flops["attention_share"] = flops["attention"] / flops["total"]
+    out["flops_per_step"] = flops
+
+    # 端到端：多段流水线逐段相加。单段的用 sampling 那一组
+    sampling = gen.get("sampling") or {}
+    cfg = sampling.get("cfg") or {}
+    stages = gen.get("pipeline_stages") or []
+    runnable = [st for st in stages if st.get("steps") and st.get("forwards_per_step")]
+    e2e = None
+    if flops.get("total"):
+        if runnable:
+            e2e = sum(st["steps"] * st["forwards_per_step"] for st in runnable) * flops["total"]
+            skipped = [st.get("name") for st in stages if st not in runnable]
+            out["end_to_end_terms"] = {
+                "formula": "Σ各阶段(步数 × 每步前向次数) × 单步 FLOPs",
+                "stages": [{"name": st.get("name"), "steps": st["steps"],
+                            "forwards_per_step": st["forwards_per_step"]} for st in runnable],
+                "stages_skipped": skipped,
+                "note": "各阶段按同一个单步 FLOPs 估算；分辨率不同的阶段（SR、上采样）"
+                        "实际 token 数不同，这里是粗估，不要当精确值",
+            }
+            if skipped:
+                notes.append(f"{len(skipped)} 个阶段缺步数或前向次数，未计入端到端："
+                             + "、".join(str(x) for x in skipped))
+        elif sampling.get("steps") and cfg.get("forwards_per_step"):
+            e2e = sampling["steps"] * cfg["forwards_per_step"] * flops["total"]
+            out["end_to_end_terms"] = {
+                "formula": "步数 × 每步前向次数 × 单步 FLOPs",
+                "factors": {"steps": sampling["steps"],
+                            "forwards_per_step": cfg["forwards_per_step"],
+                            "cfg_distilled": cfg.get("distilled"),
+                            "cfg_embedded": cfg.get("embedded")},
+            }
+        else:
+            notes.append("缺 sampling.steps 或 sampling.cfg.forwards_per_step，端到端算不出")
+    if e2e is not None:
+        out["flops_end_to_end"] = e2e
+    out["excluded"] = [
+        "文本编码一次（编码器参数量在 generation.text_encoders，本函数不计）",
+        "VAE decode 一次（VAE 结构不在 config 里，解码器是 Transformer 时这一项不是小量）",
+        "音频 VAE 与声码器",
+    ]
+    if out.pop("_frac_axes", None):
+        notes.insert(0, out.pop("_frac_hint"))
+    if notes:
+        out["notes"] = notes
+        out["status"] = "partial"
+    return out
+
+
 # ---------------------------------------------------------------- 交叉核对
 
 def reconcile(cfg_t: dict, shp: dict, declared: dict, external: dict = None,
@@ -732,6 +969,9 @@ def main():
         sys.exit(f"! {fd} 下既没有 cfg.json 也没有 shapes.json，先跑 fetch_hf.py")
 
     model = load_yaml(args.model) if args.model else {}
+    kind = model.get("kind")
+    is_gen = kind in GEN_KINDS
+    gen = model.get("generation") or {}
     arch = model.get("arch") or {}
     attn = arch.get("attention") or {}
     moe = arch.get("moe") or {}
@@ -750,38 +990,51 @@ def main():
     # 层索引 >= num_hidden_layers 的归草稿侧：V3 一代的 MTP 是「第 61 层」，
     # 名字里没有 mtp 标记，不这样分会把整层算进主干
     shp = from_shapes(shapes, logical, mtp_from=t.get("num_hidden_layers"))
-    kv = kv_memory(t, attn, kv_dtype, prec.get("kv_cache_scale"), prec.get("kv_cache_components"))
-    if kv_dtype_assumed and kv.get("status") in KV_USABLE:
-        kv["dtype_assumed"] = True
-        kv["dtype_assumed_note"] = (
-            f"precision.kv_cache 未填，按模型 dtype {kv_dtype} 兜底。"
-            "KV 精度直接决定容量结论，确认后请填进模型 YAML")
-    if kv.get("status") in KV_USABLE and not kv.get("bytes_basis"):
-        # 公式路径：字节按单一 KV dtype 算，口径取决于这个 dtype 是填的还是兜底的
-        kv["bytes_basis"] = "dtype_fallback" if kv_dtype_assumed else "declared_dtype"
 
-    # 厂商公布的每 token 全局 KV 字节：缓存侧唯一的外部锚。参数量有 HF 的 safetensors
-    # tally 可对，缓存侧此前什么都没有 —— 元素数与落盘格式两侧都由本仓决定，错了只会
-    # 得到一个自洽的错数（V4 一代按 BF16 兜底高了 1.7 倍，直到读厂商的跨代图才发现）。
-    # 公布值不依赖本仓任何代码，所以它一旦存在就当权威：本仓每个分量都有公布格式时
-    # （basis 已是 theoretical_floor）拿它对账，否则直接采用它，别让兜底值盖过厂商。
-    decl = (attn.get("kv_sharing") or {}).get("declared_per_token_bytes") or {}
-    if decl.get("value") and kv.get("status") in KV_USABLE:
-        want = float(decl["value"])
-        kv["declared_per_token_bytes"] = want
-        kv["declared_source"] = decl.get("source")
-        if kv.get("bytes_basis") != "theoretical_floor":
-            kv["computed_per_token_bytes"] = kv.get("per_token_bytes")
-            kv["per_token_bytes"] = want
-            kv["bytes_basis"] = "vendor_declared"
-            got = kv["computed_per_token_bytes"] or 0
-            kv.setdefault("notes", []).append(
-                f"每 token 字节采用厂商公布值 {want:,.0f} B。本仓按分量算得 {got:,.0f} B"
-                + (f"（{got / want - 1:+.0%}）" if want else "")
-                + "，差额落在落盘格式未公布、只能按模型 dtype 兜底的那个分量上；"
-                "元素数不受影响，它实测自权重清单")
-    act = active_params(shp, t, attn, moe)
-    comm = comm_per_token(t, moe, hidden, act_dtype, args.ep)
+    # 生成类走另一条口径：非自回归，推理过程中没有跨步复用的 KV，也没有
+    # 「每 token 激活」和 EP all-to-all。**跳过要留显式标记，不能返回 0** ——
+    # 空结果和「真的没有」在代码里长得一样（model-audit 规则 7），
+    # 站点看到 0 会把「不适用」渲染成「这个模型不占缓存」
+    _NA = "非自回归生成模型：推理过程中无跨步复用的 KV，不适用本口径"
+    if is_gen:
+        kv = {"status": "not_applicable", "why": _NA}
+        act = {"status": "not_applicable", "why": "生成类每步对全部 latent token 做一次前向，"
+                                                  "没有「每 token 激活」这个量；单步负载见 generation_workload"}
+        comm = {"status": "not_applicable", "why": "生成类不做 EP all-to-all；"
+                                                   "对应的通信是序列并行(Ulysses)的 all-to-all，口径不同，本脚本未建模"}
+    else:
+        kv = kv_memory(t, attn, kv_dtype, prec.get("kv_cache_scale"), prec.get("kv_cache_components"))
+        if kv_dtype_assumed and kv.get("status") in KV_USABLE:
+            kv["dtype_assumed"] = True
+            kv["dtype_assumed_note"] = (
+                f"precision.kv_cache 未填，按模型 dtype {kv_dtype} 兜底。"
+                "KV 精度直接决定容量结论，确认后请填进模型 YAML")
+        if kv.get("status") in KV_USABLE and not kv.get("bytes_basis"):
+            # 公式路径：字节按单一 KV dtype 算，口径取决于这个 dtype 是填的还是兜底的
+            kv["bytes_basis"] = "dtype_fallback" if kv_dtype_assumed else "declared_dtype"
+
+        # 厂商公布的每 token 全局 KV 字节：缓存侧唯一的外部锚。参数量有 HF 的 safetensors
+        # tally 可对，缓存侧此前什么都没有 —— 元素数与落盘格式两侧都由本仓决定，错了只会
+        # 得到一个自洽的错数（V4 一代按 BF16 兜底高了 1.7 倍，直到读厂商的跨代图才发现）。
+        # 公布值不依赖本仓任何代码，所以它一旦存在就当权威：本仓每个分量都有公布格式时
+        # （basis 已是 theoretical_floor）拿它对账，否则直接采用它，别让兜底值盖过厂商。
+        decl = (attn.get("kv_sharing") or {}).get("declared_per_token_bytes") or {}
+        if decl.get("value") and kv.get("status") in KV_USABLE:
+            want = float(decl["value"])
+            kv["declared_per_token_bytes"] = want
+            kv["declared_source"] = decl.get("source")
+            if kv.get("bytes_basis") != "theoretical_floor":
+                kv["computed_per_token_bytes"] = kv.get("per_token_bytes")
+                kv["per_token_bytes"] = want
+                kv["bytes_basis"] = "vendor_declared"
+                got = kv["computed_per_token_bytes"] or 0
+                kv.setdefault("notes", []).append(
+                    f"每 token 字节采用厂商公布值 {want:,.0f} B。本仓按分量算得 {got:,.0f} B"
+                    + (f"（{got / want - 1:+.0%}）" if want else "")
+                    + "，差额落在落盘格式未公布、只能按模型 dtype 兜底的那个分量上；"
+                    "元素数不受影响，它实测自权重清单")
+        act = active_params(shp, t, attn, moe)
+        comm = comm_per_token(t, moe, hidden, act_dtype, args.ep)
 
     # decode 的线性 FLOPs 与算术强度。注意力部分随上下文变化，单列不混进来。
     flops = {}
@@ -811,6 +1064,27 @@ def main():
         for L in lens:
             kv_at[str(L)] = kv["per_sequence_bytes"] + kv["per_token_bytes"] * L
 
+    # 生成类的单步与端到端负载
+    gw = None
+    if is_gen:
+        bb = gen.get("backbone") or {}
+        p_model = model.get("params") or {}
+        brk = p_model.get("breakdown") or {}
+        # 主干激活参数，按可信度取：记录里声明的 > 权重按组件分出来的 dit > 总量。
+        # 口径不同的三个值，取了哪个要跟着报出去 —— 不然下游不知道这个乘式的因子是哪来的
+        if p_model.get("active_decode"):
+            dit_params, dit_src = p_model["active_decode"], "params.active_decode（记录声明）"
+        elif brk.get("dit"):
+            dit_params, dit_src = brk["dit"], "params.breakdown.dit（记录声明）"
+        elif (shp.get("params_by_component") or {}).get("dit"):
+            dit_params, dit_src = shp["params_by_component"]["dit"], "权重按组件分出的 dit"
+        elif shp.get("complete"):
+            dit_params, dit_src = shp["params_total"], "权重总量（未按组件分，含文本编码器/VAE 时会高估）"
+        else:
+            dit_params, dit_src = None, None
+        gw = gen_workload(gen, kind, dit_params, dit_src,
+                          bb.get("layers"), bb.get("hidden"))
+
     declared = {"params_total": (model.get("params") or {}).get("total"),
                 "excludes": (model.get("params") or {}).get("excludes")}
     rec = reconcile(t, shp, declared, external=(repoinfo.get("safetensors") or {})
@@ -837,6 +1111,7 @@ def main():
         "arithmetic_intensity": intensity,
         "ep_communication": comm,
         "reconciliation": rec,
+        **({"generation_workload": gw} if gw is not None else {}),
     }
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -852,6 +1127,10 @@ def main():
     if shp.get("available") and shp.get("complete"):
         print(f"参数总量(实测)   {dtypes.fmt_count(shp['params_total'])}"
               f"    权重存储 {dtypes.fmt_bytes(shp['weight_bytes_total'])}")
+        if shp.get("weight_bytes_by_component"):
+            comp = sorted(shp["weight_bytes_by_component"].items(), key=lambda kv_: -kv_[1])
+            print("  按组件         " + ", ".join(
+                f"{subsystems.COMPONENT_LABEL.get(k, k)} {dtypes.fmt_bytes(v)}" for k, v in comp))
         top = sorted(shp["weight_bytes_by_subsystem"].items(), key=lambda kv_: -kv_[1])[:5]  # noqa
         print("  按子系统       " + ", ".join(f"{k} {dtypes.fmt_bytes(v)}" for k, v in top))
         if shp.get("expert_storage"):
@@ -887,8 +1166,35 @@ def main():
             print(f"    ! {n}")
         for L, v in kv_at.items():
             print(f"    @{int(L):>8d} tok  {dtypes.fmt_bytes(v)}")
+    elif kv.get("status") == "not_applicable":
+        print(f"KV / token       不适用 — {kv.get('why')}")
     else:
         print(f"KV / token       未知 — {kv.get('why')}")
+    if gw:
+        if gw.get("status") == "unknown":
+            print(f"生成负载         未知 — {gw.get('why')}")
+        else:
+            b = gw["bucket"]
+            ec = gw["effective_compression"]
+            dims = f"{b.get('width')}×{b.get('height')}"
+            if b.get("frames"):
+                dims += f"×{b['frames']}f"
+            bound = " (下界)" if gw.get("sequence_tokens_is_lower_bound") else ""
+            print(f"生成负载         {dims}  有效压缩 "
+                  f"t{ec['temporal']:g}×h{ec['spatial_h']:g}×w{ec['spatial_w']:g}")
+            print(f"    latent token  {gw['latent_tokens']:,.0f}"
+                  + (f"  + 音频 {gw['audio_tokens']:,.0f}" if gw.get("audio_tokens") else "")
+                  + f"  = 序列 {gw['sequence_tokens']:,.0f}{bound}")
+            f = gw.get("flops_per_step") or {}
+            if f.get("total"):
+                print(f"    单步 FLOPs    {f['total']:.3e}"
+                      f"  (线性 {f['linear']:.3e} / 注意力 {f['attention']:.3e}，"
+                      f"注意力占 {f['attention_share']:.0%})")
+            if gw.get("flops_end_to_end"):
+                print(f"    端到端 FLOPs  {gw['flops_end_to_end']:.3e}"
+                      "   不含文本编码与 VAE decode")
+            for n in gw.get("notes") or []:
+                print(f"    ! {n}")
     if comm.get("status") == "ok" and args.ep > 1:
         print(f"EP all-to-all    {comm['bytes_per_token']:.0f} B/token  (EP={args.ep})")
     if intensity.get("decode_flops_per_byte"):
