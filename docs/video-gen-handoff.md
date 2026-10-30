@@ -135,16 +135,27 @@ git diff --stat 352c114..main -- scripts/lib/                 # 空
 刚刚才花力气把三个 DeepSeek 提交从 `p1-glm` 上拆下来、cherry-pick 到 main，
 不值得为省几小时再造一次同样的麻烦。
 
-### 现状与建议
+### 决定：不回退（用户，2026-10-30）
 
-A3a 已经在 `5557c6c` 上了。两种意见的分歧在**要不要回退**，不在拆法本身。
+两种意见的分歧在**要不要回退**，不在拆法本身。用户拍板：**不回退**，
+A3a 留在 `5557c6c` 上，P1 整合时按下面的办法叠。
 
-建议不回退，理由是回退本身也有成本（schema 与 derive 的组件维依赖它），
+本会话当时的建议（与决定一致）：不回退，理由是回退本身也有成本（schema 与 derive 的组件维依赖它），
 而真实的合并风险可以这样消：**P1 整合时以 GLM 线的改动为准先落地，
 再把本分支的 `component()` / `classify2()` 几个函数原样叠上去** ——
 它们和 `SUBSYSTEM` 表没有交集，叠的时候只需确认 `classify()` 的签名没被 GLM 线改掉。
 
-如果主会话坚持回退，回退范围是 `scripts/lib/subsystems.py` 与 `data/schema/components.json`，
+**整合时的具体做法**（已决定走这条）：
+
+1. 先把 GLM 线对 `SUBSYSTEM` 表的改动落进 `main`
+2. 再把本分支 `subsystems.py` 顶部的 `component()` / `classify2()` / `COMPONENT_ORDER` /
+   `COMPONENT_LABEL` / `SPLIT_INSIDE` / `_COMPONENTS` / `_COMPONENT_PREFIXES` / `DEFAULT_COMPONENT`
+   连同 `data/schema/components.json` 原样叠上去 —— 它们和 `SUBSYSTEM` 表没有交集
+3. **唯一要确认的一点**：`classify()` 的签名（`name`, `mtp_from`）没被 GLM 线改掉。
+   `classify2()` 直接调它，签名变了要同步
+4. 叠完重跑 LLM 侧 15 份记录的 `derive.py`，摘要与 JSON 应逐字不变（本分支已验证过一次）
+
+回退方案（已不采用，留档）：范围是 `scripts/lib/subsystems.py` 与 `data/schema/components.json`，
 以及 `derive.py` 里 `classify2` / `params_by_component` / `weight_bytes_by_component` 三处引用；
 schema 侧与 `gen_workload()` 不受影响。
 
