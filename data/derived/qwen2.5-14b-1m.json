@@ -1,7 +1,7 @@
 {
  "id": "qwen2.5-14b-1m",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T07:08:40+00:00",
+ "generated_at": "2026-10-30T07:22:38+00:00",
  "inputs": {
   "facts_dir": "facts/qwen2.5-14b-1m",
   "config_present": true,
