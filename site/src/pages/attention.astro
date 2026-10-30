@@ -1,0 +1,365 @@
+---
+/**
+ * 注意力演进专题：各家族逐代的注意力类型与缓存账的形状。
+ *
+ * 和家族页一样，页面不自带任何数字或表 —— 每一格都从 data/models 的记录与
+ * data/derived 的 kv_cache 算出来。新录的家族按 family 与 lineage 自动纳入，不写死 id。
+ *
+ * 两条口径规则（定义见 docs/kv-cache-accounting.md）：
+ *   - 跨代、跨族系比结构只用元素口径（per_token_elems）。字节随落盘精度的来源变，
+ *     theoretical_floor 与 dtype_fallback 之间算倍数是范畴错误，所以这页不出字节倍数
+ *   - 每序列固定量与每 token 增长量分开列，不合成一个数
+ */
+import Base from '../layouts/Base.astro';
+import Evidence from '../components/Evidence.astro';
+import {
+  families, allModels, roster, changesFor, evidenceFor, url, fmtInt, fmtBytes,
+  KV_BASIS_LABEL, type Model, type EvidenceTag,
+} from '../lib/data';
+
+/** 分量键 → 展示名，和 scripts/kv_table.py 的 COMPONENT_LABEL 同义。未登记的键原样显示 —— 新分量要看得见 */
+const COMPONENT_LABEL: Record<string, string> = {
+  global_kv: '全局压缩 KV',
+  indexer: 'index K',
+  local_window: '滑窗局部 KV',
+  full_attention: 'full attention KV',
+  linear_state: '线性递归状态',
+};
+const compLabel = (k: string) => COMPONENT_LABEL[k] ?? k;
+
+const kvOf = (m: Model) => {
+  const kv = m.derived?.kv_cache;
+  return kv?.status && kv.status !== 'unknown' ? kv : undefined;
+};
+
+/**
+ * 家族内按谱系排：从没有（族内）前代的记录起，深度优先，主线子代在支线前，同类按发布日期。
+ * 这样一条支线紧跟在它的前代后面，不会按时间插进主线中间。
+ */
+function lineageOrder(models: Model[]): { m: Model; depth: number }[] {
+  const ids = new Set(models.map((m) => m.id));
+  const kids = new Map<string, Model[]>();
+  const roots: Model[] = [];
+  for (const m of models) {
+    const p = m.lineage?.predecessor;
+    if (p && ids.has(p)) {
+      if (!kids.has(p)) kids.set(p, []);
+      kids.get(p)!.push(m);
+    } else roots.push(m);
+  }
+  const cmp = (a: Model, b: Model) => {
+    const sa = a.lineage?.track === 'side' ? 1 : 0;
+    const sb = b.lineage?.track === 'side' ? 1 : 0;
+    return sa - sb || (a.released ?? '').localeCompare(b.released ?? '');
+  };
+  const out: { m: Model; depth: number }[] = [];
+  const walk = (m: Model, depth: number) => {
+    out.push({ m, depth });
+    for (const k of (kids.get(m.id) ?? []).sort(cmp)) walk(k, depth + (k.lineage?.track === 'side' ? 1 : 0));
+  };
+  roots.sort((a, b) => (a.released ?? '').localeCompare(b.released ?? '')).forEach((r) => walk(r, 0));
+  return out;
+}
+
+interface Item { text: string; ev?: EvidenceTag }
+
+/**
+ * 产出层覆盖：哪些层真的产出缓存。只读记录里明确列出的层号与计数，
+ * 记录没单列的覆盖面不推断（例如 V4 一代 indexer 的层数只写在自由文本里，这里就不出）。
+ */
+function coverage(m: Model): Item[] {
+  const a = m.arch?.attention ?? {};
+  const L = m.arch?.layers;
+  const ks = a.kv_sharing ?? {};
+  const kv = kvOf(m);
+  const ev = (p: string) => evidenceFor(p, m.evidence);
+  const out: Item[] = [];
+  if (Array.isArray(ks.source_layers)) {
+    out.push({ text: `KV ${ks.source_layers.length} / ${L} 层（跨层共享）`, ev: ev('arch.attention.kv_sharing.source_layers') });
+  } else if (Array.isArray(ks.compress_ratios) && L) {
+    // compress_ratios 的项数含 MTP 块，只取主干 L 项；比值 0 的层不产出压缩 KV
+    const n = ks.compress_ratios.slice(0, L).filter((r: number) => Number(r) !== 0).length;
+    out.push({ text: `压缩 KV ${n} / ${L} 层`, ev: ev('arch.attention.kv_sharing.compress_ratios') });
+  } else if (a.hybrid?.layer_types_count?.full !== undefined) {
+    out.push({ text: `full ${a.hybrid.layer_types_count.full} / ${L} 层`, ev: ev('arch.attention.hybrid.layer_types_count') });
+  } else if (kv?.components?.full_attention?.layers) {
+    out.push({ text: `KV ${kv.components.full_attention.layers} / ${L} 层`, ev: 'derived' });
+  }
+  if (Array.isArray(ks.index_kv_source_layers)) {
+    out.push({ text: `index K ${ks.index_kv_source_layers.length} 层`, ev: ev('arch.attention.kv_sharing.index_kv_source_layers') });
+  } else if (kv?.components?.indexer?.layers) {
+    out.push({ text: `index K ${kv.components.indexer.layers} 层`, ev: 'derived' });
+  }
+  if (a.hybrid?.layer_types_count?.linear !== undefined) {
+    out.push({ text: `线性状态 ${a.hybrid.layer_types_count.linear} 层`, ev: ev('arch.attention.hybrid.layer_types_count') });
+  }
+  if (a.sliding_window) {
+    out.push({ text: `滑窗 ${a.sliding_window}`, ev: ev('arch.attention.sliding_window') });
+  }
+  return out;
+}
+
+/** 每序列固定量：逐分量列。有元素口径就报元素；只有字节的照实报字节并标精度，不反推元素 */
+function perSequence(m: Model): Item[] {
+  const kv = kvOf(m);
+  if (!kv) return [];
+  return Object.entries(kv.components ?? {})
+    .filter(([, c]: [string, any]) => c.elements_per_sequence || c.bytes_per_sequence)
+    .map(([k, c]: [string, any]) => ({
+      text: c.elements_per_sequence
+        ? `${compLabel(k)} ${fmtInt(c.elements_per_sequence)} 元素`
+        : `${compLabel(k)} ${fmtBytes(c.bytes_per_sequence)}（${c.dtype ?? '精度未记'}，仅字节）`,
+      ev: 'derived' as EvidenceTag,
+    }));
+}
+
+const perTokenComps = (kv: any) =>
+  Object.entries(kv?.components ?? {})
+    .filter(([, c]: [string, any]) => c.elements_per_token)
+    .map(([k]) => compLabel(k));
+
+/** 各分量 basis 不一时把分量的列出来，单一口径只报一个 */
+function basisOf(kv: any): string[] {
+  if (!kv?.bytes_basis) return [];
+  const comp = new Set(
+    Object.values(kv.components ?? {}).map((c: any) => c.bytes_basis).filter(Boolean),
+  );
+  const all = new Set([kv.bytes_basis, ...comp]);
+  return [...all];
+}
+
+/** 元素口径相对前代的倍数。元素与精度无关，跨 basis 可比；任一侧是上界就不出 */
+function elemRatio(m: Model): string | undefined {
+  const p = m.lineage?.predecessor && allModels().find((x) => x.id === m.lineage!.predecessor);
+  const a = p && kvOf(p);
+  const b = kvOf(m);
+  if (!a?.per_token_elems || !b?.per_token_elems) return undefined;
+  if (a.per_token_elems_bound !== 'exact' || b.per_token_elems_bound !== 'exact') return undefined;
+  if (a.per_token_elems === b.per_token_elems) return '= 前代';
+  const r = b.per_token_elems / a.per_token_elems;
+  return `×${r >= 10 ? r.toFixed(1) : r.toFixed(2)} 前代`;
+}
+
+/** 前代比出来的注意力字段变化。KV 元素已单独成列，这里不重复 */
+const attnChanges = (m: Model) =>
+  changesFor(m).filter((c) => c.field.axis === 'attention' && c.field.key !== 'kv_elems');
+
+const attnNarrative = (m: Model) =>
+  (m.lineage?.changed_from_predecessor ?? []).filter((c: any) => c.axis === 'attention');
+
+const fams = families().map((f) => {
+  const rows = lineageOrder(f.models);
+  const max = Math.max(0, ...rows.map((r) => kvOf(r.m)?.per_token_elems ?? 0));
+  return { ...f, rows, max };
+});
+
+// 跨族系对照：名册里每个家族的旗舰。名册没给 model_id 时取该家族最新的主线记录 ——
+// 和 scripts/kv_table.py 同一条回退，记录先到、名册没跟上时这一行要显示出来
+const r = roster();
+const flagships = r.families.map((f) => {
+  let m = f.model_id ? allModels().find((x) => x.id === f.model_id) : undefined;
+  if (!m) {
+    m = allModels()
+      .filter((x) => x.family === f.family && x.lineage?.track === 'main')
+      .sort((a, b) => (b.released ?? '').localeCompare(a.released ?? ''))[0];
+  }
+  const why = !m ? '待录' : !kvOf(m) ? '已有记录，未 derive' : undefined;
+  return { entry: f, m, why };
+});
+const shortName = (m: Model, label: string) =>
+  m.display_name.replace(new RegExp(`^${label}[-_ ]?`, 'i'), '') || m.display_name;
+---
+
+<Base
+  title="注意力演进"
+  lead="各家族逐代的注意力类型与缓存账形状。每一格都从记录与 derive.py 的产物算出来，页面不存数字。"
+>
+  <p class="small muted">
+    口径：<strong>KV 元素 / token</strong> 只计随上下文增长的分量，与精度无关，跨代、跨族系可比；
+    <strong>每序列固定</strong>（滑窗局部 KV、线性递归状态）不随上下文增长，单独列，不折进每 token。
+    字节由落盘精度决定，而各记录的精度来源不一（<code>theoretical_floor</code> 是查到落盘格式的理论下限，
+    <code>dtype_fallback</code> 是按权重 dtype 兜底的占位值），<strong>本页不出字节倍数</strong>；
+    「相对前代」的倍数只在元素口径上算，任一侧元素数是上界时不出。定义见
+    <a href={url('/about/')}>口径说明</a>与仓库的 <code>docs/kv-cache-accounting.md</code>。
+  </p>
+
+  <h2>跨族系对照 <Evidence tag="derived" /></h2>
+  <p class="small muted">
+    行取自追踪名册（每个家族的最新旗舰）。比数字前先比<strong>账的形状</strong>：分量不同，单个 per-token 数就只说明了一半。
+  </p>
+  <div class="scroll-x">
+    <table>
+      <thead>
+        <tr>
+          <th>族系旗舰</th><th>注意力类型</th><th>随上下文增长的分量</th>
+          <th class="num">KV 元素 / token</th><th>每序列固定</th><th>basis</th>
+        </tr>
+      </thead>
+      <tbody>
+        {flagships.map(({ entry, m, why }) => {
+          if (why || !m) {
+            return (
+              <tr>
+                <td>{m ? <a href={url(`/models/${m.id}/`)}>{entry.flagship}</a> : entry.flagship}</td>
+                <td colspan="5" class="muted"><em>{why}</em></td>
+              </tr>
+            );
+          }
+          const kv = kvOf(m)!;
+          const seq = perSequence(m);
+          return (
+            <tr>
+              <td><a href={url(`/models/${m.id}/`)}>{m.display_name}</a></td>
+              <td>{m.arch?.attention?.type ?? '—'}<Evidence tag={evidenceFor('arch.attention.type', m.evidence)} /></td>
+              <td>{perTokenComps(kv).join(' + ') || '—'}</td>
+              <td class="num">
+                {kv.per_token_elems_bound === 'upper_bound' && '≤ '}{fmtInt(kv.per_token_elems)}<Evidence tag="derived" />
+              </td>
+              <td>{seq.length ? seq.map((s) => <div>{s.text}</div>) : <span class="dash">无</span>}</td>
+              <td>{basisOf(kv).map((b) => <code>{b}</code>)}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+
+  {fams.map((f) => (
+    <section>
+      <h2>
+        <a href={url(`/families/${f.key}/`)}>{f.label}</a> 逐代
+      </h2>
+      <div class="scroll-x">
+        <table class="attn">
+          <thead>
+            <tr>
+              <th>版本</th><th>注意力类型</th><th class="num">KV 元素 / token</th>
+              <th>每序列固定</th><th>产出层覆盖</th><th>basis</th>
+            </tr>
+          </thead>
+          <tbody>
+            {f.rows.map(({ m, depth }) => {
+              const kv = kvOf(m);
+              const ratio = elemRatio(m);
+              const changes = attnChanges(m);
+              const story = attnNarrative(m);
+              const side = m.lineage?.track === 'side' ? 'side' : undefined;
+              const seq = perSequence(m);
+              const cov = coverage(m);
+              return (
+                <>
+                  <tr class={side}>
+                    <td class={side} style={depth ? `padding-left:${10 + depth * 16}px` : undefined}>
+                      <a href={url(`/models/${m.id}/`)}>{shortName(m, f.label)}</a>
+                      {side && <span class="track-mark" title="支线">支</span>}
+                      <div class="small muted">{m.released}</div>
+                    </td>
+                    <td>
+                      {m.arch?.attention?.type ?? <span class="dash">—</span>}
+                      {m.arch?.attention?.type && <Evidence tag={evidenceFor('arch.attention.type', m.evidence)} />}
+                      {kv && <div class="small muted">{perTokenComps(kv).join(' + ')}</div>}
+                    </td>
+                    <td class="num">
+                      {kv?.per_token_elems ? (
+                        <>
+                          {kv.per_token_elems_bound === 'upper_bound' && '≤ '}
+                          {fmtInt(kv.per_token_elems)}<Evidence tag="derived" />
+                          <div class="bar" aria-hidden="true">
+                            <span style={`width:${(100 * kv.per_token_elems) / (f.max || 1)}%`} />
+                          </div>
+                          {ratio && <div class="small muted">{ratio}</div>}
+                        </>
+                      ) : (
+                        <span class="dash">{kv ? '—' : '未 derive'}</span>
+                      )}
+                    </td>
+                    <td>
+                      {seq.length
+                        ? seq.map((s) => <div>{s.text}<Evidence tag={s.ev} /></div>)
+                        : kv ? <span class="dash">无</span> : <span class="dash">—</span>}
+                    </td>
+                    <td>
+                      {cov.length
+                        ? cov.map((c) => <div>{c.text}<Evidence tag={c.ev} /></div>)
+                        : <span class="dash">—</span>}
+                    </td>
+                    <td>
+                      {kv ? basisOf(kv).map((b) => (
+                        <div><code>{b}</code> <span class="small muted">{KV_BASIS_LABEL[b] ?? ''}</span></div>
+                      )) : <span class="dash">—</span>}
+                    </td>
+                  </tr>
+                  {(changes.length > 0 || story.length > 0) && (
+                    <tr class={`detail ${side ?? ''}`}>
+                      <td class={side}></td>
+                      <td colspan="5">
+                        {changes.length > 0 && (
+                          <div class="chgs">
+                            <span class="muted">字段变化</span><Evidence tag="derived" />
+                            {changes.map((c) => (
+                              <span class="chg">
+                                {c.field.label}：<span class="from">{c.from ?? '无'}</span> → <span class="to">{c.to ?? '取消'}</span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {story.length > 0 && (
+                          <details>
+                            <summary class="muted">改了什么 · 为什么（{story.length} 条，来自 lineage）</summary>
+                            {story.map((e: any) => (
+                              <div class="story">
+                                {e.text}<Evidence tag="derived" />
+                                {e.benefit && (
+                                  <div class="benefit"><span class="muted">收益 ·</span> {e.benefit}<Evidence tag="judgement" /></div>
+                                )}
+                              </div>
+                            ))}
+                          </details>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  ))}
+
+  <p class="note" style="margin-top:18px">
+    「产出层覆盖」只报记录里明确列出层号或计数的覆盖面；只写在自由文本里的（例如某一代 indexer 的层数）不在这里推断，
+    去模型详情页读原文。条形长度只在同一家族内按元素口径缩放，不跨家族比较。
+  </p>
+</Base>
+
+<style>
+  .attn td { vertical-align: top; }
+  .attn td div + div { margin-top: 2px; }
+  tr.detail td {
+    white-space: normal;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    padding-top: 0;
+    border-top: none;
+  }
+  .chgs { max-width: min(70em, 82vw); display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; margin-bottom: 4px; }
+  .chg { white-space: nowrap; }
+  .from { color: var(--ink-3); }
+  .to { color: var(--ink); font-weight: 600; }
+  details summary { cursor: pointer; }
+  .story { max-width: min(70em, 82vw); margin-top: 4px; }
+  .story + .story { margin-top: 6px; }
+  .benefit { padding-left: 10px; border-left: 2px solid var(--line); margin-top: 2px; }
+  .bar {
+    height: 4px;
+    width: 96px;
+    margin: 4px 0 0 auto;
+    background: var(--line);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .bar span { display: block; height: 100%; background: var(--accent); }
+  td code + code { margin-left: 4px; }
+</style>
