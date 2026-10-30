@@ -1,0 +1,572 @@
+# 机械字段来自 config（official）；形状、参数量、专家存储布局、层分布、
+# 视觉塔与草稿块的构成、以及 F32 的两类张量来自完整权重清单
+# （94 分片 2924 条目，无读失败分片）。
+# 主干专家堆叠而草稿块逐专家独立，这件事只有清单看得出来（见 R1）。
+id: qwen3.5-397b-a17b
+family: qwen
+kind: vlm
+display_name: Qwen3.5-397B-A17B
+released: '2026-02-16'
+license: apache-2.0
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/Qwen/Qwen3.5-397B-A17B
+    locator: config.json @ 8472618112ab
+    accessed: '2026-10-30'
+    note: >-
+      许可取自 HF tags license:apache-2.0 与 cardData license: apache-2.0
+      （下一代旗舰 qwen3.8-2.4t-a95b 变成 license_name: qwen3.8-max）。
+      94 分片 2924 个张量，逐分片读头取全，failed_shards 为空。
+      **2834 条 BF16 + 90 条 F32**（45 层的 linear_attn.A_log [64] 与
+      linear_attn.norm.weight [128]，共 8640 个元素）。
+      条目数只有 2924 是因为主干专家堆叠存储：每层两张 3 维张量装下 512 个专家
+
+hf:
+  repo: Qwen/Qwen3.5-397B-A17B
+  sha: 8472618112ab0dc7f0bb16bc99c8aa3fd82d0bb4
+  last_modified: '2026-04-24T08:09:23.000Z'
+  pipeline_tag: image-text-to-text
+  gated: false
+
+lineage:
+  track: main
+  predecessor: qwen3-next-80b-a3b
+  successor: qwen3.8-2.4t-a95b
+  changed_from_predecessor:
+    - axis: moe
+      text: >-
+        **主干专家改成 3 维堆叠**：每层一个 mlp.experts.gate_up_proj
+        [512, 2048, 4096]（gate 与 up 融合，2048 = 2 × 1024）与一个
+        mlp.experts.down_proj [512, 4096, 1024]，取代前代每层 1536 个独立张量。
+        **但草稿块没有跟上**：mtp.layers.0 仍是 1536 个逐专家独立张量
+        （mtp.layers.0.mlp.experts.N.{gate,up,down}_proj.weight）——
+        一个模型内两种专家存储布局。专家数 512 与 top_k 10 不变，
+        专家中间维 512 → 1024，共享专家仍 1 个（中间维 1024）
+      benefit: >-
+        主干侧 grouped GEMM 直接吃 3 维权重，算子签名与 EP 切分方式都变了
+        （按首维切，而不是按张量切）；条目数从 73,728 降到 120，
+        加载时不必再开七万多个张量视图。
+        **草稿侧要另一条路径**：同一个引擎里要同时支持堆叠与逐专家两种布局，
+        或者在加载时把草稿块转成堆叠。到 Qwen3.6 / Qwen3.8 草稿块才统一成堆叠
+        （见 qwen3.8-2.4t-a95b），所以这是**一代之内的过渡态**
+    - axis: attention
+      text: >-
+        混合比例与机制沿用前代（3:1、门控线性注意力 + 短卷积），
+        但三件事换了：(1) config **第一次给出 layer_types 列表**（60 项，
+        45 线性 + 15 full），不再只有 full_attention_interval；
+        (2) 线性层的投影**从融合拆成两张**：in_proj_qkv [12288, 4096] 与
+        in_proj_z [8192, 4096]（前代是一张 in_proj_qkvz），
+        in_proj_ba 也拆成 in_proj_a [64, 4096] 与 in_proj_b [64, 4096]；
+        (3) config 第一次有 attn_output_gate: true 与 mamba_ssm_dtype: float32。
+        full 层 32 头 / 2 KV 头 / head_dim 256，q_proj [16384, 4096] = 2 × 32 × 256。
+        位置编码换成 interleaved mRoPE（mrope_section [11, 11, 10]）
+      benefit: >-
+        累积 KV 的层数 12 → 15、每层宽度不变（都是 2 × 2 × 256 = 1024 元素），
+        每 token 12,288 → **15,360 元素**（+25%，全部来自层数）。
+        线性状态因 value 头数 32 → 64 而几乎翻倍：每序列 38.25 MiB → **188.44 MiB**
+        （而且这一代的 FP32 有 config 声明，前代是 BF16 兜底 ——
+        **两代的每序列字节不是同一种 basis，不能直接比倍数**；
+        同口径比元素数是 (32×128×128 + 4×8192) → (64×128×128 + 4×12288)，1.93 倍）。
+        投影拆开之后，「conv1d 首维 = in_proj_qkv 输出维」这个恒等式才成立
+    - axis: modality
+      text: >-
+        **视觉前端并入主线**：model.visual.* 共 333 个张量、456,010,480 参数
+        （27 个 ViT 块 + patch_embed 3D 卷积 + pos_embed + merger），
+        架构名从 Qwen3NextForCausalLM 变成 Qwen3_5MoeForConditionalGeneration。
+        前代旗舰是纯文本
+      benefit: >-
+        主线从这一代起是多模态（kind 由 llm 变 vlm）。视觉塔只占参数量的 0.11%，
+        但它的算子（带 bias 的 LayerNorm、GELU、3D patch 卷积、patch merge）
+        与语言主干完全不同，prefill 侧是独立一段负载。
+        **下一代旗舰 qwen3.8-2.4t-a95b 又回到纯文本**，所以这不是单调演进
+    - axis: scale
+      text: >-
+        81.3B 总 / A3B → 403.4B 总 / A17B；层数 48 → 60，hidden 2048 → 4096，
+        词表 151936 → 248320
+      benefit: >-
+        总量 ×5.0 而带宽口径的激活参数 ×4.6（3,563,858,230 → 16,331,922,176），
+        激活占比 4.5% → 4.1% —— 这一代是等比例放大，稀疏度基本没动。
+        权重存储 751.39 GiB，单机已装不下
+    - axis: precision
+      text: >-
+        **45 层的 linear_attn.A_log [64] 与 linear_attn.norm.weight [128] 升到 F32**
+        （前代这两类是 BF16），dt_bias 仍 BF16。其余 2834 条是 BF16。
+        同代的 qwen3.5-27b 也是这样（48 层 × 两类）
+      benefit: >-
+        线性注意力的递归核在这一代是混合精度。这件事**只有 dtype 看得见** ——
+        张量名与形状都没变。到 Qwen3.6 两档都回到 BF16，
+        所以 F32 是 Qwen3.5 一代的闭区间特征
+
+params:
+  total: 3.97e+11
+  active_decode: 1.7e+10
+  excludes: [draft, vision]
+  breakdown:
+    expert: 386547000000.0
+    attention: 6883500000.0
+    draft: 6595570000.0
+    embed: 1017120000.0
+    lm_head: 1017120000.0
+    shared_expert: 755220000.0
+    vision: 456010000.0
+    router: 125829000.0
+    norm: 509056.0
+  counting_note: >-
+    total 与 active_decode 都取自模型名（397B-A17B），属厂商声明；breakdown 是本仓按
+    完整权重清单（94 分片 2924 条目）实测的分项，取 6 位有效数字。
+    实测全量 403,397,928,944，与 HF 平台自己从分片头统计的 safetensors tally
+    逐位相同（含 8640 个 F32 元素）。
+    **名字不按全量算**：全量对 397B 是 +1.61%（侥幸在容差内）；
+    扣掉草稿块后 396,802,360,816 是 −0.05%，再扣视觉塔是 396,346,350,336、−0.16%。
+    两种扣法都远比全量吻合，**本记录取 [draft, vision] 以便与同代的 qwen3.5-27b
+    同口径**（那一档两项都扣才进容差）；只扣草稿块的偏差更小（−0.05%），
+    所以扣哪几项仍是判断，没有一手说明。
+    **A17B 对得上的是可比官方口径**：含输入词表 17,349,040,896 对 17B 是 +2.05%、
+    取整为 17B；带宽口径 16,331,922,176 是 −3.93%、取整为 16B。
+    这是 Qwen MoE 线的第三个同向样本（前两个是 A2.7B 的 −0.40% 对 −11.9%
+    与 A14B 的 +1.78% 对 −2.11%）。做带宽估算用带宽口径那个数。
+    激活的专家部分 = 386,547,056,640 × 10/512 = 7,549,747,200，
+    常驻部分 8,782,174,976（注意力 + 共享专家 + router + norm + lm_head）——
+    **常驻比激活的专家还多**，和前代同样的格局（线性注意力层的投影全部常驻）。
+    词表与输出层不共享权重（各 1,017,118,720）。权重存储 751.39 GiB。
+
+context:
+  max: 262144
+
+arch:
+  layers: 60
+  hidden: 4096
+  vocab: 248320
+  norm: RMSNorm
+  norm_eps: 1.0e-06
+  activation: SwiGLU
+  position: >-
+    interleaved mRoPE，theta 1e7，partial_rotary_factor 0.25（只对 1/4 维度加 rope）：
+    256 × 0.25 = 64 维即 32 个频率对，mrope_section [11, 11, 10] 正好分完 32 对
+
+  attention:
+    type: hybrid
+    num_heads: 32
+    num_kv_heads: 2
+    head_dim: 256
+    head_dim_note: >-
+      full attention 层的 q_proj 是 [16384, 4096]，16384 = 2 × 32 头 × 256 ——
+      输出维翻倍，一半是 query、一半是输出门（config 的 attn_output_gate: true）。
+      o_proj 入口 8192 = 32 × 256 只对应 query 那一半，按 num_heads × head_dim
+      推 q_proj 会低一半。k_proj 与 v_proj 都是 [512, 4096]（512 = 2 × 256），
+      缓存宽度按它们的输出维算：每层 2 × 512 = 1024 元素。
+      线性层的输出门是另一张 in_proj_z [8192, 4096]（= 64 value 头 × 128），不在 q 里。
+      另有每层 q_norm [256] 与 k_norm [256]，归 norm 子系统
+    partial_rotary_factor: 0.25
+    layer_pattern: >-
+      3:1 linear:full，full attention 落在层号 ≡ 3 (mod 4) 上。
+      config 的 layer_types 列表（60 项）与清单一致：self_attn.q_proj 在
+      3/7/…/59 共 15 层（外加草稿块 1 层），linear_attn.* 在其余 45 层
+    output_gate:
+      enabled: true
+      type: >-
+        未声明 —— config 有 attn_output_gate: true 但没有 output_gate_type 这个键
+        （Qwen3.6 起才有，值 swish；Qwen3.8-Flash-Next 是 sigmoid）
+    hybrid:
+      layer_types_count:
+        linear: 45
+        full: 15
+      interval: 4
+      note: >-
+        15 层 full attention 的 KV 随上下文线性增长，45 层线性注意力只带每序列固定的
+        递归状态。以上层数都是主干口径（60 主干层 + 1 草稿块）：
+        草稿块 mtp.layers.0 带一套与主干 full attention 同名的 q/k/v/o 投影、
+        没有 linear_attn，所以开草稿侧时累积 KV 的是 16 层、
+        30720 → 32768 B/token，线性状态仍是 45 层。
+        本记录与 data/derived/ 都按主干口径记账
+    linear_state:
+      mechanism: 门控线性注意力 + 短卷积
+      num_key_heads: 16
+      num_value_heads: 64
+      key_head_dim: 128
+      value_head_dim: 128
+      conv_kernel_dim: 4
+      state_dtype: FP32
+      state_layout_note: >-
+        四个因子都钉在清单的形状上。状态头数 64（= value 头数）：每层
+        linear_attn.A_log [64] 与 dt_bias [64]，衰减参数每状态头一个；
+        in_proj_a [64, 4096] 与 in_proj_b [64, 4096] 也是 64。
+        conv 通道数 12288 = 2 × 16 × 128 + 64 × 128，45/45 层
+        conv1d.weight 都是 [12288, 1, 4]，与 in_proj_qkv [12288, 4096] 的输出维相等
+        —— **这个相等从本代才成立**：前代 Qwen3-Next 把 z 门融合进
+        in_proj_qkvz，conv1d 首维不含 z（见 qwen3-next-80b-a3b 的 R1）。
+        跨代通用的写法是「conv 通道数 = q + k + v 三段之和」。
+        状态精度有一手来源：config 的 mamba_ssm_dtype: float32。
+        窗长按全窗 4 计是上界；矩阵状态的实际存储是否就是一个 [64, 128, 128]
+        的 FP32 张量仍需按实现核（两维都是 128，维序不影响容量）
+
+  ffn:
+    type: moe
+    layer_pattern: >-
+      60 层全是 MoE 层（清单里 60/60 层都有 mlp.experts 与 shared_expert），
+      线性层与 full 层的 FFN 形态相同 —— 混合只发生在注意力一侧。
+      同代的 qwen3.5-27b 这一档是稠密 FFN，两档的差别在 FFN 而不在注意力
+
+  moe:
+    routed_experts: 512
+    shared_experts: 1
+    top_k: 10
+    intermediate: 1024
+    routing: 带辅助损失（router_aux_loss_coef 0.001）
+    balance: aux-loss
+    storage_note: >-
+      **一个模型内两种布局**。主干 60 层是堆叠存储：每层一个
+      gate_up_proj [512, 4096 后两维 2048 × 4096 中的 2048 = 2 × 1024]
+      —— 准确形状是 [512, 2048, 4096]（512 专家 × (gate+up) 2048 × hidden 4096）
+      与一个 down_proj [512, 4096, 1024]，共 120 个条目装下全部 30,720 个专家。
+      草稿块 mtp.layers.0 **仍是逐专家独立张量**：
+      mtp.layers.0.mlp.experts.N.{gate,up,down}_proj.weight 共 1536 条目。
+      grouped GEMM 吃 3 维权重、EP 按首维切，这两件事只对主干成立；
+      草稿侧要走逐专家路径或在加载时转布局。
+      到 Qwen3.6 / Qwen3.8 草稿块才统一成堆叠
+
+  decoding:
+    mtp_layers: 1
+    mtp_layers_note: >-
+      config 的 mtp_num_hidden_layers: 1 与清单一致。块内是一套 full attention
+      （q/k/v/o + q_norm/k_norm，没有 linear_attn）加一整套 512 专家 MoE
+      （逐专家独立张量）+ 共享专家 + router，块外有 mtp.fc [4096, 8192]、
+      pre_fc_norm_embedding / pre_fc_norm_hidden、mtp.norm。
+      共 1553 条目、6,595,568,128 参数 —— **是主干的 1.66%，但它自己就有 6.44B
+      的专家权重**，开草稿侧时这些权重也要驻留
+
+  vision:
+    encoder: Qwen3.5 vision tower
+    layers: 27
+    hidden: 1152
+    num_heads: 16
+    intermediate: 4304
+    patch_size: 16
+    spatial_merge_size: 2
+    temporal_patch_size: 2
+    out_hidden: 4096
+    params: 456010480.0
+    fusion: >-
+      patch merge 后投影到主干 hidden：merger.linear_fc1 [4608, 4608]
+      （4608 = 1152 × 4，即 2×2 个 patch 拼接）→ linear_fc2 [4096, 4608]。
+      deepstack_visual_indexes 是空列表，所以没有多层注入，只在输入侧并入
+      —— 与同代 qwen3.5-27b 的视觉塔同构，只有 out_hidden 不同（4096 对 5120）
+
+precision:
+  weights_release: [BF16, FP8_E4M3, INT4]
+  quantization:
+    per_subsystem:
+      attention: BF16
+      expert: BF16
+      shared_expert: BF16
+      router: BF16
+      draft: BF16
+      vision: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: MIXED
+    subsystem_method: >-
+      来自完整权重清单（94 分片 2924 条目）逐项统计，非抽样：每个条目都带 shape 与 dtype，
+      failed_shards 为空。2834 条 BF16 + 90 条 F32。
+      **norm 一项标 MIXED**：45 层的 linear_attn.norm.weight 是 F32，
+      其余 norm（input_layernorm / post_attention_layernorm / q_norm / k_norm /
+      model.norm / 视觉塔的 LayerNorm）都是 BF16。按元素数加权 F32 只占
+      5760 / 509,056 = 1.1%，但少数异类正是要说的事，所以不报多数值。
+      attention 报 BF16：A_log 的 F32 在该桶里只占 2880 / 6,883,497,600，
+      它单独写在 lineage 的 precision 条与 open_questions 里。
+      没有 quantization_config，所以 per_subsystem_block 不填。
+      weights_release 的 FP8_E4M3 与 INT4 来自同代 Qwen3.5-397B-A17B-FP8
+      与 Qwen3.5-397B-A17B-GPTQ-Int4 两个仓的存在（HF 名单），
+      **本仓没有取它们的清单**
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: BF16
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/Qwen/Qwen3.5-397B-A17B
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      混合结构的两个分量：15 层 full attention 的 KV 随上下文增长，
+      45 层线性注意力的递归状态每序列固定 188.44 MiB。
+      262144 满上下文是 7.50 GiB + 188.44 MiB —— 状态占 2.4%；
+      而 4096 上下文时 KV 只有 120.00 MiB、状态占 61.1%。
+      **两个分量的 basis 不同**：per_token 是 dtype_fallback（KV 精度未披露），
+      per_sequence 的 FP32 有 config 声明，合计不是单一口径。
+    quantified: >-
+      30,720 B/token（15 层 × 1024 元素 × 2 B 兜底）+ 188.44 MiB/序列
+      （45 层 × (64×128×128 矩阵 + 4×12288 短卷积) × 4 B）。
+      元素口径：15,360 元素/token（可跨代比），每序列 1,097,728 元素/层
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      **同一个模型里两种专家存储布局**：主干堆叠成 [512, …, …] 的 3 维张量、
+      草稿块是 1536 个 2 维张量。grouped GEMM 的算子签名与 EP 切分方式
+      对两者不同，引擎要么支持两条路径，要么在加载时把草稿块转成堆叠。
+      这件事在 config 里完全看不出来，只有清单能答。
+    fix: 加载时把草稿块的 1536 个张量 concat 成堆叠布局，与主干共用一套 grouped GEMM
+    visibility: public
+  - dimension: ep-comm
+    finding: >-
+      top_k 10、hidden 4096、60 个 MoE 层 —— 每 token 的 dispatch + combine
+      9,830,400 B，是前代（48 层、hidden 2048）的 2.5 倍。
+      专家堆叠之后 EP 按首维切，通信载荷不变但路由元数据的组织方式变了。
+    quantified: 2 × top_k 10 × hidden 4096 × 2 B × 60 层 = 9,830,400 B/token（EP>1，BF16 激活）
+    visibility: public
+  - dimension: weight-bandwidth
+    finding: >-
+      权重存储 751.39 GiB 而带宽口径每 token 只搬 30.42 GiB（激活占比 4.1%）——
+      容量与带宽差 24.2 倍（两侧都扣输入词表、草稿块与视觉塔）。
+      单机装不下权重，而 decode 的带宽需求只有总量的 1/24，
+      所以这一档的约束是「装得下 + 跨机通信」，不是「搬得快」。
+    quantified: >-
+      权重存储 751.39 GiB；带宽口径 16,331,922,176 × 2 B = 30.42 GiB/token；
+      容量/带宽 = 396,346,350,336 / 16,331,922,176 = 24.2 倍
+    visibility: public
+
+infra_signals:
+  - text: >-
+      **「这个模型的专家是堆叠存储」在这一代只是半句真话**：主干 60 层堆叠成
+      每层两张 3 维张量（120 个条目装下 30,720 个专家），而草稿块仍是 1536 个
+      逐专家独立张量。同一个模型内两种布局，grouped GEMM 与 EP 切分对两者不同。
+      到 Qwen3.6 / Qwen3.8 草稿块才统一成堆叠 —— 所以这是一代之内的过渡态，
+      结构结论要钉代际，而且要钉到「哪一部分」。
+    evidence: derived
+    horizon: settled
+    axis: moe
+  - text: >-
+      线性状态的每序列字节从前代的 38.25 MiB 变成 188.44 MiB，看着是 4.9 倍，
+      **但两代的 basis 不同**：前代 config 没有 mamba_ssm_dtype、按 BF16 兜底，
+      本代声明 float32。属于结构的只有元素数之比
+      （(32×128×128 + 4×8192) × 36 → (64×128×128 + 4×12288) × 45，即 1.93 倍），
+      另外 2.5 倍是「本代查到了状态精度、前代还在兜底」。
+      跨代比每序列状态，和跨代比 KV 一样，必须先对齐 basis。
+    evidence: derived
+    horizon: now
+    axis: attention
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: official
+  params.breakdown: derived
+  params.excludes: judgement
+  params.counting_note: judgement
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: judgement
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.attention.output_gate: derived
+  arch.attention.hybrid.layer_types_count: derived
+  arch.attention.hybrid.note: judgement
+  arch.attention.linear_state.mechanism: judgement
+  arch.attention.linear_state.state_layout_note: derived
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.shared_experts: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.decoding.mtp_layers_note: derived
+  arch.vision.encoder: judgement
+  arch.vision.params: derived
+  arch.vision.fusion: derived
+  precision: official
+  precision.weights_release: judgement
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+notes: >-
+  Qwen3.5 一代的旗舰（2026-02），qwen3.8-2.4t-a95b 的直接前代。
+  相对前代旗舰 qwen3-next-80b-a3b 的四件事：主干专家改堆叠（草稿块没跟上）、
+  线性注意力的投影拆分、视觉前端并入主线、A_log 与 linear_attn.norm 升 F32。
+  混合比例（3:1）、专家数（512）、top_k（10）、共享专家（1 个）都沿用前代。
+  同代另有 Qwen3.5-122B-A10B / 35B-A3B 两个 MoE 档与 27B / 9B / 4B / 2B / 0.8B
+  等档位，张量名族与本记录或 qwen3.5-27b 逐族相同，只是缩放，不另录。
+  下一代旗舰 qwen3.8-2.4t-a95b **又回到纯文本**（没有 visual.*），
+  所以「主线从此多模态」这个说法只对这一代成立。
+
+open_questions:
+  - >-
+    A_log 的 F32 在 attention 子系统里只占 2880 / 6,883,497,600，
+    所以 per_subsystem 的 attention 报 BF16（带宽主体）。
+    「衰减参数是 F32」这件事因此不在精度表的 attention 行里，
+    只写在 lineage 的 precision 条与本列表
+  - >-
+    矩阵状态的实际存储是否就是一个 [64, 128, 128] 的 FP32 张量需按实现确认
+    （两维都是 128，维序不影响容量）；状态头数与 conv 通道数已由权重清单确定
+  - >-
+    短卷积的状态按全窗 4 计是上界，实现若只存 k−1 = 3 个位置会低 1/4
+  - >-
+    KV cache 的实际落盘精度未披露，按模型 dtype 兜底 ——
+    **缓存账的两个分量 basis 不同**（per_token 兜底、per_sequence 的 FP32 有声明），
+    合计不能当单一口径用，跨代比也只能用元素口径
+  - >-
+    输出门的函数形式本代无声明（config 没有 output_gate_type），3.6 起声明为 swish
+  - >-
+    params.excludes 取 [draft, vision] 是判断：只扣草稿块的偏差更小（−0.05%
+    对 −0.16%），取两项是为了与同代 qwen3.5-27b 同口径，没有一手说明
+  - >-
+    同代的 FP8 与 GPTQ-Int4 发布本仓没有取清单，weights_release 只记发布形态，
+    量化配置未知
+  - >-
+    训练精度没有一手来源：config 的 dtype: bfloat16 说的是发布权重，
+    模型卡正文未核，故不填 precision.training
+  - >-
+    **data/derived/ 里的 from_shapes.expert_storage 与本记录的 arch.moe.storage_note
+    不一致**：派生值是 "individual"，而主干实际是堆叠、只有草稿块逐专家（见 R7）。
+    derive.py 的 expert_storage 是单值字段，表达不了一个模型内两种布局，
+    而它的 individual 判据（名字里有 experts.<数字>.）被草稿块的 1536 个张量命中。
+    本轮按约定不改共享脚本，改动请求在交接报告里；
+    引用专家布局时以本记录的 storage_note 为准
+
+reviewed:
+  date: '2026-10-30'
+  scope:
+    - official
+    - derived
+    - judgement
+  reviewer: 本会话逐字段复算
+  method: >-
+    按 .claude/skills/model-audit 的提问顺序对 facts/qwen3.5-397b-a17b 核：config 全部键、
+    完整权重清单（2924 条目逐项 numel / dtype / 层索引）、repoinfo 的 tags / cardData /
+    sha 与逐 dtype 的 safetensors tally（BF16 403,397,920,304 + F32 8640）。
+    两种专家布局是把主干与 mtp 的张量名族分开列出来比的（主干 2 族 × 60 层、
+    草稿 3 族 × 512 专家），见 R1。
+    混合层的两个集合由清单的层索引交并集定，并与 config 的 layer_types 逐项比对一致。
+    conv 通道恒等式在 45/45 层上验过。
+    参数九项逐项按形状重算并与清单求和、HF tally 三方比对；草稿块 6,595,568,128
+    逐项重算过（512 专家 6,442,450,944 + full attention 104,857,600 + 共享 12,587,008
+    + router 2,097,152 + fc 33,554,432 + 7 张 norm 20,992）。
+    derive.py 以默认 --ep 1 带 --model 重跑，0 处不一致；EP 通信量按 --ep 4 核对公式。
+    **原理上核不了的**：输出门的函数形式、矩阵状态的实际布局、conv 窗长、
+    KV 落盘精度、量化发布的配置、训练精度，都在 open_questions 里。
+review:
+  - id: R1
+    field: arch.moe.storage_note
+    severity: wrong
+    claim: >-
+      草稿按同族 qwen3.8-2.4t-a95b 的写法写「专家为堆叠存储：每层一个 gate_up_proj
+      与一个 down_proj」
+    finding: >-
+      对主干成立，**对草稿块不成立**。清单里主干是 120 个条目
+      （60 层 × {gate_up_proj [512, 2048, 4096], down_proj [512, 4096, 1024]}），
+      而 mtp.layers.0 下是 **1536 个逐专家独立张量**
+      （mtp.layers.0.mlp.experts.N.{gate,up,down}_proj.weight，N 从 0 到 511）。
+      一个模型内两种布局，grouped GEMM 的签名与 EP 切分方式对两者不同。
+      查了三代才确定这是过渡态：Qwen3-Next 两边都是逐专家，
+      本代主干堆叠而草稿逐专家，Qwen3.6-35B-A3B 起草稿块也变成堆叠
+      （facts/qwen3.6-35b-a3b 的名族里是 mtp.layers.N.mlp.experts.{down_proj,gate_up_proj}），
+      Qwen3.8 两档已经统一。
+      「这个模型的专家是堆叠存储」在这一代是半句真话
+    resolution: corrected
+    changed_to: >-
+      storage_note 分主干与草稿块两段写，并给出各自的条目数；
+      infra_signals 加一条；bottleneck 里给出「加载时转布局」这个修法
+  - id: R2
+    field: lineage.changed_from_predecessor
+    severity: imprecise
+    claim: >-
+      草稿里 attention 条的 benefit 写「每序列状态从 38.25 MiB 涨到 188.44 MiB，4.9 倍」
+    finding: >-
+      4.9 倍里混着两样东西：元素数（结构）与每元素字节（调研进度）。
+      前代 config 没有 mamba_ssm_dtype，本仓按 BF16 兜底；本代声明 float32。
+      属于结构的只有元素数之比：前代 36 × (32×128×128 + 4×8192) = 36 × 1,081,344，
+      本代 45 × (64×128×128 + 4×12288) = 45 × 1,097,728，比值 **1.93 倍**；
+      另外 2.5 倍是 basis 的差。
+      docs/kv-cache-accounting.md 的「不同 basis 之间不算倍数」原本只针对
+      per_token 那一列，**每序列状态这一列同样适用**，而本仓此前没有在任何记录里写过这句
+    resolution: corrected
+    changed_to: >-
+      attention 条改为同时给元素口径的 1.93 倍与 basis 差；
+      infra_signals 加一条把这条规则写到每序列状态上
+  - id: R3
+    field: params.counting_note
+    severity: unsupported
+    claim: A17B 对得上的是可比官方口径（含输入词表）
+    finding: >-
+      含输入词表 17,349,040,896 对 17B 是 +2.05%（取整 17B），
+      带宽口径 16,331,922,176 是 −3.93%（取整 16B）。
+      **两种都不在 2% 容差内**，但只有前者取整得到名字里的 17 —— 这是判据。
+      同向的还有 A2.7B（−0.40% 对 −11.9%）与 A14B（+1.78% 对 −2.11%），
+      三个样本一致，所以「Qwen 的激活参数声明含输入词表」这条有三份支撑；
+      反例是 A3B（两种口径 +18.8% / +29.2% 都对不上，判为档位名）
+      与 A22B（两种都在容差内、分不出来）。五份记录的证据合起来写在各自的 counting_note 里
+    resolution: confirmed
+  - id: R4
+    field: lineage.changed_from_predecessor
+    severity: missing
+    claim: >-
+      草稿的 modality 条只写「视觉前端并入主线，主线从此是多模态」
+    finding: >-
+      后半句在下一代就不成立：qwen3.8-2.4t-a95b 的清单里 visual.* 零命中、
+      架构名是 Qwen3_5MoeForCausalLM、pipeline_tag 是 text-generation。
+      旗舰在 3.5 是 vlm、在 3.8 又回到 llm。
+      「从此」这种连续性断言正是 skill 规则 5 点名的那类
+    resolution: corrected
+    changed_to: modality 条与 notes 都写明下一代旗舰又回到纯文本
+  - id: R5
+    field: arch.moe.intermediate
+    severity: imprecise
+    claim: >-
+      草稿把 gate_up_proj 的形状写成 [512, 1024, 4096]
+    finding: >-
+      实际是 [512, 2048, 4096]：中间维 1024 而 gate 与 up **融合在一起**，
+      所以第二维是 2 × 1024 = 2048。按 1024 读会把主干专家参数量算少一半
+      （真值 60 × 512 × (2048 × 4096 + 4096 × 1024) = 386,547,056,640）。
+      同一个坑在旗舰那份记录里是对的（[512, 4096, 8192] 配中间维 2048），
+      本记录的草稿照抄形状时漏了这一层
+    resolution: corrected
+    changed_to: storage_note 写明准确形状与 2048 = 2 × 1024 的来历
+  - id: R6
+    field: arch.decoding.mtp_layers_note
+    severity: missing
+    claim: 草稿只写「草稿块 1 层」
+    finding: >-
+      草稿块自带 512 专家的完整 MoE（6,442,450,944 参数，占它自身的 97.7%），
+      所以它虽然只占主干的 1.66%，绝对量是 6.44B —— 开草稿侧时这些权重要驻留，
+      而且它们是逐专家布局。只写「1 层」会让人以为是个轻量头
+    resolution: corrected
+    changed_to: mtp_layers_note 写明块内构成与 6.44B 的专家权重
+  - id: R7
+    field: arch.moe.storage_note
+    severity: miscategorized
+    claim: >-
+      data/derived/qwen3.5-397b-a17b.json 的 from_shapes.expert_storage 报
+      "individual（逐专家独立张量）"，Gate B 那一行也这么印
+    finding: >-
+      对本记录是**半错**：主干 60 层是堆叠的，只有草稿块是逐专家。
+      根因在 derive.py 的判据 —— 它先用「张量名里有 experts.<数字>.」收集专家下标，
+      有命中就报 individual；而本模型的命中全部来自 mtp.layers.0 的 1536 个
+      逐专家张量（它们归 draft 子系统，但下标收集不分子系统）。
+      主干的堆叠张量名是 experts.gate_up_proj（没有数字），走的是另一条分支，
+      只写进 stacked_experts。两个集合同时非空时，expert_storage 这个**单值字段**
+      表达不了，于是选了 individual。
+      旗舰 qwen3.8-2.4t-a95b 两边都堆叠，所以那份报 stacked，是对的。
+      **不是数据错，是字段的粒度不够** —— 本记录的 arch.moe.storage_note
+      才是权威描述。按约定本轮不改共享脚本，改法写进交接报告
+    resolution: open
+    changed_to: >-
+      storage_note 分两段写明布局，并在 open_questions 里记下派生字段与记录不一致
+      及其原因；derive.py 的 expert_storage 建议支持 mixed，改动请求在交接报告里
