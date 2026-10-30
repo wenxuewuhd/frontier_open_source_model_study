@@ -22,6 +22,7 @@ import sys
 from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib import cfgio  # noqa: E402
 
 TODO = "TODO"
 
@@ -38,7 +39,7 @@ def layout(cfg: dict):
         pref = {k[len("vision_"):]: v for k, v in cfg.items() if k.startswith("vision_")}
         if pref:
             vision = pref
-    return text, vision, dict(cfg.get("quantization_config") or {}), cfg
+    return text, vision, cfgio.quant_cfg(cfg), cfg   # 两处都找，见 lib/cfgio.py
 
 
 def pick(d: dict, *keys):

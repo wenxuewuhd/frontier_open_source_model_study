@@ -31,6 +31,7 @@ from collections import defaultdict
 from math import prod
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib import cfgio  # noqa: E402
 from lib import dtypes  # noqa: E402
 from lib.subsystems import ORDER, classify  # noqa: E402
 from fetch_hf import API, RESOLVE, _get, _get_json, _token_header, safetensors_header  # noqa: E402
@@ -135,7 +136,9 @@ def main():
 
     # config 声明的专家精度，用来判定容器里装的是什么
     cfg, t = _cfg, _t
-    q = cfg.get("quantization_config") or {}
+    # 顶层与 text_config 下都找 —— Kimi 的四份 VLM 把整块嵌在 text_config 下，
+    # 只读顶层会让逐子系统精度表那几格渲染成「未录」，而 config 明写着 group_size 32
+    q = cfgio.quant_cfg(cfg)
     declared_expert = (t.get("expert_dtype") or q.get("expert_dtype") or "").upper() or None
 
     # 子系统的代表精度 = **按元素数加权的多数**，在读完分片之后统计。

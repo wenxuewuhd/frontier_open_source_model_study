@@ -30,6 +30,7 @@ from lib import yamlio  # noqa: E402
 
 import validate  # noqa: E402
 import fetch_hf  # noqa: E402
+from lib import cfgio  # noqa: E402
 
 
 # ------------------------------------------------------------ 小工具
@@ -456,6 +457,57 @@ def _():
     finally:
         if os.path.exists(probe):
             os.remove(probe)
+
+
+# ================================ 读 config：声明可能嵌在 text_config 下
+#
+# Kimi 的四份 VLM（k2.5 / k2.6 / k2.7-code / k3）把整个 `quantization_config`
+# 嵌在 `text_config` 下，顶层只剩 `dtype: bfloat16`。仓里曾有四个消费点两套读法：
+# derive.py 拍平后取，fetch_dtypes / extract_layers / scaffold 只读顶层。
+# 后果不是报错 —— 是逐子系统精度表那几格渲染成「未录」，而 config 明写着
+# group_size 32。**「未录」让人以为去查就行，没人会想到判据本身读错了地方。**
+
+@case("读 config·正例：嵌在 text_config 下的 quantization_config 要找得到")
+def _():
+    import json as _json
+    want = {"kimi-k3", "kimi-k2.5", "kimi-k2.6", "kimi-k2.7-code"}
+    got = set()
+    for mid in want:
+        fp = os.path.join(ROOT, "facts", mid, "cfg.json")
+        if not os.path.exists(fp):
+            continue                      # facts 不随分支走，缺了就跳过这一份
+        cfg = _json.load(open(fp, encoding="utf-8"))
+        assert cfgio.quant_site(cfg) == "text_config", \
+            f"{mid} 的声明位置变了：{cfgio.quant_site(cfg)}"
+        q = cfgio.quant_cfg(cfg)
+        assert q, f"{mid}：嵌套的 quantization_config 没读到"
+        grp = next(iter((q.get("config_groups") or {}).values()), {}).get("weights", {})
+        assert grp.get("group_size") == 32, f"{mid}: group_size={grp.get('group_size')}"
+        assert grp.get("num_bits") == 4, f"{mid}: num_bits={grp.get('num_bits')}"
+        got.add(mid)
+    assert got, "四份 Kimi VLM 的 facts 一份都不在，这条用例没验到东西"
+
+
+@case("读 config·反例：顶层声明的照常读得到，位置记成 root")
+def _():
+    cfg = {"quantization_config": {"format": "pack-quantized"}, "text_config": {}}
+    assert cfgio.quant_site(cfg) == "root"
+    assert cfgio.quant_cfg(cfg)["format"] == "pack-quantized"
+
+
+@case("读 config·反例：两处都没有时返回 {} 而不是 None")
+def _():
+    # 调用方一律 .get()，返回 None 会炸在很远的地方
+    assert cfgio.quant_cfg({"dtype": "bfloat16"}) == {}
+    assert cfgio.quant_site({"dtype": "bfloat16"}) == "none"
+
+
+@case("读 config·正例：text_config 拍平后层数别名认 num_layers")
+def _():
+    # 扩散主干的 config 把层数叫 num_layers，不认的后果是 Gate B 的层数核对静默 skip
+    assert cfgio.flatten({"num_layers": 30})["num_hidden_layers"] == 30
+    # 两个键都有时不覆盖（glm-4-9b 是这种，两处值相同）
+    assert cfgio.flatten({"num_hidden_layers": 40, "num_layers": 40})["num_hidden_layers"] == 40
 
 
 # ======================================== 取数：别把几个模型合并成一个不存在的模型
