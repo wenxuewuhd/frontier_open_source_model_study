@@ -419,10 +419,14 @@ def _():
     色块那边根本没有的精度 —— 读者会当成数据错，而两边其实各说各的。
     """
     d = copy.deepcopy(RECS["qwen1.5-72b"])
+    base = []
+    validate.check_excluded_variants(d, d["id"], base)
+    assert not base, f"基线要先是干净的，否则下面那句可能是别的错导致的：{base}"
     d["precision"]["weights_release"] = list(d["precision"]["weights_release"]) + ["INT4"]
     errs = []
     validate.check_excluded_variants(d, d["id"], errs)
     assert errs, "被排除的 dtype 混进 weights_release 必须报"
+    assert "weights_release" in errs[0], f"报的要是这一条，不是顺带撞上的别的：{errs}"
 
 
 @case("三·负例：有实测却填 in_precision_table: false —— 说反话也要挡")
@@ -460,8 +464,17 @@ def _():
     没实据又没填 false → 报。
     """
     d = copy.deepcopy(RECS["qwen3.5-27b"])
-    # 没有任何逐仓实测，而两档都老老实实填了 false —— 这是正当交代，不该报
     (d["precision"]["quantization"]).pop("official_variants", None)
+    # **先证明这条路径是活的。** 不先验一次「不交代就报」，这条用例会在前提消失那天
+    # 静默通过 —— 比如 qwen3.5-27b 哪天不再声明 FP8_E4M3 / INT4，那两档就不「缺席」，
+    # 闸口提前返回，下面那句 `assert not ...` 照样成立而什么都没测到。
+    # 这和「用例因数据变好而失效」是同一科：**空结果至少有三种成因，
+    # 判据不能只看有没有报错**。
+    for dt in ("FP8_E4M3", "INT4"):
+        d["precision"]["weights_release_scope"][dt] = {"manifest_taken": False}
+    assert release_errors(d), \
+        "前提已经不成立：这两档现在不缺席，这条用例测不到东西了，去修夹具"
+    # 前提成立，再验正事：没实据而填 false 是正当交代，不该报
     for dt in ("FP8_E4M3", "INT4"):
         d["precision"]["weights_release_scope"][dt] = {
             "manifest_taken": False, "in_precision_table": False,
