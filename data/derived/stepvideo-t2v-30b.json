@@ -1,7 +1,7 @@
 {
  "id": "stepvideo-t2v-30b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T17:33:24+00:00",
+ "generated_at": "2026-10-31T02:54:08+00:00",
  "inputs": {
   "facts_dir": "facts/stepvideo-t2v-30b",
   "config_present": false,
@@ -24,23 +24,32 @@
   "params_by_subsystem": {
    "norm": 1204224.0,
    "attention": 14495514624.0,
-   "other": 14770249792.0,
-   "text_encoder": 75509760.0
+   "dense_ffn": 14495514624.0,
+   "modulation": 267644928.0,
+   "text_encoder": 75509760.0,
+   "other": 6696960.0,
+   "io_proj": 393280.0
   },
   "params_total_container": 29342478400.0,
   "params_container_by_subsystem": {
    "norm": 1204224.0,
    "attention": 14495514624.0,
-   "other": 14770249792.0,
-   "text_encoder": 75509760.0
+   "dense_ffn": 14495514624.0,
+   "modulation": 267644928.0,
+   "text_encoder": 75509760.0,
+   "other": 6696960.0,
+   "io_proj": 393280.0
   },
   "scale_elements": 0.0,
   "weight_bytes_total": 58684956800.0,
   "weight_bytes_by_subsystem": {
    "norm": 2408448.0,
    "attention": 28991029248.0,
-   "other": 29540499584.0,
-   "text_encoder": 151019520.0
+   "dense_ffn": 28991029248.0,
+   "modulation": 535289856.0,
+   "text_encoder": 151019520.0,
+   "other": 13393920.0,
+   "io_proj": 786560.0
   },
   "params_by_component": {
    "backbone": 29266968640.0,

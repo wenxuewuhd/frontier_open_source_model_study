@@ -79,7 +79,28 @@ SUBSYSTEM = [
     ("attention", re.compile(
         r"attn|self_attention|query_key_value|\bwq|\bwk|\bwv|\bwo\b"
         r"|q_proj|k_proj|v_proj|o_proj|kv_[ab]|q_[ab]", re.I)),
-    ("dense_ffn", re.compile(r"mlp|ffn|gate_proj|up_proj|down_proj|w1|w2|w3", re.I)),
+    # (?:^|\.)ff\. 是 diffusers 的 FeedForward（transformer_blocks.N.ff.net.0.proj）。
+    # **a-t-t-n 不是 attention 的子串，f-f 也不是 ffn 的子串** —— 不认它的后果是
+    # 五份生成记录的整个 FFN 落进 other：ltx-2 6.44B、h3 11.56B、cogvideox 3.17B、
+    # stepvideo 14.50B、ltx-2.3 6.45B。要求前面是行首或点号，所以 `...diff.` 不会误中
+    ("dense_ffn", re.compile(r"mlp|ffn|gate_proj|up_proj|down_proj|w1|w2|w3"
+                             r"|(?:^|\.)ff\.", re.I)),
+    # ── 以下三条是生成类 DiT 的桶，**一律排在全部已有规则之后** ──
+    #
+    # 次序不是风格问题：这三条只许从 other 里捞，不许抢任何已有归类。
+    # 排在前面会立刻出事 —— `patch_embed` 会把视觉塔的 ViT patch embedding 从 vision
+    # 抢走（13 份语言模型记录受影响）、`scale_shift` 会把 LTX 音频支路的 103–175 个
+    # 张量从 audio 抢走、`timestep_embed` 会把 HunyuanVideo 时间步嵌入里的 4 个 mlp
+    # 从 dense_ffn 抢走。这几条都在全仓 57 份的张量名上验过（见提交信息）。
+    #
+    # 「音频支路的调制该归 modulation 还是 audio」是按功能分桶还是按流分桶的问题，
+    # 本仓的 param_scaling 轴已经把「流」单列，所以子系统按功能分才一致 ——
+    # 但那会改动 LTX 两份已成文的数字，留给 ltx 那条线自己核，不在这里单方面改。
+    ("modulation", re.compile(r"adaln|ada_ln|_mod\.linear|\bmodulation\b|scale_shift", re.I)),
+    ("time_embed", re.compile(r"timestep_embed|time_embed|time_projection"
+                              r"|\bt_embedder\b|c_embedder", re.I)),
+    ("io_proj", re.compile(r"patch_embed|\bproj_in\b|\bproj_out\b"
+                           r"|text_proj|caption_proj|unpatchify", re.I)),
 ]
 
 # 展示顺序与中文名存在 data/schema/subsystems.json，站点侧读同一个文件 ——

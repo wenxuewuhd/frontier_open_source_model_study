@@ -1,9 +1,9 @@
 {
  "id": "cogvideox-1.5-5b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T17:28:37+00:00",
+ "generated_at": "2026-10-31T02:54:07+00:00",
  "inputs": {
-  "facts_dir": "/Users/yuan/Work/frontier-llm-tracking/frontier_open_source_model_study/facts/cogvideox-1.5-5b",
+  "facts_dir": "facts/cogvideox-1.5-5b",
   "config_present": false,
   "shapes_present": true,
   "model_yaml": "data/models/cogvideo/cogvideox-1.5-5b.yaml",
@@ -23,21 +23,27 @@
   "params_total": 5570676352.0,
   "params_by_subsystem": {
    "norm": 797962752.0,
-   "other": 3186750592.0,
-   "attention": 1585963008.0
+   "io_proj": 13375616.0,
+   "dense_ffn": 3171538944.0,
+   "attention": 1585963008.0,
+   "time_embed": 1836032.0
   },
   "params_total_container": 5570676352.0,
   "params_container_by_subsystem": {
    "norm": 797962752.0,
-   "other": 3186750592.0,
-   "attention": 1585963008.0
+   "io_proj": 13375616.0,
+   "dense_ffn": 3171538944.0,
+   "attention": 1585963008.0,
+   "time_embed": 1836032.0
   },
   "scale_elements": 0.0,
   "weight_bytes_total": 11141352704.0,
   "weight_bytes_by_subsystem": {
    "norm": 1595925504.0,
-   "other": 6373501184.0,
-   "attention": 3171926016.0
+   "io_proj": 26751232.0,
+   "dense_ffn": 6343077888.0,
+   "attention": 3171926016.0,
+   "time_embed": 3672064.0
   },
   "weight_bytes_by_dtype": {
    "BF16": 11141352704.0

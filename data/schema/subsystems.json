@@ -1,5 +1,5 @@
 {
-  "$comment": "子系统的展示顺序与中文名。Python 侧由 scripts/lib/subsystems.py 读取，站点侧由 site/src/lib/data.ts 读取 —— 一份定义，两边不会漂移。顺序按对带宽账的分量从大到小，不是字母序。归类用的正则在 subsystems.py 里，那是行为不是展示，不放在这。",
+  "$comment": "子系统的展示顺序与中文名。modulation / io_proj / time_embed 三条是生成类 DiT 的桶：没有它们，AdaLN 调制、patch 投影、时间步嵌入全落进 other —— MiniMax-H3 的 adaln_proj 一项就是 13.01B（总量 33.12B 的 39.3%），而那正是「逐层放矩阵」这条判据量的来源，整块看不见。Python 侧由 scripts/lib/subsystems.py 读取，站点侧由 site/src/lib/data.ts 读取 —— 一份定义，两边不会漂移。顺序按对带宽账的分量从大到小，不是字母序。归类用的正则在 subsystems.py 里，那是行为不是展示，不放在这。",
   "subsystems": [
     { "key": "expert", "label": "路由专家" },
     { "key": "shared_expert", "label": "共享专家" },
@@ -8,10 +8,13 @@
     { "key": "indexer", "label": "稀疏索引器" },
     { "key": "retrieval", "label": "检索表" },
     { "key": "dense_ffn", "label": "稠密 FFN" },
+    { "key": "modulation", "label": "调制（AdaLN）" },
     { "key": "router", "label": "路由器" },
     { "key": "embed", "label": "输入词表" },
     { "key": "lm_head", "label": "输出头" },
     { "key": "norm", "label": "归一化" },
+    { "key": "io_proj", "label": "入口/出口投影" },
+    { "key": "time_embed", "label": "时间步嵌入" },
     { "key": "residual", "label": "残差系数" },
     { "key": "draft", "label": "草稿 / MTP" },
     { "key": "vision", "label": "视觉塔" },

@@ -1,7 +1,7 @@
 {
  "id": "wan2.2-ti2v-5b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T17:21:29+00:00",
+ "generated_at": "2026-10-31T02:54:08+00:00",
  "inputs": {
   "facts_dir": "facts/wan2.2-ti2v-5b",
   "config_present": true,
@@ -24,14 +24,20 @@
    "attention": 2265661440.0,
    "norm": 552960.0,
    "dense_ffn": 2642933760.0,
-   "other": 90639552.0
+   "modulation": 559104.0,
+   "io_proj": 592896.0,
+   "other": 22616256.0,
+   "time_embed": 66871296.0
   },
   "params_total_container": 4999787712.0,
   "params_container_by_subsystem": {
    "attention": 2265661440.0,
    "norm": 552960.0,
    "dense_ffn": 2642933760.0,
-   "other": 90639552.0
+   "modulation": 559104.0,
+   "io_proj": 592896.0,
+   "other": 22616256.0,
+   "time_embed": 66871296.0
   },
   "scale_elements": 0.0,
   "weight_bytes_total": 19999150848.0,
@@ -39,7 +45,10 @@
    "attention": 9062645760.0,
    "norm": 2211840.0,
    "dense_ffn": 10571735040.0,
-   "other": 362558208.0
+   "modulation": 2236416.0,
+   "io_proj": 2371584.0,
+   "other": 90465024.0,
+   "time_embed": 267485184.0
   },
   "weight_bytes_by_dtype": {
    "FP32": 19999150848.0

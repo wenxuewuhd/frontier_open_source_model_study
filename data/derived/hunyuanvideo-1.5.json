@@ -1,7 +1,7 @@
 {
  "id": "hunyuanvideo-1.5",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T17:21:30+00:00",
+ "generated_at": "2026-10-31T02:54:07+00:00",
  "inputs": {
   "facts_dir": "facts/hunyuanvideo-1.5",
   "config_present": true,
@@ -21,27 +21,33 @@
   "tensor_count": 1793,
   "params_total": 8326608160.0,
   "params_by_subsystem": {
-   "other": 2774911008.0,
+   "other": 18958368.0,
    "norm": 46976.0,
    "attention": 1846394880.0,
    "dense_ffn": 3701559296.0,
+   "modulation": 2744414208.0,
+   "time_embed": 11538432.0,
    "vision": 3696000.0
   },
   "params_total_container": 8326608160.0,
   "params_container_by_subsystem": {
-   "other": 2774911008.0,
+   "other": 18958368.0,
    "norm": 46976.0,
    "attention": 1846394880.0,
    "dense_ffn": 3701559296.0,
+   "modulation": 2744414208.0,
+   "time_embed": 11538432.0,
    "vision": 3696000.0
   },
   "scale_elements": 0.0,
   "weight_bytes_total": 33306432640.0,
   "weight_bytes_by_subsystem": {
-   "other": 11099644032.0,
+   "other": 75833472.0,
    "norm": 187904.0,
    "attention": 7385579520.0,
    "dense_ffn": 14806237184.0,
+   "modulation": 10977656832.0,
+   "time_embed": 46153728.0,
    "vision": 14784000.0
   },
   "weight_bytes_by_dtype": {
