@@ -100,8 +100,12 @@ params:
 
     分桶口径：self_attention 与 cross_attention 各含 q/k/v/o 四个
     [3072,3072] 投影加 bias，以及 norm_q / norm_k 两个 [3072] 的 QK-norm；
-    adaln_modulation 含逐层 modulation [1,6,3072]、time_embedding、
-    time_projection [18432,3072] 与 head.modulation。
+    adaln_modulation 含逐层 modulation [1,6,3072]、time_embedding 与
+    time_projection [18432,3072]；**`head.modulation` 归 unpatchify_head**
+    （原先这句写的是 adaln_modulation「与 head.modulation」，与数字相反：
+    67,424,256 正好是不含那 6,144 的和，而 unpatchify_head 596,160
+    = head.head 590,016 + head.modulation 6,144。数字一直是对的，是这句话错了，
+    同族 wan2.1-t2v-14b 的同一句本来就写对）。
 
 generation:
   backbone:
@@ -220,6 +224,53 @@ precision:
         代价直接可见：5.0B 参数占 18.63 GiB，若按 BF16 发布只要 9.31 GiB。
         参考实现给单卡档位的建议里有 `--convert_model_dtype`，
         即**官方预期你在载入时自己转精度**，发布格式不是部署格式
+  quantization:
+    per_subsystem:
+      attention: FP32
+      dense_ffn: FP32
+      modulation: FP32
+      norm: FP32
+      io_proj: FP32
+      time_embed: FP32
+      other: FP32
+    subsystem_method: >-
+      来自完整权重清单（3 分片 825 条目）逐项统计，**穷举、非抽样**：
+      每个条目都带 shape 与 dtype，from_shapes.complete 为 true、failed_shards 为空，
+      **825 条的 dtype 集合就是 {F32} 一个值**，scale_elements 为 0、
+      清单里没有任何 scale 叶名，config 的 12 个字段里没有 quantization_config。
+      所以七个桶全是 FP32 是全量结论，不是代表值；没有量化档，
+      per_subsystem_block 与 per_subsystem_scale 因此不是「未录」而是无可填。
+      字节侧独立复核每元素确实是 4 B：4,999,787,712 × 4 B = 19,999,150,848 B，
+      与三个分片的 HTTP 大小合计 19,999,234,384 B 差 83,536 B（= 三个 safetensors 头）。
+
+      **缺的十二个桶是结构性不适用，不是没查。** 825 条里没有一条落进
+      expert / shared_expert / router（稠密主干，没有路由）、
+      compressor / indexer（满 q/k/v/o 的 MHA，既无压缩支路也无稀疏索引）、
+      retrieval、draft、vision、audio，也没有 residual
+      （残差是直加，清单无系数张量、config 12 个字段里也没有残差系数键 ——
+      两路都查过，不是只按清单推的）。embed 与 lm_head 缺席的理由与别的不同：
+      生成类没有 token 词表，文本侧是外部 umT5-XXL，
+      `text_embedding.*` 投的是 T5 特征而不是词表，`head.head` 是 unpatchify
+      投影而不是词表输出头 —— 两者按现行词表都落进 other。
+
+      **三处分桶边界与 params.breakdown 不同，跨表取数要先对口径**：
+      ① attention 桶 2,265,661,440 **不含** QK-norm，而 breakdown 的
+      self_attention / cross_attention 各把 norm_q + norm_k 算了进去（各 +184,320），
+      两边差 368,640；breakdown 的 norm 184,320 只是 norm3，本表 norm 桶 552,960
+      是 norm3 加两套 QK-norm。
+      ② 调制在本表里是两桶：modulation 只有逐层表 [1,6,3072]×30 加 `head.modulation`
+      共 559,104（0.011%），而 time_embed 桶 66,871,296（1.337%）才是大头
+      —— 它是 time_embedding 10,229,760 + time_projection 56,641,536。
+      breakdown 的 adaln_modulation 67,424,256 = 这两桶之和减掉 `head.modulation`
+      6,144（那 6,144 在 breakdown 里归 unpatchify_head）。
+      所以记录里 adaLN 占 active_decode **1.348%** 这个数，84.01% 是
+      time_projection、15.17% 是 time_embedding、只有 0.82% 是逐层表：
+      **「放表」那一侧的成本在共享的表生成器上，不在 `blocks.N.modulation` 本身。**
+      ③ io_proj 桶只有 patch_embedding 两条 592,896。`text_embedding.*`
+      22,026,240 与 `head.head.*` 590,016 功能上也是入口/出口投影，但现行
+      io_proj 正则（patch_embed / proj_in / proj_out / text_proj / caption_proj
+      / unpatchify）认不出这两个名字，于是合 22,616,256 落进 other。
+      这是词表的缺口，已报给词表那边；本记录照现行词表照实填，不自行改归类
   inference_default: FP32
 
 bottlenecks:
@@ -290,6 +341,11 @@ evidence:
   generation.constraints: derived
   precision: official
   precision.weights_release_scope: derived
+  # 逐子系统精度是从权重头实测的，不是厂商声明 —— 落进 `precision: official`
+  # 的前缀继承就绕过 Gate C 的人工复核。逐条列，不用 precision.quantization 前缀：
+  # 那个前缀会把将来从 config 抄进来的 method 一起标成实测
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
   bottlenecks: judgement
   infra_signals: judgement
   notes: judgement
@@ -351,6 +407,60 @@ review:
     changed_to: >-
       保留，但在 sources 里标明档位、在 sampling.note 写明「模型卡两者都没写」。
       若后续出技术报告，这三项要按报告重核
+  - id: R4
+    field: precision.quantization.per_subsystem
+    severity: missing
+    claim: >-
+      这一格空着。本轮之前，全仓 48 份语言模型记录全部填了，
+      而 9 份生成类记录**一份都没有** —— 于是精度演进页上逐子系统那一片全是「未录」，
+      家族页上整块 0 行被 rowIsInformative 丢掉，读者连「没录」都看不到
+    finding: >-
+      **结论是「全 FP32」，不是「没查」，而且事实本来就在手上**：
+      `facts/wan2.2-ti2v-5b/shapes.json` 的每一条都带 dtype。
+      本会话用 `scripts/lib/subsystems.py` 的 `classify2()` 对 825 条**穷举**
+      （不是抽样）逐桶统计 dtype 与参数量，七个桶全是 F32 100.0%：
+      dense_ffn 2,642,933,760 / 120 条、attention 2,265,661,440 / 480 条、
+      time_embed 66,871,296 / 6 条、other 22,616,256 / 6 条、
+      io_proj 592,896 / 2 条、modulation 559,104 / 31 条、
+      norm 552,960 / 180 条 —— 七桶相加 4,999,787,712，等于 params.total。
+      `scale_elements` 为 0、清单里没有任何 scale 叶名、`from_shapes.complete`
+      为 true，config 的 12 个字段里没有 `quantization_config`。
+      字节侧还有一条独立因子钉住「每元素 4 B」：numel × 4 B = 19,999,150,848 B
+      与三个分片 HTTP 大小合计差 83,536 B（= 头）。
+      **判主体按参数量加权而不按张量条数**（README 记过挑中 `[64]` 小向量
+      把注意力精度报错的坑）；本代单一 dtype 碰不到，口径仍按参数量做。
+      这一份的 FFN 与注意力占比与同族 14B 两档**正好相反**（52.9% / 45.3%
+      对 39.6% / 58.7%），而精度结论相同 —— 分桶占比变了而 dtype 没变，
+      说明这一格记的是发布格式，不随 FFN 倍率走
+    resolution: corrected
+    changed_to: >-
+      新增 precision.quantization.per_subsystem（七桶全 FP32）与
+      subsystem_method（写明 3 分片 825 条穷举、dtype 集合单值、零 scale、
+      无 quantization_config，以及十二个缺桶各自为什么是结构性不适用）；
+      evidence 加两条，都是 derived
+  - id: R5
+    field: params.counting_note
+    severity: wrong
+    claim: >-
+      「adaln_modulation 含逐层 modulation [1,6,3072]、time_embedding、
+      time_projection [18432,3072] **与 head.modulation**」
+    finding: >-
+      **最后那一项与数字相反。** `head.modulation` 是 [1,2,3072] 共 6,144，
+      而 `adaln_modulation` 填的 67,424,256 恰好等于不含它的和
+      （time_embedding 10,229,760 + time_projection 56,641,536
+      + 30 层逐层表 552,960）。那 6,144 实际在 `unpatchify_head`
+      596,160 里（= `head.head` 590,016 + 6,144），两处相加才等于 params.total
+      4,999,787,712 —— 全部八项逐条核过，无一条落在两个桶里或一个都不落。
+      同族 `wan2.1-t2v-14b` 的同一句本来就写对（「`head.modulation` 归
+      unpatchify_head」），即这是本份独有的一处口径笔误，不是族内约定不同。
+      **数字一直是对的，错的是解释数字的那句话** ——
+      照它去重算的人会把 adaln 桶算多 6,144、unpatchify_head 算少 6,144
+    resolution: corrected
+    changed_to: >-
+      counting_note 改成「`head.modulation` 归 unpatchify_head」并把原句、
+      两个桶的实测值与为什么相加才等于 total 写在括号里。
+      新词表把这个桶拆成 modulation 与 time_embed 两桶时核出来的，
+      逐因子口径写进 precision.quantization.subsystem_method
 
 notes: >-
   **本仓第一份生成类记录，几个口径在这里定下。**

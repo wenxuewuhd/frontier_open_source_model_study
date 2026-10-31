@@ -287,6 +287,59 @@ precision:
         这与 wan（主干 F32）、stepvideo（主干 BF16 / VAE F32）
         构成三种不同的发布精度组合
   inference_default: BF16
+  quantization:
+    per_subsystem:
+      attention: BF16
+      dense_ffn: BF16
+      modulation: BF16
+      norm: BF16
+      io_proj: BF16
+      time_embed: BF16
+    subsystem_method: >-
+      **穷举，不是抽样**：对本记录 `shapes.json` 的全部 **1024 个条目**逐条跑
+      `lib/subsystems.py` 的 `classify2()`，每条都带 shape 与 dtype，
+      `fetched.json` 的 `failed_shards` 为空。
+      **1024 条全部 BF16，零例外**（作用域：本仓 2026-10-31 实测的这一个修订版）。
+      所以没有 `per_subsystem_scale`、没有 `per_subsystem_block`、没有
+      `method` —— 组件 config 里没有 `quantization_config`，清单里也没有任何
+      scale 张量或打包容器（derived 的 `scale_elements` 为 0、
+      `weight_dtype_containers` 为空）。
+
+      逐桶参数量（五桶相加 = 5,570,676,352，`other` 桶为 **0**）：
+      `dense_ffn` 3,171,538,944（168 条）、`attention` 1,585,963,008（336 条）、
+      `norm` 797,962,752（510 条）、`io_proj` 13,375,616（6 条）、
+      `time_embed` 1,836,032（4 条）。
+
+      **口径与 `params.total` 同一套：只含 DiT。** 同仓的 T5-XXL（219 条）与
+      VAE（436 条）全 F32，取数时 `include_globs` 是 `transformer/*`，
+      不在这份清单里 —— 见 `weights_release_scope.FP32.in_precision_table: false`。
+      所以这张表上**缺席的子系统读作「DiT 里没有」，不是「这个仓里没有」**：
+      `embed` 就是例子，DiT 没有词表，而 T5-XXL 有。
+
+      **`modulation` 这一行是手工补的，它不来自 `classify2()`。**
+      CogVideoX 的 AdaLN 叫 `norm1.linear` / `norm2.linear` / `norm_out.linear`，
+      `norm` 那条正则先命中（SUBSYSTEM 里 norm 排在 modulation 之前，而 modulation
+      认的是 `adaln` / `ada_ln` / `_mod.linear` / `modulation` / `scale_shift`，
+      一个都配不上），于是调制参数整块落在 `norm` 桶里、`modulation` 桶是空的。
+      **空的原因是命名，不是这个模型没有 AdaLN** —— bottlenecks 与 infra_signals
+      整整两段都在讲这一份的调制有多贵（14.35%）。不补这一行，缺值判据会把它
+      渲染成「不适用：这个子系统在这个模型里不存在」，而那句话是错的。
+      代价是两张表对不齐：derived 的 `params_by_subsystem` 只有五桶
+      （`norm` 含调制），这张精度表有六行。归类正则是共用基建，已报主会话。
+
+      `norm` 桶的 797,962,752 拆开是：**调制 797,423,616**
+      （42 套 `norm1.linear` + 42 套 `norm2.linear`，各 [18432, 512] 带 bias；
+      加 `norm_out.linear` [6144, 512] 带 bias）
+      **+ 真正的归一化 539,136**（42 层各两组 LayerNorm 的 weight/bias [3072]
+      共 516,096、42 层 QK-norm 的 [64] 共 10,752、`norm_final` 与
+      `norm_out.norm` 共 12,288）。
+      797,423,616 与 `params.breakdown.adaln_modulation` 799,259,648 差的
+      1,836,032 就是 `time_embedding` —— 它在这张表里单列为 `time_embed` 桶。
+
+      `io_proj` 的 13,375,616 横跨 `param_scaling` 的两个桶：
+      `patch_embed.text_proj` 12,585,984 是 `per_text_token`，
+      `patch_embed.proj` + `proj_out` 789,632 是 `per_video_token`。
+      **子系统轴与 param_scaling 轴不是同一刀**，两张表的格子不要互相代入
 
 bottlenecks:
   - dimension: compute
@@ -401,9 +454,14 @@ infra_signals:
       ltx-2 六个全局模块 298,424,320 + 顶层表 12,288 + 逐块表 3,244,032
       = 301,680,640，**完全相等**。
 
-      每层每份的单价对比最直观：wan2.1 的逐层表 6×5120 = **30,720**；
-      这一份的逐层矩阵 (6×3072)×512 = **9,437,184**，正好贵 **512 倍** —— 就是入口宽度。
-      hunyuanvideo-1.5 是 25,165,824，minimax-h3 是 260,112,384。
+      每层每份的单价对比最直观，**但倍数只在同一个 hidden 里成立**：
+      这一份若改放表是 6×3072 = **18,432**，实际放矩阵是 (6×3072)×512 =
+      **9,437,184**，正好贵 **512 倍 —— 就是入口宽度**。
+      跨模型比就不是这个数：wan2.1 的逐层表是 6×5120 = **30,720**，
+      而 9,437,184 / 30,720 = **307.2 倍**，因为两边 hidden 不同（3072 vs 5120），
+      512 被 3072/5120 冲掉了一截。见 R8。
+      hunyuanvideo-1.5 是 25,165,824（= 6×2048 × 2048）、
+      minimax-h3 是 260,112,384（= 18×5376 × 2688）。
       分母统一取 `params.active_decode`（每步真正跑的那部分）：
       wan2.2-t2v-a14b 只算一套专家 14,288,491,584，
       ltx-2.3 的 `params.total` 为空但 active_decode 是 18,988,838,144
@@ -439,6 +497,8 @@ evidence:
   generation.buckets: derived
   generation.constraints: derived
   precision: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
   bottlenecks: judgement
   infra_signals: judgement
   notes: derived
@@ -613,6 +673,44 @@ review:
       九份全部补齐，分母统一取 `params.active_decode` 并写明这个口径选择。
       infra_signals 改成按结构分组（逐层表 / 逐层矩阵）而不是按时间排，
       并给出六份的逐因子重建（三份逐位相等、三份主项 ≥99.38%）
+  - id: R8
+    field: infra_signals（调制单价那一段）
+    severity: wrong
+    claim: >-
+      「wan2.1 的逐层表 6×5120 = 30,720；这一份的逐层矩阵 (6×3072)×512 =
+      9,437,184，正好贵 512 倍 —— 就是入口宽度」
+    finding: >-
+      **9,437,184 不是 30,720 的 512 倍，是 307.2 倍。**
+      512 这个因子只在**同一个 hidden 里**成立：这一份若改放表是
+      6×3072 = 18,432，而 18,432 × 512 = 9,437,184。
+      句子却把它摆在 wan2.1 的 30,720 旁边，而 wan2.1 的 hidden 是 5120 不是 3072，
+      于是 512 × 3072/5120 = 307.2 才是两个数之间的真实比值。
+      **两个因子（入口宽度与 hidden）被压进了一个倍数里**，
+      正是 CLAUDE.md「不同口径之间不算倍数」与「一个乘式逐因子验」说的那回事 ——
+      而这一段的全部论点恰恰就是「倍数来自入口宽度」，
+      所以读者越相信这一段，越会把 307.2 读成 512。
+      结论（放矩阵比放表贵一个入口宽度）不受影响，错的是跨模型那一步的算术
+    resolution: corrected
+    changed_to: >-
+      改成先在同一个 hidden 里给出 18,432 → 9,437,184 的 512 倍，
+      再单独写出与 wan2.1 的 307.2 倍并说明差额来自 hidden 3072 vs 5120
+  - id: R9
+    field: open_questions（推导只消费了 text_tokens 一半那条）
+    severity: stale
+    claim: >-
+      「`buckets[].text_tokens` 已填 226，但推导只消费了它的一半 ——
+      `sequence_tokens` 与 `attention` 仍按 44,880 算，
+      `sequence_tokens_is_lower_bound` 仍为 true」
+    finding: >-
+      **共用代码已经改好，这条过期了。** 本轮重跑 `derive.py` 得到
+      `sequence_tokens: 45106`、`sequence_tokens_is_lower_bound: false`、
+      `flops_per_step.attention: 1.0500e15`，
+      与本记录当初手算的真值（45,106 与 1.0500e15）**逐位对上**。
+      原文预期的 1.0395e15 不再出现。
+      本记录自己没做任何改动，变化全在 `derive.py` 那一侧
+    resolution: corrected
+    changed_to: >-
+      删掉那条 open_question，事实留在本条里
 
 notes: >-
   **字节对账。** transformer 11,141,352,704 + text_encoder 19,049,242,624
@@ -633,8 +731,9 @@ notes: >-
 
   **卡上的「推理精度」不是发布格式。** 规格表写「BF16（推荐）、FP16、FP32、
   FP8、INT8，**不支持 INT4**」—— 那是**支持跑**的精度，不是仓里有的权重。
-  仓里只有 BF16 的 DiT 与 F32 的两个附属组件，没有任何量化权重，
-  所以本记录没有 `precision.quantization` 块。
+  仓里只有 BF16 的 DiT 与 F32 的两个附属组件，没有任何量化权重 ——
+  `precision.quantization` 下**只有逐子系统的实测 dtype 表**（六行全 BF16），
+  没有 `method`、没有块、没有 scale。
   「不支持 INT4」是卡上少见的否定式声明，值得记一笔：它说明厂商试过。
 
   **取数提醒。** 这个仓是视频线九份里最规整的：标准 diffusers 布局、
@@ -668,17 +767,28 @@ open_questions:
     训练精度无一手来源。发布权重 DiT 全 BF16、文本编码器与 VAE 全 F32 是实测，
     卡上「BF16（推荐）…不支持 INT4」说的是**支持的推理精度**，不是训练格式
   - >-
-    **`buckets[].text_tokens` 已填 226，但推导只消费了它的一半 ——
-    注意力那一侧仍是下界。** 这一份是 in-sequence，226 个文本 token
-    既进线性项也进注意力的平方项，而 `derive.gen_workload` 里
-    `seq = latent_tokens + audio_tokens` 不含文本：
-    线性项正确用上了 226（`linear_terms.factors.text_tokens` 可见），
-    `sequence_tokens` 与 `attention` 仍按 44,880 算。
-    手算真值：序列 44,880 + 226 = 45,106，注意力比推导给的高 **1.01%**
-    （1.0395e15 → 1.0500e15）；线性项那一侧差 5.7e9，可忽略。
-    同时 `sequence_tokens_is_lower_bound` 仍为 true、
-    提示语仍说「记录没给文本长度」—— **那句话现在是错的，记录给了。**
-    这是共享代码，本次只报不改（见共享笔记）
+    **`modulation` 桶在这一份上是空的，而这个模型 14.35% 的参数是 AdaLN。**
+    `lib/subsystems.py` 的归类正则里 `norm` 排在 `modulation` 之前，
+    CogVideoX 的调制矩阵又恰好叫 `norm1.linear` / `norm2.linear` /
+    `norm_out.linear`，于是 797,423,616 个参数整块落进 `norm` 桶。
+    本记录的 `per_subsystem` 手工补了 `modulation: BF16` 那一行，
+    否则缺值判据会把它渲染成「不适用：这个子系统在这个模型里不存在」。
+    **补这一行只挡住了错话，没有修好归类** —— derived 的
+    `params_by_subsystem` 仍是五桶，两张表的行数对不齐。
+    归类正则是共用基建，已报主会话
+  - >-
+    **derived 的 `gate_b` 说「仓里没有任何 config（顶层与组件目录都没有）」，
+    而组件目录下有四份 config，`facts/` 里就存着
+    （`cfg_components.json`：scheduler / text_encoder / transformer / vae）。**
+    `derive.py` 只读 `cfg.json`（顶层），这个仓是 diffusers 布局、顶层 config
+    不存在，于是 `cfg.json` 是 `{}`、`config_present` 判 false。
+    后果是模型页的交叉核对横幅会说只剩一路，
+    而本记录 `reviewed.method` 写的是「Gate B 三路」—— **同一页上两句话打架**，
+    且错的是带闸口背书的那一句。本记录**没有**因此下调 reviewed.method：
+    组件 config 确实读过（层数 42 / 头数 48 / head_dim 64 / patch 2 /
+    `time_embed_dim` 512 都与清单对过）。
+    全仓同形的还有 ltx-2、minimax-h3、stepvideo-t2v-30b、wan2.2-t2v-a14b 四份。
+    共用代码，本次只报不改
   - >-
     没有任何性能数据。卡上既没有耗时也没有显存，
     `performance[]` 因此是空的 —— 这与 stepvideo（卡上有两行实测）

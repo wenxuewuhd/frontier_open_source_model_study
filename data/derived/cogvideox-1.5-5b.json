@@ -1,7 +1,7 @@
 {
  "id": "cogvideox-1.5-5b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-31T02:54:07+00:00",
+ "generated_at": "2026-10-31T03:10:50+00:00",
  "inputs": {
   "facts_dir": "facts/cogvideox-1.5-5b",
   "config_present": false,

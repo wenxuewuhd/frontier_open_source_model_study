@@ -361,6 +361,74 @@ precision:
         即**发布精度与推理精度不是一个值**；而这一代新加了
         `--convert_model_dtype` 把参数真正转过去（前代只有 `amp.autocast`，
         改计算精度不改驻留形态）。卡给的单卡命令里这个开关是默认带的
+  quantization:
+    per_subsystem:
+      attention: FP32
+      dense_ffn: FP32
+      modulation: FP32
+      norm: FP32
+      io_proj: FP32
+      time_embed: FP32
+      other: FP32
+    subsystem_method: >-
+      来自完整权重清单逐项统计，**穷举、非抽样**。
+      口径先说清：`shapes.json` 只装得下**一套**专家的 1,095 条
+      （两套的张量名逐项相同，被记成跨分片重复，见 R2），所以逐桶统计跑在
+      这 1,095 条上，from_shapes.complete 为 true、failed_shards 为空，
+      **1,095 条的 dtype 集合就是 {F32} 一个值**，scale_elements 为 0、
+      清单里没有任何 scale 叶名，两份组件 config 各 12 个字段、都没有
+      quantization_config。所以七个桶全是 FP32 是全量结论，不是代表值；
+      没有量化档，per_subsystem_block 与 per_subsystem_scale
+      因此不是「未录」而是无可填。
+
+      **这个结论覆盖两套专家，有两条独立依据，不是从一套推另一套**：
+      ① `shard_map.json` 的 1,095 条 duplicates 每条恰好两个分片、
+      分属 `high_noise_model/` 与 `low_noise_model/` 两个组件目录，
+      即两套的张量名集合逐项相同（本轮实测复核过）——
+      所以第二套不可能带来第一套没有的子系统，穷举的作用域可以传递过去。
+      ② 字节侧把第二套的每元素宽度钉死：两套合计 28,576,983,168 × 4 B
+      = 114,307,932,672 B，与十二个分片的 HTTP 大小合计 114,308,154,752 B
+      差 222,080 B（= 12 个 safetensors 头）。若 low_noise 那一套是 BF16，
+      合计只会是 85.7 GB 量级 —— **差 28.6 GB，不可能被头开销吸收**。
+
+      **缺的十二个桶是结构性不适用，不是没查**，但 `expert` 这一桶的理由
+      与别处不同，**必须读这一段再看那个格子**：这一代的「A14B / MoE」说的是
+      **两套完整 DiT 按时间步二选一**，不是层内路由专家。两套各自带着自己的
+      40 层注意力 / FFN / 逐层调制 / time_embedding / time_projection /
+      patch_embedding / head，清单里**没有任何一条**张量名落进
+      `expert` / `shared_expert` / `router` 的归类
+      （换手判据是时间步与 boundary 的标量比较，在流水线代码里，没有学出来的
+      router 权重 —— 见 generation.expert_switching）。所以这三个桶在逐子系统
+      精度表上是空的；**「专家」在这一份里是一根复制轴，不是一个子系统**，
+      它作为轴记在 params.breakdown 的 expert_high_noise / expert_low_noise 两项上。
+      其余九个桶：compressor / indexer（满 q/k/v/o 的 MHA，既无压缩支路
+      也无稀疏索引）、retrieval、draft、vision、audio，以及 residual
+      （残差是直加，清单无系数张量、两份组件 config 里也没有残差系数键 ——
+      两路都查过）；embed 与 lm_head 则是生成类没有 token 词表，
+      文本侧是外部 umT5-XXL，`text_embedding.*` 投的是 T5 特征而不是词表，
+      `head.head` 是 unpatchify 投影而不是词表输出头 ——
+      两者按现行词表都落进 other。
+
+      **三处分桶边界与 params.breakdown 不同，跨表取数要先对口径**（数值都是
+      **单套**口径，与前代 wan2.1-t2v-14b 逐项相同）：
+      ① attention 桶 8,390,246,400 **不含** QK-norm，而前代 breakdown 的
+      self_attention / cross_attention 各把 norm_q + norm_k 算了进去（各 +409,600），
+      两边差 819,200；norm 桶 1,228,800 是 norm3 加两套 QK-norm。
+      ② 调制在本表里是两桶：modulation 只有逐层表 [1,6,5120]×40 加 `head.modulation`
+      共 1,239,040（单套的 0.009%），而 time_embed 桶 184,852,480（1.294%）才是大头
+      —— 它是 time_embedding 27,535,360 + time_projection 157,317,120。
+      adaln_modulation 186,081,280 = 这两桶之和减掉 `head.modulation` 10,240。
+      所以 adaLN 占 active_decode **1.302%** 这个数，84.54% 是 time_projection、
+      14.80% 是 time_embedding、只有 0.66% 是逐层表：
+      **「放表」那一侧的成本在共享的表生成器上，不在 `blocks.N.modulation` 本身。**
+      分母必须用 active_decode 14,288,491,584 而不是 total 28,576,983,168 ——
+      每步只跑一套，按 total 算会得到 0.65%，低一倍。
+      而这一块**也被复制了两份**：两套各有自己的共用表生成器。
+      ③ io_proj 桶只有 patch_embedding 两条 332,800。`text_embedding.*`
+      47,196,160 与 `head.head.*` 327,744 功能上也是入口/出口投影，但现行
+      io_proj 正则（patch_embed / proj_in / proj_out / text_proj / caption_proj
+      / unpatchify）认不出这两个名字，于是合 47,523,904 落进 other。
+      这是词表的缺口，已报给词表那边；本记录照现行词表照实填，不自行改归类
   inference_default: FP32
 
 bottlenecks:
@@ -466,6 +534,11 @@ evidence:
   generation.expert_switching: judgement
   precision: official
   precision.weights_release_scope: derived
+  # 逐子系统精度是从权重头实测的，不是厂商声明 —— 落进 `precision: official`
+  # 的前缀继承就绕过 Gate C 的人工复核。逐条列，不用 precision.quantization 前缀：
+  # 那个前缀会把将来从 config 抄进来的 method 一起标成实测
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
   bottlenecks: judgement
   infra_signals: derived
   notes: judgement
@@ -577,6 +650,52 @@ review:
       scale 留空，两个值写进 sampling.note 并说明留空是哪一种空。
       `forwards_per_step` 不受影响（仍是 2，两档都是真 CFG），
       所以端到端算力的推导不缺因子
+  - id: R5
+    field: precision.quantization.per_subsystem
+    severity: missing
+    claim: >-
+      这一格空着。本轮之前，全仓 48 份语言模型记录全部填了，
+      而 9 份生成类记录**一份都没有** —— 于是精度演进页上逐子系统那一片全是「未录」，
+      家族页上整块 0 行被 rowIsInformative 丢掉，读者连「没录」都看不到
+    finding: >-
+      **结论是「全 FP32」，不是「没查」，而且事实本来就在手上**：
+      `facts/wan2.2-t2v-a14b/shapes.json` 的每一条都带 dtype。
+      本会话用 `scripts/lib/subsystems.py` 的 `classify2()` 对清单里的 1,095 条
+      **穷举**（不是抽样）逐桶统计，七个桶全是 F32 100.0%，
+      逐桶数值与前代 wan2.1-t2v-14b 逐项相同：
+      attention 8,390,246,400 / 640 条、dense_ffn 5,663,068,160 / 160 条、
+      time_embed 184,852,480 / 6 条、other 47,523,904 / 6 条、
+      modulation 1,239,040 / 41 条、norm 1,228,800 / 240 条、
+      io_proj 332,800 / 2 条 —— 七桶相加 14,288,491,584，等于 params.active_decode。
+      `scale_elements` 为 0、无 scale 叶名、`from_shapes.complete` 为 true，
+      两份组件 config 各 12 个字段、都没有 `quantization_config`。
+
+      **这份的难点是 `shapes.json` 只装得下一套专家（见 R2），
+      所以「穷举」的作用域要单独论证**，两条独立依据：
+      ① `shard_map.json` 的 1,095 条 duplicates **每条恰好两个分片、
+      分属 `high_noise_model/` 与 `low_noise_model/`**（本轮实测复核），
+      即两套的张量名集合逐项相同 —— 第二套不可能藏着第一套没有的子系统，
+      于是「缺的桶就是不存在」这个结论可以传递过去。
+      ② 字节侧钉死第二套的每元素宽度：两套合计 28,576,983,168 × 4 B
+      = 114,307,932,672 B，与十二个分片 HTTP 大小合计 114,308,154,752 B
+      差 222,080 B（= 12 个头）。若 low_noise 那套是 BF16，合计只会是 85.7 GB
+      量级，**差 28.6 GB，头开销吸收不了**。
+      这两条合起来才让 R2 那处 2× 口径差不污染精度结论。
+
+      **`expert` 桶判「不适用」需要一句解释，否则会读成矛盾**：这一代的
+      「A14B / MoE」是两套完整 DiT 按时间步二选一，不是层内路由专家，
+      清单里没有一条张量落进 `expert` / `shared_expert` / `router`
+      （换手是时间步与 boundary 的标量比较，没有学出来的 router 权重）。
+      `derive.py` 的交叉核对也独立地印证了这一点：它那条「路由专家数」判的是
+      `ok  dense 模型，无 MoE`。**「专家」在这一份里是一根复制轴，
+      不是一个子系统**，它作为轴记在 params.breakdown 的两项上
+    resolution: corrected
+    changed_to: >-
+      新增 precision.quantization.per_subsystem（七桶全 FP32）与
+      subsystem_method（写明穷举口径、两条让结论覆盖两套专家的独立依据、
+      以及十二个缺桶各自为什么是结构性不适用，其中 `expert` 单独一段）；
+      evidence 加两条，都是 derived。
+      R2 那处 MISMATCH 不受影响，仍是 deferred
 
 notes: >-
   **本仓第一份时间步路由的记录。** 它和 token 级路由共用「MoE」这个词，

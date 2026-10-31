@@ -269,6 +269,53 @@ precision:
         `amp.autocast(dtype=param_dtype)` 下跑，autocast 改的是计算精度，
         不改参数的落盘与驻留形态，所以 53.23 GiB 是躲不掉的。
         后一代 Wan2.2 才加了 `--convert_model_dtype`
+  quantization:
+    per_subsystem:
+      attention: FP32
+      dense_ffn: FP32
+      modulation: FP32
+      norm: FP32
+      io_proj: FP32
+      time_embed: FP32
+      other: FP32
+    subsystem_method: >-
+      来自完整权重清单（6 分片 1,095 条目）逐项统计，**穷举、非抽样**：
+      每个条目都带 shape 与 dtype，from_shapes.complete 为 true、failed_shards 为空，
+      **1,095 条的 dtype 集合就是 {F32} 一个值**，scale_elements 为 0、
+      清单里没有任何 scale 叶名，config 的 12 个字段里没有 quantization_config。
+      所以七个桶全是 FP32 是全量结论，不是代表值；没有量化档，
+      per_subsystem_block 与 per_subsystem_scale 因此不是「未录」而是无可填。
+      字节侧独立复核每元素确实是 4 B：14,288,491,584 × 4 B = 57,153,966,336 B，
+      与六个分片的 HTTP 大小合计 57,154,077,392 B 差 111,056 B（= 六个 safetensors 头）。
+
+      **缺的十二个桶是结构性不适用，不是没查。** 1,095 条里没有一条落进
+      expert / shared_expert / router（稠密主干，没有路由）、
+      compressor / indexer（满 q/k/v/o 的 MHA，既无压缩支路也无稀疏索引）、
+      retrieval、draft、vision、audio，也没有 residual
+      （残差是直加，清单无系数张量、config 12 个字段里也没有残差系数键 ——
+      两路都查过，不是只按清单推的）。embed 与 lm_head 缺席的理由与别的不同：
+      生成类没有 token 词表，文本侧是外部 umT5-XXL，
+      `text_embedding.*` 投的是 T5 特征而不是词表，`head.head` 是 unpatchify
+      投影而不是词表输出头 —— 两者按现行词表都落进 other。
+
+      **三处分桶边界与 params.breakdown 不同，跨表取数要先对口径**：
+      ① attention 桶 8,390,246,400 **不含** QK-norm，而 breakdown 的
+      self_attention / cross_attention 各把 norm_q + norm_k 算了进去（各 +409,600），
+      两边差 819,200；breakdown 的 norm 409,600 只是 norm3，本表 norm 桶 1,228,800
+      是 norm3 加两套 QK-norm。
+      ② 调制在本表里是两桶：modulation 只有逐层表 [1,6,5120]×40 加 `head.modulation`
+      共 1,239,040（0.009%），而 time_embed 桶 184,852,480（1.294%）才是大头
+      —— 它是 time_embedding 27,535,360 + time_projection 157,317,120。
+      breakdown 的 adaln_modulation 186,081,280 = 这两桶之和减掉 `head.modulation`
+      10,240（那 10,240 在 breakdown 里归 unpatchify_head）。
+      所以记录里 adaLN 占 active_decode **1.302%** 这个数，84.54% 是
+      time_projection、14.80% 是 time_embedding、只有 0.66% 是逐层表：
+      **「放表」那一侧的成本在共享的表生成器上，不在 `blocks.N.modulation` 本身。**
+      ③ io_proj 桶只有 patch_embedding 两条 332,800。`text_embedding.*`
+      47,196,160 与 `head.head.*` 327,744 功能上也是入口/出口投影，但现行
+      io_proj 正则（patch_embed / proj_in / proj_out / text_proj / caption_proj
+      / unpatchify）认不出这两个名字，于是合 47,523,904 落进 other。
+      这是词表的缺口，已报给词表那边；本记录照现行词表照实填，不自行改归类
   inference_default: FP32
 
 bottlenecks:
@@ -345,6 +392,11 @@ evidence:
   generation.constraints: derived
   precision: official
   precision.weights_release_scope: derived
+  # 逐子系统精度是从权重头实测的，不是厂商声明 —— 落进 `precision: official`
+  # 的前缀继承就绕过 Gate C 的人工复核。逐条列，不用 precision.quantization 前缀：
+  # 那个前缀会把将来从 config 抄进来的 method 一起标成实测
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
   bottlenecks: judgement
   infra_signals: derived
   notes: judgement
@@ -362,8 +414,13 @@ reviewed:
     [5120,16,1,2,2] 与 `head.head.weight` [64,5120] 里实测到。
     外部对账：HF 自己的 safetensors tally 14,288,491,584 与本仓实测**逐位相同**。
     字节对账：实测 numel × 4 B 与六个分片的 HTTP Content-Length 差 111,056 B（= 头）。
-    卡上那句「adaLN 的 MLP 全层共用、逐层只学偏置」用参数量复核过
-    （157,317,120 + 40×30,720 = adaln 桶的全部）。
+    卡上那句「adaLN 的 MLP 全层共用、逐层只学偏置」用参数量复核过：
+    time_projection 157,317,120 + 逐层表 40×30,720 + time_embedding 27,535,360
+    = adaln 桶的全部 186,081,280。
+    （**原先这里写的是「157,317,120 + 40×30,720 = adaln 桶的全部」，漏了
+    time_embedding** —— 那两项合计 158,545,920，只占 adaln 桶的 85.2%。
+    新词表把这个桶拆成 modulation 与 time_embed 两桶时核出来的，
+    逐桶口径见 precision.quantization.subsystem_method。）
     Gate C：判断类字段逐条在 evidence 里标了 judgement 或 derived。
 
 review:
@@ -410,6 +467,61 @@ review:
     changed_to: >-
       generation.vae 整块标 derived；在 note 里逐项写清哪个数有几路佐证。
       空间压缩 8 只有一路，留一条 open question
+  - id: R4
+    field: precision.quantization.per_subsystem
+    severity: missing
+    claim: >-
+      这一格空着。本轮之前，全仓 48 份语言模型记录全部填了，
+      而 9 份生成类记录**一份都没有** —— 于是精度演进页上逐子系统那一片全是「未录」，
+      家族页上整块 0 行被 rowIsInformative 丢掉，读者连「没录」都看不到
+    finding: >-
+      **结论是「全 FP32」，不是「没查」，而且事实本来就在手上**：
+      `facts/wan2.1-t2v-14b/shapes.json` 的每一条都带 dtype。
+      本会话用 `scripts/lib/subsystems.py` 的 `classify2()` 对 1,095 条**穷举**
+      （不是抽样）逐桶统计 dtype 与参数量，七个桶全是 F32 100.0%：
+      attention 8,390,246,400 / 640 条、dense_ffn 5,663,068,160 / 160 条、
+      time_embed 184,852,480 / 6 条、other 47,523,904 / 6 条、
+      modulation 1,239,040 / 41 条、norm 1,228,800 / 240 条、
+      io_proj 332,800 / 2 条 —— 七桶相加 14,288,491,584，等于 params.total。
+      `scale_elements` 为 0、清单里没有任何 scale 叶名、`from_shapes.complete`
+      为 true，config 的 12 个字段里没有 `quantization_config`。
+      字节侧还有一条独立因子钉住「每元素 4 B」：numel × 4 B = 57,153,966,336 B
+      与六个分片 HTTP 大小合计差 111,056 B（= 头）。
+      **判主体按参数量加权而不按张量条数**（README 记过挑中 `[64]` 小向量
+      把注意力精度报错的坑）；本代单一 dtype 碰不到，口径仍按参数量做。
+      填这一格的理由不是凑字段：空着渲染成「未录」，而「这一代全 F32 发布」
+      对 infra 是**本记录 bottlenecks 第一条的前提**
+    resolution: corrected
+    changed_to: >-
+      新增 precision.quantization.per_subsystem（七桶全 FP32）与
+      subsystem_method（写明 6 分片 1,095 条穷举、dtype 集合单值、零 scale、
+      无 quantization_config，以及十二个缺桶各自为什么是结构性不适用）；
+      evidence 加两条，都是 derived。
+      格式照 qwen3.8-27b（同样单一 dtype），桶名换成生成类的三个新桶
+  - id: R5
+    field: reviewed.method
+    severity: wrong
+    claim: >-
+      「卡上那句『adaLN 的 MLP 全层共用、逐层只学偏置』用参数量复核过
+      （157,317,120 + 40×30,720 = adaln 桶的全部）」
+    finding: >-
+      **那个等式缺一项。** 157,317,120（`time_projection.1`）+ 1,228,800
+      （40 层逐层表）= 158,545,920，而 `params.breakdown.adaln_modulation`
+      是 186,081,280 —— 只占 85.2%，漏掉的 27,535,360 是 `time_embedding.{0,2}`
+      四条（[5120,256] / [5120,5120] 加两个 bias）。
+      口径本身没错、数字也没错：counting_note 里一直写着这个桶含 time_embedding，
+      同一份记录 generation.backbone.note 里那句「占 adaln 桶的 84.5%」
+      也正确地暗示了桶比 157,317,120 大。**只有 reviewed.method 这一句把
+      「复核过两项」写成了「= 全部」** —— 即它声称的复核覆盖面比实际做过的大。
+      是新子系统词表把这个桶拆成 modulation（1,239,040）与 time_embed
+      （184,852,480）两桶时核出来的
+    resolution: corrected
+    changed_to: >-
+      等式补上 time_embedding 27,535,360 并写出桶总量 186,081,280，
+      同时把原句与 85.2% 留在括号里，免得以后又有人用那两项去凑总量。
+      逐因子口径写进 precision.quantization.subsystem_method：
+      这 1.302% 里 84.54% 是 time_projection、14.80% 是 time_embedding、
+      只有 0.66% 是逐层表
 
 notes: >-
   **这份是 wan 线的差分基线**，录它的价值在对侧：Wan2.2 相对它改了什么，
