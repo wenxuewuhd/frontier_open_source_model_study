@@ -606,61 +606,53 @@ precision:
       modulation: MIXED
       norm: BF16
       io_proj: BF16
-      audio: MIXED
-      other: BF16
+      time_embed: BF16
     subsystem_method: >-
       来自完整权重清单（单文件整包 5,947 条目）**逐项穷举、非抽样**：
       每个条目都带 shape 与 dtype，5,657 条 BF16 + 290 条 F32，
       两者相加等于条目数，没有第三种 dtype、没有 scale 容器、没有打包容器。
 
-      **290 条 F32 全是 `*scale_shift_table` 调制表**（4,730,880 参数，0.02%），
-      两个桶各 145 条：modulation（`scale_shift_table` 48 +
-      `scale_shift_table_a2v_ca_video` 48 + `prompt_scale_shift_table` 48 + 顶层 1
-      = 3,153,920）与 audio（`audio_scale_shift_table` 48 +
-      `scale_shift_table_a2v_ca_audio` 48 + `audio_prompt_scale_shift_table` 48
-      + 顶层 1 = 1,576,960）。**前代有 48 条落在 attention 桶里，本代一条都没有** ——
-      前代那 48 条叫 `video_a2v_cross_attn_scale_shift_table`、名字里有 `attn`，
-      本代改名成 `scale_shift_table_a2v_ca_video` 就不再被 attention 的正则捞走。
-      所以本代 attention 桶 960 条逐条 BF16，是干净的 BF16。
+      **只有 modulation 一桶是混的，其余五桶整格单一 dtype（全 BF16）。**
+      modulation 里 8 个全局 AdaLN 模块的输出投影共 335,642,624（16 条 BF16），
+      290 张 `*scale_shift_table` 共 4,730,880（**全部 F32**，占整包的 0.02%）。
+      前代是 194 张 / 3,256,320 —— 涨的是本代新增的 prompt 调制表
+      与 6 行扩成 9 行那部分，不是精度策略变了。
 
-      **modulation 与 audio 两桶报 MIXED 是实话，不是「多数值 + 异类」**：
-      modulation 里 8 个 `*adaln_single` 模块的投影共 348,755,968 是 BF16、
-      97 张调制表 3,153,920 是 F32；audio 那一桶按「流」分，
-      音频支路自己的 BF16 权重 5,733,468,288 与自己的 145 张 F32 调制表
-      1,576,960 都归它。两桶都确实同时装着两种精度的、属于自己的权重。
+      **六个桶与本记录手写的 `params.breakdown` 逐位对上**，这是这组值最硬的支点
+      —— 两套分桶是独立做的（一套由 `classify2()` 按张量名归类，
+      一套是逐块数出来的功能分解），它们相等说明归类没有串桶：
+      attention 10,500,547,584 = 六套注意力之和 10,502,120,448 − QK-norm 1,572,864；
+      dense_ffn 8,054,538,240 = video_ffn 6,443,433,984 + audio_ffn 1,611,104,256
+      （**与前代逐位相同**）；
+      modulation 340,373,504 + time_embed 90,226,688 = 430,600,192 = adaln_modulation；
+      io_proj 1,579,264 = patchify_and_proj_out（这一代没有 caption 投影，
+      文本侧改走 `text_embedding_projection` 组件）；
+      norm 1,572,864 = 六套注意力里的 QK-norm（它们在 breakdown 里算进各自的注意力）。
 
-      **audio 这一桶装的是整条音频支路**：audio_ffn 1,611,104,256
-      （192 条 `audio_ff.net.*`）、a2v 交叉注意力 1,214,744,064、
-      v2a 交叉注意力 1,211,500,032、音频自注意力 808,846,848、
-      音频交叉注意力 808,846,848、AdaLN 与时间步嵌入 77,113,344、
-      调制表 1,576,960、norm 786,432、
-      `audio_patchify_proj` 与 `audio_proj_out` 526,464。
-      所以 **`dense_ffn` 那一行的 6,443,433,984 只是视频支路的 FFN**，
-      整模型的 FFN 是 8,054,538,240（与前代逐位相同）；
-      `attention` 那一行同样只有视频两套。按功能的分桶在 params.breakdown 里。
+      **分桶按功能、不按流**：音频支路与视频支路的同类算子合在一桶，
+      所以 `attention` 含六套注意力、`dense_ffn` 含两条支路的 FFN。
+      音视频的分流看 `param_scaling`，不看子系统。
+      **`audio` 这一桶判「不适用」是对的** —— 它的定义是音频**理解**编码器
+      （见 `data/schema/components.json` 的 `audio_vae` 条），
+      而本模型的音频张量住在和视频支路完全同一组 `transformer_blocks.0–47` 里、
+      是块内并行支路不是一座塔，已按功能分进上面六桶。
 
-      **`time_embed` 一桶没列，而这不代表这个模型没有时间步嵌入。**
-      本代把时间步嵌入全部嵌在 8 个 `*adaln_single` 模块下
-      （`*.emb.timestep_embedder.linear_{1,2}.{weight,bias}`，32 条 90,226,688 参数、
-      按桶归进 modulation 与 audio），归类正则的 `modulation` 条排在 `time_embed`
-      条之前，所以 time_embed 这个桶是空的。**前代同一个模块叫 `time_embed`**，
-      于是前代那一行有 118,521,856（其中 100,687,872 是 AdaLN 输出投影）。
-      **两代的 modulation / time_embed 两行是命名造成的，不能读成架构变化**；
-      可比的是 params.breakdown 的 adaln_modulation（301,680,640 → 430,600,192）。
+      **modulation 与 time_embed 的二分口径**：8 个 AdaLN 模块各含两件东西，
+      `.emb.timestep_embedder.*`（正弦→MLP 的时间步嵌入）归 time_embed、
+      `.linear.*`（调制投影）归 modulation。所以 time_embed 的 32 条 = 8 × 4，
+      modulation 的 16 条 BF16 = 8 × 2。前代是 6 个模块，
+      两代**口径相同、可以横着读**：modulation 234,010,624 → 340,373,504、
+      time_embed 67,670,016 → 90,226,688，合计 301,680,640 → 430,600,192（+42.7%），
+      增量来自新增的 `prompt_adaln_single` 与 `audio_prompt_adaln_single`。
 
-      **`other` 这一桶只有 2 条、528,384 参数**：`patchify_proj.weight`
-      [4096, 128] 与它的 bias，即视频侧的入口 patch 投影。
-      它该在 io_proj 里 —— io_proj 的正则认 `patch_embed` 而本代写成
-      `patchify_proj`（前代写成 `proj_in`，所以前代没有 other 桶）。
-      已上报，本记录不改共享文件。
-
-      未列出的 11 个桶（expert / shared_expert / compressor / indexer / retrieval /
-      router / embed / lm_head / residual / draft / vision）在这份清单里
-      **一条张量都没有**，是穷举后的「不适用」：DiT 稠密无 MoE 与路由、
+      未列出的 13 个桶（expert / shared_expert / compressor / indexer / retrieval /
+      router / embed / lm_head / residual / draft / vision / audio / other）
+      在这份清单里**一条张量都没有**，是穷举后的「不适用」：DiT 稠密无 MoE 与路由、
       无 KV 压缩与稀疏索引、文本从 cross-attn 进来所以无输入词表与输出头、
-      无残差系数张量、无 MTP、无视觉塔。
+      无残差系数张量、无 MTP、无视觉塔、无音频理解编码器；
+      other 为 0 表示每一条张量都归到了类。
 
-      **逐子系统的桶只拆 DiT 一个组件**（SPLIT_INSIDE 只含 backbone / dit /
+      **逐子系统的桶只拆 DiT 一个组件**（`SPLIT_INSIDE` 只含 backbone / dit /
       refiner），所以另外五个组件不在上面任何一行里；它们**逐条都是 BF16**：
       连接器 258 条 2,016,166,400、文本嵌入投影 4 条 1,156,061,184、
       视觉 VAE 170 条 726,106,225、声码器 1,227 条 129,085,032、
@@ -934,15 +926,21 @@ review:
       与两个门控模块，不是那两行上看到的 ×296 与 −100%。
       **而 time_embed 桶空掉会让页面把那一格判成「这个子系统在这个模型里不存在」**，
       本代有 32 条时间步嵌入张量、90,226,688 参数，那句话是错的
-    resolution: open
+    resolution: corrected
     changed_to: >-
-      per_subsystem 按归类实际结果填（time_embed 不列，因为桶确实是空的，
-      硬填一个 dtype 会和 derived 的 params_by_subsystem 对不上），
-      两行不可跨代比与「时间步嵌入其实存在、嵌在 adaln_single 下」
-      两件事写进 subsystem_method —— 它渲染在同一行的「依据」列上，
-      紧挨着那句错话。**规整的修法在共用基建侧**（把 time_embed 提到 modulation
-      之前，或给 `$subsystem` 的 not_applicable 换一句不说「不存在」的话），
-      已上报，本记录不改共享文件
+      **在共用基建侧修掉了**（上游 `242e724`）：`time_embed` 条提到 `modulation`
+      条之前，于是 8 个 `*adaln_single` 模块的 `.emb.timestep_embedder.*`
+      不再被 `adaln` 先领走，本代的 time_embed 桶从空变成
+      **90,226,688（32 条 = 8 模块 × 4）**，前代同口径是 67,670,016（6 × 4）。
+      同一次改动把音频支路按功能分散进六个桶、把 48 张调制表从 `attention` 收回
+      `modulation`，所以 modulation 两代变成 234,010,624 → 340,373,504。
+      **两行现在口径相同、可以横着读了**，而且 modulation + time_embed
+      在两代上都逐位等于 `breakdown.adaln_modulation`（301,680,640 / 430,600,192）
+      —— 这不是重新划线，是把记录自己已经在跟踪的那个量做了干净二分。
+      期间**没有**在 per_subsystem 里手工补 `time_embed` 行去遮那句错话：
+      桶空时补行会和 derived 的 `params_by_subsystem` 对不上，页面上是
+      「有精度、无参数」的格子，而没有任何闸口查这个对账。
+      这条规矩已写进 CLAUDE.md 的「改数据」一节
 
 notes: >-
   **这个仓为什么必须用 `--include`，以及拦住它的是哪道防线。**
@@ -969,33 +967,6 @@ notes: >-
   两代的名字用了两套规则。
 
 open_questions:
-  - >-
-    **逐子系统分桶在这一族是按「流」而不是按「功能」分的，而本仓两种口径只能选一种。**
-    `audio` 这一桶收的是整条音频支路（5,735,045,248：注意力 4.04B、FFN 1.61B、
-    AdaLN 与时间步嵌入 0.08B、norm、调制表、入口出口投影），于是 `dense_ffn`
-    那一行只剩视频侧的 6,443,433,984，而整模型的 FFN 是 8,054,538,240 ——
-    一个按「对带宽账的分量」排序的表，它的头号桶少了 1,611,104,256，
-    即真值的 20.0%（反过来说真值高 25%）。
-    本仓的 `param_scaling` 轴已经把「流」单列（per_sample / per_video_token /
-    per_text_token），而 components.json 给 audio_vae 写的注里把 `audio`
-    子系统定义成「音频理解编码器」—— 本代的音频张量不是编码器，
-    它们住在和视频支路**完全同一组** `transformer_blocks.0–47`（两边层号集合逐个相同，
-    实测），是块内的并行支路而不是一座塔。按这两条判，子系统该按功能分。
-    但改次序要同时改三条正则（`audio` 不许吃生成侧的流、`dense_ffn` 的
-    `(?:^|\.)ff\.` 配不上 `audio_ff.`、`io_proj` 的 `patch_embed` 配不上
-    `patchify_proj` —— 后一条已经让本代的 `patchify_proj` 落在 other 里）
-    并把 `modulation` 提到 `attention` 之前、`time_embed` 提到 `modulation` 之前，
-    那是共用基建、要连全仓 57 份一起回归。**已上报，本记录不改共享文件**；
-    在改之前，本记录里按功能的那一份口径在 params.breakdown，
-    逐子系统的那一份口径写在 precision.quantization.subsystem_method。
-
-    **同一个根因还有第二个面**（R6）：`precision.quantization.per_subsystem`
-    里 modulation 与 time_embed 两行的代际变化全是改名造成的 ——
-    前代的 `time_embed` 模块本代叫 `adaln_single`，而 `modulation` 条排在
-    `time_embed` 条之前，于是 time_embed 桶空掉、页面把那一格判成
-    「这个子系统在这个模型里不存在」，而本代实有 32 条时间步嵌入张量、
-    90,226,688 参数。`per_subsystem` 按归类实际结果填，两件事都写在
-    subsystem_method 里，但那句错话要靠共用基建侧修
   - >-
     蒸馏档每步到底跑几次前向，只验到了一半。CFG=1 让参考实现的 uncond
     那一路消失（`do_unconditional_generation()` 判据不成立），
