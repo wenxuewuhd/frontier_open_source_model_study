@@ -59,6 +59,16 @@ SUBSYSTEM = [
     ("residual", re.compile(
         r"\bhc_[a-z]+_(base|fn|scale)\b|^hc_|residual|_res_proj\b|hyper_connection(?!.*norm)",
         re.I)),
+    # **modulation 在这张表里出现两次，这不是笔误。**
+    # CogVideoX 把 AdaLN 调制实现成 `transformer_blocks.N.norm1.linear` ——
+    # 名字里带 norm，所以会被下面那条 norm 规则领走。后果不是「少一个桶」：
+    # 794,271,744 个参数（总量的 14.26%）被标成「归一化」，而**这一份记录的全部意义
+    # 就是它是「逐层放矩阵」那组的代表**，页面上却会说它没有调制子系统。
+    # 所以这一条必须排在 norm 之前，而尾部那条 modulation 不能上移 ——
+    # 上移会从 attention 与 audio 抢走 LTX 的 54 与 103–175 个张量（实测过）。
+    # 全仓只有 cogvideox-1.5-5b 有 normN.linear 这种写法，168 条，
+    # 抢占仅此一处、非生成类受影响为 0。
+    ("modulation", re.compile(r"\bnorm\d*\.linear\b", re.I)),
     # norm 必须排在 attention / dense_ffn 之前：attn_norm、ffn_norm、kv_norm、q_norm
     # 名字里带 attn / ffn / kv / q，按那两条先匹配会把归一化算成注意力或 FFN 权重。
     # 带 norm 的就是归一化，没有例外，所以提前判定是安全的
@@ -99,8 +109,16 @@ SUBSYSTEM = [
     ("modulation", re.compile(r"adaln|ada_ln|_mod\.linear|\bmodulation\b|scale_shift", re.I)),
     ("time_embed", re.compile(r"timestep_embed|time_embed|time_projection"
                               r"|\bt_embedder\b|c_embedder", re.I)),
-    ("io_proj", re.compile(r"patch_embed|\bproj_in\b|\bproj_out\b"
-                           r"|text_proj|caption_proj|unpatchify", re.I)),
+    # `\bpos_embed\b` 的词界不是风格，是判据：裸 `pos_embed` 会把 ltx-2.5 的
+    # `keyframes_abs_pos_embedding` 捞进来，而那是一张绝对位置嵌入表、不是入口投影。
+    # 三个追加词条各自堵的洞：stepvideo 的入口叫 `pos_embed` 而不是 `patch_embed`
+    # （于是「入口/出口投影」桶只剩出口，少掉的一半在叫「其它」的桶里）、
+    # stepvideo 的 `clip_projection` 与已有的 text_proj / caption_proj 同类、
+    # h3 的 `context_embedder` 是它整个 other 桶（27,530,496）。
+    # 三条都只从 other 里捞：io_proj 已是本表最后一条，后面只有 return "other"。
+    ("io_proj", re.compile(r"patch_embed|\bpos_embed\b|\bproj_in\b|\bproj_out\b"
+                           r"|text_proj|caption_proj|clip_proj|\bcontext_embedder\b"
+                           r"|unpatchify", re.I)),
 ]
 
 # 展示顺序与中文名存在 data/schema/subsystems.json，站点侧读同一个文件 ——

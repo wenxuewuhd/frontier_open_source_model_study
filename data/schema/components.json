@@ -22,8 +22,8 @@
     {
       "key": "text_encoder",
       "label": "文本编码器",
-      "prefixes": ["text_encoder.", "text_encoder_2.", "prompt_enhancer.", "text_embedding_projection.", "connectors.", "caption_"],
-      "note": "必须和 DiT 分开。MiniMax-H3 的文本编码器是 33B 的 Qwen3-VL-32B，混进 DiT 的参数量会让主干凭空翻倍"
+      "prefixes": ["text_encoder.", "text_encoder_2.", "prompt_enhancer.", "text_embedding_projection.", "connectors."],
+      "note": "必须和 DiT 分开。MiniMax-H3 的文本编码器是 33B 的 Qwen3-VL-32B，混进 DiT 的参数量会让主干凭空翻倍。**`caption_` 曾在这张前缀表里，已去掉**：顶层 `caption_projection.*` 是 DiT 内部把外部文本编码器的嵌入投进主干的那两层，不是编码器本体。判据不靠论证 —— facts/ltx-2 与 facts/ltx-2-pack 是同一个 repo 同一个 revision（Lightricks/LTX-2 @ 64f65d09e0b7）的两种布局，而同一批 caption_projection 张量在前者归 text_encoder、在后者因为带 model.diffusion_model. 前缀而归 dit/io_proj：取数布局的差别不该改变一个张量是什么。去掉之后它们落 backbone 并由 io_proj 的 caption_proj 词条接住，两种布局结果一致。后果最难看的是 stepvideo：真正的文本编码器 Step-LLM 是 19,579,600,896 且压根不在 shapes.json 里（取数收窄到 transformer/*），而 params_by_component 曾印着 text_encoder 75,509,760，照字面读差 259 倍"
     },
     {
       "key": "connector",

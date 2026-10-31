@@ -112,10 +112,24 @@ def check_release_vs_measured(doc, path, derived_dir, errors):
     # **全部迁完之后把下面的 warnings 改成 errors**，这一条就从提示变成闸 ——
     # 届时「没交代又对不上」没有任何正当理由。
     scope = ((doc.get("precision") or {}).get("weights_release_scope")) or {}
+    # 第三种正当交代（2026-10-31）：这一档在厂商另发的独立仓里，而本仓**取过那个仓的清单**
+    # 并把逐子系统实测落进了 precision.quantization.official_variants。那时
+    # in_precision_table 为真是实话 —— 它进的是精度表的另一个来源，不是 derived 的主仓直方图。
+    #
+    # **但只认有据可查的那种。** 判据是「同 dtype 的那条变体，其 per_subsystem 里真的
+    # 出现了这个精度」，不是「布尔填了 true」。光翻布尔不算交代，那只是换个地方说谎 ——
+    # tests/absence_regression.py 的「三·正例」就是钉这件事的：标 true 而查无实据必须继续报。
+    variants = {}
+    for v in (((doc.get("precision") or {}).get("quantization") or {})
+              .get("official_variants") or []):
+        got = {str(x).upper() for x in (v.get("per_subsystem") or {}).values()}
+        variants.setdefault(str(v.get("dtype") or "").upper(), set()).update(got)
     unexplained = []
     for v in missing:
         s = scope.get(v) or scope.get(str(v).upper()) or {}
         if s.get("in_precision_table") is False or s.get("container"):
+            continue
+        if str(v).upper() in variants.get(str(v).upper(), set()):
             continue
         unexplained.append(v)
     if not unexplained:
@@ -798,7 +812,17 @@ def check_review(doc, path, errors, warnings):
 
         if f.get("resolution") == "open":
             key = field.split("[")[0].split(".")[-1]
-            if key and key not in open_q and field not in open_q:
+            # **锚不住要说出来，不能静默通过。** field 为 `-` 时 key 就是 `-`，
+            # 而 `-` 在任何一段中文散文里都能撞上（一个「——」就有两个），
+            # 于是 `key in open_q` 恒真 —— stepvideo 的 R4 挂了两轮 `open`，
+            # 而这道检查从头到尾没管过它。坑 #2「用名字当锚，锚到别处同名词」的又一例：
+            # 这回撞的不是另一个同名词，是一个在散文里到处都是的标点。
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key or ""):
+                warnings.append(
+                    f"{path}: 核查 {fid}（field='{field}'）未解决，而这个 field 不是字段路径，"
+                    "没法机械核对它在 open_questions 里有没有对应条目 —— 这一条要人看"
+                )
+            elif key not in open_q and field not in open_q:
                 warnings.append(
                     f"{path}: 核查 {fid}（{field}）未解决，但 open_questions 里没有对应条目 —— "
                     f"未解决的问题不应该只存在于核查块里"

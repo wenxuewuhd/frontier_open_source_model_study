@@ -780,8 +780,11 @@ def gen_workload(gen: dict, kind: str, dit_params: float, dit_params_src: str,
         p_vid = psc.get("per_video_token") or 0
         p_txt = psc.get("per_text_token") or 0
         p_smp = psc.get("per_sample") or 0
-        # 文本 token 数本仓目前没有字段装；有 per_text_token 却没有 token 数时，
-        # 那一项只能漏掉并标明是下界 —— 不替它猜一个长度
+        # **这条注释原先写着「文本 token 数本仓目前没有字段装」** —— 写的时候是对的，
+        # 后来 `buckets[].text_tokens` 加上了（上面二十多行就在读它），注释没跟上。
+        # 留着的后果不是编译错，是让人**不去查**：它看起来已经回答了「为什么不算这一项」。
+        # 现在的真实情况是：档位可以给 text_tokens，没给的那些才漏掉这一项并标明是下界 ——
+        # 不替它猜一个长度。
         n_txt = bucket.get("text_tokens") or 0
         flops["linear"] = 2 * (p_vid * seq + p_txt * n_txt + p_smp)
         flops["linear_terms"] = {

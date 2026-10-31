@@ -1,7 +1,7 @@
 {
  "id": "ltx-2",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-31T02:54:07+00:00",
+ "generated_at": "2026-10-31T03:41:00+00:00",
  "inputs": {
   "facts_dir": "facts/ltx-2",
   "config_present": false,
@@ -27,8 +27,7 @@
    "attention": 6564581376.0,
    "norm": 786432.0,
    "dense_ffn": 6443433984.0,
-   "text_encoder": 32514048.0,
-   "io_proj": 1052800.0,
+   "io_proj": 33566848.0,
    "time_embed": 118521856.0
   },
   "params_total_container": 18876174592.0,
@@ -38,8 +37,7 @@
    "attention": 6564581376.0,
    "norm": 786432.0,
    "dense_ffn": 6443433984.0,
-   "text_encoder": 32514048.0,
-   "io_proj": 1052800.0,
+   "io_proj": 33566848.0,
    "time_embed": 118521856.0
   },
   "scale_elements": 0.0,
@@ -50,17 +48,8 @@
    "attention": 13131128832.0,
    "norm": 1572864.0,
    "dense_ffn": 12886867968.0,
-   "text_encoder": 65028096.0,
-   "io_proj": 2105600.0,
+   "io_proj": 67133696.0,
    "time_embed": 237043712.0
-  },
-  "params_by_component": {
-   "backbone": 18843660544.0,
-   "text_encoder": 32514048.0
-  },
-  "weight_bytes_by_component": {
-   "backbone": 37693833728.0,
-   "text_encoder": 65028096.0
   },
   "weight_bytes_by_dtype": {
    "FP32": 13025280.0,
