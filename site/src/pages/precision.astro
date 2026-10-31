@@ -30,8 +30,15 @@ import Evidence from '../components/Evidence.astro';
 import Prose from '../components/Prose.astro';
 import {
   families, allModels, url, fmtInt, SUBSYSTEMS, DTYPE_CELL, dtypeCell,
-  changesFor, evidenceFor, KV_BASIS_LABEL, type Model,
+  changesFor, evidenceFor, KV_BASIS_LABEL, TRACKED_FIELDS, type Model,
 } from '../lib/data';
+import Cell from '../components/Cell.astro';
+
+// KV 这一列和家族页的「KV 缓存精度」是同一个事实，所以空格子要走同一套三态契约。
+// 原先这里硬写 `未录`：对一个不建 KV 的扩散 DiT，图例上「未录」写的是
+// 「有权重，精度还没查」—— 说的是调研进度，而事实是这一代根本没有这笔账。
+// 九份生成记录在家族页上是「不适用」、在这张表上是「未录」，同一格两种说法。
+const KV_DTYPE = TRACKED_FIELDS.find((f) => f.key === 'kv_dtype')!;
 import '../styles/dtype.css';
 
 const SUB_LABEL: Record<string, string> = Object.fromEntries(
@@ -45,9 +52,40 @@ const perSub = (m: Model): Record<string, string> =>
 const byShapes = (m: Model): Record<string, number> =>
   (m.derived as any)?.from_shapes?.params_by_subsystem ?? {};
 
+/** 一个子系统里的一套量化方案（记录的 `per_subsystem_schemes`，只有带 `+` 的格子有）。 */
+type Scheme = {
+  dtype: string;
+  block?: string;
+  scale_dtype?: string;
+  tensors: number;
+  elements: number;
+};
+
+/** 按元素数降序 —— **第一条就是主方案**，格子的名字由它推。记录里本来就是这个序，这里不信它。 */
+const schemesOf = (m: Model, key: string): Scheme[] => {
+  const all: Record<string, Scheme[]> = prec(m).quantization?.per_subsystem_schemes ?? {};
+  return (all[key] ?? []).slice().sort((a, b) => b.elements - a.elements);
+};
+
+/**
+ * 逐方案一行，带条数与元素占比。
+ *
+ * **这一行是「代表值」三个字的兑付。** 整列都是代表值（`attention` 那格同样盖掉了
+ * BF16 的 norm），平时不碍事；但 `draft` 推出 `MXFP4` 之后，不写明它只说 95.5% 那一半，
+ * 「草稿头全是 4 bit」就是个很自然的误读 —— 而草稿头的注意力投影其实停在 FP8。
+ * 未量化的档也列出来，所以占比合得上 100%，不会让人以为漏了。
+ */
+function mixSummary(sch: Scheme[]): string | undefined {
+  const tot = sch.reduce((s, r) => s + r.elements, 0);
+  if (sch.length < 2 || !tot) return undefined;
+  return sch
+    .map((r) => `${r.dtype}${r.block ? ` 块 ${r.block}` : ''} ${r.tensors} 条 / ${((r.elements / tot) * 100).toFixed(1)}%`)
+    .join('；');
+}
+
 type Cell =
   /** `shown` 是格子上实际显示的格式名；`derived` 为真表示它是从签名推的，不是记录原值 */
-  | { kind: 'dtype'; dtype: string; shown: string; derived: boolean; sig?: string; why?: string }
+  | { kind: 'dtype'; dtype: string; shown: string; derived: boolean; sig?: string; why?: string; mix?: string; mainSub?: string }
   | { kind: 'unsurveyed' }
   | { kind: 'not_applicable' };
 
@@ -413,7 +451,7 @@ const shortName = (m: Model, label: string) =>
     ))}
     <span><i class="sw dt-fp4 drv">MX</i>底部虚线＝名字由签名推出，非记录原值</span>
     <span><i class="sw dt-fp4">4</i>裸 FP4＝元素是 E2M1，但块布局不是单一有名格式</span>
-    <span><i class="sw abs">·</i>不适用（这一代没有这块权重）</span>
+    <span><i class="sw abs">·</i>不适用（这一代没有这块权重，或根本不建 KV）</span>
     <span><i class="sw uns">?</i>未录（有权重，精度还没查）</span>
   </div>
   <p class="small muted sigline">
@@ -514,7 +552,7 @@ const shortName = (m: Model, label: string) =>
                             : <code>{r.sig.split(' · ')[0]}</code>}
                           {!r.declared && <span class="muted"> 非声明</span>}
                         </div>
-                      )) : <span class="absent unsurveyed">未录</span>}
+                      )) : <Cell field={KV_DTYPE} model={m} />}
                     </td>
                     <td>
                       {rel.length ? rel.map((r) => (
