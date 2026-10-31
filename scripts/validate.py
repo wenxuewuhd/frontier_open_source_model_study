@@ -650,6 +650,49 @@ def check_roster(root, loaded, errors, warnings):
                 "分线判据（登在哪张名册）与记录形状不一致，两者必有一错")
 
 
+# 「这件共享改动还没落地」这类**待办式陈述**的措辞。它们描述的是仓外/他处的当前状态，
+# 一落地就变成假话，而没有任何闸口查得到。
+_PENDING_CLAIM = re.compile(r"已报主会话|已上报|待主会话|归主会话|建议主会话|留给主会话|等基建|待基建")
+
+
+def check_pending_claims(doc, path, warnings):
+    """记录里对**共享文件待办状态**的陈述，一落地就成假话。
+
+    v2-hy15 在 hunyuanvideo-1.5 一份记录上**连着栽了四次同一个形状**：共享改法落地了，
+    而引用它的散文没跟上（`fb35da8` 之后一次、R6/R7 两条过期核查、R4 一条、标签那次）。
+    前三次隔了好几轮才发现。它的归纳对：**这不是谁疏忽，是结构性的** ——
+    共享文件的改动落地在一处，引用它的散文散在 N 份记录里，而
+    `validate` 查记录内部一致性、`check_rendered` 查产物语法，
+    **都不查「这句话描述的那个世界还在不在」**。
+
+    **只查活话字段，不查 `review[]`。** 这个区分是结构的不是词的：
+    `review[].finding` / `changed_to` 里写「已报主会话」是**当时**的记录，
+    它就该停在当时；而 `open_questions` / `subsystem_method` / `reviewed.method`
+    里的同一句话说的是现在。实测 17 处命中里 11 处在 `review[]`，报它们纯属误伤。
+
+    **报 warning 不报 error，而且理由要说清**：这道闸**判不出那件事落地了没有** ——
+    它只能把这类话翻出来让人去核。按本轮那条教训（锚不住就要说出来，不能静默通过），
+    与其假装能判，不如把判不了这件事本身写进措辞里。
+    """
+    def walk(node, where):
+        if isinstance(node, str):
+            m = _PENDING_CLAIM.search(node)
+            if m:
+                warnings.append(
+                    f"{path}: {where} 写着「{m.group(0)}」—— 这是对共享文件待办状态的陈述，"
+                    "那件事一落地这句话就成了假话。**本闸判不出它落地了没有**，"
+                    "只能提出来让人核：落地了就改这句话，没落地就留着")
+        elif isinstance(node, dict):
+            for k, v in node.items():
+                if k == "review":      # 当时的记录，不是现在的陈述
+                    continue
+                walk(v, f"{where}.{k}" if where else k)
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                walk(v, f"{where}[{i}]")
+    walk(doc, "")
+
+
 def check_stray_labels(root, errors):
     """第二份标签表：代码里不许把 basis 取值自己映射成中文。
 
@@ -1020,6 +1063,7 @@ def main():
         check_leak(doc, p, errors, args.allow_internal)
         check_release_vs_measured(doc, p, os.path.join(args.data_dir, "derived"), errors)
         check_speedup_baseline(doc, p, errors)
+        check_pending_claims(doc, p, warnings)
         check_scope_coherence(doc, p, errors)
         check_variants(doc, p, os.path.join(args.data_dir, "derived"), errors)
         check_absence_resolves(doc, p, os.path.join(args.data_dir, "derived"),
