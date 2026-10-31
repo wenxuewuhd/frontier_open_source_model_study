@@ -98,8 +98,9 @@ def coverage(m, dt):
 
 
 def render(mid, facts_id, dtype, origin, m, shapes, cfg, fetched, want,
-           file=None, component=None):
+           file=None, component=None, main_per=None):
     ind = " " * 8
+    main_per = main_per or {}
     tot = sum(m["params"].values())
     byt = sum(m["bytes"].values())
     delta = int(tot) - int(want or tot)
@@ -126,6 +127,15 @@ def render(mid, facts_id, dtype, origin, m, shapes, cfg, fetched, want,
         if sub not in m["hist"]:
             continue
         dt, share = vp.dominant(m["hist"][sub])
+        # **主仓手写成 MIXED 的桶，变体也报 MIXED。**
+        # vp.dominant 的 60% 阈值是个通用兜底，而有些桶的 MIXED 是人**有意**写的
+        # （LTX 的 modulation：那一桶里 F32 的调制表只占 1.4%，按阈值会报 BF16，
+        # 但「少数异类」在那里恰恰是要说的事）。两边用不同的规则，精度页横着读就会
+        # 出现 MIXED → BF16 这种**本仓之差冒充厂商之差**的假变化 ——
+        # LTX 四条里只有 ltx-2.3-nvfp4 真是纯 BF16（290 张调制表从 F32 降了下来），
+        # 另外三条按阈值填 BF16 的话，那条唯一的真变化会被三个错标签盖住。
+        if main_per.get(sub) == "MIXED" and len(m["hist"][sub]) > 1:
+            dt = "MIXED"
         lines.append(f"{ind}  {sub}: {dt}\n")
         if len(m["hist"][sub]) > 1:
             mixed.append(sub)
@@ -246,7 +256,9 @@ def main():
         m = vp.measure(shapes, cfg, tcfg.get("num_hidden_layers"), args.component)
         entries.append((BITS.get(dtype, 99), render(
             args.model_id, facts_id, dtype, origin, m, shapes, cfg, fetched, want,
-            file=vfile, component=args.component)))
+            file=vfile, component=args.component,
+            main_per=((doc.get("precision") or {}).get("quantization") or {})
+                     .get("per_subsystem") or {})))
         dtypes_added.append(dtype)
 
     out = ["    official_variants:\n"]

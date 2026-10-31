@@ -767,7 +767,7 @@ open_questions:
     没有来源：那两代 config 没有这个键，权重侧（gate BF16 + e_score F32）三代完全相同，
     所以清单区分不了。「本代开始走 FP32」不能从这个键的出现推出来
   - >-
-    GLM-5.2-FP8 仓未取数（它的存在来自 HF API 的 author=zai-org 模型列表，
+    GLM-5.2-FP8 仓**本轮取了清单**（141 分片 118,629 条目，逐子系统实测见 official_variants；它的存在原先只来自 HF API 的 author=zai-org 模型列表，
     2026-10-30 拉取，createdAt 同为 2026-06-16；本仓 repoinfo.json 里没有指向它的字段）。
     主仓是 BF16，而下一代 GLM-5.3 把 FP8 做成主仓 —— 这个发布策略的变化
     是否从 GLM-5.2-FP8 的量化配置延续而来，未对照

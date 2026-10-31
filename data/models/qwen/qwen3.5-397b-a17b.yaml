@@ -640,8 +640,10 @@ open_questions:
     params.excludes 取 [draft, vision] 是判断：只扣草稿块的偏差更小（−0.05%
     对 −0.16%），取两项是为了与同代 qwen3.5-27b 同口径，没有一手说明
   - >-
-    同代的 FP8 与 GPTQ-Int4 发布本仓没有取清单，weights_release 只记发布形态，
-    量化配置未知
+    （已关闭）同代的 FP8 与 GPTQ-Int4 两个仓本轮都取了清单
+    （189,042 / 371,444 条目），逐子系统精度、块与 scale 见 official_variants，
+    两者参数量都与主仓逐位相同。剩下的未知只有激活量化那一侧 ——
+    那是运行期行为，清单里看不到
   - >-
     训练精度没有一手来源：config 的 dtype: bfloat16 说的是发布权重，
     而**模型卡正文本轮已读**（README.md @ 8472618112ab），Model Overview 只列结构与规模，

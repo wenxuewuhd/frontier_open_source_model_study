@@ -91,7 +91,7 @@ lineage:
         两侧都是 BF16 兜底口径（bytes_basis: dtype_fallback），同一套 basis 才可以这样比）。
         长上下文这一代是靠 rope base 放大 100 倍换来的，结构上没有任何省缓存的改造
     - axis: precision
-      text: 仍是 BF16 直接发布（另有独立的 GLM-4.5-FP8 仓，未收录）
+      text: 仍是 BF16 直接发布（另有独立的 GLM-4.5-FP8 仓，已逐张量实测，见 official_variants）
       benefit: 主仓不量化，部署最简单；FP8 走单独的仓，与 GLM-5.3 把 FP8 做成主仓的做法不同
 
 params:

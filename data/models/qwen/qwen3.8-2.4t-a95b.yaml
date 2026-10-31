@@ -296,10 +296,12 @@ precision:
       没有 quantization_config，**scale 张量零个**（scale_elements 0），
       所以 per_subsystem_scale 与 per_subsystem_block 都不填 —— 不是漏填，是没有可填的。
       **weights_release 里的 FP8_E4M3 不在这份口径里**：它来自同模型的另一个发布仓
-      Qwen/Qwen3.8-2.4T-A95B-FP8（213 分片 2.27 TiB，见 sources 的模型卡注），
-      **本仓从没取过那个仓的清单**。上面这一列实测只覆盖主仓
-      Qwen/Qwen3.8-2.4T-A95B @ 207bd685a7e3，所以「声明发了 FP8」与「实测全是 BF16」
-      并排出现不是矛盾，是两个仓。两版的量化配置差异见 open_questions
+      Qwen/Qwen3.8-2.4T-A95B-FP8（213 分片 2.27 TiB，见 sources 的模型卡注）。
+      上面这一列实测只覆盖主仓 Qwen/Qwen3.8-2.4T-A95B @ 207bd685a7e3，
+      所以「声明发了 FP8」与「这一列全是 BF16」并排出现不是矛盾，是两个仓。
+      **那个仓的清单本轮取了**（287,119 条目），逐子系统实测落在同级的
+      official_variants 里 —— 原文这里写着「本仓从没取过那个仓的清单」，
+      那句话已经过期。两版的量化配置差异见 open_questions
 
     official_variants:
       - dtype: FP8_E4M3

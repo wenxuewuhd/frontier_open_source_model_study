@@ -702,6 +702,12 @@ precision:
             - { dtype: NVFP4, block: '[1,16]', scale_dtype: FP8_E4M3, tensors: 176, elements: 7381975040 }
             - { dtype: BF16, tensors: 208, elements: 672563200 }
         method: >-
+          **这个仓是五份 LTX 清单里唯一一份调制表不是 F32 的**：290 张
+          `*scale_shift_table` 在主仓与 fp8 仓全是 F32，在这里全是 BF16，
+          所以它的 modulation 桶报纯 BF16，而另外三档报 MIXED（F32 + BF16 并存）。
+          **这是本批取数里唯一一条非量化桶的精度变化**，由 v2-ltx 逐条比名字核出；
+          三档若都按多数值填 BF16，精度页横着读会是 MIXED → BF16 → BF16，
+          读成「两个量化档都把调制表提到了 BF16」，而实际只有这一档动了。
           完整清单逐项统计（1 分片 8,939 条目，failed_shards 为空），非抽样。 **逐子系统参数量与主仓逐位相同，11 桶零例外**，合计同为
           23,069,505,387 —— 这是「同一份权重的两种存法」的硬证据，也是把 origin 判成 post_quantized 的判据之一。 NVFP4
           覆盖注意力（9,622,519,808）、稠密 FFN（7,381,975,040），占参数量 73.7%；其余桶原样留在高精度上。 **打包存储**：NVFP4
@@ -718,7 +724,7 @@ precision:
         per_subsystem:
           attention: FP8_E4M3
           dense_ffn: FP8_E4M3
-          modulation: BF16
+          modulation: MIXED
           norm: BF16
           io_proj: BF16
           time_embed: BF16
@@ -1080,10 +1086,12 @@ open_questions:
     算一次复用。这 3.17B 算不算进每步激活没定，所以 params.active_decode
     只填了 DiT。这直接决定单步成本是不是要高 17%
   - >-
-    fp8 与 nvfp4 两档搬到独立仓后**没有取数**，所以「量化覆盖了哪些张量、
-    块大小多少」在这一代没有实测依据。前代同样的两档实测到
-    「只量化 DiT、覆盖 DiT 参数的 85.9%、nvfp4 块 16 带 E4M3 scale」，
-    但那是前代的事实，不能传播过来 —— 结构规律要钉代际
+    （已关闭）fp8 与 nvfp4 两档搬到独立仓后**本轮取了清单**
+    （8,871 / 8,939 条目），逐子系统实测见 official_variants，
+    两档的参数量都与主仓逐位相同。原文说前代的结论不能传播过来 ——
+    不传播是对的，而现在有本代自己的数了：nvfp4 块 16 配 E4M3 scale 在本代仍成立，
+    另外量到一件前代没有的事：**290 张 scale_shift_table 在 nvfp4 仓是 BF16
+    而非 F32**，五份清单里仅此一份。两个仓都没有任何 config，Gate B 只剩清单一路
   - >-
     训练精度无一手来源。三个全量档落盘 BF16（调制表 F32）是实测，
     但那说的是发布格式不是训练格式

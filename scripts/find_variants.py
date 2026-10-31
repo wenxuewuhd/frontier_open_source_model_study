@@ -26,6 +26,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -125,6 +126,18 @@ def variants_for(repo, names):
             sorted(sibs, key=lambda h: order.get(h[1], 99)))
 
 
+def _strings(node, where):
+    """枚举一棵子树里的所有字符串及其路径。review[] 由调用方自己不传。"""
+    if isinstance(node, str):
+        yield where, node
+    elif isinstance(node, dict):
+        for k, v in node.items():
+            yield from _strings(v, f"{where}.{k}")
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            yield from _strings(v, f"{where}[{i}]")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--id", help="只查这一份记录")
@@ -132,7 +145,7 @@ def main():
     ap.add_argument("--json", help="把结果写成 JSON，给批量取数用")
     args = ap.parse_args()
 
-    cache, rows = {}, []
+    cache, rows, docs = {}, [], []
     paths = sorted(glob.glob(os.path.join(args.data_dir, "models", "**", "*.yaml"),
                              recursive=True))
     for p in paths:
@@ -152,6 +165,7 @@ def main():
         recorded = {str(v.get("dtype")).upper()
                     for v in (((doc.get("precision") or {}).get("quantization") or {})
                               .get("official_variants") or [])}
+        docs.append(doc)
         rows.append({"id": mid, "repo": repo,
                      "variants": [{"repo": r, "dtype": d, "suffix": s} for r, d, s in vs],
                      "siblings": [{"repo": r, "dtype": d} for r, d, _s in sibs],
@@ -181,6 +195,34 @@ def main():
             print(f"    {r['id']:<22} 本记录跟 {r['repo']}")
             for v in r["siblings"]:
                 print(f"        {v['dtype']:<10} {v['repo']}")
+    # ── 翻完布尔别忘了散文 ──────────────────────────────────
+    # **这一段是「列」不是「闸」，有意的。** 它靠关键词找嫌疑句，而关键词判不出
+    # 一句话是否过期 —— 做成 CI 闸就会每次红、每次该忽略，然后人学会不读告警
+    # （主会话的 check_pending_claims 刚栽过这个形状）。放在取数脚本里按需跑，
+    # 看见了自己判，不占闸口的信用。
+    #
+    # 为什么需要它：翻 weights_release_scope 的布尔是字段操作，而同一件事还写在
+    # open_questions / lineage.*.benefit / notes 的散文里 —— 工具按字段走，扫不到。
+    # 本轮栽过两次：ltx-2.3 的 lineage benefit 整段说反（v2-ltx 发现），
+    # 以及五份记录的 open_questions 还写着「本仓没有取它的清单」。
+    # **review[] 不扫**：那里的同一句话是当时的记录，就该停在当时。
+    stale = re.compile(r"没取过|没有取过|没有取它|连清单都没取|未取数|没取数"
+                       r"|没进精度表|没有并进|两个布尔都是假|没有实测依据")
+    suspects = []
+    for r, doc in zip(rows, docs):
+        if not (((doc.get("precision") or {}).get("quantization") or {})
+                .get("official_variants")):
+            continue
+        for field in ("open_questions", "notes", "lineage"):
+            for where, text in _strings(doc.get(field), field):
+                if stale.search(text):
+                    suspects.append((r["id"], where, stale.search(text).group(0)))
+    if suspects:
+        print(f"\n--- {len(suspects)} 处散文可能跟不上布尔（**列，不是闸**：关键词判不出"
+              f"一句话是否过期，自己看）---")
+        for mid, where, hit in suspects:
+            print(f"    {mid:22} {where}: 「{hit}」")
+
     if args.json:
         json.dump(rows, open(args.json, "w"), ensure_ascii=False, indent=1)
         print(f"\n写了 {args.json}")

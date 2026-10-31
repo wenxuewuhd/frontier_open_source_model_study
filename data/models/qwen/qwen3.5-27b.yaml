@@ -649,8 +649,10 @@ open_questions:
     输出门的函数形式本代无声明（config 没有 output_gate_type），
     3.6 起声明为 swish；本档是否同为 swish 没有来源
   - >-
-    同代 FP8 仓（Qwen3.5-27B-FP8）的 config 与清单都没取 ——
-    本档是稠密 FFN 档，不能照搬旗舰 FP8 仓的结论（那边只量化路由专家）。
+    （已关闭）同代 FP8 仓（Qwen3.5-27B-FP8）的清单本轮也取了（1,606 条目），
+    不必再照搬旗舰 FP8 仓的结论：本档的 FP8 仓把**注意力 99.6%、草稿块 87.6%**
+    也压到了 FP8，块 [128,128]、scale BF16，holdout 由 config 的
+    modules_to_not_convert 逐条点名。
     Int4 仓的 config 与清单本轮都取了：**group_size 128 已是实测**
     （192 个张量零例外），scale 是 F16，只覆盖主干稠密 FFN。
     剩下的未知是 GPTQ 的 zero-point 与 g_idx 的实际内容（清单只有形状）

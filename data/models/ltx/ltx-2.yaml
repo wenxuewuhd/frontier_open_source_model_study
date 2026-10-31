@@ -551,7 +551,7 @@ precision:
         per_subsystem:
           attention: NVFP4
           dense_ffn: NVFP4
-          modulation: BF16
+          modulation: MIXED
           norm: BF16
           io_proj: BF16
           time_embed: BF16
@@ -594,7 +594,7 @@ precision:
         per_subsystem:
           attention: FP8_E4M3
           dense_ffn: FP8_E4M3
-          modulation: BF16
+          modulation: MIXED
           norm: BF16
           io_proj: BF16
           time_embed: BF16

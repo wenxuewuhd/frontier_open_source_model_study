@@ -798,8 +798,9 @@ open_questions:
     **缓存账的两个分量 basis 不同**（per_token 兜底、per_sequence 的 FP32 有声明），
     合计不能当单一口径用
   - >-
-    同代有 Qwen3.8-Flash-Next-FP8 仓，本仓没有取它的清单，
-    weights_release 只写 BF16，量化配置未知
+    （已关闭）同代的 Qwen3.8-Flash-Next-FP8 仓本轮取了清单（131 分片 152,089 条目），
+    逐子系统精度见 official_variants，参数量 179,999,981,459 与主仓逐位相同；
+    weights_release 随之补上 FP8_E4M3。剩下的未知只有激活量化那一侧
   - >-
     训练精度没有一手来源：config 的 dtype: bfloat16 说的是发布权重，
     而**模型卡正文本轮已读**（README.md @ de4b8e4d43b9），Model Overview 只列结构与规模，
