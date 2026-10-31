@@ -9,7 +9,8 @@ families:
   - family: deepseek
     flagship: DeepSeek-V4.1-Flash
     hf_repo: deepseek-ai/DeepSeek-V4.1-Flash
-    released: 2026-10-16
+    # HF lastModified 是 2026-10-16，createdAt 才是发布 —— 记录里这条判过一次
+    released: 2026-09-10
     model_id: deepseek-v41-flash
     status: recorded
     note: 另有 DeepSeek-V4.1-Flash-1017 刷新版（下载量约 1/16）；V4.1 线尚无 Pro 档
@@ -62,8 +63,14 @@ families:
 # 这是本仓第一次有两套选题标准，所以单写一条，不要默认沿用上面那条。
 #
 # 依据与逐条排除理由见 docs/video-gen-gate-a.md。
-# 下面这些 consumer 目前都只读 `families`，不读 `video_families`：
-# refresh_check.py / kv_table.py / site 的 data.ts。接进去是另一件事。
+#
+# 消费情况：site 的 data.ts 两张名册都读了（`roster()` / `familyGroups()`，
+# 总览与家族演进各按线分表）。**refresh_check.py / kv_table.py 仍只读 `families`** ——
+# 接进去是另一件事。
+#
+# 这里曾有九条 `status: planned` 对着已经落地的记录，一路陈旧到站点开始读它为止：
+# **没有消费点的字段不会被发现写错了**，而「计划中」读起来和「还没排到」一样自然。
+# 现在 validate.py 的 check_roster 按 model_id 有没有记录对账。
 
 video_policy: >-
   每个 family 追最新旗舰，外加一个差分基线；
@@ -76,7 +83,7 @@ video_families:
     hf_repo: MiniMaxAI/MiniMax-H3
     released: 2026-07-28
     model_id: minimax-h3
-    status: planned
+    status: recorded
     wave: 1
     note: 压力测试首录。音视频联合；文本编码器是随仓发布的 Qwen3-VL-32B 全权重；
           Ref2VA 侧带第二套 33B transformer_ref；Context-IR 与 Regenerate-2K 未开源。
@@ -93,7 +100,7 @@ video_families:
       - model_id: ltx-2
         hf_repo: Lightricks/LTX-2
         released: 2026-01-03
-        status: planned
+        status: recorded
         wave: 1
         note: >-
           取数要 --include。仓里同名张量跨文件 dtype 不同（distilled 是 BF16、
@@ -102,7 +109,7 @@ video_families:
       - model_id: ltx-2.3
         hf_repo: Lightricks/LTX-2.3
         released: 2026-03-04
-        status: planned
+        status: recorded
         wave: 1
         note: >-
           卡上无结构数字，全部靠权重头实测。取数要 --include：8 个顶层 safetensors 是
@@ -115,7 +122,7 @@ video_families:
     hf_repo: Wan-AI/Wan2.2-T2V-A14B
     released: 2025-07-24
     model_id: wan2.2-t2v-a14b
-    status: planned
+    status: recorded
     wave: 1
     note: >-
       时间步路由的 MoE，不是 token 路由。取数实测印证了这点：无顶层 config，
@@ -124,14 +131,14 @@ video_families:
       - model_id: wan2.2-ti2v-5b
         hf_repo: Wan-AI/Wan2.2-TI2V-5B
         released: 2025-07-18
-        status: planned
+        status: recorded
         wave: 1
         note: 同代但换了 VAE（4×16×16/48ch），按「换 VAE 就是另一回事」单独录。
               取数最简单的一份（顶层 config + 1 个 index + 3 分片），所以拿它当首录定形状
       - model_id: wan2.1-t2v-14b
         hf_repo: Wan-AI/Wan2.1-T2V-14B
         released: 2025-02-25
-        status: planned
+        status: recorded
         wave: 2
         note: 差分基线
 
@@ -140,7 +147,7 @@ video_families:
     hf_repo: tencent/HunyuanVideo-1.5
     released: 2025-11-20
     model_id: hunyuanvideo-1.5
-    status: planned
+    status: recorded
     wave: 1
     note: 11 个全量 checkpoint 进同一份记录；SSTA 稀疏权重只有 720p_i2v_distilled_sparse 一个。
           顶层 config 有，组件下另有 16 份
@@ -160,9 +167,10 @@ video_families:
   - family: cogvideo
     flagship: CogVideoX1.5-5B
     hf_repo: zai-org/CogVideoX1.5-5B
-    released: 2024-11-02
+    # 卡上写 2024-11-08，HF createdAt 是 11-02，记录用卡上的
+    released: 2024-11-08
     model_id: cogvideox-1.5-5b
-    status: planned
+    status: recorded
     wave: 2
     note: 2024 年锚点；该线自 2024-11 起无后续，zai-org 之后只发了任务模型
 
@@ -171,10 +179,12 @@ video_families:
     hf_repo: stepfun-ai/stepvideo-t2v
     released: 2025-02-14
     model_id: stepvideo-t2v-30b
-    status: planned
+    status: recorded
     wave: 2
-    note: 压缩率最激进（16×16×8 / 64ch）；卡上有峰值显存与端到端耗时，
-          是唯一能填公开 performance 的一份
+    # 原先写「压缩率最激进」—— 写下时就错，ltx 两份是 32× 空间且已录在先。
+    # 这一份真正少见的是两个维度都由 VAE 压完（patch t 与 h/w 都是 1）
+    note: 空间与时间都由 VAE 压完（16×16×8 / 64ch），patch 不再降维；
+          卡上有峰值显存与端到端耗时，是唯一能填公开 performance 的一份
 
   - family: magi
     flagship: MAGI-2-preview

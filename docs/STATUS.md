@@ -55,7 +55,8 @@ git worktree remove --force $T
 | **生成负载进页面** | derive 一直在算 `generation_workload`，页面一个字没读。序列长度 / 单步 FLOPs 拆分 / 逐因子推导表 / 两个时间压缩率现在都看得见 |
 | **`latent_frames` 声明优先** | H3 是 17n+5（厂商 VAE 实现 + 14 个官方样片验），公式给 61.5、真值 72。token 低 17% 经 O(n²) 放大成注意力低 31% |
 | **读 config 收口** | `lib/cfgio.py` 一个入口。量化声明**跟着模态走**：纯文本在顶层、VLM 嵌 `text_config` 下，所以只读顶层的新代码每多一份 VLM 就多漏一份 |
-| **第六道闸：字段消费点棘轮** | schema 的字段站点上得有人读。当前欠 47 个（基本是整个 `generation` 块） |
+| **第六道闸：字段消费点棘轮** | schema 的字段站点上得有人读。当前欠 45 个（基本是整个 `generation` 块）。**这个数是低估**，判据会被字符串里的同名词顶掉，见 C8 |
+| **名册对账（`check_roster`）** | `tracking.yaml` 的 `video_families` 陈旧过一整条线：九条 `status: planned` 对着已落地的记录，外加两条 `released` 口径错、一条写下时就错的 note。**原因是没有消费点** —— 站点只读 `families`，那张表没人看过。现在站点两张都读（总览与家族演进按线分表），status / released 按记录对账，分线判据再与记录有没有 `generation` 块互核 |
 | **M3.1-Flash（原 B1）** | 录为支线。顺带修掉三个页面早就印着的字面量 `undefined`（五道闸当时全绿） |
 | **LayerMap 三修** | 零 MTP 块的轨道错位（`repeat(0,…)` 被钳成 1）、`DT` 补 `MXFP4`、**`recurrent_state` 进表**。第三条原被当成「图的口径限制」，实际是 kimi 93 层里 69 层的缓存去向在表上不存在、而每 token 合计看着像覆盖全部层 |
 
@@ -127,9 +128,17 @@ git worktree remove --force $T
   MiniMax 那两份就是没有权重的非常规残差（系数是 config 标量）。
   判据要两路合一（清单无张量 **且** config 无残差系数键），而规则 DSL
   读不到 config（`src` 只有 rec / derived）。Q 低秩那 13 份建议逐族系确认。
-- **C8 整个 `generation` 块没有消费点** —— 第六道闸报的 47 个欠账基本都在这里：
+- **C8 整个 `generation` 块没有消费点** —— 第六道闸报的 45 个欠账基本都在这里：
   VAE 规格、音频、文本编码器、采样口径、尺寸约束、checkpoint 矩阵全录了，
   页面上只渲染了由它们**推出来的**负载。还掉之后把棘轮收紧。
+  **而这 45 个是低估。** 棘轮按叶字段名 grep 标识符，正则不分代码与字符串字面量，
+  于是别处的同名词会把字段顶成「已读」：`generation.text_encoders` 整块零消费点，
+  13 个叶字段里七个（role / name / hf_repo / params / hidden / note / gated）
+  是被撞出来的「已读」。诚实的数是 51 左右。`_MASKED_UNREAD` 现在只钉住 `gated`
+  一个（名册状态标签 `blocked-gated` 一分词就撞上它，是本仓代码自己造成的），
+  其余六个要连同预算一起改 —— **把预算从 45 调到 51 看起来像放松，实际是把量测改准**，
+  所以单独做、单独说明。先还 `text_encoders` 的消费点更划算：那一块本身就该渲染
+  （「部署时要不要额外塞一个大模型进显存」「拿不拿得到」）。
 - **C3 第一批三份录入** —— `wan2.2-ti2v-5b` → `minimax-h3` → `magi-2-preview`，第三份依赖 A3b。
 - **C4 视频线的 policy 与语言模型线不同** —— 「每个 family 追最新旗舰 + 一个差分基线；
   VAE 或注意力形态变了的同代档位单独录」。要写进 `tracking.yaml` 的 policy，
@@ -261,7 +270,7 @@ git worktree remove --force $T
     `bottlenecks.fix` 不走 Prose、`generation_workload` 整块没消费点、
     `group_size` 加完没有列。**第四个是我诊断完前三个之后自己造的。**
     加字段时只想「schema 收得下」，没问「谁读它」。
-    已做成第六道闸（棘轮），但闸只挡新增，存量 47 个要人去还。
+    已做成第六道闸（棘轮），但闸只挡新增，存量 45 个要人去还 —— 而那 45 个本身是低估。
 15. **断言「A 当且仅当 B」只验了一个方向** —— p1-kimi 查「有 derived 残差信号的是不是
     都填了字段」（7/7 成立）就报「两边 100% 一致、零例外」，反方向没查，
     而反例（填了字段却无张量的两份 minimax）**就在它自己上一条命令的输出里**。

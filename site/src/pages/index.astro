@@ -3,19 +3,24 @@ import Base from '../layouts/Base.astro';
 import Evidence from '../components/Evidence.astro';
 import Prose from '../components/Prose.astro';
 import {
-  allModels, allSignals, roster, timeline, url, fmtCount, fmtBytes, FAMILY_LABEL,
+  allModels, allSignals, familyGroups, roster, timeline, url, fmtCount, fmtBytes,
+  FAMILY_LABEL, ROSTER_STATUS_LABEL,
   HORIZON_LABEL, HORIZON_ORDER, KV_BASIS_LABEL,
 } from '../lib/data';
 
 const models = allModels();
-const r = roster();
+const lines = familyGroups();
+const rosterUpdated = roster().updated;
 const signals = allSignals();
 const byHorizon = HORIZON_ORDER.map((h) => ({
   key: h,
   label: HORIZON_LABEL[h],
   items: signals.filter((s) => s.horizon === h),
 }));
-const recorded = r.families.filter((f) => f.status === 'recorded').length;
+const allEntries = lines.flatMap((g) => g.entries);
+// 「已录」按旗舰算。ltx 的旗舰仓 gated 而两份 members 已录 ——
+// 按家族算是 12、按旗舰算是 11，所以句子里要写明按哪个。
+const recorded = allEntries.filter((f) => f.status === 'recorded').length;
 ---
 
 <Base
@@ -24,38 +29,62 @@ const recorded = r.families.filter((f) => f.status === 'recorded').length;
 >
   <h2>追踪名册</h2>
   <p class="small muted">
-    {r.policy}。名册更新于 {r.updated}，已录 {recorded} / {r.families.length} 家。
+    两条线各有一套选题标准，是并列不是替换 —— 语言模型线按「每族追最新旗舰」就够，
+    生成线换一次 VAE 就会让下游 token 数差几倍，同代档位也得单独录。
+    名册更新于 {rosterUpdated}，旗舰已录 {recorded} / {allEntries.length} 家。
   </p>
-  <table>
-    <thead>
-      <tr>
-        <th>家族</th>
-        <th>旗舰</th>
-        <th>发布</th>
-        <th>状态</th>
-        <th>备注</th>
-      </tr>
-    </thead>
-    <tbody>
-      {
-        r.families.map((f) => (
-          <tr>
-            <td>{FAMILY_LABEL[f.family] ?? f.family}</td>
-            <td>
-              {f.model_id ? (
-                <a href={url(`/models/${f.model_id}/`)}>{f.flagship}</a>
-              ) : (
-                <span class="muted">{f.flagship}</span>
-              )}
-            </td>
-            <td class="num">{f.released ?? '—'}</td>
-            <td>{f.status === 'recorded' ? '已录' : <span class="muted">待录</span>}</td>
-            <td class="small muted">{f.note ?? ''}</td>
-          </tr>
-        ))
-      }
-    </tbody>
-  </table>
+  {
+    lines.map((g) => (
+      <>
+        <h3>{g.label}</h3>
+        <p class="small muted">{g.policy}</p>
+        <table>
+          <thead>
+            <tr>
+              <th>家族</th>
+              <th>旗舰</th>
+              <th>发布</th>
+              <th>状态</th>
+              <th>备注</th>
+            </tr>
+          </thead>
+          <tbody>
+            {g.entries.flatMap((f) =>
+              /* members 也要出行：ltx 的旗舰取不到数，整个 family 看起来像没录，
+                 而 ltx-2 / ltx-2.3 就在 members 里录着 */
+              [f, ...(f.members ?? [])].map((e, i) => (
+                <tr>
+                  <td>
+                    {i === 0 ? (
+                      FAMILY_LABEL[f.family] ?? f.family
+                    ) : (
+                      <span class="muted small">　└ 同族档位</span>
+                    )}
+                  </td>
+                  <td>
+                    {e.model_id ? (
+                      <a href={url(`/models/${e.model_id}/`)}>{e.flagship ?? e.model_id}</a>
+                    ) : (
+                      <span class="muted">{e.flagship ?? e.model_id}</span>
+                    )}
+                  </td>
+                  <td class="num">{e.released ?? '—'}</td>
+                  <td>
+                    {e.status === 'recorded' ? (
+                      ROSTER_STATUS_LABEL[e.status]
+                    ) : (
+                      <span class="muted">{ROSTER_STATUS_LABEL[e.status] ?? e.status}</span>
+                    )}
+                  </td>
+                  <td class="small muted"><Prose text={e.note ?? ''} /></td>
+                </tr>
+              )),
+            )}
+          </tbody>
+        </table>
+      </>
+    ))
+  }
 
   <h2>已录记录</h2>
   <div class="grid c2">

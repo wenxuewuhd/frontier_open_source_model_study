@@ -784,19 +784,128 @@ export function changeMatrix(models: Model[]) {
 }
 
 export interface RosterEntry {
-  family: string;
-  flagship: string;
+  /** members 下没有这个键 —— 档位属于父条目那一族 */
+  family?: string;
+  /** 旗舰显示名。**members 下没有这个键**，那一层只有 model_id */
+  flagship?: string;
   hf_repo?: string;
   released?: string;
-  model_id?: string;
-  status: 'recorded' | 'pending';
+  /** null 表示旗舰本身没录。此时家族仍可能靠 `members` 录着（ltx 的旗舰仓 gated，
+   *  记录是 ltx-2 / ltx-2.3）—— 所以「旗舰没录」推不出「这个家族待录」。 */
+  model_id?: string | null;
+  /**
+   * 语言模型线只有 recorded / pending；生成线另有 planned 与两种 blocked-*。
+   * **阻塞原因进取值而不是 note**：「还没排到」和「权重是 .pt、读头拿清单这条路
+   * 不成立」不是一件事，前者等人排期，后者等一个新的取数口径（C5）。
+   */
+  status:
+    | 'recorded'
+    | 'pending'
+    | 'planned'
+    | 'blocked-gated'
+    | 'blocked-no-safetensors';
   note?: string;
+  /** 同家族内单独立项的档位（换了 VAE 或注意力形态的同代档位、差分基线）。 */
+  members?: RosterEntry[];
 }
 
-/** 追踪名册（data/tracking.yaml）：选取结果，不是模型记录。 */
-export function roster(): { updated?: string; policy?: string; families: RosterEntry[] } {
+export type FamilyLine = 'llm' | 'generation';
+
+export const LINE_LABEL: Record<FamilyLine, string> = {
+  llm: '语言模型',
+  generation: '多模态生成',
+};
+
+/** 名册状态的中文。阻塞的两档写出阻塞在哪 —— 「待录」会让人以为只是没排到。 */
+export const ROSTER_STATUS_LABEL: Record<RosterEntry['status'], string> = {
+  recorded: '已录',
+  pending: '待录',
+  planned: '已选待录',
+  'blocked-gated': '仓 gated，取不到',
+  'blocked-no-safetensors': '无 safetensors，取不到',
+};
+
+/**
+ * 追踪名册（data/tracking.yaml）：选取结果，不是模型记录。
+ *
+ * **两条线各有一张名册与一条 policy，是并列不是替换** —— 语言模型线「每族追最新旗舰」
+ * 的前提是代际差异能靠一句 lineage 讲清，生成线不成立（换 VAE 就会让下游 token 数差几倍）。
+ * 理由写在 tracking.yaml 里，这里只负责把两张都取出来。
+ */
+export function roster(): {
+  updated?: string;
+  policy?: string;
+  families: RosterEntry[];
+  videoPolicy?: string;
+  videoFamilies: RosterEntry[];
+} {
   const p = path.join(DATA, 'tracking.yaml');
-  if (!fs.existsSync(p)) return { families: [] };
+  if (!fs.existsSync(p)) return { families: [], videoFamilies: [] };
   const doc = loadYaml(p) as any;
-  return { updated: doc?.updated, policy: doc?.policy, families: doc?.families ?? [] };
+  return {
+    updated: doc?.updated,
+    policy: doc?.policy,
+    families: doc?.families ?? [],
+    videoPolicy: doc?.video_policy,
+    videoFamilies: doc?.video_families ?? [],
+  };
+}
+
+let _videoKeys: Set<string> | null = null;
+
+/** 生成线的家族键。dev 下不缓存，理由同 `allModels`：tracking.yaml 是外部文件。 */
+function videoKeys(): Set<string> {
+  if (_videoKeys && !import.meta.env.DEV) return _videoKeys;
+  _videoKeys = new Set(roster().videoFamilies.map((f) => f.family));
+  return _videoKeys;
+}
+
+/**
+ * 家族属于哪条线。**不另立字段 —— 就是它登在哪张名册上。**
+ *
+ * 选题结果只有一个家。再写一份 `key → line` 的映射，就是本仓第四个
+ * 「同一份名单写两遍」的实例（前三个：basis 标签表、kv_table 漂移守卫、
+ * FAMILY_LABEL 与 schema 枚举），而那三个都是靠 validate 对账才兜住的。
+ *
+ * 名册外的家族归 llm 只是兜底不是判断：`check_roster` 要求 FAMILY_ORDER 里
+ * 除 `other` 之外每个家族恰好登在一张名册上，并且与记录里有没有 `generation` 块一致。
+ */
+export function familyLine(key: string): FamilyLine {
+  return videoKeys().has(key) ? 'generation' : 'llm';
+}
+
+/**
+ * 按线分组：各自的 policy、名册、已录家族，以及名册上尚未开录的家族。
+ *
+ * 「家族演进」与「总览」都走这里。两页要的不是同一份 —— 演进页看已录记录，
+ * 总览看选取结果（含没录的）—— 但**分线这件事只能有一处判据**，
+ * 所以两份一起给，不让任一页自己按家族名去猜线。
+ */
+export function familyGroups(): {
+  line: FamilyLine;
+  label: string;
+  policy?: string;
+  /** 该线的追踪名册，原序 */
+  entries: RosterEntry[];
+  /** 该线已有记录的家族，组内保持 FAMILY_ORDER */
+  families: ReturnType<typeof families>;
+  /** 名册上还没有任何记录的家族。**按有没有记录判，不看 status** ——
+   *  status 曾整条线陈旧过（九条 `planned` 对着已落地的记录），
+   *  靠 `check_roster` 对账，不靠这里 */
+  pending: RosterEntry[];
+}[] {
+  const fams = families();
+  const r = roster();
+  return (['llm', 'generation'] as FamilyLine[]).map((line) => {
+    const gen = line === 'generation';
+    const entries = gen ? r.videoFamilies : r.families;
+    return {
+      line,
+      label: LINE_LABEL[line],
+      policy: gen ? r.videoPolicy : r.policy,
+      entries,
+      families: fams.filter((f) => familyLine(f.key) === line),
+      pending: entries.filter((e) => !fams.some((f) => f.key === e.family)),
+    };
+  });
 }

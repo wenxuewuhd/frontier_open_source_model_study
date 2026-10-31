@@ -276,6 +276,22 @@ def label_table_hit(line):
 # 由它们推出来的负载，规格本身一格没有。
 _UNREAD_FIELD_BUDGET = 45
 
+# 棘轮按叶字段名在 site/src 下 grep 标识符，而正则不分代码与字符串字面量 ——
+# **字符串里出现同名词，这个字段就算被读过了。**
+#
+# 这不是推测：`generation.text_encoders` 整块在站点上一个消费点都没有
+# （`[id].astro` 与 data.ts 里搜不到 `text_encoders`），而它 13 个叶字段里
+# 有七个被别处的同名标识符顶成「已读」：role / name / hf_repo / params /
+# hidden / note 本来就撞，gated 是加名册状态标签 `blocked-gated` 之后撞上的 ——
+# 那个值一分词就有 `gated`。于是棘轮凭空松了一格，**而松的那一格没人看得见**。
+#
+# 这里把这类字段加回未读，棘轮才不会吃掉它。只列确实查过来源的：
+# 上面六个是本来就撞的、未由本仓代码引入，列出来会把数字直接推到 51，
+# 要连同预算一起改并单独说明 —— 那是另一件事，记在 docs/STATUS.md 的 C8。
+_MASKED_UNREAD = {
+    "generation.text_encoders.gated",
+}
+
 
 def check_field_consumers(root, errors, warnings):
     """schema 里的字段，站点上得有人读。
@@ -328,7 +344,7 @@ def check_field_consumers(root, errors, warnings):
 
     watched = ("precision", "generation")
     unread = [pp for pp, k in leaves(schema)
-              if pp.startswith(watched) and k not in seen]
+              if pp.startswith(watched) and (k not in seen or pp in _MASKED_UNREAD)]
     n = len(unread)
     if n > _UNREAD_FIELD_BUDGET:
         errors.append(
@@ -423,6 +439,105 @@ def check_family_registry(root, errors):
         if extra:
             errors.append(f"site/src/lib/data.ts 的 {name} 多出 {sorted(extra)} —— "
                           "schema 的 family 枚举里没有这些值，记录填不进来")
+
+
+def check_roster(root, loaded, errors, warnings):
+    """追踪名册（data/tracking.yaml）与记录对账。
+
+    **这张名册陈旧过一整条线**：`video_families` 下九条 `status: planned` 对着
+    九份已经落地的记录，从首录一直挂到站点开始读它为止。原因在那份文件自己的
+    注释里写着 —— 「下面这些 consumer 都只读 `families`，不读 `video_families`」。
+    **没有消费点的字段不会被发现写错了**，而「计划中」读起来和「还没排到」一样自然，
+    翻页的人也不会去对。同一批里还有两条 `released` 是记录早已判错的口径
+    （deepseek-v41-flash 填了 HF lastModified，记录的 R 条正是为此改过），
+    和一条写下时就错的 note（stepvideo「压缩率最激进」，而 ltx 两份是 32× 空间）。
+
+    所以这里查三件事，都只查能机器判的：
+
+      1. **分线**。FAMILY_ORDER 里除 `other` 之外，每个家族恰好登在一张名册上。
+         站点的 `familyLine()` 就是按「登在哪张」判的，不另立字段 ——
+         两张都没登的家族会静默归到语言模型线。
+      2. **status 与 released 跟着记录走**。有记录就必须是 `recorded`，
+         标了 `recorded` 就必须有记录；`released` 必须与记录一致 ——
+         名册是选取结果，不是第二份事实。
+      3. **记录的 `generation` 块与它那条线一致**。生成线的记录必须有，
+         语言模型线的记录必须没有。这一条是第 1 条的独立旁证：分线判据只有一处
+         （登在哪张名册），而这里拿记录的形状再核一遍，两边不一致就报。
+
+    不查 note —— 散文对不对机器判不了，那是 Gate C 的事。
+    """
+    import re as _re
+    tp = os.path.join(root, "data", "tracking.yaml")
+    dp = os.path.join(root, "site", "src", "lib", "data.ts")
+    if not os.path.exists(tp):
+        errors.append("data/tracking.yaml: 读不到追踪名册")
+        return
+    doc = load_yaml(tp) or {}
+    try:
+        ts = open(dp, encoding="utf-8").read()
+    except OSError:
+        return
+    i = ts.find("FAMILY_ORDER")
+    order = set(_re.findall(r"'([a-z0-9-]+)'", ts[i:ts.find("];", i)])) if i >= 0 else set()
+
+    rosters = {"families": doc.get("families") or [],
+               "video_families": doc.get("video_families") or []}
+    where = {}
+    for name, lst in rosters.items():
+        for e in lst:
+            if isinstance(e, dict) and e.get("family"):
+                where.setdefault(e["family"], []).append(name)
+
+    for fam in sorted(order - {"other"}):
+        hit = where.get(fam, [])
+        if not hit:
+            errors.append(
+                f"data/tracking.yaml: 家族 `{fam}` 两张名册都没登 —— "
+                "站点的 familyLine() 按「登在哪张」分线，没登的会静默归到语言模型线")
+        elif len(hit) > 1:
+            errors.append(f"data/tracking.yaml: 家族 `{fam}` 同时登在 {hit}，分线不唯一")
+
+    by_id = {d.get("id"): d for d in loaded.values() if isinstance(d, dict)}
+
+    def entries(lst):
+        for e in lst:
+            if not isinstance(e, dict):
+                continue
+            yield e
+            yield from entries(e.get("members") or [])
+
+    for name, lst in rosters.items():
+        for e in entries(lst):
+            mid = e.get("model_id")
+            rec = by_id.get(mid) if mid else None
+            st = e.get("status")
+            tag = f"data/tracking.yaml {name} 的 {mid or e.get('flagship') or '?'}"
+            if rec is not None and st != "recorded":
+                errors.append(
+                    f"{tag}: 记录已落地，status 还是 `{st}` —— "
+                    "名册陈旧过一整条线，就是这个形状")
+            if rec is None and st == "recorded":
+                errors.append(f"{tag}: status 是 recorded，但 data/models 下没有这份记录")
+            if rec is not None:
+                rr, tr = str(rec.get("released") or ""), str(e.get("released") or "")
+                if rr != tr:
+                    errors.append(
+                        f"{tag}: released 名册写 {tr or '空'}、记录写 {rr or '空'} —— "
+                        "名册是选取结果不是第二份事实，口径跟着记录走")
+
+    video_fams = {e["family"] for e in rosters["video_families"]
+                  if isinstance(e, dict) and e.get("family")}
+    for path, d in sorted(loaded.items()):
+        fam = d.get("family")
+        if fam not in where:
+            continue
+        gen = "generation" in d
+        if fam in video_fams and not gen:
+            errors.append(f"{path}: 家族 `{fam}` 在生成线名册上，记录却没有 generation 块")
+        if fam not in video_fams and gen:
+            errors.append(
+                f"{path}: 家族 `{fam}` 在语言模型线名册上，记录却有 generation 块 —— "
+                "分线判据（登在哪张名册）与记录形状不一致，两者必有一错")
 
 
 def check_stray_labels(root, errors):
@@ -789,6 +904,7 @@ def main():
         check_absence_resolves(doc, p, os.path.join(args.data_dir, "derived"),
                                errors, warnings, gaps)
     check_review_pointers(loaded, errors, warnings)
+    check_roster(_root(args.data_dir), loaded, errors, warnings)
 
     ops = sorted(glob.glob(os.path.join(args.data_dir, "ops", "**", "*.yaml"), recursive=True))
     for p in ops:
