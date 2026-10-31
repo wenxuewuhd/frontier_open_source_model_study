@@ -85,17 +85,33 @@ SUBSYSTEM = [
     # 在此之前我两次把这两个数说成「量级吻合但不是同一个量」——**它本来就是同一个量，
     # 只是张量在错桶里**。
     #
-    # **但它不普适：九份里四份有 `per_sample` 字段，三份成立、一份不成立**（实测）：
+    # **但它不是一条律，是一条带前提的判据。** 四份有 `per_sample` 字段的里三份成立：
     #     cogvideox-1.5-5b    797,423,616 +      1,836,032 ==      799,259,648  ✓
     #     minimax-h3       13,039,369,728 +     15,835,008 ==   13,055,204,736  ✓
     #     stepvideo-t2v-30b   228,311,040 +     39,333,888 ==      267,644,928  ✓
     #     hunyuanvideo-1.5  2,744,414,208 +     20,983,808 !=    2,723,964,928
-    #         差 41,433,088，**而它不是桶里任何一组的干净子集** —— 不是「漏算某一块」
-    #         那么简单，根因未查，归 hunyuan 那条线。
-    # 另五份没有 `per_sample` 字段，无从比。所以拿它当回归判据只能对那三份用。
     #
-    # **这一条自己就是「零例外在下一份上通常不成立」的实例**：我先按手上那两份把它
-    # 写成了普适结论，v2-h3 与 v2-step 各自独立复算九份才把反例找出来。
+    # **hunyuan 那 41,433,088 是口径差不是漏刀，两个方向都对平过**（v2-ltx 拆出来的）：
+    #     per_sample 2,723,964,928 = double_blocks.*_mod.linear 2,719,236,096
+    #                              + time_in.mlp 4,722,688
+    #                              + cond_type_embedding 6,144   ← 它在 other 桶里
+    #     差 41,433,088 = txt_in.* 的 mod/time_embed 33,046,528
+    #                   + final_layer.adaLN_modulation 8,392,704 − 6,144
+    #
+    # 前提是**那份记录的 `breakdown` 本身是纯功能分解**。hunyuan 不满足：它的
+    # `breakdown.token_refiner` 141,105,152 是**按模块**切的，其中 23.4%
+    # （33,046,528）是 AdaLN 与时间步嵌入，功能轴会把这个桶切开；
+    # 另外 `final_layer.adaLN_modulation` 压根不在它的 `adaln_modulation` 里。
+    # cogvideox / h3 / stepvideo / ltx 两份的 breakdown 都是纯功能分解，所以都成立。
+    #
+    # **所以判据要带前提写**：breakdown 是纯功能分解时，`modulation + time_embed`
+    # 必须等于它的 `adaln_modulation` / `per_sample`；不等就先去看 breakdown 里
+    # 有没有按模块切的桶 —— 这样它既能当校验器，又不会在下一份带 `token_refiner`
+    # 这类桶的记录上误报。
+    #
+    # **这一条自己就是「断言规律不要断言人口普查」的实例**：我先按手上那两份把它
+    # 写成了普适结论，v2-h3 与 v2-step 各自独立复算九份找出反例，v2-ltx 再把
+    # 反例的根因拆平 —— 三步都不是我做的。
     ("modulation", re.compile(r"\bnorm(?:\d+|_out)\.linear\b", re.I)),
     # norm 必须排在 attention / dense_ffn 之前：attn_norm、ffn_norm、kv_norm、q_norm
     # 名字里带 attn / ffn / kv / q，按那两条先匹配会把归一化算成注意力或 FFN 权重。
