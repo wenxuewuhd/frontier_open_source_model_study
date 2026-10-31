@@ -89,6 +89,23 @@ SUBSYSTEM = [
     ("attention", re.compile(
         r"attn|self_attention|query_key_value|\bwq|\bwk|\bwv|\bwo\b"
         r"|q_proj|k_proj|v_proj|o_proj|kv_[ab]|q_[ab]", re.I)),
+    # **时间步嵌入器的 MLP 要在 dense_ffn 之前截下来，但只截带 `.mlp.` 的那种。**
+    # HunyuanVideo 的两个时间步嵌入器 8 条 / 9,445,376 全算进了稠密 FFN，
+    # 两条失效原因还不一样：`txt_in.t_embedder.mlp.*` 是 \bt_embedder\b 命中了
+    # 但 time_embed 排在 dense_ffn 之后、`mlp` 先匹配先得（优先级问题）；
+    # `time_in.mlp.*` 是词条里压根没有 `time_in` 这个写法（词表缺项）。
+    #
+    # **键在 `\.mlp\.` 上，不是把宽的那条 time_embed 整体前移。** 前移会同时跑到
+    # modulation 前面，抢走 LTX 与 stepvideo 的 `adaln_single.emb.timestep_embedder.*`
+    # （ltx-2.3 20 条 / 76,058,624、stepvideo 4 条 / 39,333,888），而 ltx-2.3 的
+    # time_embed 这一格现在判的正是「不适用 = 这个子系统在这个模型里不存在」——
+    # 那句假话会变成「桶里躺着 7,600 万个参数」。那些名字是 `...timestep_embedder.linear_1`，
+    # **不带 `.mlp.`**，所以这条一条都碰不到。全仓实测：只有 hunyuanvideo-1.5 一处变动。
+    #
+    # 「`adaln_single.emb.timestep_embedder` 到底该归 time_embed 还是 modulation」
+    # 是另一个口径问题，v2-ltx 与 v2-hy15 的答案相反，留给那一轮一起定。
+    ("time_embed", re.compile(r"(?:time_in|t_embedder|time_embedder|timestep_embedder)"
+                              r"\.mlp\.", re.I)),
     # (?:^|\.)ff\. 是 diffusers 的 FeedForward（transformer_blocks.N.ff.net.0.proj）。
     # **a-t-t-n 不是 attention 的子串，f-f 也不是 ffn 的子串** —— 不认它的后果是
     # 五份生成记录的整个 FFN 落进 other：ltx-2 6.44B、h3 11.56B、cogvideox 3.17B、
@@ -116,8 +133,16 @@ SUBSYSTEM = [
     # stepvideo 的 `clip_projection` 与已有的 text_proj / caption_proj 同类、
     # h3 的 `context_embedder` 是它整个 other 桶（27,530,496）。
     # 三条都只从 other 里捞：io_proj 已是本表最后一条，后面只有 return "other"。
+    # HunyuanVideo 的入口/出口投影在原有六个模式上一条都不命中，整批落在 other：
+    # `txt_in.input_embedder` 7,342,080 + `byt5_in.fc1/2/3` 11,409,408
+    # + `img_in.proj` 135,168 + `final_layer.linear` 65,568 = 18,952,224，
+    # 是它 other 桶的 99.97%。剩下的 6,144 是 `cond_type_embedding`，**有意留在 other**：
+    # 它不是投影，塞进 embed 会让「输入词表」在一个没有 token 词表的 DiT 上长出值。
+    # 位置仍排最后，所以 `final_layer.adaLN_modulation` 仍归 modulation、
+    # `byt5_in.layernorm` 仍归 norm —— 实测确认没被抢走。
     ("io_proj", re.compile(r"patch_embed|\bpos_embed\b|\bproj_in\b|\bproj_out\b"
                            r"|text_proj|caption_proj|clip_proj|\bcontext_embedder\b"
+                           r"|input_embedder|\bimg_in\b|\bfinal_layer\b|\bbyt5_in\b"
                            r"|unpatchify", re.I)),
 ]
 
