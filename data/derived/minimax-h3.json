@@ -1,7 +1,7 @@
 {
  "id": "minimax-h3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-31T03:41:00+00:00",
+ "generated_at": "2026-10-31T03:46:35+00:00",
  "inputs": {
   "facts_dir": "facts/minimax-h3",
   "config_present": false,

@@ -167,9 +167,11 @@ params:
     + refiner FFN 462,422,016；
     子系统 `norm` 29,495,296 = `breakdown.norm` 542,976 + QK-norm 12,800
     + `norm_out.linear` 28,912,128 + refiner norm 27,392；
-    `io_proj` = `breakdown.patch_embed_video` 1,037,664、
-    `audio` = `breakdown.patch_embed_audio` 349,472、
-    `other` = `breakdown.text_proj` 27,530,496，这三项两轴逐字相同。
+    子系统 `io_proj` 28,568,160 = `breakdown.patch_embed_video` 1,037,664
+    + `breakdown.text_proj` 27,530,496 —— 两者都是进出口投影，只是一个吃 latent
+    一个吃文本隐状态（`breakdown` 按部件把它们分开，子系统轴按功能并成一桶）；
+    `audio` = `breakdown.patch_embed_audio` 349,472，这一项两轴逐字相同。
+    **子系统轴上没有 `other` 桶** —— 638 条全部归进了词表。
     `breakdown.token_refiner` 770,730,752 在子系统轴上不存在 ——
     它被摊成 308,281,344 + 462,422,016 + 27,392。
 
@@ -433,7 +435,8 @@ precision:
       in_precision_table: true
       repo: MiniMaxAI/MiniMax-H3
       note: >-
-        DiT 的 626 / 638 条是 BF16（全部注意力、FFN、AdaLN 投影、norm），
+        DiT 的 626 / 638 条是 BF16（全部注意力 208、FFN 104、AdaLN 投影 100、norm 212，
+        外加文本入口 `context_embedder` 2 条 —— 加起来正好 626），
         文本编码器 1058 条**全部** BF16。卡的 checkpoint 表也写 BF16
     FP32:
       manifest_taken: true
@@ -451,10 +454,9 @@ precision:
       dense_ffn: BF16
       modulation: BF16
       norm: BF16
-      io_proj: FP32
+      io_proj: MIXED
       time_embed: FP32
       audio: FP32
-      other: BF16
     subsystem_method: >-
       **对 DiT 主干的完整权重清单 638 条逐项穷举，不是抽样**：14 个分片的 `weight_map`
       全覆盖、`failed_shards` 为空、`duplicate_tensors` 为 0，626 BF16 + 12 F32，
@@ -462,24 +464,39 @@ precision:
       `total_size` 逐字相同。取数用 `fetch_hf.py --include 'transformer/*'`
       把范围收到一个组件上，理由见 R2。
 
-      **八个桶没有一个是混的** —— 每个桶内部只有一种 dtype，所以这一列的每个值都是
-      全量结论，不是代表值。**12 条 F32 全部落在三个桶，而这三个桶整格 100% F32**：
-      `time_embed`（`time_embedder.linear_1/2` 的 weight 与 bias，4 条、15,835,008 参数）、
-      `io_proj`（`proj_in` / `proj_out` 的 weight 与 bias，4 条、1,037,664）、
-      `audio`（`audio_proj_in` / `audio_proj_out` 的 weight 与 bias，4 条、349,472）。
-      即**时间步嵌入与视频 / 音频的进出口投影整条是 F32**，而注意力 / FFN /
+      **七个桶里只有 `io_proj` 一个是混的，另外六个各自只有一种 dtype。**
+      12 条 F32 落在三个桶：
+      `time_embed`（`time_embedder.linear_1/2` 的 weight 与 bias，4 条、15,835,008 参数，
+      **整格 100% F32**）、
+      `audio`（`audio_proj_in` / `audio_proj_out` 的 weight 与 bias，4 条、349,472，
+      **整格 100% F32**）、
+      `io_proj`（`proj_in` / `proj_out` 的 weight 与 bias，4 条、1,037,664，
+      与同桶 BF16 的 `context_embedder` 并存）。
+      即**时间步嵌入与视频 / 音频的进出口投影是 F32**，而注意力 / FFN /
       AdaLN 投影 / norm 整条是 BF16。
-      **但三个模态入口并不同精度**：视频 `proj_in` 与音频 `audio_proj_in` 是 F32，
-      文本入口 `context_embedder` [5376, 5120] 却是 BF16 —— 它接的正是 BF16 的
-      文本编码器，这是落盘实测不是推测。
+
+      **`io_proj` 报 MIXED 是实话，不是「多数值 + 异类」。**
+      这一桶 6 条装的是三个模态的进出口投影，而**三个入口并不同精度**：
+      视频 `proj_in` / `proj_out` 与音频入口是 F32，文本入口
+      `context_embedder` [5376, 5120] 是 BF16 —— 后者接的正是 BF16 的文本编码器，
+      这是落盘实测不是推测。两半**都是货真价实的进出口投影**，所以这一桶确实同时
+      装着两种精度，和 LTX-2 的 `audio` 那一格同类；而 LTX-2 的 `attention` 报 BF16
+      不报 MIXED，是因为那桶里的 F32 根本不是注意力权重。判据是「两半是不是都属于
+      这个桶」，不是占比。
+      **而占比本身在这一格上自相矛盾，这也是不能报代表值的理由**：按元素数 96.37%
+      是 BF16（`context_embedder` 27,530,496 / 28,568,160），按条目数 66.7% 是 F32
+      （4/6）—— 两套计数基各指一个「多数」。报 BF16 会让「视频入口是 F32」从表上消失，
+      报 FP32 会让文本入口消失。
       没有 quantization_config、没有 scale 容器、没有低位打包，所以**本记录根本没有
       `per_subsystem_scale` / `per_subsystem_block` 这两个字段** —— 不量化，
       不存在 scale 张量与量化块。
 
-      **`other` 桶那 2 条就是 `context_embedder`**（27,530,496，即 breakdown 的
-      `text_proj`）。它功能上是文本入口投影、本该与 `proj_in` 同桶，但 `io_proj`
-      的正则认 `text_proj` / `caption_proj`，而 diffusers 把它叫 `context_embedder`。
-      归类正则在共享文件 `scripts/lib/subsystems.py` 里，本记录不改它，已回报。
+      **`other` 桶是空的，所以它那一格是「不适用」而不是「未录」** ——
+      638 条没有一条归不进已有的子系统词表。
+      这一格此前不是空的：`context_embedder` 两条曾经落在 `other` 里，
+      因为 `io_proj` 的正则认 `text_proj` / `caption_proj` 而 diffusers 把它叫
+      `context_embedder`。词表已在 `ebfb3cd` 补上 `\bcontext_embedder\b`，
+      那 27,530,496 现在归 `io_proj`。
 
       **这张表的作用域是 `transformer/` 一个组件，不是整个仓。** 所以缺的那些桶上的
       「不适用」说的是**DiT 主干里没有**，依据就是上面这次穷举：稠密单流、没有 MoE
