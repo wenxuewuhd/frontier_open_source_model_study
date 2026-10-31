@@ -376,6 +376,15 @@ git worktree remove --force $T
    坏的一面是**反过来也成立：没准备好的提交会被别人推走**。
    所以共用 checkout 里「本地提交、不要 push」这条约束只约束得住主动推送的人，
    约束不住被动带出去 —— 要真的不出去，提交前就得确认它已经可以出去。
+   **这不是个别疏忽：三条线各自独立犯了同一个推理错** ——
+   v2-hy15、v2-ltx、lowbit-repos 都从「我没执行过 push」推出「我的提交没被 push」，
+   而共用 checkout 里这两件事没有因果关系。lowbit-repos 连报两轮，
+   v2-ltx 从头到尾都在说「本地提交、未 push」。
+   **而我犯的是它的镜像**：我没看出自己的 push 正在替它们做那个它们任务书里
+   留给用户的决定（lowbit-repos 的 brief 明写「由用户决定推送时机」，
+   它六笔全被我带出去了）。
+   判这类状态要跑命令，不要从自己的动作往外推：
+   `git merge-base --is-ancestor <commit> origin/main`。
 23. **锚不住就要说出来，不能静默通过** —— validate 的「`resolution: open` 必须有
    对应 open_question」那道检查，判据是 `field.split(".")[-1] in open_q`，
    而 `field: '-'` 时 key 就是 `-`，**一个「——」就有两个破折号**，于是 `in` 恒真。
