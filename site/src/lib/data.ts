@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
 import { absence, isAbsent, withUnit, type Absent } from './columns';
+import { blockFormat, mainFormat, sortSchemes } from './blockformat';
 
 export { absence, isAbsent } from './columns';
 export type { Absent, AbsenceState } from './columns';
@@ -697,7 +698,28 @@ function subsystemFields(): TrackedField[] {
       // 三件事挤在一格，但它们必须一起看：反量化要同时知道权重精度、scale 精度和块。
       // 少看一个就会错 —— V4 的专家是 FP4 / FP8_E8M0 / [1,32]，
       // 照 config 的 [128,128] 去读 scale 会差 128 倍。
-      return [w, sc, bk].filter(Boolean).join(' / ');
+      const triple = [w, sc, bk].filter(Boolean).join(' / ');
+
+      // 末尾挂一个推导出来的块格式名。
+      //
+      // **三元组本身一个字不动。** 第一格的定义是「权重精度」，`FP4` 是精度（E2M1，
+      // 4 bit），`MXFP4` 是块格式 —— 记录里 R41 专门把这两件事分开过：厂商给的是前者，
+      // 后者是本仓按签名判断的。往精度格里塞块格式名等于把刚分开的两件事又合回去，
+      // 而这个三元组存在的目的恰恰是给人照着反量化。
+      //
+      // 加标注是为了消掉**并置**造成的困惑：精度页上同一个子系统，徽章印 `MX`、
+      // 下面这行写 `FP4`，中间没有一句话说这俩是同一件事的两个面 —— 徽章的 tooltip
+      // 里写了，但那要悬停才看得到，而这一行就在眼皮底下。
+      //
+      // 带 `+` 的格子只有主方案得名，所以标注里写明「主方案」：草稿头的注意力投影
+      // 停在 FP8，不写就会被读成整格都是 4 bit。
+      // 参数是 (元素格式, 块, scale) —— 别按三元组的显示顺序 (w, sc, bk) 传。
+      // 传反了不会报错，只会安静地推不出名字：blockSize('FP8_E8M0') 会匹配到末尾那个
+      // `0`，n=0 走 `if (!n) return undefined`，于是专家那格的标注整片消失。
+      const whole = blockFormat(w, bk, sc);
+      const main = whole ? undefined : mainFormat(w, sortSchemes(q?.per_subsystem_schemes?.[s.key]));
+      const name = whole ?? main;
+      return name ? `${triple}（${main ? '主方案 ' : ''}${name}）` : triple;
     },
   }));
 }

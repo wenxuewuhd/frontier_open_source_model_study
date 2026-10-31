@@ -33,6 +33,9 @@ import {
   changesFor, evidenceFor, KV_BASIS_LABEL, TRACKED_FIELDS, type Model,
 } from '../lib/data';
 import Cell from '../components/Cell.astro';
+// 块格式名的推导只此一份：格子的 badge/title 与 data.ts 里逐子系统的变化行共用，
+// 各留一份副本就会出现「徽章写 MXFP4、下面那行写 FP4」这种同格两种说法
+import { blockFormat, mainFormat, mixSummary, sortSchemes, type Scheme } from '../lib/blockformat';
 
 // KV 这一列和家族页的「KV 缓存精度」是同一个事实，所以空格子要走同一套三态契约。
 // 原先这里硬写 `未录`：对一个不建 KV 的扩散 DiT，图例上「未录」写的是
@@ -52,42 +55,9 @@ const perSub = (m: Model): Record<string, string> =>
 const byShapes = (m: Model): Record<string, number> =>
   (m.derived as any)?.from_shapes?.params_by_subsystem ?? {};
 
-/** 一个子系统里的一套量化方案（记录的 `per_subsystem_schemes`，只有带 `+` 的格子有）。 */
-type Scheme = {
-  dtype: string;
-  block?: string;
-  scale_dtype?: string;
-  tensors: number;
-  elements: number;
-};
-
-/** 按元素数降序 —— **第一条就是主方案**，格子的名字由它推。记录里本来就是这个序，这里不信它。 */
-const schemesOf = (m: Model, key: string): Scheme[] => {
-  const all: Record<string, Scheme[]> = prec(m).quantization?.per_subsystem_schemes ?? {};
-  return (all[key] ?? []).slice().sort((a, b) => b.elements - a.elements);
-};
-
-/**
- * 逐方案一行，带条数与元素占比。
- *
- * **这一行是「代表值」三个字的兑付。** 整列都是代表值（`attention` 那格同样盖掉了
- * BF16 的 norm），平时不碍事；但 `draft` 推出 `MXFP4` 之后，不写明它只说 95.5% 那一半，
- * 「草稿头全是 4 bit」就是个很自然的误读 —— 而草稿头的注意力投影其实停在 FP8。
- * 未量化的档也列出来，所以占比合得上 100%，不会让人以为漏了。
- */
-function mixSummary(sch: Scheme[]): string | undefined {
-  const tot = sch.reduce((s, r) => s + r.elements, 0);
-  if (sch.length < 2 || !tot) return undefined;
-  // 小数档不印 `0.0%` —— 那读着像零，而它们是实测到的 20 条 BF16 与 27 条 FP32，
-  // 恰恰是本页「小而对误差敏感的块反而被提上去」那条结论的样本，不能显示成不存在
-  const pct = (n: number) => {
-    const p = (n / tot) * 100;
-    return p > 0 && p < 0.05 ? '<0.1%' : `${p.toFixed(1)}%`;
-  };
-  return sch
-    .map((r) => `${r.dtype}${r.block ? ` 块 ${r.block}` : ''} ${r.tensors} 条 / ${pct(r.elements)}`)
-    .join('；');
-}
+/** 这一格的逐方案实测，按元素数降序 —— **第一条就是主方案**，格子的名字由它推。 */
+const schemesOf = (m: Model, key: string): Scheme[] =>
+  sortSchemes(prec(m).quantization?.per_subsystem_schemes?.[key]);
 
 type Cell =
   /** `shown` 是格子上实际显示的格式名；`derived` 为真表示它是从签名推的，不是记录原值 */
@@ -117,25 +87,16 @@ function cellFor(m: Model, key: string): Cell {
     const scl = (q.per_subsystem_scale ?? {})[key];
     const sig = [dtype, blk ? `块 ${blk}` : '', scl ? `scale ${scl}` : ''].filter(Boolean).join(' · ');
 
-    // 两步推导：先按整格的三因子推，推不出再按**主方案**的三因子推。
+    // 两步推导：先按整格的三因子推，推不出再按**主方案**的三因子推（mainFormat）。
     //
     // 第二步是 `per_subsystem_schemes` 买来的。带 `+` 的块（`'[1,32]+[32,32]'`）解析不出
     // 单一块大小，第一步必然弃权 —— 而弃权的代价不是「少一个名字」：`expert` 显示 MXFP4、
     // `draft` 显示裸 FP4，可两格 4 bit 那一半逐因子相同（E2M1 + [1,32] + E8M0），
     // 读者横着看得到的是「草稿换了格式」，一个错结论。
-    //
-    // **不能走「取块字符串末尾那个数」的捷径**：V4.1 的 '[1,32]+[32,32]' 会取到 32 而得名，
-    // V4 三份的 '[1,32]+[128,128]' 取到 128 而不得名 —— 同一个 FP4 方案，因为后面那个
-    // FP8 块碰巧是 32 还是 128 就分了道，比统一不给名字更糟。所以配对关系必须是数据。
-    //
-    // 主方案的 dtype 要和这一格的代表值一致才认。不一致说明记录自相矛盾，
-    // 那时退回裸 dtype —— 页面不替记录在两个矛盾值里挑一个。
+    // 为什么不走「取块字符串末尾那个数」的捷径，见 lib/blockformat 的 blockSize。
     const sch = schemesOf(m, key);
-    const main = sch[0];
-    const fromMain = main && main.dtype.toUpperCase() === dtype.toUpperCase()
-      ? blockFormat(main.dtype, main.block, main.scale_dtype)
-      : undefined;
     const whole = blockFormat(dtype, blk, scl);
+    const fromMain = whole ? undefined : mainFormat(dtype, sch);
     const f = whole ?? fromMain;
     const mix = mixSummary(sch);
     if (f) {
@@ -143,7 +104,7 @@ function cellFor(m: Model, key: string): Cell {
         kind: 'dtype', dtype, shown: f.replace(' 式', ''), derived: true, sig, mix,
         // 名字由主方案推出来时必须标上，title 里才会写明它只说那一半 ——
         // 否则 draft 格的 `MX` 会被读成「整个草稿头都是 4 bit」，而它的注意力投影是 FP8
-        partial: !whole && !!fromMain,
+        partial: !!fromMain,
       };
     }
     // 推不出名字时要说清是为什么，否则读者只看到一个裸 `FP4` 不知道是漏了还是有意的。
@@ -290,65 +251,6 @@ function blocks(m: Model): { sub: string; block?: string; scale?: string; fmt?: 
   }));
 }
 
-/**
- * 块格式的名字由**签名**推出来，不取记录的 `dtype` 字段。
- *
- * 因为 `FP4` 不是一种存储格式，它是**元素格式**（E2M1：1 符号 + 2 指数 + 1 尾数）。
- * NVFP4 与 MXFP4 的元素都是 E2M1，分开它们的是块大小与 scale：
- *   块 16 + E4M3  → NVFP4 式（NVIDIA；严格的 NVFP4 还有第二级 FP32 全局 scale）
- *   块 32 + E8M0  → MXFP4（OCP Microscaling 标准）
- * 本仓的 dtype 字段记的是元素格式，所以 DeepSeek 全族的 4bit 都写作 `FP4`，
- * 而它们其实分属两种块格式 —— 页面只印 `FP4` 等于把这个区别丢了。
- *
- * **只在签名完全对上时给名字，对不上就不给。** 推名字是推断，不是记录里的事实：
- *   - scale 记成容器（如 `UINT8`，E8M0 的容器）时不推 —— 容器说明不了逻辑精度
- *   - 块是混合的（`[1,32]+[32,32]`）时这里不推 —— 整格没有单一名字。**但 cellFor 会退一步
- *     按主方案再推一次**，条件是记录补了 `per_subsystem_schemes`（配对关系是数据，不是猜的），
- *     推出的名字在 title 里标明「只说主方案那一半」
- * 页面上这个名字标成推导，读者要核就看并排的块与 scale 两列。
- */
-function blockSize(block: unknown): number | undefined {
-  if (typeof block === 'number') return block;
-  if (typeof block !== 'string') return undefined;
-  // 混合块不给单一名字。**不要改成「取末尾那个数」**：V4.1 的 '[1,32]+[32,32]' 会取到 32、
-  // V4 三份的 '[1,32]+[128,128]' 取到 128，同一个 FP4 方案因此一个得名一个不得名。
-  // 要给带 + 的格子推名字，走 cellFor 里的主方案那条路（配对关系有数据支撑）。
-  if (block.includes('+')) return undefined;
-  const m = block.match(/(\d+)\s*\]?\s*$/);
-  return m ? Number(m[1]) : undefined;
-}
-
-/** 元素格式是第三个因子，**少验一个就会把 FP8 认成 MXFP4**。 */
-const IS_E2M1 = new Set(['FP4', 'MXFP4', 'NVFP4']);
-
-/**
- * 记录自己已经给了块格式名的，不再推 —— **推导只用来补空缺，不用来复述，更不用来反驳。**
- *
- * `minimax-m3.1-flash` 的专家记作 `NVFP4`，而签名（块 16 + E4M3）在这里会推出
- * 「NVFP4 式」。两者看着像同一句话，其实差一个关键事实：严格的 NVFP4 有**第二级
- * FP32 全局 scale**，「…式」是专门留给没有它的那种。而那份记录实测到了
- * 21,888 个 weight_global_scale 与同样多的 weight_packed 一一对应，**第二级 scale
- * 在**，所以它是严格 NVFP4；DeepSeek 的全局 KV 才是「式」——技术报告原话
- * "following NVFP4 but omitting its second-level global scale"。
- * 推导值盖在记录值旁边会把这个区别抹平，所以 dtype 已是块格式名时直接让位。
- */
-const NAMED_BLOCK_FORMAT = new Set(['MXFP4', 'NVFP4']);
-
-function blockFormat(dtype: unknown, block: unknown, scale: unknown): string | undefined {
-  // 初版只验了块与 scale 两个因子，于是 `FP8_E4M3 · 块 32 · scale E8M0` 的滑窗
-  // 被标成了 MXFP4 —— 那是 8 bit 元素，怎么也成不了 FP4。本仓「一个乘式逐因子验」
-  // 说的就是这个：三个因子只验两个，剩下那个照样能错一个量级。
-  // 元素不是 E2M1 就一律不给名字（MXFP8 之类另有定义，但本仓没有一手依据去断言）。
-  const dt = typeof dtype === 'string' ? dtype.toUpperCase() : '';
-  if (!IS_E2M1.has(dt)) return undefined;
-  if (NAMED_BLOCK_FORMAT.has(dt)) return undefined; // 记录已经给了名字，让位
-  const n = blockSize(block);
-  const sc = typeof scale === 'string' ? scale.toUpperCase() : '';
-  if (!n) return undefined;
-  if (n === 16 && sc === 'FP8_E4M3') return 'NVFP4 式';
-  if (n === 32 && sc === 'FP8_E8M0') return 'MXFP4';
-  return undefined;
-}
 
 /**
  * KV 缓存精度。两种来源，**绝不混为一谈**：
