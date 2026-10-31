@@ -776,7 +776,10 @@ def gen_workload(gen: dict, kind: str, dit_params: float, dit_params_src: str,
     # hy15 的线性项高 3.05 倍、单步高 20.4%，注意力占比从真值 90.0% 被压成 74.8% ——
     # **误差专挑新模型放大**，恰好是最该看准的那几份。
     psc = (gen.get("backbone") or {}).get("param_scaling") or {}
-    if psc.get("per_video_token") or psc.get("per_sample"):
+    # n_txt 提到分支外：**单步与逐段必须用同一个文本 token 数**，
+    # 而它原先定义在下面那个 if 里，逐段那段取不到 —— 于是逐段把文本项整项漏掉了（见下）
+    n_txt = bucket.get("text_tokens") or 0
+    if psc.get("per_video_token") or psc.get("per_text_token") or psc.get("per_sample"):
         p_vid = psc.get("per_video_token") or 0
         p_txt = psc.get("per_text_token") or 0
         p_smp = psc.get("per_sample") or 0
@@ -785,7 +788,6 @@ def gen_workload(gen: dict, kind: str, dit_params: float, dit_params_src: str,
         # 留着的后果不是编译错，是让人**不去查**：它看起来已经回答了「为什么不算这一项」。
         # 现在的真实情况是：档位可以给 text_tokens，没给的那些才漏掉这一项并标明是下界 ——
         # 不替它猜一个长度。
-        n_txt = bucket.get("text_tokens") or 0
         flops["linear"] = 2 * (p_vid * seq + p_txt * n_txt + p_smp)
         flops["linear_terms"] = {
             "formula": "2 × (每视频 token 参数 × token 数 + 每文本 token 参数 × 文本 token 数"
@@ -848,8 +850,17 @@ def gen_workload(gen: dict, kind: str, dit_params: float, dit_params_src: str,
                     # 线性项要和单步用同一套口径。这里原来写死了 2 × dit_params × seq，
                     # 于是 param_scaling 填上之后单步用新口径、端到端用旧口径 ——
                     # 同一个页面上两个数按两种公式算，而且谁也看不出来
-                    if psc.get("per_video_token") or psc.get("per_sample"):
+                    # **上面那条注释写对了病根，却只治了一半。** 它说「原来写死
+                    # 2 × dit_params × seq，于是单步用新口径、端到端用旧口径」——
+                    # 改的时候补了 per_video_token 与 per_sample 两项，**漏了 per_text_token**，
+                    # 于是同一份产物里顶层 linear 含文本项、逐段不含，差值恰好
+                    # 2 × per_text_token × text_tokens（hunyuanvideo-1.5 每步 1.140e13，
+                    # 114 步合计 1.30e15、占端到端 0.15%）。量级可忽略，**口径不可**。
+                    # 文本 token 不随分辨率变，所以逐段与单步用同一个 n_txt。
+                    if (psc.get("per_video_token") or psc.get("per_text_token")
+                            or psc.get("per_sample")):
                         s_lin = 2 * ((psc.get("per_video_token") or 0) * s_seq
+                                     + (psc.get("per_text_token") or 0) * n_txt
                                      + (psc.get("per_sample") or 0))
                     else:
                         s_lin = 2 * dit_params * s_seq

@@ -1,7 +1,7 @@
 {
  "id": "hunyuanvideo-1.5",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-31T03:50:45+00:00",
+ "generated_at": "2026-10-31T04:39:37+00:00",
  "inputs": {
   "facts_dir": "facts/hunyuanvideo-1.5",
   "config_present": true,
@@ -188,8 +188,8 @@
      "steps": 50,
      "forwards_per_step": 2,
      "tokens": 111600.0,
-     "flops_per_step": 6118284831558656.0,
-     "flops": 6.118284831558656e+17,
+     "flops_per_step": 6129684431081216.0,
+     "flops": 6.129684431081216e+17,
      "tokens_source": "stage"
     },
     {
@@ -197,8 +197,8 @@
      "steps": 6,
      "forwards_per_step": 1,
      "tokens": 111600.0,
-     "flops_per_step": 6118284831558656.0,
-     "flops": 3.670970898935194e+16,
+     "flops_per_step": 6129684431081216.0,
+     "flops": 3.67781065864873e+16,
      "tokens_source": "stage"
     },
     {
@@ -206,14 +206,14 @@
      "steps": 8,
      "forwards_per_step": 1,
      "tokens": 247163.0,
-     "flops_per_step": 2.837234676057363e+16,
-     "flops": 2.2697877408458906e+17,
+     "flops_per_step": 2.838374636009619e+16,
+     "flops": 2.2706997088076954e+17,
      "tokens_source": "stage"
     }
    ],
    "stages_skipped": []
   },
-  "flops_end_to_end": 8.755169662298066e+17,
+  "flops_end_to_end": 8.768165205753784e+17,
   "excluded": [
    "文本编码一次（编码器参数量在 generation.text_encoders，本函数不计）",
    "VAE decode 一次（VAE 结构不在 config 里，解码器是 Transformer 时这一项不是小量）",
