@@ -197,10 +197,18 @@ lineage:
         `Lightricks/LTX-2.3-nvfp4`（只有 dev）。
         前代的 fp8 / fp4 是主仓里的 `ltx-2-19b-dev-fp8.safetensors` 等文件
       benefit: >-
-        主仓因此从 314 GB 降到 157 GB，但「本记录实测清单覆盖了哪些精度」
-        这件事变了：fp8 与 nvfp4 两档本轮**没有取数**，
-        见 precision.weights_release_scope 的两个布尔（前代那两档
-        manifest_taken 为真、in_precision_table 为假；本代两个都假）
+        主仓因此从 314 GB 降到 157 GB，而**实测覆盖面并没有跟着变窄** ——
+        两个独立仓的清单后来都取了（fp8 8,871 条、nvfp4 8,939 条），
+        逐子系统实测记在 precision.quantization.official_variants 里，
+        两档的 manifest_taken 与 in_precision_table 四个布尔都为真。
+        所以「搬到独立仓」这件事的代价不在覆盖面上，而在取数要多走两个仓、
+        且那两个仓**连一份 config 都没有**（Gate B 在它们身上只剩清单一路）。
+
+        取数之后反倒多出一条只有逐仓清单才看得见的事实：
+        **nvfp4 那个仓把 290 张 `*scale_shift_table` 调制表从 F32 降成了 BF16**，
+        而 fp8 仓与两代主仓的同一批表全是 F32 —— 五份清单里只有它这一份这样。
+        调制表只占 4,730,880 参数（0.02%），但它是这一族里唯一一处
+        「量化档顺手改了非量化桶的精度」，照主仓的精度去读 nvfp4 会读错这一桶
 
 params:
   # **total 故意留空**，不是漏填。这个仓只发单文件整包，清单实测的 23,069,505,387
@@ -857,7 +865,12 @@ reviewed:
     完整 config 在 `__metadata__.config` 里（transformer / vae / scheduler /
     audio_vae / vocoder 五块）。所以 Gate B 的双路对账是齐的，
     只是 `fetch_hf.py` 丢掉 `__metadata__`，facts/ltx-2.3/cfg.json 因此是空的，
-    derive 的「层数」一项显示为 skip 而不是 ok。已上报取数脚本的这个缺口。
+    derive 的「层数」一项显示为 skip 而不是 ok —— 这是 `fetch_hf.py` 的缺口，
+    不是这个仓没有 config。
+    **收尾条件**：`facts/ltx-2.3/cfg.json` 不再是 `{}` 的那天（现在实测是空对象），
+    这两句删掉、重跑 derive，并确认「层数」从 skip 变 ok。
+    判据是一条命令：`python -c "import json;print(json.load(open('facts/ltx-2.3/cfg.json'))=={})"`
+    印出 False 就该收尾，不用来问人。
 
     Gate B 三路：内嵌 config × 权重清单（5,947 张量）× 厂商参考实现。
     结构字段逐项对读：num_layers 48 对 transformer_blocks.0–47；
@@ -1050,7 +1063,14 @@ open_questions:
     在蒸馏调度下是否也关掉，没有读到构造 guider 的那一层代码。
     非蒸馏默认档是 4 路全开（LTX_2_3_PARAMS 的 3.0 / 1.0 / 3.0），这一条验过了。
     若蒸馏档也开着后两路，端到端前向数是 8 × 3 而不是 8 × 1，
-    而 schema 的 forwards_per_step 只收 1 和 2 —— 这是另一个已上报的缺口
+    而 schema 的 forwards_per_step 只收 1 和 2 —— 那是 schema 的枚举太窄，
+    不是厂商只跑 1 或 2 次。
+    **收尾条件**：`data/schema/model.schema.json` 的
+    `generation.sampling.cfg.forwards_per_step` 枚举里出现大于 2 的值的那天
+    （现在实测是 `[1, 2]`），把字段改成实测值并把这一条里"枚举只收 1 和 2"
+    那半句删掉；前半句（蒸馏档后两路关没关）要读代码才能收，与枚举无关，
+    两件事分开收。判据是一条命令：
+    `python -c "import json;print(json.load(open('data/schema/model.schema.json'))['properties']['generation']['properties']['sampling']['properties']['cfg']['properties']['forwards_per_step']['enum'])"`
   - >-
     连接器（2,016,166,400）与文本投影（1,156,061,184）是每步跑还是每 prompt
     跑一次，从清单看不出来。连接器块里只有自注意力、没有时间步输入，
