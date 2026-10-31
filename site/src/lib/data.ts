@@ -777,9 +777,36 @@ export function changeMatrix(models: Model[]) {
   }));
   // 「零变化」只对有前代的版本成立。家族首录没有前代可比，changesFor 同样返回空，
   // 混进来会让页面把它说成「相对前代一个字段都没动」—— 它根本没有前代
-  const unchanged = models.filter(
-    (m) => m.lineage?.predecessor && (changes.get(m.id) ?? []).length === 0,
-  );
+  //
+  // **而「有前代且零变化」本身也不等于「没变」。** 跟踪字段是一套语言模型词表
+  // （vocab / kv_lora / experts / moe_inter / mtp / kv_elems …），生成线的记录
+  // 大半列取不到值：wan2.1 → wan2.2-T2V-A14B 在 48 个可比字段里只有 6 个
+  // 两侧都有值，而真正变了的那个量（整模型参数量 14.3B → 28.6B，两套专家按时间步
+  // 切换）**根本没有列**。于是矩阵看见零，页面曾把它写成「连一个规格字段都没动，
+  // 能力变化来自后训练或权重刷新」—— 一个双模型架构被说成了权重刷新。
+  //
+  // **不是生成线独有的**：glm-4.7 比过 24 / 48 个字段也落进这一段，
+  // 而它与 glm-4.6 的 `params.total` 差 1,551,892,480 —— `params` 不是跟踪字段。
+  //
+  // 所以这里连「比过几个」一起返回。少了这个数，`length === 0` 读起来和
+  // 「比遍了都一样」完全一样，而它实际是「能比的只有那几个」。
+  const diffable = TRACKED_FIELDS.filter((f) => f.diff !== false);
+  const has = (v: unknown) => v !== undefined && v !== null && v !== '';
+  const unchanged = models
+    .filter((m) => m.lineage?.predecessor && (changes.get(m.id) ?? []).length === 0)
+    .map((m) => {
+      const prev = modelById(m.lineage!.predecessor!);
+      return {
+        m,
+        compared: prev
+          ? diffable.filter((f) => has(f.get(prev)) && has(f.get(m))).length
+          : 0,
+        total: diffable.length,
+      };
+    })
+    // 一个字段都没比过的，连「零变化」都不该说 —— 那是整张表对这份记录失效，
+    // 不是这份记录没变
+    .filter((u) => u.compared > 0);
   return { cols, rows, unchanged };
 }
 

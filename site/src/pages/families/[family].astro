@@ -19,7 +19,7 @@ import {
   familyModels, axisMatrix, changeMatrix, allModels, url, fmtSci,
   TRACKED_FIELDS, SUBSYSTEM_FIELD_PREFIX, FAMILY_LABEL, FAMILY_ORDER,
   HORIZON_LABEL, reviewStatus,
-  rowIsInformative,
+  rowIsInformative, familyLine,
 } from '../../lib/data';
 
 export function getStaticPaths() {
@@ -32,6 +32,11 @@ const label = FAMILY_LABEL[family!] ?? family!;
 const models = familyModels(family!);
 const narrative = axisMatrix(models);
 const matrix = changeMatrix(models);
+// 「矩阵看不见什么」两条线不一样。写一句通用的会在另一条线上变成悬空断言 ——
+// 在 GLM 页上提 VAE 与采样步数，和在 wan 页上提 KV 一样不着边
+const unseen = familyLine(family!) === 'generation'
+  ? '整模型参数量、VAE 口径、采样步数与每步前向次数'
+  : '整模型参数量、权重存储口径';
 
 /** 表头用短名。家族前缀对每一列都一样，占着宽度不提供信息。 */
 const short = (m: any) =>
@@ -111,15 +116,20 @@ const sideCls = (m: any) => (m.lineage?.track === 'side' ? 'side' : undefined);
   {
     matrix.unchanged.length > 0 && (
       <p class="note" style="margin-top:12px">
-        字段零变化的版本（{matrix.unchanged.length} 个）：
-        {matrix.unchanged.map((m, i) => (
+        比过的字段里零变化（{matrix.unchanged.length} 个版本）：
+        {matrix.unchanged.map((u, i) => (
           <>
             {i > 0 && '、'}
-            <a href={url(`/models/${m.id}/`)}>{short(m)}</a>
+            <a href={url(`/models/${u.m.id}/`)}>{short(u.m)}</a>
+            <span class="muted small">（比过 {u.compared} / {u.total} 个字段）</span>
           </>
         ))}
-        。这些版本相对前代连一个规格字段都没动，能力变化来自后训练或权重刷新，
-        算子清单可直接沿用前代 —— 跟踪时先比张量名集合，相同就不必重走算子评估。
+        。<strong>这只说比过的那几个字段相同，不是「这一版没变」</strong> ——
+        其余字段在这两份记录上不适用或未录，而<strong>{unseen}本身就不是跟踪字段</strong>，
+        变了也不会出现在上面那张矩阵里。
+        要判断能不能沿用算子清单，去比张量名集合与形状；但那个比较只回答算子种类，
+        不回答要占多少显存：本仓有过张量名、形状、dtype 逐项全同、而驻留参数量翻倍的
+        两份记录（Wan2.1-T2V-14B → Wan2.2-T2V-A14B，两套专家按时间步切换）。
       </p>
     )
   }
