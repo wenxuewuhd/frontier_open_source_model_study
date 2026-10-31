@@ -91,27 +91,31 @@ SUBSYSTEM = [
     #     stepvideo-t2v-30b   228,311,040 +     39,333,888 ==      267,644,928  ✓
     #     hunyuanvideo-1.5  2,744,414,208 +     20,983,808 !=    2,723,964,928
     #
-    # **hunyuan 那 41,433,088 是口径差不是漏刀，两个方向都对平过**（v2-ltx 拆出来的）：
-    #     per_sample 2,723,964,928 = double_blocks.*_mod.linear 2,719,236,096
-    #                              + time_in.mlp 4,722,688
-    #                              + cond_type_embedding 6,144   ← 它在 other 桶里
-    #     差 41,433,088 = txt_in.* 的 mod/time_embed 33,046,528
-    #                   + final_layer.adaLN_modulation 8,392,704 − 6,144
+    # **hunyuan 那 41,433,088 拆开来是四项，逐位对平**（v2-ltx 与 v2-hy15 两轮拆的）：
+    #     + final_layer.adaLN_modulation        8,392,704   在桶里、不在 per_sample
+    #     + token_refiner 内的 modulation      16,785,408   同上
+    #     + t_embedder.mlp + c_embedder        16,261,120   在桶里、记录算进 per_text_token
+    #     − cond_type_embedding                     6,144   在 per_sample、却落 other 桶
+    #                                         ───────────
+    #                                          41,433,088
     #
-    # 前提是**那份记录的 `breakdown` 本身是纯功能分解**。hunyuan 不满足：它的
-    # `breakdown.token_refiner` 141,105,152 是**按模块**切的，其中 23.4%
-    # （33,046,528）是 AdaLN 与时间步嵌入，功能轴会把这个桶切开；
-    # 另外 `final_layer.adaLN_modulation` 压根不在它的 `adaln_modulation` 里。
-    # cogvideox / h3 / stepvideo / ltx 两份的 breakdown 都是纯功能分解，所以都成立。
+    # **而它不成立恰恰是这条判据在起作用，不是判据无效。** 那份记录自己的
+    # `param_scaling.note` 就写着：token_refiner 的 `adaLN_modulation` + `t_embedder`
+    # + `c_embedder` 共 **33,046,528**「这三项吃的是条件向量、每次前向只过一遍，
+    # **口径上属 per_sample**」，而它「本次未改（会动已核过的数）」。
+    # 也就是说 `per_sample` 是**已知不纯**的，不是另一根轴 ——
+    # 四项里两项是那份记录认过的不纯、一项（final_layer）它没认、
+    # 一项（cond_type_embedding）是桶这边的归属问题。
+    # **判据揪出了四件事，其中一件此前没人记过。**
     #
-    # **所以判据要带前提写**：breakdown 是纯功能分解时，`modulation + time_embed`
-    # 必须等于它的 `adaln_modulation` / `per_sample`；不等就先去看 breakdown 里
-    # 有没有按模块切的桶 —— 这样它既能当校验器，又不会在下一份带 `token_refiner`
-    # 这类桶的记录上误报。
+    # 所以不要把失配读成「两根轴按设计不同、相等只是巧合」——那会丢掉一个刚挣到
+    # 自己位置的校验器。正确的用法：**不等时先问「这份记录的 per_sample 纯不纯」**，
+    # 答案在它自己的 `param_scaling.note` 里。
     #
-    # **这一条自己就是「断言规律不要断言人口普查」的实例**：我先按手上那两份把它
-    # 写成了普适结论，v2-h3 与 v2-step 各自独立复算九份找出反例，v2-ltx 再把
-    # 反例的根因拆平 —— 三步都不是我做的。
+    # **而「它是不是一条律」这件事我栽了两次**：先按手上两份写成普适结论
+    # （v2-h3 与 v2-step 各自复算九份才找出反例）；再把反例写成「根因未查」
+    # （我试过几组组合都不中，就当成拆不开 —— v2-ltx 多试一步就拆开了，
+    # 它是两组之和再减一组）。「我试过的都不中」不是「拆不开」的证据。
     ("modulation", re.compile(r"\bnorm(?:\d+|_out)\.linear\b", re.I)),
     # norm 必须排在 attention / dense_ffn 之前：attn_norm、ffn_norm、kv_norm、q_norm
     # 名字里带 attn / ffn / kv / q，按那两条先匹配会把归一化算成注意力或 FFN 权重。
