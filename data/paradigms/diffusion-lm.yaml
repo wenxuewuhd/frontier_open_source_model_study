@@ -1,0 +1,60 @@
+id: diffusion-lm
+name: 扩散语言模型（dLLM）
+aliases: [dLLM, LLaDA, Dream, SDAR, "diffusion LM", "masked diffusion"]
+category: decoding
+question: >-
+  自回归的 decode 是「权重带宽受限、每步一个 token」；扩散式解码是「每步刷一批位置、
+  步数可调」。两者的瓶颈不在同一侧，**KV 缓存这个概念本身都可能不成立**。
+  所以 infra 要问的不是「快多少」，而是「decode 的算术强度换了一个量级之后，
+  现有的批调度、缓存管理、算子表还剩多少能复用」。
+
+match:
+  - test: { src: rec, op: eq, path: kind, values: [dllm] }
+    why: >-
+      本仓 schema 的 kind 枚举里**已经有 dllm 这一项**，所以这个范式是能被表达的 ——
+      命中为零是「没录」，不是「录不了」。这两件事在看板上必须分得开。
+match_note: >-
+  判据能跑，命中 0 份（2026-10-31）。对照 loop-transformer 那条：那一条的 match 是空数组，
+  因为 schema 里压根没有能表达它的字段。**同样是「看板上空一行」，成因不同、修法不同** ——
+  这条要去录模型，那条要先加字段。
+
+watchlist:
+  # 名字取自 PLAN.md §2「dLLM（LLaDA、Dream、SDAR 等）」—— 那是本项目自己的选题清单，
+  # 算在仓内来源。**仓名一律空着**：HF 仓 id 要现查才算数，凭印象写一个是把猜测存成事实。
+  - name: LLaDA
+    note: 仓名与规格未查
+  - name: Dream
+    note: 仓名与规格未查
+  - name: SDAR
+    note: 仓名与规格未查
+
+production:
+  state: unsurveyed
+  note: 公开仓看不见这一档；实证归 data-private（P3 自测基准）
+
+infra_signals:
+  - text: >-
+      本仓对这个范式的事实储备是零：0 份记录、0 条平台条目、0 个取过的权重清单。
+      看板上这一行的价值就是把这个零显式化 —— D2（选题漂移没有任何闸口查）的实例之一。
+    evidence: derived
+  - text: >-
+      扩散式解码与生成类多模态共用「步数」这根轴（PLAN §3.2 的最后一句）。
+      本仓生成线已经有 9 份记录和一套采样口径字段，dLLM 落地时应当先看那套字段够不够用，
+      而不是另起一套。
+    evidence: judgement
+
+open_questions:
+  - L0 未录：要带定位的引用（论文编号 / 节号），不从印象里写标题。
+  - >-
+      L1 未录：watchlist 三个名字的仓名、参数量、许可都没查。
+      这是一次定向取数的活，不是一次判断。
+
+evidence:
+  question: judgement
+  match: derived
+  match_note: derived
+  watchlist: unknown
+  production: unknown
+  infra_signals: judgement
+  infra_signals[0].text: derived
+  open_questions: judgement

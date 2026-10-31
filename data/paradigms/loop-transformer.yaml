@@ -1,0 +1,54 @@
+id: loop-transformer
+name: 递归深度 / Loop Transformer
+aliases: ["loop transformer", "recurrent depth", "layer reuse", "universal transformer", "depth recurrence"]
+category: depth
+question: >-
+  同一套层权重被循环执行 N 次：**参数量与计算量解耦**。
+  于是本仓三套参数口径（参数量 / 权重存储 / 激活参数）全都答不出「这个模型要多少算力」——
+  权重存储按一份算，而 FLOPs 要乘 N，而 N 可能随输入变。
+  infra 要准备的是一个现在没有的轴：每 token 的执行深度。
+
+# 空数组是一种结论，不是漏填。schema 里没有能表达「层复用 / 循环深度」的字段，
+# 所以这条范式**推不出 L1**：即便明天录进一份这样的模型，看板也认不出来。
+match: []
+match_note: >-
+  **本仓 schema 表达不了这个范式。** arch 下现有 15 个块（layers / hidden / vocab / norm /
+  norm_eps / activation / position / attention / ffn / moe / residual / retrieval / decoding /
+  vision / audio），没有一个能说「这 N 层是同一份权重循环 M 次」。
+  arch.layers 是个整数，它同时被读作「权重里有几层」与「一次前向过几层」——
+  循环深度一出现，这两件事就不再相等，而**字段会悄悄地只说对一半**（坑 #7 的形状：
+  一个字段压两件事，消费点会替你选一个含义）。
+  要立判据得先加字段，建议形态：arch.depth.{unique_layers, executed_layers, adaptive}。
+  在那之前这一行恒为「未录」，而这正是它该显示的。
+
+watchlist: []
+
+production:
+  state: unsurveyed
+  note: 公开仓看不见这一档；实证归 data-private（P3）
+
+infra_signals:
+  - text: >-
+      这是本看板上唯一一条「连判据都还立不起来」的范式，所以它排在待办里的位置和别的不同：
+      别的范式缺的是数据，这一条缺的是字段。
+    evidence: judgement
+  - text: >-
+      一旦有记录落地，本仓的推导链会在 derive.py 处断掉：每 token FLOPs 按 arch.layers
+      线性折算，而循环深度让这个折算失效 —— 与 D1（算术强度按参数量比例折算，对混合精度不成立）
+      同形，都是推导式里一个因子被当成常量。
+    evidence: judgement
+
+open_questions:
+  - L0 未录：要带定位的引用。
+  - >-
+      加字段之前不要先录模型：没有 arch.depth 这一块，录进来的记录会把循环深度写进散文，
+      而散文上没有任何闸口。顺序是先 schema、再取数。
+
+evidence:
+  question: judgement
+  match: derived
+  match_note: derived
+  watchlist: unknown
+  production: unknown
+  infra_signals: judgement
+  open_questions: judgement

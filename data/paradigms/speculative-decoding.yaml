@@ -1,0 +1,61 @@
+id: speculative-decoding
+name: 投机解码 / MTP
+aliases: [MTP, "multi-token prediction", EAGLE, DSpark, "draft head", "nextn"]
+category: decoding
+question: >-
+  草稿侧是**另一套要驻留的权重**，而且它的接受率决定每步实际产出几个 token。
+  infra 要准备两件事：草稿块的显存与算子（含它自带的那份词表投影），
+  以及「每步 token 数不再是 1」之后批调度与 KV 写入的变化。
+
+match:
+  - test: { src: rec, op: truthy, path: arch.decoding.mtp_layers }
+    why: >-
+      本仓的 MTP 口径是「发布权重里有几个草稿块」，0 为假值，所以 truthy 恰好等于
+      「这代发了草稿侧权重」。
+  - test: { src: rec, op: truthy, path: arch.decoding.speculative }
+    why: >-
+      不是 MTP 块形态的草稿侧（独立子目录、自带 config 与清单）记在这一块。
+      没有这条规则，L1 会漏。
+match_note: >-
+  **第二条规则是实测补上的，不是对称性考虑。** 只用 mtp_layers 一条时命中 23 份；
+  加上 speculative 后 24 份，多出来的恰好是 minimax-m3.1-flash —— 它的 mtp_layers 记 0
+  （config 里两个 MTP 键都没了、清单里零 mtp.* 前缀），草稿侧换成了落在 dspark/ 子目录的
+  DSpark 头，1,958,493,697 参数的真实权重。那份记录自己的 note 就写着
+  「**但这不等于没有草稿侧**」，而按单条规则匹配正好会犯它警告的那个错。
+  **L1 这一档按权重判，不按 config 判**，这个区分在本仓有实例：2026-10-31 实测，
+  13 份 mtp_layers=0 的记录里有 2 份（minimax-m2 / minimax-m3）的 config 声明了
+  MTP 模块（num_mtp_modules 3 / 7）而发布清单里一个 MTP 张量都没有 —— 训练侧有、
+  发布权重没带。按 config 匹配会把这两份算成 L1。
+
+infra_signals:
+  - text: >-
+      草稿块不只是「一层」：实测 step-5-preview 的 3 个 MTP 块各自自带一份
+      shared_head.output 词表投影，三份合计 1.58B，占草稿侧 2.52B 的 63%。
+      按「主干一层的大小」估草稿侧显存会差出一个词表。
+    evidence: derived
+  - text: >-
+      参数口径上草稿侧要能被扣掉再对账：本仓 params.excludes 里有 draft 这一项，
+      就是因为厂商声明值含不含草稿侧两种都有，不扣会报出一个口径差导致的假不一致。
+    evidence: official
+  - text: >-
+      引擎侧的开关与权重是否存在是两件事（命中记录里有「参考实现不加载 MTP，
+      而模型卡给的 vLLM 命令带 --spec-method mtp」这种情况）。平台矩阵上要分开记。
+    evidence: judgement
+
+open_questions:
+  - >-
+      L0 未录：投机解码这一脉的定义性文献要带定位地引。本仓命中记录里的引用都是
+      厂商侧实例（MTP / DSpark / EAGLE-like 的说法），那是 L1 证据。
+  - >-
+      **接受率本仓一个数都没有。** 没有接受率，「每步产出几个 token」就只是上限而不是
+      有效值，这一档的 infra 结论（批调度、KV 写入放大）全都悬着。
+      它属于性能数据那一块（本仓 57 份里只有 2 份有 performance），不是这里补得上的。
+
+evidence:
+  question: judgement
+  match: derived
+  match_note: derived
+  infra_signals: judgement
+  infra_signals[0].text: derived
+  infra_signals[1].text: official
+  open_questions: judgement

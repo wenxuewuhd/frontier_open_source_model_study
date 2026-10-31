@@ -537,6 +537,22 @@ def check_field_consumers(root, errors, warnings):
     unread = [pp for pp, k in leaves(schema)
               if pp.startswith(watched) and (k not in seen or pp in _MASKED_UNREAD)]
     n = len(unread)
+
+    # 新范式那份 schema 是 2026-10-31 新建的，**它的预算是 0 而不是棘轮** ——
+    # 存量欠账是历史问题，新建的 schema 没有历史，一开始就该全部有人读。
+    # 放进同一个棘轮里会让它被 45 这个额度兜住，等于新 schema 白送 45 个欠账。
+    pp2 = os.path.join(root, "data", "schema", "paradigm.schema.json")
+    if os.path.exists(pp2):
+        try:
+            s2 = json.load(open(pp2, encoding="utf-8"))
+        except ValueError as e:
+            errors.append(f"data/schema/paradigm.schema.json 读不动：{e}")
+        else:
+            miss = sorted({k for _, k in leaves(s2) if k not in seen})
+            if miss:
+                errors.append(
+                    f"paradigm.schema.json 有 {len(miss)} 个字段站点上没人读：{miss}。"
+                    "新建 schema 的预算是 0 —— 加字段要同时加消费点")
     if n > _UNREAD_FIELD_BUDGET:
         errors.append(
             # 不说「新增的是 X」—— 这里拿不到基线名单，只有数量，
@@ -551,6 +567,62 @@ def check_field_consumers(root, errors, warnings):
         warnings.append(
             f"站点没读的 schema 字段降到 {n} 个（棘轮是 {_UNREAD_FIELD_BUDGET}）。"
             "把 _UNREAD_FIELD_BUDGET 改成这个数，棘轮才收得紧")
+
+
+# 新范式条目里「描述条目本身」的键，不承载关于世界的断言，不要求 evidence 归属。
+# 与模型记录的 SKIP_KEYS 同一个道理，但名单不同 —— 合成一份会让两边互相放行。
+_PARADIGM_META = {"id", "name", "category", "aliases", "evidence", "sources",
+                  "review", "visibility"}
+
+
+def check_paradigm(doc, path, errors, warnings):
+    """新范式条目的两条自有规矩。
+
+    1. **evidence 覆盖**：承载断言的顶层块都要能在 evidence 里找到归属（前缀继承）。
+       question 与 infra_signals 几乎必然是 judgement，这里不替它判，只要求写出来。
+    2. **match 为空时必须写 match_note**。空 match 是一种结论（schema 表达不了这个范式），
+       不是漏填 —— 但两者在产物里长得一模一样，不逼着写理由就分不出来。
+       loop-transformer 是前者，而「有人新建条目忘了填 match」是后者。
+    """
+    ev = doc.get("evidence")
+    if not isinstance(ev, dict):
+        errors.append(f"{path}: 缺 evidence 块")
+        return
+    for k in doc:
+        if k in _PARADIGM_META:
+            continue
+        if evidence_for(k, ev) is None:
+            errors.append(f"{path}: {k} 没有 evidence 归属（evidence 支持前缀继承，写 {k}: 口径 即可）")
+
+    if not (doc.get("match") or []):
+        if not doc.get("match_note"):
+            errors.append(
+                f"{path}: match 是空的而没有 match_note。"
+                "空 match 要么是「本仓 schema 表达不了这个范式」这个结论，"
+                "要么是漏填 —— 产物里两者长得一样，所以必须写出是哪一种")
+
+
+def check_paradigms_derived(root, errors):
+    """data/derived/paradigms.json 有没有过期。
+
+    产物是输入的纯函数（脚本里没放时间戳，就是为了这道闸能逐字节比），
+    所以这里直接重算一遍比文本，不逐字段比 —— 「哪些字段不参与比对」
+    是一份要维护的名单，而那种名单一定会漂。
+    """
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        import derive_paradigms as dp
+    except ImportError as e:
+        errors.append(f"scripts/derive_paradigms.py 导入失败：{e}")
+        return
+    want = dp.dumps(dp.compute(root))
+    path = os.path.join(root, "data", "derived", "paradigms.json")
+    if not os.path.exists(path):
+        errors.append("data/derived/paradigms.json 不存在：跑 python scripts/derive_paradigms.py")
+        return
+    if open(path, encoding="utf-8").read() != want:
+        errors.append("data/derived/paradigms.json 过期了 —— 条目或记录变了而产物没重算。"
+                      "跑 python scripts/derive_paradigms.py")
 
 
 def check_speedup_baseline(doc, path, errors):
@@ -1172,6 +1244,22 @@ def main():
     check_review_pointers(loaded, errors, warnings)
     check_roster(_root(args.data_dir), loaded, errors, warnings)
 
+    paradigm_schema_path = os.path.join(schema_dir, "paradigm.schema.json")
+    paradigm_schema = (json.load(open(paradigm_schema_path))
+                       if os.path.exists(paradigm_schema_path) else None)
+    paras = sorted(glob.glob(os.path.join(args.data_dir, "paradigms", "*.yaml")))
+    for p in paras:
+        doc = load_yaml(p)
+        if not isinstance(doc, dict):
+            errors.append(f"{p}: 不是一个 YAML 映射")
+            continue
+        if paradigm_schema:
+            check_schema(doc, paradigm_schema, p, errors)
+        check_paradigm(doc, p, errors, warnings)
+        check_leak(doc, p, errors, args.allow_internal)
+    if paras:
+        check_paradigms_derived(_root(args.data_dir), errors)
+
     ops = sorted(glob.glob(os.path.join(args.data_dir, "ops", "**", "*.yaml"), recursive=True))
     for p in ops:
         doc = load_yaml(p)
@@ -1179,7 +1267,7 @@ def main():
             check_schema(doc, ops_schema, p, errors)
         check_leak(doc, p, errors, args.allow_internal)
 
-    print(f"校验 {len(models)} 份模型记录, {len(ops)} 份算子表"
+    print(f"校验 {len(models)} 份模型记录, {len(paras)} 条新范式, {len(ops)} 份算子表"
           f"{' (放行 internal)' if args.allow_internal else ''}")
     for w in warnings:
         print(f"  warn  {w}")

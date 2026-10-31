@@ -1,0 +1,618 @@
+{
+  "ascend_pattern": "昇腾|Ascend|ascend|MindIE|CANN|SACT|\\b91[0-9]\\b|\\b95[0-9]\\b",
+  "generated": {
+    "by": "scripts/derive_paradigms.py",
+    "inputs": {
+      "models": 57,
+      "paradigms": [
+        "data/paradigms/diffusion-lm.yaml",
+        "data/paradigms/hybrid-attention.yaml",
+        "data/paradigms/loop-transformer.yaml",
+        "data/paradigms/sparse-attention.yaml",
+        "data/paradigms/speculative-decoding.yaml"
+      ]
+    },
+    "note": "无时间戳：产物是输入的纯函数，validate.py 逐字节比对重算结果判过期"
+  },
+  "ok_status": [
+    "day0",
+    "partial",
+    "supported"
+  ],
+  "paradigms": {
+    "diffusion-lm": {
+      "category": "decoding",
+      "criterion": "expressible",
+      "l0": {
+        "state": "unsurveyed"
+      },
+      "l1": {
+        "families": [],
+        "records": [],
+        "state": "unsurveyed",
+        "watchlist": 3
+      },
+      "l2": {
+        "engines": {},
+        "entries": [],
+        "state": "unsurveyed"
+      },
+      "l3": {
+        "engines": {},
+        "entries": [],
+        "state": "unsurveyed"
+      },
+      "l4": {
+        "state": "unsurveyed"
+      },
+      "name": "扩散语言模型（dLLM）"
+    },
+    "hybrid-attention": {
+      "category": "attention",
+      "criterion": "expressible",
+      "l0": {
+        "state": "unsurveyed"
+      },
+      "l1": {
+        "families": [
+          "kimi",
+          "minimax",
+          "qwen",
+          "stepfun"
+        ],
+        "records": [
+          "kimi-k3",
+          "kimi-linear-48b",
+          "minimax-m1-80k",
+          "minimax-text-01",
+          "qwen3-next-80b-a3b",
+          "qwen3.5-27b",
+          "qwen3.5-397b-a17b",
+          "qwen3.8-2.4t-a95b",
+          "qwen3.8-27b",
+          "qwen3.8-flash-next",
+          "step-3.5-flash",
+          "step-5-preview"
+        ],
+        "state": "present",
+        "watchlist": 0
+      },
+      "l2": {
+        "engines": {
+          "SGLang": {
+            "partial": 1,
+            "supported": 3
+          },
+          "Transformers": {
+            "supported": 1
+          },
+          "llama.cpp": {
+            "supported": 1
+          },
+          "transformers": {
+            "supported": 7,
+            "unknown": 1
+          },
+          "vLLM": {
+            "partial": 1,
+            "supported": 4
+          }
+        },
+        "entries": [
+          {
+            "engine": "SGLang",
+            "hardware": "NVIDIA",
+            "model": "kimi-k3",
+            "status": "supported"
+          },
+          {
+            "engine": "vLLM",
+            "hardware": "NVIDIA",
+            "model": "kimi-k3",
+            "status": "supported"
+          },
+          {
+            "engine": "SGLang",
+            "hardware": "NVIDIA",
+            "model": "kimi-linear-48b",
+            "status": "supported"
+          },
+          {
+            "engine": "vLLM",
+            "hardware": "NVIDIA",
+            "model": "kimi-linear-48b",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "minimax-m1-80k",
+            "status": "supported"
+          },
+          {
+            "engine": "vLLM",
+            "hardware": "NVIDIA",
+            "model": "minimax-m1-80k",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "minimax-text-01",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "qwen3-next-80b-a3b",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "qwen3.5-27b",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "qwen3.5-397b-a17b",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "qwen3.8-2.4t-a95b",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "qwen3.8-27b",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "qwen3.8-flash-next",
+            "status": "unknown"
+          },
+          {
+            "engine": "SGLang",
+            "hardware": "NVIDIA",
+            "model": "step-3.5-flash",
+            "status": "partial"
+          },
+          {
+            "engine": "Transformers",
+            "hardware": "NVIDIA",
+            "model": "step-3.5-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "llama.cpp",
+            "hardware": "不限（卡上给的例子是 Mac Studio / DGX-Spark / AMD Ryzen AI Max+ 395）",
+            "model": "step-3.5-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "vLLM",
+            "hardware": "NVIDIA",
+            "model": "step-3.5-flash",
+            "status": "partial"
+          },
+          {
+            "engine": "SGLang",
+            "hardware": "NVIDIA",
+            "model": "step-5-preview",
+            "status": "supported"
+          },
+          {
+            "engine": "vLLM",
+            "hardware": "NVIDIA",
+            "model": "step-5-preview",
+            "status": "supported"
+          }
+        ],
+        "state": "present"
+      },
+      "l3": {
+        "engines": {},
+        "entries": [],
+        "state": "unsurveyed"
+      },
+      "l4": {
+        "state": "unsurveyed"
+      },
+      "name": "混合注意力（线性状态 / 滑窗）"
+    },
+    "loop-transformer": {
+      "category": "depth",
+      "criterion": "inexpressible",
+      "l0": {
+        "state": "unsurveyed"
+      },
+      "l1": {
+        "families": [],
+        "records": [],
+        "state": "unsurveyed",
+        "watchlist": 0
+      },
+      "l2": {
+        "engines": {},
+        "entries": [],
+        "state": "unsurveyed"
+      },
+      "l3": {
+        "engines": {},
+        "entries": [],
+        "state": "unsurveyed"
+      },
+      "l4": {
+        "state": "unsurveyed"
+      },
+      "name": "递归深度 / Loop Transformer"
+    },
+    "sparse-attention": {
+      "category": "attention",
+      "criterion": "expressible",
+      "l0": {
+        "state": "unsurveyed"
+      },
+      "l1": {
+        "families": [
+          "deepseek",
+          "glm",
+          "minimax",
+          "qwen",
+          "stepfun"
+        ],
+        "records": [
+          "deepseek-v41-flash",
+          "ds-v3.2-exp",
+          "ds-v4-flash",
+          "ds-v4-flash-dspark",
+          "ds-v4-flash-vision-exp",
+          "ds-v4-pro",
+          "glm-5",
+          "glm-5.2",
+          "glm-5.3",
+          "minimax-m3",
+          "minimax-m3.1-flash",
+          "qwen3.8-flash-next",
+          "step-5-preview"
+        ],
+        "state": "present",
+        "watchlist": 0
+      },
+      "l2": {
+        "engines": {
+          "SGLang": {
+            "supported": 2
+          },
+          "TokenSpeed": {
+            "supported": 1
+          },
+          "transformers": {
+            "supported": 4,
+            "unknown": 1,
+            "wip": 1
+          },
+          "vLLM": {
+            "supported": 3
+          }
+        },
+        "entries": [
+          {
+            "engine": "vLLM",
+            "hardware": "NVIDIA",
+            "model": "deepseek-v41-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "glm-5",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "glm-5.2",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "glm-5.3",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "minimax-m3",
+            "status": "supported"
+          },
+          {
+            "engine": "SGLang",
+            "hardware": "NVIDIA",
+            "model": "minimax-m3.1-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "TokenSpeed",
+            "hardware": "NVIDIA",
+            "model": "minimax-m3.1-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "minimax-m3.1-flash",
+            "status": "wip"
+          },
+          {
+            "engine": "vLLM",
+            "hardware": "NVIDIA",
+            "model": "minimax-m3.1-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "qwen3.8-flash-next",
+            "status": "unknown"
+          },
+          {
+            "engine": "SGLang",
+            "hardware": "NVIDIA",
+            "model": "step-5-preview",
+            "status": "supported"
+          },
+          {
+            "engine": "vLLM",
+            "hardware": "NVIDIA",
+            "model": "step-5-preview",
+            "status": "supported"
+          }
+        ],
+        "state": "present"
+      },
+      "l3": {
+        "engines": {},
+        "entries": [],
+        "state": "unsurveyed"
+      },
+      "l4": {
+        "state": "unsurveyed"
+      },
+      "name": "稀疏注意力"
+    },
+    "speculative-decoding": {
+      "category": "decoding",
+      "criterion": "expressible",
+      "l0": {
+        "state": "unsurveyed"
+      },
+      "l1": {
+        "families": [
+          "deepseek",
+          "glm",
+          "minimax",
+          "qwen",
+          "stepfun"
+        ],
+        "records": [
+          "deepseek-v41-flash",
+          "ds-v3",
+          "ds-v3.1",
+          "ds-v3.2-exp",
+          "ds-v4-flash",
+          "ds-v4-flash-dspark",
+          "ds-v4-flash-vision-exp",
+          "ds-v4-pro",
+          "glm-4.5",
+          "glm-4.6",
+          "glm-4.7",
+          "glm-4.7-flash",
+          "glm-5",
+          "glm-5.2",
+          "glm-5.3",
+          "minimax-m3.1-flash",
+          "qwen3-next-80b-a3b",
+          "qwen3.5-27b",
+          "qwen3.5-397b-a17b",
+          "qwen3.8-2.4t-a95b",
+          "qwen3.8-27b",
+          "qwen3.8-flash-next",
+          "step-3.5-flash",
+          "step-5-preview"
+        ],
+        "state": "present",
+        "watchlist": 0
+      },
+      "l2": {
+        "engines": {
+          "SGLang": {
+            "partial": 1,
+            "supported": 2
+          },
+          "TokenSpeed": {
+            "supported": 1
+          },
+          "Transformers": {
+            "supported": 1
+          },
+          "llama.cpp": {
+            "supported": 1
+          },
+          "transformers": {
+            "supported": 12,
+            "unknown": 1,
+            "wip": 1
+          },
+          "vLLM": {
+            "partial": 1,
+            "supported": 3
+          }
+        },
+        "entries": [
+          {
+            "engine": "vLLM",
+            "hardware": "NVIDIA",
+            "model": "deepseek-v41-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "glm-4.5",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "glm-4.6",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "glm-4.7",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "glm-4.7-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "glm-5",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "glm-5.2",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "glm-5.3",
+            "status": "supported"
+          },
+          {
+            "engine": "SGLang",
+            "hardware": "NVIDIA",
+            "model": "minimax-m3.1-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "TokenSpeed",
+            "hardware": "NVIDIA",
+            "model": "minimax-m3.1-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "minimax-m3.1-flash",
+            "status": "wip"
+          },
+          {
+            "engine": "vLLM",
+            "hardware": "NVIDIA",
+            "model": "minimax-m3.1-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "qwen3-next-80b-a3b",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "qwen3.5-27b",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "qwen3.5-397b-a17b",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "qwen3.8-2.4t-a95b",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "qwen3.8-27b",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "qwen3.8-flash-next",
+            "status": "unknown"
+          },
+          {
+            "engine": "SGLang",
+            "hardware": "NVIDIA",
+            "model": "step-3.5-flash",
+            "status": "partial"
+          },
+          {
+            "engine": "Transformers",
+            "hardware": "NVIDIA",
+            "model": "step-3.5-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "llama.cpp",
+            "hardware": "不限（卡上给的例子是 Mac Studio / DGX-Spark / AMD Ryzen AI Max+ 395）",
+            "model": "step-3.5-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "vLLM",
+            "hardware": "NVIDIA",
+            "model": "step-3.5-flash",
+            "status": "partial"
+          },
+          {
+            "engine": "SGLang",
+            "hardware": "NVIDIA",
+            "model": "step-5-preview",
+            "status": "supported"
+          },
+          {
+            "engine": "vLLM",
+            "hardware": "NVIDIA",
+            "model": "step-5-preview",
+            "status": "supported"
+          }
+        ],
+        "state": "present"
+      },
+      "l3": {
+        "engines": {},
+        "entries": [],
+        "state": "unsurveyed"
+      },
+      "l4": {
+        "state": "unsurveyed"
+      },
+      "name": "投机解码 / MTP"
+    }
+  }
+}

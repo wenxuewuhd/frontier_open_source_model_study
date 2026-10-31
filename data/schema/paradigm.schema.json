@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/wenxuewuhd/frontier_open_source_model_study/schema/paradigm.schema.json",
+  "title": "新型范式条目",
+  "description": "一条新型范式的观察条目。成熟度分级 L0 论文 → L1 开源权重 → L2 主流引擎支持 → L3 昇腾可用 → L4 生产部署，用来回答「这件事什么时候需要 infra 真正投入」（PLAN.md §2）。**这里只手写 L0 与 L4，L1/L2/L3 一律由 scripts/derive_paradigms.py 从 data/models 的记录推出来，手写不进来**（schema 不给它们留位置）：那三档的事实本仓已经有了 —— L1 是「有没有记录命中这个结构」、L2/L3 是「命中的记录的 platforms 里有没有这个引擎 / 硬件」—— 手写一遍就是第二份会漂的拷贝，而且会变成一句没有判据的断言。judgement 口径的那一句归 infra_signals，不归分级。",
+  "type": "object",
+  "required": ["id", "name", "category", "question", "match", "evidence"],
+  "additionalProperties": false,
+
+  "$defs": {
+    "evidence_tag": { "enum": ["official", "derived", "judgement", "unknown"] },
+    "ref": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["paper", "modelcard", "blog", "repo", "pr", "issue", "doc"] },
+        "url": { "type": "string" },
+        "locator": { "type": "string", "description": "页码、节号、图号、file:anchor。没有定位的引用不能复核，等于没引" },
+        "accessed": { "type": "string", "format": "date" },
+        "note": { "type": "string" }
+      }
+    },
+    "match_rule": {
+      "type": "object",
+      "description": "结构判据，一条规则。DSL 与 data/schema/columns.json 的 absent.rules 同一套，实现就是 scripts/lib/columns.py 的 test() —— 不另造第二套 op 词表（第五道闸在比对两种语言的 op 列表，再开一套就逃出了那道闸）。**判据按结构不按词**：锚字段路径，不要去 grep 散文，坑 #2 已经撞过三次。",
+      "required": ["test"],
+      "additionalProperties": false,
+      "properties": {
+        "test": {
+          "type": "object",
+          "required": ["src", "op", "path"],
+          "additionalProperties": false,
+          "properties": {
+            "src": { "enum": ["rec", "derived"] },
+            "op": { "enum": ["truthy", "absent", "eq", "in", "not_in", "matches"] },
+            "path": { "type": "string", "description": "点分路径，如 arch.attention.sparse" },
+            "values": { "type": "array" },
+            "pattern": { "type": "string" }
+          }
+        },
+        "why": { "type": "string", "description": "这条路径为什么是这个范式的判据" }
+      }
+    }
+  },
+
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "name": { "type": "string" },
+    "aliases": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "厂商专用名与论文名。**只做展示，不做判据** —— 拿名字当锚会锚到别处同名词（坑 #2）"
+    },
+    "category": {
+      "description": "按它改的是哪一层：attention=注意力形态；decoding=每步产出几个 token；depth=深度/递归；generation=扩散生成范式；moe=稀疏激活",
+      "enum": ["attention", "decoding", "depth", "generation", "moe"]
+    },
+    "question": {
+      "type": "string",
+      "description": "这个范式迫使 infra 回答的那一个问题。本项目与模型侧跟踪站的区别就在这一句，所以它是必填"
+    },
+
+    "match": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/match_rule" },
+      "description": "命中即算这份记录实现了该范式（any-of，任一条成立就算）。**空数组是合法的、而且是一种结论**：本仓 schema 里还没有能表达这个范式的结构字段，于是它永远推不出 L1 —— 这种情况必须写 match_note 说清缺的是哪个字段，否则「没有记录」与「表达不了」在看板上长得一样"
+    },
+    "match_note": {
+      "type": "string",
+      "description": "判据的边界：为什么取这些路径、已知会漏什么。match 为空时必填（闸口校验）"
+    },
+
+    "watchlist": {
+      "type": "array",
+      "description": "已知的候选权重仓，本仓还没录。这一栏是 D2（选题漂移没有闸口）的解药：范式有 L1 事实而本仓零记录时，看板上看得见",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "description": "模型名。**只要名字就能立条目** —— 仓名要现查才算数，凭印象写一个 HF 仓 id 是把猜测存成事实（CLAUDE.md「来源优先级」）" },
+          "repo": { "type": "string", "description": "HF 仓名。查过了再填；缺它就是「未录」，不是「没有权重」" },
+          "note": { "type": "string" },
+          "ref": { "$ref": "#/$defs/ref" }
+        }
+      }
+    },
+
+    "paper": {
+      "type": "object",
+      "description": "L0 的依据。**没有这一块就是「未录」，不是「没有论文」** —— 三态契约同样适用于这一栏。只填带定位的引用，凭印象写出来的标题不算来源（CLAUDE.md「来源优先级」）",
+      "required": ["title", "ref"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string" },
+        "ref": { "$ref": "#/$defs/ref" },
+        "note": { "type": "string", "description": "这篇定义的是范式本身还是某一家的实例。两者不是一回事" }
+      }
+    },
+
+    "production": {
+      "type": "object",
+      "description": "L4 的依据。**公开仓基本看不见这一档** —— 生产部署的实证是自测与内部状态，归 data-private（P3）。所以这里的默认态是 unsurveyed，填 confirmed_absent 要说清查过哪里",
+      "required": ["state"],
+      "additionalProperties": false,
+      "properties": {
+        "state": { "enum": ["unsurveyed", "confirmed_absent", "present"] },
+        "note": { "type": "string" },
+        "ref": { "$ref": "#/$defs/ref" }
+      }
+    },
+
+    "infra_signals": {
+      "type": "array",
+      "description": "1–3 条结论，每条带口径。分级回答「到哪一步了」，这里回答「所以 infra 要准备什么」",
+      "items": {
+        "type": "object",
+        "required": ["text", "evidence"],
+        "additionalProperties": false,
+        "properties": {
+          "text": { "type": "string" },
+          "evidence": { "$ref": "#/$defs/evidence_tag" }
+        }
+      }
+    },
+
+    "open_questions": { "type": "array", "items": { "type": "string" } },
+    "notes": { "type": "string" },
+    "visibility": { "enum": ["public", "internal"] },
+    "evidence": {
+      "type": "object",
+      "description": "字段级证据口径，点分路径，支持前缀继承。与模型记录同一套",
+      "additionalProperties": { "$ref": "#/$defs/evidence_tag" }
+    },
+    "sources": { "type": "array", "items": { "$ref": "#/$defs/ref" } },
+    "review": {
+      "type": "array",
+      "description": "核查留痕。不覆盖原值，记下改了什么、依据什么",
+      "items": {
+        "type": "object",
+        "required": ["id", "text"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "field": { "type": "string" },
+          "text": { "type": "string" },
+          "resolution": { "enum": ["corrected", "refuted", "confirmed", "open"] }
+        }
+      }
+    }
+  }
+}

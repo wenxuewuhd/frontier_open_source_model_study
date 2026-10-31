@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import { absence, isAbsent, withUnit, type Absent } from './columns';
+import { absence, absenceStates, isAbsent, withUnit, type Absent } from './columns';
 import { blockFormat, mainFormat, sortSchemes } from './blockformat';
 
 export { absence, isAbsent } from './columns';
@@ -1146,4 +1146,123 @@ export function familyGroups(): {
       pending: entries.filter((e) => !fams.some((f) => f.key === e.family)),
     };
   });
+}
+
+// ---------------------------------------------------------------- 新范式看板
+//
+// 成熟度分级 L0 论文 → L1 开源权重 → L2 主流引擎 → L3 昇腾可用 → L4 生产部署
+// （PLAN.md §2）。**中间三档不手写**：scripts/derive_paradigms.py 从 data/models
+// 的记录推出来，这里只读 data/derived/paradigms.json。手写一遍就是第二份会漂的拷贝。
+//
+// 每一档的事实来源不同，所以「L0 未录而 L1 已证」是正常的，不是矛盾 ——
+// 页面上必须把这件事说出来，否则读者会把「未录」读成「没有论文」。
+
+export type Rung = 'l0' | 'l1' | 'l2' | 'l3' | 'l4';
+
+export const RUNG_ORDER: Rung[] = ['l0', 'l1', 'l2', 'l3', 'l4'];
+
+export const RUNG_LABEL: Record<Rung, string> = {
+  l0: 'L0 论文',
+  l1: 'L1 开源权重',
+  l2: 'L2 主流引擎',
+  l3: 'L3 昇腾可用',
+  l4: 'L4 生产部署',
+};
+
+/** 这一档的判定依据从哪来。不同档位来源不同，是读者最容易误读的地方 */
+export const RUNG_SOURCE: Record<Rung, string> = {
+  l0: '外部文献，手写在条目的 paper 块',
+  l1: '本仓记录：有没有记录命中该范式的结构判据',
+  l2: '本仓记录：命中记录的 platforms 里非昇腾引擎的状态',
+  l3: '本仓记录：命中记录的 platforms 里昇腾侧的状态',
+  l4: '自测与内部状态，公开仓看不见（归 data-private）',
+};
+
+export type RungState = 'present' | 'unsurveyed' | 'not_applicable' | 'confirmed_absent';
+
+/** present 是本地的第四个取值（「有」）；另外三个的标签一律取自 columns.json */
+export function rungStateMeta(s: RungState): { label: string; meaning: string; is_gap: boolean } {
+  if (s === 'present') {
+    return { label: '已证', meaning: '本仓有能指出来的依据', is_gap: false };
+  }
+  const t = absenceStates()[s];
+  return t ?? { label: s, meaning: '', is_gap: true };
+}
+
+export interface ParadigmMatchRule {
+  test: { src: string; op: string; path: string; values?: any[]; pattern?: string };
+  why?: string;
+}
+
+export interface Paradigm {
+  id: string;
+  name: string;
+  category: string;
+  question: string;
+  aliases?: string[];
+  match: ParadigmMatchRule[];
+  match_note?: string;
+  watchlist?: { name: string; repo?: string; note?: string; ref?: any }[];
+  paper?: { title: string; ref?: any; note?: string };
+  production?: { state: RungState; note?: string; ref?: any };
+  infra_signals?: { text: string; evidence: EvidenceTag }[];
+  open_questions?: string[];
+  notes?: string;
+  evidence?: Record<string, EvidenceTag>;
+  sources?: any[];
+  review?: any[];
+  /** derive_paradigms.py 的产物，渲染期挂进来 */
+  rungs: {
+    criterion: 'expressible' | 'inexpressible';
+    l0: { state: RungState };
+    l1: { state: RungState; records: string[]; families: string[]; watchlist: number };
+    l2: RungEvidence;
+    l3: RungEvidence;
+    l4: { state: RungState };
+  } | null;
+}
+
+export interface RungEvidence {
+  state: RungState;
+  entries: { model: string; engine: string; hardware: string; status: string }[];
+  engines: Record<string, Record<string, number>>;
+}
+
+export const PARADIGM_CATEGORY_LABEL: Record<string, string> = {
+  attention: '注意力形态',
+  decoding: '每步产出',
+  depth: '深度 / 递归',
+  generation: '生成范式',
+  moe: '稀疏激活',
+};
+
+let _pcache: Paradigm[] | null = null;
+
+export function paradigms(): Paradigm[] {
+  if (_pcache && !import.meta.env.DEV) return _pcache;
+  const derived = readDerived(DATA, 'paradigms') as any;
+  const byId = new Map<string, Paradigm>();
+  for (const dir of [DATA, OVERLAY].filter(Boolean) as string[]) {
+    for (const f of walkYaml(path.join(dir, 'paradigms'))) {
+      const doc = loadYaml(f) as Paradigm | null;
+      if (!doc || !doc.id) continue;
+      const prev = byId.get(doc.id);
+      byId.set(doc.id, prev ? merge(prev, doc) : doc);
+    }
+  }
+  for (const p of byId.values()) p.rungs = derived?.paradigms?.[p.id] ?? null;
+  _pcache = [...byId.values()].sort((a, b) => {
+    // 有 L1 记录的排前面，同组内按命中份数降序 —— 看板的用处是「现在要准备什么」，
+    // 字母序会把一条都没录的排到前面去
+    const na = a.rungs?.l1.records.length ?? 0;
+    const nb = b.rungs?.l1.records.length ?? 0;
+    if (na !== nb) return nb - na;
+    return a.id.localeCompare(b.id);
+  });
+  return _pcache;
+}
+
+/** 看板读的那份产物自己的元信息：昇腾判据与合格状态，要印在页面上供人复核 */
+export function paradigmMeta(): { ascend_pattern?: string; ok_status?: string[] } {
+  return (readDerived(DATA, 'paradigms') as any) ?? {};
 }

@@ -1,0 +1,45 @@
+id: sparse-attention
+name: 稀疏注意力
+# 别名只做展示。拿名字当判据会锚到别处同名词（坑 #2 已经撞过三次），
+# 命中靠下面 match 里的字段路径。
+aliases: [NSA, DSA, MoBA, MSA, QSA, "MiniMax Sparse Attention", "Qwen Sparse Attention"]
+category: attention
+question: >-
+  打分器选出来的那批 token / 块，**数据还得在**。所以 KV 容量不会因为稀疏而降，
+  降的是注意力的计算量 —— infra 要准备的是「全量 KV 驻留 + 每层一次 topk 选择」
+  这个组合，而不是「缓存变小了」。
+
+match:
+  - test: { src: rec, op: truthy, path: arch.attention.sparse }
+    why: >-
+      本仓把稀疏注意力的全部参数收在 arch.attention.sparse 下（index_topk /
+      index_head_dim / index_kv_source / mechanism）。这一块存在即这代做稀疏，
+      与叫什么名字无关。
+match_note: >-
+  **只认 arch.attention.sparse 这一块，不认 mechanism 里的词。** 实测 13 份命中记录的
+  mechanism 字段里出现过 DSA、MSA、Qwen Sparse Attention、「indexer 打分选块」四种写法，
+  按词匹配会把同一件事切成四个范式。
+  已知的匹配边界：**滑窗注意力不算在这里** —— 它也是「不看全部 token」，但它不打分、
+  不选择，省的是另一种账（固定窗口缓冲 vs 全量驻留），归混合注意力那一条。
+
+infra_signals:
+  - text: >-
+      稀疏注意力降的是注意力算力，不降 KV 容量 —— 选中的 token 其 K/V 必须可取，
+      所以全量 KV 仍要驻留。把它当「省显存」的手段排期会排错。
+    evidence: judgement
+  - text: >-
+      每层一次 topk 是新增的常驻算子，而不是一次性开销：命中记录里绝大多数是逐层各算一次
+      （只有少数代际做了跨层复用上游选择结果）。算子表上它和 attention 本体同量级地出现。
+    evidence: judgement
+
+open_questions:
+  - >-
+      L0 未录：这一栏要的是定义范式本身的那篇（带节号/图号的定位），不是某一家的实例报告。
+      本仓 13 份命中记录各自引的都是厂商技术报告 —— 那是 L1 的证据，不能当 L0 用。
+
+evidence:
+  question: judgement
+  match: derived
+  match_note: derived
+  infra_signals: judgement
+  open_questions: judgement

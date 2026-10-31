@@ -1,0 +1,333 @@
+---
+/**
+ * 新范式观察看板：成熟度分级 L0 论文 → L1 开源权重 → L2 主流引擎 → L3 昇腾可用 →
+ * L4 生产部署（PLAN.md §2）。这一页回答的是「这件事什么时候需要 infra 真正投入」。
+ *
+ * **中间三档没有一个数字是手写的。** 它们由 scripts/derive_paradigms.py 从
+ * data/models 的 57 份记录推出来：L1 是「有没有记录命中该范式的结构判据」，
+ * L2/L3 是「命中记录的 platforms 里那个引擎 / 硬件的状态」。条目 YAML 里只手写
+ * L0 与 L4，schema 不给中间三档留位置 —— 手写一遍就是第二份会漂的拷贝。
+ *
+ * 两件事页面必须说出来，否则一定被读错：
+ *   1. 五档的事实来源不是一处，所以「L0 未录而 L1 已证」是正常的，不是矛盾。
+ *      不说清楚，读者会把「未录」读成「没有论文」。
+ *   2. 空格子按三态渲染（未录 / 确认无），标签取自 data/schema/columns.json。
+ *      **「没有平台条目」与「查过了不支持」不是一回事** —— 本仓昇腾侧 0 条条目，
+ *      那是未录，不是不支持。
+ */
+import Base from '../layouts/Base.astro';
+import Evidence from '../components/Evidence.astro';
+import Prose from '../components/Prose.astro';
+import {
+  paradigms, paradigmMeta, modelById, evidenceFor, url,
+  RUNG_ORDER, RUNG_LABEL, RUNG_SOURCE, rungStateMeta,
+  PARADIGM_CATEGORY_LABEL, EVIDENCE_LABEL,
+  type Paradigm, type Rung, type RungState, type EvidenceTag,
+} from '../lib/data';
+
+const all = paradigms().filter((p) => (p.visibility ?? 'public') === 'public');
+const meta = paradigmMeta();
+
+const stateOf = (p: Paradigm, r: Rung): RungState =>
+  (p.rungs?.[r]?.state as RungState) ?? 'unsurveyed';
+
+/**
+ * 看板格子里的短依据。**长字符串不放这里** —— 这张表是 nowrap 的宽表，
+ * 一行引擎明细会被裁掉，而被裁掉的部分读者不知道自己没看见。明细放下面的卡片。
+ */
+function shortBasis(p: Paradigm, r: Rung): string {
+  const g = p.rungs;
+  if (!g) return '产物缺失';
+  if (r === 'l0') return p.paper ? '' : '无 paper 块';
+  if (r === 'l1') {
+    const n = g.l1.records.length;
+    if (n) return `${n} 份 / ${g.l1.families.length} 族`;
+    if (g.criterion === 'inexpressible') return '判据立不起来';
+    return g.l1.watchlist ? `候选 ${g.l1.watchlist} 个` : '命中 0 份';
+  }
+  if (r === 'l4') return '';
+  return `${g[r].entries.length} 条平台条目`;
+}
+
+/** 引擎明细，给卡片用。没有条目就返回空串，由调用处渲染三态 */
+function engineTally(p: Paradigm, r: 'l2' | 'l3'): string {
+  const e = p.rungs?.[r];
+  if (!e || !e.entries.length) return '';
+  return Object.entries(e.engines)
+    .map(([eng, st]) => `${eng} ${Object.entries(st).map(([k, v]) => `${k}×${v}`).join(' ')}`)
+    .join('；');
+}
+
+const refText = (ref: any): string =>
+  !ref ? '' : [ref.kind, ref.locator, ref.url, ref.accessed, ref.note].filter(Boolean).join(' · ');
+
+const ev = (p: Paradigm, path: string): EvidenceTag | undefined => evidenceFor(path, p.evidence);
+
+const total = all.length;
+const withL1 = all.filter((p) => stateOf(p, 'l1') === 'present').length;
+const inexpressible = all.filter((p) => p.rungs?.criterion === 'inexpressible').length;
+const ascendEntries = all.reduce((n, p) => n + (p.rungs?.l3.entries.length ?? 0), 0);
+---
+
+<Base
+  title="新范式观察"
+  lead="L0 论文 → L1 开源权重 → L2 主流引擎 → L3 昇腾可用 → L4 生产部署。分级直接回答「这件事什么时候需要 infra 真正投入」。"
+>
+  <section class="grid c3">
+    <div class="card stat">
+      <div class="label">跟踪的范式</div>
+      <div class="value">{total}</div>
+      <div class="sub">{withL1} 条已有本仓记录</div>
+    </div>
+    <div class="card stat">
+      <div class="label">昇腾侧平台条目</div>
+      <div class="value">{ascendEntries}</div>
+      <div class="sub">
+        本仓全部平台条目里昇腾一条都没有，所以 L3 整列是「未录」而不是「不支持」
+      </div>
+    </div>
+    <div class="card stat">
+      <div class="label">判据立不起来的</div>
+      <div class="value">{inexpressible}</div>
+      <div class="sub">schema 里没有能表达它的字段，于是永远推不出 L1</div>
+    </div>
+  </section>
+
+  <p class="note">
+    <strong>五档的事实来源不是一处，所以这张表不该按单调性读。</strong>
+    L1/L2/L3 由 <code>scripts/derive_paradigms.py</code> 从 <code>data/models</code>
+    的记录推出来，L0 是外部文献、L4 是自测与内部状态。于是
+    <strong>「L0 未录而 L1 已证」是正常的</strong>：本仓有 13 份实现了稀疏注意力的记录，
+    而定义这个范式的那篇文献还没有带定位地录进来。把「未录」读成「没有论文」就读反了。
+    空格子一律按三态显示（标签取自 <code>data/schema/columns.json</code>）：
+    <strong>「未录」是调研进度，「确认无」才是信息。</strong>
+  </p>
+
+  <h2>成熟度看板</h2>
+  <div class="scroll-x">
+    <table>
+      <thead>
+        <tr>
+          <th>范式</th>
+          <th>改的是哪一层</th>
+          {RUNG_ORDER.map((r) => <th title={RUNG_SOURCE[r]}>{RUNG_LABEL[r]}</th>)}
+        </tr>
+      </thead>
+      <tbody>
+        {
+          all.map((p) => (
+            <tr>
+              <td><a href={`#${p.id}`}>{p.name}</a></td>
+              <td class="muted small">{PARADIGM_CATEGORY_LABEL[p.category] ?? p.category}</td>
+              {
+                RUNG_ORDER.map((r) => {
+                  const s = stateOf(p, r);
+                  const m = rungStateMeta(s);
+                  return (
+                    <td>
+                      {s === 'present' ? (
+                        <span class="dot" title={`${m.meaning} —— ${RUNG_SOURCE[r]}`}>{m.label}</span>
+                      ) : (
+                        <span class={`absent ${s}`} title={`${m.meaning} —— ${RUNG_SOURCE[r]}`}>
+                          {m.label}
+                        </span>
+                      )}
+                      <div class="muted small">{shortBasis(p, r)}</div>
+                    </td>
+                  );
+                })
+              }
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+  <p class="small muted">
+    L2 / L3 的分界判据写在产物里，不藏在脚本名单里：昇腾侧按
+    <code>{meta.ascend_pattern}</code> 匹配引擎名与硬件名，算「这一档有」的状态是
+    <code>{(meta.ok_status ?? []).join(' / ')}</code>（<code>unknown</code> 不算 ——
+    它的字面意思就是未查）。
+  </p>
+
+  <h2>逐条</h2>
+  {
+    all.map((p) => (
+      <section class="card" id={p.id} style="margin-bottom:14px">
+        <h3 style="margin-top:4px">
+          {p.name}
+          <span class="muted small" style="font-weight:400">
+            　{PARADIGM_CATEGORY_LABEL[p.category] ?? p.category}
+          </span>
+        </h3>
+        {p.aliases?.length && (
+          <p class="small muted">
+            别名（只做展示，不做判据）：{p.aliases.map((a, i) => (<>{i > 0 && '、'}<code>{a}</code></>))}
+          </p>
+        )}
+
+        <p>
+          <strong>infra 要回答的问题</strong><Evidence tag={ev(p, 'question')} />
+          <br /><Prose text={p.question} />
+        </p>
+
+        <dl class="kv">
+          <dt>命中判据</dt>
+          <dd>
+            {p.match.length === 0 ? (
+              <span class="absent unsurveyed" title="schema 里没有能表达这个范式的字段">
+                立不起来
+              </span>
+            ) : (
+              <ul class="plain">
+                {p.match.map((r) => (
+                  <li>
+                    <code>{r.test.src}.{r.test.path}</code>{' '}
+                    <code>{r.test.op}</code>
+                    {r.test.values && <> <code>{JSON.stringify(r.test.values)}</code></>}
+                    {r.test.pattern && <> <code>{r.test.pattern}</code></>}
+                    {r.why && <div class="small muted"><Prose text={r.why} /></div>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {p.match_note && (
+              <div class="small"><Prose text={p.match_note} /></div>
+            )}
+          </dd>
+
+          <dt>L1 命中记录</dt>
+          <dd>
+            {p.rungs?.l1.records.length ? (
+              p.rungs.l1.records.map((id, i) => (
+                <>
+                  {i > 0 && '、'}
+                  <a href={url(`/models/${id}/`)}>{modelById(id)?.display_name ?? id}</a>
+                </>
+              ))
+            ) : (
+              <span class="absent unsurveyed" title="本仓还没有记录命中这个判据">未录</span>
+            )}
+          </dd>
+
+          {p.watchlist?.length && (
+            <>
+              <dt>候选（本仓未录）</dt>
+              <dd>
+                <ul class="plain">
+                  {p.watchlist.map((w) => (
+                    <li>
+                      {w.name}
+                      {w.repo ? <> · <code>{w.repo}</code></> : (
+                        <span class="absent unsurveyed" title="仓名要现查才算数">　仓名未录</span>
+                      )}
+                      {w.note && <span class="small muted">　{w.note}</span>}
+                      {w.ref && <span class="small muted">　{refText(w.ref)}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </dd>
+            </>
+          )}
+
+          <dt>L0 论文</dt>
+          <dd>
+            {p.paper ? (
+              <>
+                {p.paper.title}
+                <span class="small muted">　{refText(p.paper.ref)}</span>
+                {p.paper.note && <div class="small muted"><Prose text={p.paper.note} /></div>}
+              </>
+            ) : (
+              <span class="absent unsurveyed" title="条目里没有 paper 块。这是调研进度，不是「没有论文」">
+                未录
+              </span>
+            )}
+          </dd>
+
+          <dt>L2 引擎</dt>
+          <dd class="small">
+            {p.rungs?.l2.entries.length ? engineTally(p, 'l2') : (
+              <span class="absent unsurveyed" title="命中记录上没有平台条目">未录</span>
+            )}
+          </dd>
+
+          <dt>L3 昇腾</dt>
+          <dd class="small">
+            {p.rungs?.l3.entries.length ? engineTally(p, 'l3') : (
+              <span class="absent unsurveyed" title="命中记录上没有昇腾侧平台条目。未查，不是不支持">
+                未录
+              </span>
+            )}
+          </dd>
+
+          <dt>L4 生产部署</dt>
+          <dd class="small">
+            {(() => {
+              const s = (p.production?.state ?? 'unsurveyed') as RungState;
+              const m = rungStateMeta(s);
+              return (
+                <>
+                  {s === 'present' ? <span class="dot">{m.label}</span>
+                    : <span class={`absent ${s}`} title={m.meaning}>{m.label}</span>}
+                  {p.production?.note && <>　<Prose text={p.production.note} /></>}
+                  {p.production?.ref && <span class="muted">　{refText(p.production.ref)}</span>}
+                </>
+              );
+            })()}
+          </dd>
+        </dl>
+
+        {p.infra_signals?.length && (
+          <>
+            <h3>infra 信号</h3>
+            <ul class="plain">
+              {p.infra_signals.map((s) => (
+                <li>
+                  <Prose text={s.text} />
+                  <Evidence tag={s.evidence} />
+                  <span class="small muted">　{EVIDENCE_LABEL[s.evidence]}</span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {p.notes && <p class="small"><Prose text={p.notes} /></p>}
+
+        {p.open_questions?.length && (
+          <>
+            <h3>未决</h3>
+            <ul class="plain small">
+              {p.open_questions.map((q) => <li><Prose text={q} /></li>)}
+            </ul>
+          </>
+        )}
+
+        {p.review?.length && (
+          <>
+            <h3>核查留痕</h3>
+            <ul class="plain small">
+              {p.review.map((r: any) => (
+                <li>
+                  <code>{r.id}</code>
+                  {r.field && <> <code>{r.field}</code></>}
+                  {r.resolution && <> [{r.resolution}]</>}
+                  　<Prose text={r.text} />
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {p.sources?.length && (
+          <p class="small muted">
+            来源：{p.sources.map((s: any, i: number) => (
+              <>{i > 0 && '；'}{s.url ? <a href={s.url}>{refText(s)}</a> : refText(s)}</>
+            ))}
+          </p>
+        )}
+      </section>
+    ))
+  }
+</Base>

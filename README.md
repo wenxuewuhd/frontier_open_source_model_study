@@ -16,14 +16,16 @@
 
 ```
 data/
-  schema/           JSON Schema：模型记录、算子表
+  schema/           JSON Schema：模型记录、新范式条目、算子表
   models/<家族>/    手写事实。每个字段带证据口径
+  paradigms/        新型范式条目。只手写 L0 与 L4，中间三档一律推导
   derived/          推导值，由脚本生成，不手写
 facts/              取数缓存（不进仓库，可按 pinned sha 复现）
 scripts/
   fetch_hf.py       HF 仓库 -> facts/（只读 safetensors 头，不下权重）
   fetch_kv_widths.py 只取产出 KV 的张量宽度与层覆盖 -> facts/<id>/kv_widths.json（没有全量清单时用）
   derive.py         config + 权重清单 -> 负载特征 + 交叉核对
+  derive_paradigms.py  范式条目 + 模型记录 -> 成熟度分级 L1/L2/L3（--check 查过期）
   validate.py       schema + 证据覆盖 + 防泄漏
   kv_table.py       tracking.yaml + derived -> docs 的缓存对照表（--check 查过期）
   refresh_check.py  双周刷新：比 HF sha 与张量名集合，列出上游有变化的记录（只读）
@@ -73,6 +75,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python scripts/apply_dtypes.py                                  # 写进记录，已有值时只比对
 .venv/bin/python scripts/fetch_kv_widths.py --id <模型id> --repo <org/repo> --rev <sha>  # KV 条目宽度，逐层读、查同类一致
 .venv/bin/python scripts/derive.py --id <模型id> --model data/models/<家族>/<模型id>.yaml --ep 4
+.venv/bin/python scripts/derive_paradigms.py      # 新范式成熟度分级，改过记录或条目之后重算
+.venv/bin/python scripts/derive_paradigms.py --check   # 只查过期（validate.py 里也查一遍）
 .venv/bin/python scripts/validate.py
 .venv/bin/python scripts/kv_table.py              # 改过缓存数之后重生成 docs 里的对照表
 .venv/bin/python scripts/kv_table.py --check      # 只查过期，给 CI 用
@@ -91,7 +95,14 @@ npm run build                             # 产物在 site/dist
 
 Astro 静态站，直接读 `data/` 下的 YAML 与 derived JSON，**不另定一套 content collection schema** —— 校验是 `validate.py` 的职责，站点只负责渲染。
 
-页面：总览（追踪名册 + Infra 信号 + 时间线）、家族演进、模型列表、模型详情、平台矩阵、口径说明。
+页面：总览（追踪名册 + Infra 信号 + 时间线）、家族演进、注意力演进、精度演进、模型列表、模型详情、平台矩阵、**新范式观察**、口径说明。
+
+新范式观察页是成熟度看板（L0 论文 → L1 开源权重 → L2 主流引擎 → L3 昇腾可用 → L4 生产部署）。
+**中间三档一个数字都不手写**：`derive_paradigms.py` 把条目的结构判据（与 `columns.json` 同一套
+op 词表）跑在全部模型记录上，命中即 L1，命中记录的 `platforms` 决定 L2 / L3。
+于是录进一份新记录，看板自己就会动；而 `paradigm.schema.json` 根本不给这三档留位置。
+空格子按三态渲染，**「未录」与「确认无」分得开** —— 本仓昇腾侧 0 条平台条目，
+所以 L3 整列是未录，不是不支持。
 
 家族页有四块，**都从记录算出来，页面不自带任何表** —— 手写的表会和记录各自漂移，而记录才是 `validate.py` 覆盖的那一份：
 

@@ -1,0 +1,58 @@
+id: hybrid-attention
+name: 混合注意力（线性状态 / 滑窗）
+aliases: [KDA, "Kimi Delta Attention", "lightning attention", "Gated DeltaNet", GLA, SWA, "hybrid attention"]
+category: attention
+question: >-
+  一份权重里现在有两种缓存对象：**随上下文线性增长的 KV**，和**每序列固定的那一份**
+  （递归状态或滑窗缓冲）。两者不在同一个刻度上，容量规划不能再按「每 token 多少字节 × 层数」
+  一口价算 —— 要按层分组各算一套，再问在多长的上下文处交叉。
+
+match:
+  - test: { src: rec, op: truthy, path: arch.attention.linear_state }
+    why: >-
+      线性/递归注意力的状态布局收在这一块（mechanism / state_dtype / 头数与头维）。
+      它存在即这代有「每序列固定状态」这种缓存对象。
+  - test: { src: rec, op: eq, path: arch.attention.type, values: [hybrid] }
+    why: >-
+      层间混合但没有递归状态的那一类（滑窗 + 全局按比例交替）也要算进来：
+      它同样产出两种刻度不同的缓存对象，infra 的问题是同一个。
+match_note: >-
+  **两条规则不是冗余，差集是实打实的。** 实测：有 linear_state 的 10 份全部 type=hybrid，
+  反过来 type=hybrid 的 12 份里有 2 份（step-3.5-flash / step-5-preview）**没有 linear_state**
+  —— 它们是滑窗 + 全局的层间混合，固定的那一份是窗口缓冲而不是递归状态。
+  只留第一条会漏掉这 2 份；只留第二条会在某一代出现「不声明 hybrid 但有线性层」时漏掉。
+  已知边界：**稀疏注意力不算在这里**（见 sparse-attention）—— 它不改变缓存对象的种类，
+  只改变每步看多少。
+
+infra_signals:
+  - text: >-
+      这一类的缓存容量账必须按层分组算两套：全局层按每 token 字节随上下文增长，
+      线性/滑窗层按每序列一个固定量。合成一个「每 token 平均」会在短上下文处高估、
+      在长上下文处低估，而两条曲线有交点 —— 交点在哪是部署要知道的数。
+    evidence: judgement
+  - text: >-
+      递归状态是 FP32 落盘的（本仓 2026-10-31 实测：10 份命中记录里填了 state_dtype 的
+      7 份全部 FP32，另 3 份未录）。按 BF16 估这部分容量会少算一半。
+    evidence: derived
+  - text: >-
+      LayerMap 那一轮的教训在这条线上是结构性的：**per-layer 的缓存去向必须逐层画出来**，
+      否则「每 token 合计」看着像覆盖全部层，而实际上大半层的缓存去向在表上不存在。
+    evidence: judgement
+
+open_questions:
+  - >-
+      L0 未录：线性注意力与 delta rule 这一脉的定义性文献要带定位地引，
+      本仓命中记录里现有的引用全是厂商侧实例（KDA、lightning attention、Gated DeltaNet
+      三种厂商名），那是 L1 证据。
+  - >-
+      滑窗混合与线性混合在本条目里合并了。合并的理由是 infra 问题同构（两种刻度的缓存对象），
+      代价是「换哪种机制」这件事看板上看不出来。真要分开时，判据是
+      linear_state 在不在，而不是改 match 的词。
+
+evidence:
+  question: judgement
+  match: derived
+  match_note: derived
+  infra_signals: judgement
+  infra_signals[1].text: derived
+  open_questions: judgement

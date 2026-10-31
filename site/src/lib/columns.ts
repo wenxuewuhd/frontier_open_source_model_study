@@ -142,3 +142,19 @@ export function withUnit(key: string, text: string): string {
   if (!unit || !/^[≤≥]?\s*[\d,.]+$/.test(text.trim())) return text;
   return `${text} ${unit}`;
 }
+
+/**
+ * 三态的标签与含义，直接取自 data/schema/columns.json。
+ *
+ * 新范式看板也要在页面上写「未录 / 确认无」，所以这里开一个读取口 ——
+ * **在那边重打一遍标签就是第二份会漂的拷贝**，basis 那套取值表已经漂过一次
+ * （两份措辞不一样、而守卫按设计只对键不对值，于是一直放过）。
+ */
+export function absenceStates(): Record<
+  AbsenceState,
+  { label: string; meaning: string; is_gap: boolean }
+> {
+  return Object.fromEntries(
+    Object.entries(spec.absence_states).filter(([k]) => !k.startsWith('$')),
+  ) as Record<AbsenceState, { label: string; meaning: string; is_gap: boolean }>;
+}
