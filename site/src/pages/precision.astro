@@ -427,6 +427,26 @@ const subs8only = stat.filter(([, s]) => s.b4 === 0 && s.b8 > 0).sort((a, b) => 
 const subsNever = stat.filter(([, s]) => s.b4 === 0 && s.b8 === 0).sort((a, b) => b[1].n - a[1].n);
 const subsUp = stat.filter(([, s]) => s.f32 > 0).sort((a, b) => b[1].f32 - a[1].f32);
 
+/* ── 页首「往前看一年」那段外推要用的分档 ──────────────────────────────────────
+   **一个硬数字都不新增**，全从上面那几个计数器里切。外推没有闸口守着：手敲进去的
+   数字一年后没人知道当时是从哪来的，而这一页踩过的坑全是这个形状。
+   同理那段话里也不引仓外依据（硬件路线图、标准进展都不在本仓的来源阶梯上）——
+   能守住的边界是「只从这张表往前推」，守不住的边界不如不画。
+
+   切法本身就是那段外推的锚：4 bit 这一档里，**原生与事后量化落在完全不同的子系统上**
+   （`subs4pq` 那几个一格原生都没有）。合成一个「4 bit 已经铺到 N 个子系统」正好把
+   这件事抹平，而那是读者据此推错下一年最容易的地方。 */
+const subs4nat = subs4.filter(([, s]) => s.b4n > 0);
+const subs4pq = subs4.filter(([, s]) => s.b4n === 0);
+const nat4 = subs4.reduce((n, [, s]) => n + s.b4n, 0);
+const st4 = (k: string) => perSubStat.get(k);
+/** 没名字的裸 FP4 对上两种有名块格式 —— 第 ⑤ 条的判据 */
+const bare4 = tally.FP4 ?? 0;
+const named4 = (tally.MXFP4 ?? 0) + (tally.NVFP4 ?? 0);
+/** 整表最低的那一档。**不要硬写成 4** —— 这个数变了，就是第 ③ 条被推翻了。
+    MIXED 查不到位宽（data.ts 里有意不给），`?? Infinity` 让它不参与比较。 */
+const minBits = Math.min(...tallyRows.map(([d]) => DTYPE_BITS[d] ?? Infinity));
+
 /* 页脚那两句「为什么没有这一列」也从数据数，免得将来补了数据而说明还停在旧状态 */
 /* 初稿这里数的是 `precision.kv_cache`（一个标量，只有 2 份有），据此把整列砍了。
    真内容在 kv_cache_components 里 —— 逐分量带 dtype / 块 / scale。**数错了字段，
@@ -501,6 +521,82 @@ const shortName = (m: Model, label: string) =>
       精度格子合计：{tallyRows.map(([d, n]) => (
         <span class="tal"><i class={`sw ${dtypeCell(d).cls}`}>{dtypeCell(d).short}</i>{d}<b>{n}</b></span>
       ))}
+    </p>
+  </div>
+
+  {/* 这一段是全页唯一的外推，所以它自己带标记 —— 和推导名字的虚线、事后量化的斜纹
+      是同一类约定：**认识论状态给视觉标记**。页面的 lead 原话是「每一格都来自记录，
+      页面不推导」，把预测混进上面那个 callout 会直接顶撞自己的刊头，所以分开放、
+      标题里写明、tag 用 --judgement（和 .pqtag 同一个色，读者已经认识它是「这是判断」）。
+
+      写法是**给判据不给预言**：每条点名表里哪一格会变。这是外推在这个仓里唯一站得住的
+      形式 —— 一年后不需要有人回来评分，这张表自己判。 */}
+  <div class="callout fwd">
+    <p class="fwdhd">
+      <b>往前看一年：这几格会动</b>
+      <span class="fwdtag">外推，不是记录</span>
+    </p>
+    <p class="small">
+      上面每一格都来自记录。<b>下面是从这 {fmtInt(cells)} 格往前推的</b> ——
+      没有一句是厂商说过的话，也<b>不引任何仓外依据</b>（硬件路线图、标准进展都不在
+      本仓的来源阶梯上，也没有闸口能守）。写法是<b>给判据，不给预言</b>：
+      每条都点名表里哪一格会变，一年后不用有人回来评分，<b>这张表自己判</b>。
+      基准是 {all.length} 份记录、{varRepos} 个官方量化仓、{fmtInt(cells)} 格，截至本页构建时。
+    </p>
+
+    <p class="small">
+      <b>① 原生 4 bit 大概不会越过注意力那条线。</b>
+      4 bit 现在分布在 {subs4.length} 个子系统上，但<b>原生的只有
+      {subs4nat.map(([k], i) => (<>{i > 0 && '、'}{SUB_LABEL[k] ?? k}</>))}</b>（共 {nat4} 格）；
+      {subs4pq.map(([k], i) => (<>{i > 0 && '、'}{SUB_LABEL[k] ?? k}</>))}
+      的 4 bit <b>一格都不是原生的</b>，全部来自厂商另发的再量化仓。
+      而且<b>最激进的那家自己画了这条线</b> —— DeepSeek 的草稿头把 MoE 压到 FP4，
+      <b>同一个草稿头里的注意力投影留在 FP8</b>：不是没人试，是试过的人停在那儿。
+      真会长的是专家侧，共享专家还有 {st4('shared_expert')?.b8 ?? 0} 格停在 FP8，
+      从 FP8 再降一档比从 BF16 跨到 4 bit 容易。
+      <b>判据</b>：注意力那一行的<b>原生</b> 4 bit 格数 —— 现在 {st4('attention')?.b4n ?? 0} 格。
+    </p>
+
+    <p class="small">
+      <b>② 事后量化会被原生发布吃掉一部分，但别盯着 {fmtInt(pqCells)} 这个数看。</b>
+      现在 {fmtInt(pqCells)} / {fmtInt(cells)} 格的最低精度来自另发的量化仓。
+      <b>这个数下降有两种相反的成因</b>：厂商把低位搬进主仓（原生化，好事），
+      或者厂商干脆不发那个附加仓了（覆盖面退了，坏事）。
+      合成一个数看就分不出是哪一种 —— 而页面本来分得开。
+      <b>判据</b>：看<b>实心格</b>（原生低位）的增量，不看斜纹格的减量。
+    </p>
+
+    <p class="small">
+      <b>③ 那 {subsNever.length} 个从没低于 16 bit 的子系统，地板不会破。</b>
+      {subsNever.slice(0, 4).map(([k], i) => (<>{i > 0 && '、'}{SUB_LABEL[k] ?? k}</>))}
+      这几块在全部记录上<b>没有一格低于 16 bit</b>，而 FP32 正在其中几块上<b>反向增长</b>。
+      <b>这是本段最敢下注的一条</b> —— 每一个「N bit 大模型」的说法都在暗示它会破，
+      而这 {fmtInt(cells)} 格里看不到松动。顺带一句同样来自计数而非预测的事实：
+      <b>整表最低的一档就是 {minBits} bit</b>，低于它的格子一个也没有。
+      <b>判据</b>：这 {subsNever.length} 个子系统里出现任何一格低于 16 bit。
+    </p>
+
+    <p class="small">
+      <b>④ KV 精度会从「{KV_BASIS_LABEL.dtype_fallback}」转成厂商声明。</b>
+      现在 {kvDeclared} 份记录逐分量声明了 KV 精度，{fallbackN} 份只能按 dtype 兜底 ——
+      <b>不是没查，是厂商没说</b>。而厂商已经开始承认这个键存在：个别几份记录里
+      <code>kv_cache_scheme</code> 露过面，值还是 <code>null</code>；
+      <b>键先出现，值后跟上</b>，激活精度的声明走的就是这条路，现在它已经是常规动作。
+      <b>判据</b>：KV 那一列标<b>{KV_BASIS_LABEL.dtype_fallback}</b>的份数 —— 现在 {fallbackN} 份。
+    </p>
+
+    <p class="small">
+      <b>⑤ 块格式一年内不收敛。</b>
+      最大的 4 bit 桶是<b>没有名字的裸 FP4</b>（{bare4} 格，厂商自研的混合块布局），
+      两种有名格式（MXFP4 / NVFP4）加起来 {named4} 格。
+      硬件、OCP 标准、厂商按张量自己调块，三股力气各拉一个方向，
+      而<b>裸 FP4 比有名格式多</b>这件事本身就是「还没收敛」。
+      <b>判据</b>：裸 FP4 与有名格式的格数比 —— 现在 {bare4} 对 {named4}。
+    </p>
+
+    <p class="small muted">
+      <b>不预测的那一件</b>：低于 4 bit。{fmtInt(cells)} 格里一格都没有，本仓也没有
+      任何一手依据去谈它。<b>「没有证据」不写成「不会发生」</b> —— 这一条留空，等它出现。
     </p>
   </div>
 
@@ -840,6 +936,28 @@ const shortName = (m: Model, label: string) =>
     margin-left: 4px;
     color: var(--judgement);
     border-bottom: 1px dotted var(--judgement);
+  }
+
+  /* 外推那一段：左边一道 --judgement 的竖条，和 .pqtag 共用同一个「这是判断」的色。
+     为什么不换底色 —— 上面那个 callout 已经占了 --surface，再加一档底色会让
+     读者以为这是第三类内容；而竖条是**纵向**的，正好对应「整段都是另一种身份」，
+     不像斜纹那样需要逐格去看。 */
+  .callout.fwd {
+    border-left: 3px solid var(--judgement);
+    margin-top: 10px;
+  }
+  .fwdhd {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 8px;
+  }
+  .fwdtag {
+    font-size: 11px;
+    color: var(--judgement);
+    border: 1px solid color-mix(in oklab, var(--judgement) 45%, transparent);
+    border-radius: 3px;
+    padding: 0 5px;
   }
 
   .sw.abs { background: none; border: 1px solid var(--line); color: var(--ink-3); }
