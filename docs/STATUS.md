@@ -202,6 +202,15 @@ git worktree remove --force $T
 
 - **D1 `derive.py` 的算术强度按参数量比例折算 decode 权重字节** —— 对混合精度模型不成立
   （kimi-k3 偏 2.34×）。
+- **D8 组件层的桶在逐子系统精度表上没有列** —— `classify2()` 是两层的：
+  非 `SPLIT_INSIDE` 的组件（vae / connector / text_encoder / vocoder / audio_vae / upsampler）
+  整块算一桶，桶名就是组件名。而逐子系统精度表的列来自 `data/schema/subsystems.json`，
+  那里**没有任何组件键** —— 于是这些桶的精度在那张表上无处可放。
+  当前只有 ltx-2.3 一份踩到：5 个组件桶共 **4,080,667,243 参数（占它 23.07B 的 17.7%）**
+  在表上不可见（audio_vae / connector / text_encoder / vae / vocoder）。
+  另八份生成记录的取数都收窄到单个组件（`--include 'transformer/*'` 之类），所以无列桶为 0。
+  模型页的「按子系统」表直接渲染 derived 的桶，**那里看得见**；缺列的是家族页与精度演进页
+  那张逐子系统**精度**表。不是填表能解决的，要么给组件立列、要么说清这张表只覆盖主干。
 - **D7 逐子系统精度表的行不带来源维度** —— 每行隐含「测自 `hf.repo`」
   （`columns.json` 的 `$subsystem` 模板里 `scope_from: hf.repo`）。
   于是厂商另发的量化变体（M3 的 MXFP8，已实测 45,838 条）**进不了那张表** ——
