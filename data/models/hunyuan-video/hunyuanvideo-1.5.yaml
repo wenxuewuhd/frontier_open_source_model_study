@@ -508,9 +508,13 @@ precision:
       但这是推断不是实测）。
 
       **逐桶实测**（条数 / 参数量，全 F32）：
-      `dense_ffn` 448 / 3,701,559,296；`modulation` 222 / 2,744,414,208；
-      `attention` 872 / 1,846,394,880；`other` 13 / 18,958,368；
-      `time_embed` 4 / 11,538,432；`vision` 8 / 3,696,000；`norm` 226 / 46,976。
+      `dense_ffn` 440 / 3,692,113,920；`modulation` 222 / 2,744,414,208；
+      `attention` 872 / 1,846,394,880；`time_embed` 12 / 20,983,808；
+      `io_proj` 12 / 18,952,224；`vision` 8 / 3,696,000；
+      `norm` 226 / 46,976；`other` 1 / 6,144。
+      八个桶与 `per_subsystem` 的八个键**同集合**，且与
+      `derived.from_shapes.params_by_subsystem` 逐位相同 ——
+      **桶空就不补行**（CLAUDE.md 的约定），所以这里有几个键就有几个非空桶。
 
       **空桶 11 个，判「不适用」的依据逐条如下**（裸正则在这 1793 个名字上命中 0 次，
       不只是优先级被抢走）：`expert` / `shared_expert` / `router` —— 稠密 DiT，没有 MoE；
@@ -525,25 +529,36 @@ precision:
       —— minimax 两份就是系数藏在 config 标量里的非常规残差，照「清单里没张量」
       推残差形态会推反（这是 `tracking` 侧 C7 那条的同一个坑）。
 
-      **三条生成类新词条在这一份上的落点，与 derived 对不上的地方写在这里。**
-      (1) `time_embed` 这一格量到的只有 `txt_in.c_embedder.linear_1/2`
-      （4 条 / 11,538,432），而 `c_embedder` 是**池化文本投影**不是时间步嵌入 ——
-      入口 3584 正是文本编码器的 hidden。真正的两个时间步嵌入器
-      `time_in.mlp.*` 与 `txt_in.t_embedder.mlp.*`（**8 条 / 9,445,376**，
-      入口都是 256 = 正弦时间步特征）**仍归在 `dense_ffn`**：`time_embed` 词条排在
-      `dense_ffn` 之后，`mlp` 先匹配先得，而 `time_in` 连 `time_embed` 的裸正则都不命中。
-      所以上面 `dense_ffn` 的 3,701,559,296 里含这 8 条。
-      (2) `io_proj` 这一格是**手填的**：该词条的六个模式
-      （patch_embed / proj_in / proj_out / text_proj / caption_proj / unpatchify）
-      在这一份上一条都不命中，入口与出口投影整批落在 `other` ——
+      **两个桶曾经与 derived 对不上，`fb35da8` 之后不再**（原委见 R10，这里只留口径）。
+      (1) **时间步嵌入**：`time_embed` 现在是 12 条 / 20,983,808，三样东西 ——
+      `time_in.mlp.*` 4,722,688 与 `txt_in.t_embedder.mlp.*` 4,722,688
+      （两个真正的时间步嵌入器，入口都是 **256** = 正弦时间步特征），
+      加 `txt_in.c_embedder.linear_1/2` 11,538,432。
+      **`c_embedder` 按形状不是时间步嵌入** —— 入口 **3584** 正是文本编码器的 hidden，
+      它是池化文本投影；入口 256 vs 3584 这一刀纯靠形状判，没读实现
+      （`model-audit` 规则 12）。该不该把它挪进 `io_proj` 是语义题不是 bug，
+      单独一轮，见 open_questions。
+      前两样原先整批算在 `dense_ffn` 里（那时这一格只有 `c_embedder` 一样），
+      现在由一条**只认「时间步嵌入器自己的 `mlp`」**的窄规则在 `dense_ffn` 之前截下。
+      **那条窄规则现在只剩一个独有的活：`time_in.mlp.*`** ——
+      实测逐个删它的 alternative，删 `time_in` 会让 4,722,688 静默退回 `dense_ffn`，
+      删 `t_embedder` / `time_embedder` / `timestep_embedder` 全仓 0 处变动
+      （它们已被排在 `dense_ffn` 之前的那条宽 `time_embed` 兜住）。
+      **看见「重复」就删那三个 alternative 是安全的，删 `time_in` 不是。**
+      (2) **入口/出口投影**：`io_proj` 现在是 12 条 / 18,952,224 ——
       `txt_in.input_embedder` 7,342,080 + `byt5_in.fc1/2/3` 11,409,408 +
-      `img_in.proj` 135,168 + `final_layer.linear` 65,568 = **18,952,224**，
-      `other` 剩下的 6,144 是 `cond_type_embedding`。
-      **这一格不能留空** —— 留空会被三态契约判成「这个子系统在这个模型里不存在」，
-      而它明明存在；填 FP32 在事实上是对的（那 12 条都是 F32）。
-      代价是这一格与 `derived.from_shapes.params_by_subsystem` 对不上，
-      所以在这里写明。归类该不该改是 `scripts/lib/subsystems.py` 的事，
-      **本记录没碰那个共享文件，已报主会话**（见 R10）
+      `img_in.proj` 135,168 + `final_layer.linear` 65,568。
+      原先该词条的六个模式（patch_embed / proj_in / proj_out / text_proj /
+      caption_proj / unpatchify）在腾讯这套名字上一条都不命中，这 12 条整批落在
+      `other`，而这一格是手填的 —— **手填的理由是留空会被三态契约判成
+      「这个子系统在这个模型里不存在」，而它占了 `other` 的 99.97%**。
+      词条补上四个名字之后它由归类器兜住了，**不再是手填**，
+      `other` 只剩 `cond_type_embedding` 6,144（条件类型查表，不是投影，
+      有意留在 `other`：`embed` 这个桶的含义是输入词表，塞进去会让
+      「输入词表」这一行在一个没有 token 词表的 DiT 上长出值）。
+
+      两处归类都由主会话改在共享文件 `scripts/lib/subsystems.py` 上（`fb35da8`），
+      **本记录从头到尾没碰过那个文件**；精度值一格都没变（1793 条全 F32）。
 
 performance:
   # 技术报告 §6 Table 7/8。**这组数能进 performance 的理由是它带基线** ——
@@ -800,12 +815,21 @@ review:
       它的线性真值 2.929e15（derive 给 4.835e15，高 1.65 倍）、
       单步真值 8.656e15（derive 给 1.056e16，高 22.0%）、注意力真实占比 66.2% 而非 54.2%。
       wan2.2-ti2v-5b 的 adaln 只占 1.35%，几乎不受影响
-    resolution: open
+    resolution: corrected
     changed_to: >-
-      bottlenecks 与 infra_signals 里的注意力占比改成真值 90.0%（并标出 derive 的 74.8%）——
-      结论不但不变，而且更强。
-      建议的共享改法见下，已报主会话；`derive.py` 与 schema 是共享文件，本记录没碰。
-      **minimax-h3 那份也需要同样的更正**（它的 R6 与 bottlenecks 用的是旧占比）
+      bottlenecks 与 infra_signals 里的注意力占比改成真值 90.0%，结论不但不变，而且更强。
+
+      **2026-10-31 复核：本条原先标 `open`，而它两件待办都已经关掉了，
+      对应的 open_question 也早写着「已解决」—— 条目与 open_question 自相矛盾。**
+      (1) 共享改法已落地：`backbone.param_scaling` 被 `derive.gen_workload` 消费后，
+      derive 自己算的线性项是 6.202e14、注意力占 89.9%，与逐桶手算逐位吻合（见 R9）。
+      (2) 点名要连带更正的 **minimax-h3 已经改好了**：它的 R6 现在是 `corrected`，
+      bottlenecks 里一个旧占比都不剩，derived 现值 `attention_share` 0.6616 = 66.2%。
+      原文里「并标出 derive 的 74.8%」这半句也随之作废 —— derive 早就不给 74.8% 了，
+      那句连同 bottlenecks 里的旧括注一起删掉了。
+      `derive.py` 与 `data/schema/` 是共享文件，本记录从头到尾没碰过。
+      **剩下的唯一一处在 R6 末尾**：逐段线性项漏 `per_text_token × text_tokens`，
+      端到端占 0.15%，主会话已收、下一轮改
   - id: R6
     field: '-'
     severity: imprecise
@@ -963,8 +987,10 @@ review:
 
       这次按 `classify2()` 对 `transformer/720p_t2v` 的完整清单 1793 条穷举
       （非抽样，逐桶参数量相加与 `params.total` 逐位相同），结论见
-      `subsystem_method`：**1793 条全 F32，一条例外都没有**，7 个桶有权重、
-      11 个桶为空。「全 F32」是结论不是缺口 —— 一套 DiT 落盘 33.3 GB
+      `subsystem_method`：**1793 条全 F32，一条例外都没有**，当时 7 个桶有权重、
+      11 个桶为空，另加一个「桶空而功能存在」的 `io_proj`（见下文 (2)，
+      `fb35da8` 之后它有权重了，所以现在是 8 + 11）。
+      「全 F32」是结论不是缺口 —— 一套 DiT 落盘 33.3 GB
       而 `generate.py` 按 `--dtype bf16` 跑，这一倍差正是这张表该让人看见的东西。
 
       **复核中查出的两处归类落点，都在共享文件 `scripts/lib/subsystems.py` 上。**
@@ -985,17 +1011,86 @@ review:
       而它占了 `other` 的 99.97%。
       形状判据照 `model-audit` 规则 12 走，**没有去读实现**：
       256 入口 vs 3584 入口、65 通道 patch 投影、[32, 2048] 出口，
-      这四个形状各自就定了性质
-    resolution: open
+      这四个形状各自就定了性质。
+
+      **以上两段写的是 `fb35da8` 之前的状态，留着是为了能对照看。**
+      两处归类都已落地（见 `changed_to`），所以「仍归在 `dense_ffn`」
+      「六个模式一条都不命中」「io_proj 是手填的」这三句**现在都不成立了**。
+
+      **这一条自己还留下一个教训**：`time_embed` 那处我报给主会话时说
+      「8 条」，而它先前的探针报的是「4 条」—— 差的 4 条是 `time_in.mlp.*`，
+      它连宽 `time_embed` 的裸正则都配不上，于是**压根没出现在那个探针的结果里**。
+      两头各自都只看见自己工具命中的那一半。
+      **「我的工具没看见」不等于「只有这么多」**，而两种缺项（优先级被抢
+      vs 词表没有这个写法）在结果里长得一模一样，都只是「这一格数小了」
+      （本仓坑 #7 的同一张脸）。要分开它们只能逐条看裸正则命中数，
+      这也是上面「空桶 11 个」那段为什么专门写了「裸正则命中 0 次」
+    resolution: corrected
     changed_to: >-
-      本记录填了 `per_subsystem` 八格（含手填的 `io_proj`）与 `subsystem_method`，
-      两处归类落点逐条写进 `subsystem_method` 以便和
-      `derived.from_shapes.params_by_subsystem` 对照。
-      **`scripts/lib/subsystems.py` 是共享文件，本记录没碰，已报主会话**：
-      建议 `time_embed` 加 `time_in` 一类的裸前缀并移到 `dense_ffn` 之前
-      （或在 `dense_ffn` 的 `mlp` 上加否定前瞻），`io_proj` 加
-      `input_embedder` / `img_in\.proj` / `final_layer` / `byt5_in\.fc` 一类的模式。
-      **顺序一改就会动到别的记录**，所以不在这一份上单方面改
+      本记录填了 `per_subsystem` 八格与 `subsystem_method`。
+      两处归类建议由主会话**原样采纳并落地在 `fb35da8`**：窄规则
+      `(?:time_in|t_embedder|time_embedder|timestep_embedder)\.mlp\.`
+      插在 `dense_ffn` 之前，`io_proj` 追加
+      `input_embedder` / `\bimg_in\b` / `\bfinal_layer\b` / `\bbyt5_in\b`（位置不动，仍排最后）。
+      落地后本记录逐桶数改成终态（`dense_ffn` 3,692,113,920、`time_embed` 20,983,808、
+      `io_proj` 18,952,224、`other` 6,144），八个键与八个非空桶同集合、
+      与 `derived.from_shapes.params_by_subsystem` 逐位相同，
+      **`io_proj` 不再是手填**。精度值一格都没变（1793 条全 F32）。
+      **`scripts/lib/subsystems.py` 本记录从头到尾没碰过。**
+      当时建议的另一条「把宽 `time_embed` 整体前移」**被实测否掉了**：
+      它会抢走 LTX 与 stepvideo 的 `adaln_single.emb.timestep_embedder.*`
+      （ltx-2.3 76,058,624、stepvideo 39,333,888），而 ltx-2.3 的 `time_embed`
+      当时判的正是「不适用」—— 那句假话会反向变成「桶里躺着 7,600 万」。
+      改用键在 `\.mlp\.` 上的窄规则，全仓只动这一份 8 条。
+      `c_embedder` 该不该挪进 `io_proj` 仍单独一轮，见 open_questions
+  - id: R11
+    field: generation.backbone.param_scaling
+    severity: imprecise
+    claim: >-
+      `modulation + time_embed == param_scaling.per_sample` 是生成类的恒等式，
+      可以当逐子系统归类的回归判据（主会话按 cogvideox 与 minimax-h3 两份下的结论，
+      并在 `subsystems.py` 注释里称它是「本条规则最硬的回归判据」）
+    finding: >-
+      **这一份是反例，差 41,433,088 —— 而差额不是算错，是两根轴按设计切得不一样。**
+      四份有 `per_sample` 的记录里三份成立（cogvideox 799,259,648、
+      minimax-h3 13,055,204,736、stepvideo 267,644,928），这一份
+      2,744,414,208 + 20,983,808 = 2,765,398,016 != 2,723,964,928。
+
+      主会话报「那个差不是任何一组的干净子集，根因未查」。**它是三项的干净代数和**，
+      逐项实测自 `shapes.json`：
+
+      `+ adaLN_modulation 25,178,112` —— 在 `modulation` 桶里，不在 `per_sample` 里
+      （`final_layer` 一套 8,392,704 + token refiner 两套 16,785,408）；
+      `+ t_embedder.mlp 4,722,688 + c_embedder 11,538,432 = 16,261,120` ——
+      在 `time_embed` 桶里，而本记录的轴把它们算进 `per_text_token`；
+      `- cond_type_embedding 6,144` —— 在 `per_sample` 里，而它现在落 `other` 桶。
+      25,178,112 + 16,261,120 − 6,144 = **41,433,088**，逐位相等。
+
+      **根因早就写在本记录自己的 `param_scaling.note` 里，不是新缺陷。**
+      那条 note 第三段原文就自曝了「两处 per_text_token 的分桶不纯，合计 1.15%，
+      本次未改（会动已核过的数）」，其中第 (1) 条是
+      「token_refiner 自己的 `adaLN_modulation` + `t_embedder` + `c_embedder`
+      共 **33,046,528**，这三项吃的是条件向量、每次前向只过一遍，口径上属 `per_sample`」。
+      而 33,046,528 + `final_layer` 的 adaLN 8,392,704 − 6,144 = 41,433,088 —— 同一个数。
+
+      **所以恒等式在这一份上不成立是必然的**：`per_sample` 是**负载轴**
+      （「这些参数每次前向只过一遍」），`modulation` / `time_embed` 是**功能桶**，
+      两者对同一批张量的切法不同。这一份的 AdaLN 调制分散在三处
+      （逐层 `img_mod`/`txt_mod`、出口 `final_layer`、token refiner 内部），
+      前者进 `per_sample`、后两者按所在模块进了 `patch_embed` 与 `token_refiner`。
+      另三份成立，是因为它们的调制只有逐层一处、没有出口与 refiner 两套。
+
+      **它恰好是本仓「结构规律要钉住代际 / 零例外在下一份上通常不成立」的实例**，
+      而且主会话已经自查出来并把注释改成写明实测范围（`0ca2529`）——
+      本条只补上根因与逐项分解
+    resolution: confirmed
+    changed_to: >-
+      `param_scaling.per_sample` 2,723,964,928 **原值正确，一个字没改**；
+      `modulation` / `time_embed` 两个桶的值也没改。
+      补的是依据：差额的三项分解，以及它与 `param_scaling.note` 里
+      那条早已自曝的 33,046,528 口径不纯是同一件事。
+      **拿这个恒等式当回归判据只能对那三份用**，对这一份要先把
+      `per_sample` 的分桶不纯修掉 —— 而那会动已核过的数，仍按 note 原意不在本轮改
 
 notes: >-
   **字节对账。** 14 个 safetensors 实测 numel×4 B 之和 371,757,753,484 B，
@@ -1105,13 +1200,26 @@ open_questions:
     训练精度无一手来源。发布权重全 F32 是实测，`generate.py` 默认 bf16 也是实测，
     但那说的都是落盘与推理格式，不是训练格式
   - >-
-    **`per_subsystem` 的两个桶与归类正则对不上（R10），要改的是共享文件。**
+    ~~**`per_subsystem` 的两个桶与归类正则对不上（R10），要改的是共享文件。**
     `time_embed` 这一格量到的是池化文本投影 `c_embedder`，而真正的两个时间步嵌入器
     （`time_in.mlp.*` 与 `txt_in.t_embedder.mlp.*`，8 条 / 9,445,376）仍在 `dense_ffn` 里；
     `io_proj` 这一格是手填的 —— `scripts/lib/subsystems.py` 的六个模式在这一份上
-    一条都不命中，入口与出口投影 18,952,224 全落在 `other`。
-    两处都只影响分桶归属、不影响任何精度值（1793 条全 F32），
-    但**这一格与 `derived.from_shapes.params_by_subsystem` 现在是对不上的**。
-    归类正则的顺序一改就会动到别的记录，所以由主会话定，本记录没碰那个文件。
-    另有一处同源的：`720p_t2v` 之外 3 套 `use_meanflow` checkpoint 各多的那 4 个张量
-    没有逐条取过名字（4.7M 恰等于 `time_in.mlp` 整套，但那是推断不是实测）
+    一条都不命中，入口与出口投影 18,952,224 全落在 `other`。~~
+    **已解决（2026-10-31）。** 两处归类建议由主会话原样采纳、落地在 `fb35da8`，
+    本记录逐桶数已改成终态，八个键与八个非空桶同集合、与
+    `derived.from_shapes.params_by_subsystem` 逐位相同，`io_proj` 不再是手填。
+    精度值一格都没变（1793 条全 F32）。
+
+    **仍开着的两件**（都不影响已填的任何值）：
+    (1) **`c_embedder` 该不该从 `time_embed` 挪进 `io_proj`。**
+    按形状它是池化文本投影而不是时间步嵌入（入口 3584 = 文本编码器 hidden，
+    而两个真的时间步嵌入器入口都是 256 = 正弦时间步特征）。
+    全仓只有这一份命中 `c_embedder`，所以挪它不会伤到别人；
+    但**这是语义判断不是 bug 修复** —— 别家 DiT 里 `c_embedder` 可能真是
+    class embedder（条件类别嵌入），下一份带这个名字的记录进来时要重验。
+    挪了之后这一份是 `time_embed` 9,445,376 / `io_proj` 30,490,656。
+    主会话已同意单独一轮。
+    (2) `720p_t2v` 之外 3 套 `use_meanflow` checkpoint 各多的那 4 个张量
+    **没有逐条取过名字**（4.7M 恰等于 `time_in.mlp` 整套 4,722,688，
+    与 meanflow 要吃两个时间步自洽，但那是推断不是实测）。
+    要钉死得对那 3 套各取一次清单
