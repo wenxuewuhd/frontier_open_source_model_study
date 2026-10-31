@@ -23,6 +23,28 @@ match_note: >-
 
 watchlist: []
 
+paper:
+  title: Universal Transformers
+  ref:
+    kind: paper
+    url: https://arxiv.org/abs/1807.03819
+    locator: >-
+      §2.1：递归不是对序列位置而是对「深度」，转移函数跨位置与跨步共享，
+      于是层数可变（variable depth）；§2.2 Dynamic Halting：每个位置各自用 ACT
+      预测停止概率，停了就把状态复制到下一步，直到全停或到达上限
+    accessed: 2026-10-31
+  note: >-
+    **范式级。** §2.1 那句「转移函数跨位置与跨步共享、可以施加任意次」就是本条目说的
+    参数量与计算量解耦；§2.2 的逐位置 ACT 正是本仓缺的那根轴 —— 每 token 的执行深度，
+    而且它在这篇里是模型自己预测的，不是配置项。
+    **刻意不引「Looped Transformers as Programmable Computers」（arXiv:2301.13196，
+    2026-10-31 现查）**：那篇也把 transformer 放进循环，但问的是表达力
+    （13 层循环能模拟一台指令集计算机），不是「同一套权重循环 N 次该怎么算算力」——
+    同一个词，不是同一回事，而本条目的别名里恰好就有 loop transformer。
+    这条引用有一个独立旁证：本看板 hybrid-attention 的 L0（arXiv:2006.16236）§3.4 自己写着
+    「与 Universal Transformers 不同，我们的递归是对时间而不是对深度」——
+    两条范式在文献里就是这么划开的，不是本仓自己划的。
+
 production:
   state: unsurveyed
   note: 公开仓看不见这一档；实证归 data-private（P3）
@@ -39,7 +61,16 @@ infra_signals:
     evidence: judgement
 
 open_questions:
-  - L0 未录：要带定位的引用。
+  - >-
+      **L0 填上了不改这一条的状态：本仓 schema 仍表达不了这个范式**（见 match_note），
+      所以这一行会是 L0「已录」而 L1 恒为「未录」。**两格不矛盾** —— 五档的事实来源不是一处，
+      L0 是外部文献、L1 是本仓记录命不命中。看板上这一行正是「有论文、立不起判据」长什么样。
+  - >-
+      这篇是 2018 年的 encoder-decoder 时代，**它的 ACT 停止是训练出来的，而本条目要跟的
+      那一代（若有）可能把深度做成推理期可调的配置项**。两者对 infra 不是同一个问题：
+      前者让每 token 深度不可预测（批内长度不齐、调度要动），后者只是多一个常量因子。
+      加 arch.depth 字段时这两种要分开表达（adaptive 那个布尔位就是为此留的），
+      不要合成一个整数。
   - >-
       加字段之前不要先录模型：没有 arch.depth 这一块，录进来的记录会把循环深度写进散文，
       而散文上没有任何闸口。顺序是先 schema、再取数。
@@ -49,6 +80,8 @@ evidence:
   match: derived
   match_note: derived
   watchlist: unknown
+  paper: official
+  paper.note: judgement
   production: unknown
   infra_signals: judgement
   open_questions: judgement

@@ -28,6 +28,26 @@ watchlist:
   - name: SDAR
     note: 仓名与规格未查
 
+paper:
+  title: Structured Denoising Diffusion Models in Discrete State-Spaces
+  ref:
+    kind: paper
+    url: https://arxiv.org/abs/2107.03006
+    locator: >-
+      §3.1 的「Absorbing state」一段：转移矩阵让每个 token 以概率 β_t 吸收到 [MASK]，
+      平稳分布的全部质量落在 [MASK] 上；§4「Autoregressive models are (discrete) diffusion models」：
+      一步揭一个 token 的确定性掩码过程恰好就是自回归
+    accessed: 2026-10-31
+  note: >-
+    **范式级**：定义的是离散状态扩散这一类模型（D3PM），不绑任何一份权重 ——
+    本条目 watchlist 里的 LLaDA / Dream / SDAR 是它 §3.1 吸收态（[MASK]）那一支的实例。
+    **选它而不是同名的那篇**：「Diffusion-LM Improves Controllable Text Generation」
+    （arXiv:2205.14217，2026-10-31 现查）走的是连续嵌入上的高斯扩散，与本条目跟的掩码路线不是一支；
+    条目 id 叫 diffusion-lm，但它跟的是掩码扩散，这一点容易引错。
+    **这篇支持 question 的哪一半要分开说**：「步数可调」有 §4 作依据（自回归是 T = N 那一端，
+    步数少则每步揭的位置多，同一族里连续取值）；而「KV 缓存这个概念本身都可能不成立」
+    **是本仓的 infra 判断** —— 2021 年这篇不谈 decode 侧，不要当成它说的。
+
 production:
   state: unsurveyed
   note: 公开仓看不见这一档；实证归 data-private（P3 自测基准）
@@ -44,7 +64,11 @@ infra_signals:
     evidence: judgement
 
 open_questions:
-  - L0 未录：要带定位的引用（论文编号 / 节号），不从印象里写标题。
+  - >-
+      **L0 引的是 2021 年那篇，而 watchlist 三个候选是近两年的权重**，中间隔着掩码扩散的
+      若干轮细化（连续时间极限、简化的 ELBO 等），本轮一篇都没查、没引。
+      所以这一格说的只是「这一类模型有范式级定义」，**说不了「本仓要跟的那三份按哪一版训的」**
+      —— 后者得等 L1 真的录进来，从各自的技术报告里读。
   - >-
       L1 未录：watchlist 三个名字的仓名、参数量、许可都没查。
       这是一次定向取数的活，不是一次判断。
@@ -54,6 +78,8 @@ evidence:
   match: derived
   match_note: derived
   watchlist: unknown
+  paper: official
+  paper.note: judgement
   production: unknown
   infra_signals: judgement
   infra_signals[0].text: derived

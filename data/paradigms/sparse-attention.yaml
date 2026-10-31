@@ -22,6 +22,24 @@ match_note: >-
   已知的匹配边界：**滑窗注意力不算在这里** —— 它也是「不看全部 token」，但它不打分、
   不选择，省的是另一种账（固定窗口缓冲 vs 全量驻留），归混合注意力那一条。
 
+paper:
+  title: Generating Long Sequences with Sparse Transformers
+  ref:
+    kind: paper
+    url: https://arxiv.org/abs/1904.10509
+    locator: >-
+      §4.2 Factorized self-attention，式 2–4：把稀疏定义成连通模式 S_i ⊂ {j : j ≤ i}，
+      即每个输出位置只看前文的一个子集；Figure 3 是 strided / fixed 两种二维方案
+    accessed: 2026-10-31
+  note: >-
+    **范式级。** §4.2 定义的是「注意力的连通模式可以是一个子集」这件事本身，不绑任何一家实现 ——
+    本仓 13 份命中记录各自引的厂商技术报告（DSA / MSA / Qwen Sparse Attention）是 L1 证据，不是这一档。
+    **但这篇只覆盖本条目的一半，差在哪必须写出来**：它的子集是设计时固定的模式
+    （Figure 3 的 strided / fixed），**不是打分器在运行时选出来的**；而且它要省的是训练期的
+    O(n√n) 计算，2019 年这篇压根不谈 decode 期的 KV 驻留 —— 本条目 question 里
+    「全量 KV 驻留 + 每层一次 topk」那句是本仓的 infra 判断，不要当成它说的。
+    动态选块那一支的范式级来源见 open_questions 第一条。
+
 infra_signals:
   - text: >-
       稀疏注意力降的是注意力算力，不降 KV 容量 —— 选中的 token 其 K/V 必须可取，
@@ -34,12 +52,23 @@ infra_signals:
 
 open_questions:
   - >-
-      L0 未录：这一栏要的是定义范式本身的那篇（带节号/图号的定位），不是某一家的实例报告。
-      本仓 13 份命中记录各自引的都是厂商技术报告 —— 那是 L1 的证据，不能当 L0 用。
+      **L0 只覆盖固定模式那一支，动态选块那一支还没有范式级来源。** 两个候选
+      ——「Native Sparse Attention: Hardware-Aligned and Natively Trainable Sparse Attention」
+      （arXiv:2502.11089）与「MoBA: Mixture of Block Attention for Long-Context LLMs」
+      （arXiv:2502.13189），两篇的标题与作者表 2026-10-31 都现查过 ——
+      **但作者表就是本仓跟踪的那两家**（前者 DeepSeek、后者 Moonshot）。
+      于是「范式级文献」与「厂商侧实例报告」这条线在它们身上判不干脆，本轮没判。
+      paper 块只放一篇，分不开时宁可少引：少引看得见，引错看不见。
+  - >-
+      本条目 L0 与 L1 的时间跨度是 6 年（2019 → 2025 的命中记录），中间掐掉了整条演化
+      （KV 淘汰、块选择、可训练稀疏）。**所以 L0「已录」说的只是「这一类有范式级定义」**，
+      说不了「本仓这 13 份按哪一支做的」—— 后者在各份记录的 mechanism 字段里，不在这一格。
 
 evidence:
   question: judgement
   match: derived
   match_note: derived
+  paper: official
+  paper.note: judgement
   infra_signals: judgement
   open_questions: judgement

@@ -27,6 +27,26 @@ match_note: >-
   MTP 模块（num_mtp_modules 3 / 7）而发布清单里一个 MTP 张量都没有 —— 训练侧有、
   发布权重没带。按 config 匹配会把这两份算成 L1。
 
+paper:
+  title: Fast Inference from Transformers via Speculative Decoding
+  ref:
+    kind: paper
+    url: https://arxiv.org/abs/2211.17192
+    locator: >-
+      §2.3 Speculative Sampling 与 Algorithm 1：草稿模型 M_q 自回归出 γ 个猜测、
+      目标模型 M_p 并行验证、接受 n 个；Definition 3.1 与式 1 定义接受率 α = E(β)
+      并给出每步期望产出 (1 − α^(γ+1)) / (1 − α)
+    accessed: 2026-10-31
+  note: >-
+    **范式级。** draft-then-verify 这个算法、以及「每步实际产出几个 token」的口径都在这篇，
+    不绑任何厂商 —— 本仓命中记录里的 MTP / DSpark / EAGLE-like 说法是 L1 证据。
+    它同时是本条目那条 open question 的出处：式 1 里把 γ 折成有效值的那个因子就是接受率，
+    **而本仓一个数都没有**，所以这一档的 infra 结论只有上限、没有有效值。
+    **本条目把 MTP 并了进来，而这篇不覆盖 MTP**：MTP 的范式级来源是另一篇
+    （「Better & Faster Large Language Models via Multi-token Prediction」，arXiv:2404.19737，
+    共享主干上挂 n 个独立输出头）。本仓 L1 的判据 arch.decoding.mtp_layers 数的正是那种草稿块，
+    于是 **L0 与 L1 判据分属两脉** —— 这不是笔误，见 open_questions 第一条。
+
 infra_signals:
   - text: >-
       草稿块不只是「一层」：实测 step-5-preview 的 3 个 MTP 块各自自带一份
@@ -44,8 +64,13 @@ infra_signals:
 
 open_questions:
   - >-
-      L0 未录：投机解码这一脉的定义性文献要带定位地引。本仓命中记录里的引用都是
-      厂商侧实例（MTP / DSpark / EAGLE-like 的说法），那是 L1 证据。
+      **L0 与 L1 判据不在同一脉，这一格因此只半闭合。** L0 引的是投机解码
+      （Leviathan et al. 2023：外挂一个草稿模型，按接受率验证），而 match 的两条规则数的是
+      发布权重里的草稿块与草稿子目录 —— 形态上属于 MTP（Gloeckle et al. 2024，
+      arXiv:2404.19737，2026-10-31 现查）。两脉在部署上汇合（MTP 块当草稿头、按接受率验证），
+      **但那句「汇合」本仓没有证据，是推断** —— 要钉死得看引擎怎么用这些块，
+      而引擎实现在本仓的来源阶梯上是最低一档。所以这里记下另一篇的编号，
+      而不是把两件事悄悄写成一件。
   - >-
       **接受率本仓一个数都没有。** 没有接受率，「每步产出几个 token」就只是上限而不是
       有效值，这一档的 infra 结论（批调度、KV 写入放大）全都悬着。
@@ -55,6 +80,8 @@ evidence:
   question: judgement
   match: derived
   match_note: derived
+  paper: official
+  paper.note: judgement
   infra_signals: judgement
   infra_signals[0].text: derived
   infra_signals[1].text: official

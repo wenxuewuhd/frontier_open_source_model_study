@@ -24,6 +24,25 @@ match_note: >-
   已知边界：**稀疏注意力不算在这里**（见 sparse-attention）—— 它不改变缓存对象的种类，
   只改变每步看多少。
 
+paper:
+  title: "Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention"
+  ref:
+    kind: paper
+    url: https://arxiv.org/abs/2006.16236
+    locator: >-
+      §3.4 Transformers are RNNs，式 16–20：因果掩码下的注意力层等价于一个 RNN，
+      隐状态是两个尺寸固定的量（attention memory s 与 normalizer memory z），不随上下文增长
+    accessed: 2026-10-31
+  note: >-
+    **范式级，而且刻意只覆盖本条目的一半。** §3.4 定义出来的正是本条目 question 里
+    与全局 KV 不同刻度的那一份缓存对象：一份每序列固定、不随上下文长的递归状态。
+    它不绑任何厂商 —— 本仓命中记录引的 KDA / lightning attention / Gated DeltaNet
+    是这一脉的实例，那是 L1 证据。
+    **滑窗混合那一半这篇不覆盖**（本仓 2 份命中记录是滑窗 + 全局而无递归状态），见 open_questions。
+    附一条独立旁证，说明这两条范式在文献里本来就是分开的：这篇 §3.4 自己写着
+    「与 Universal Transformers 不同，我们的递归是对时间而不是对深度」——
+    被它排除的那一脉正是本看板 loop-transformer 那一条。
+
 infra_signals:
   - text: >-
       这一类的缓存容量账必须按层分组算两套：全局层按每 token 字节随上下文增长，
@@ -41,9 +60,17 @@ infra_signals:
 
 open_questions:
   - >-
-      L0 未录：线性注意力与 delta rule 这一脉的定义性文献要带定位地引，
-      本仓命中记录里现有的引用全是厂商侧实例（KDA、lightning attention、Gated DeltaNet
-      三种厂商名），那是 L1 证据。
+      **L0 只覆盖线性/递归状态那一半。** 滑窗 + 全局的层间混合另有一脉：
+      「Longformer: The Long-Document Transformer」（arXiv:2004.05150，2026-10-31 现查，
+      摘要即「combines a local windowed attention with a task motivated global attention」）
+      是那一侧的范式级候选。paper 块只放一篇，本轮选了递归状态这一篇，理由写在上面：
+      question 里那个「新刻度」由它定义，而滑窗缓冲仍是按 token 计费的 KV、只是被截断。
+      真要两篇并列得先拆条目，拆的判据仍是 linear_state 在不在，不是改 match 的词。
+  - >-
+      delta rule 这一支（KDA / Gated DeltaNet 的那个 delta）**比这篇更晚、本轮未引**。
+      它改的是式 18 那条状态更新规则（从累加改成带门的增删），而本条目的 infra 问题
+      ——「有一份每序列固定的状态要算容量」—— 两者同构，所以 L0 这一格不因此空着；
+      但「换哪种更新规则」看板上看不出来，与下面那条合并的代价是同一件事。
   - >-
       滑窗混合与线性混合在本条目里合并了。合并的理由是 infra 问题同构（两种刻度的缓存对象），
       代价是「换哪种机制」这件事看板上看不出来。真要分开时，判据是
@@ -53,6 +80,8 @@ evidence:
   question: judgement
   match: derived
   match_note: derived
+  paper: official
+  paper.note: judgement
   infra_signals: judgement
   infra_signals[1].text: derived
   open_questions: judgement
