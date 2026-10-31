@@ -135,11 +135,14 @@ params:
     于是注意力两桶合计少 48 × 4 × 128 = **24,576**（14,495,539,200 → 14,495,514,624）、
     `norm` 多同样的 24,576（1,179,648 → 1,204,224）。
 
-    其余都对得上：`ffn` / `adaln_modulation` 与 `dense_ffn` / `modulation` 逐位相同；
+    其余都对得上：`ffn` 与 `dense_ffn` 逐位相同；
+    `adaln_modulation` 267,644,928 在词表里是**两桶** ——
+    `modulation` 228,311,040 + `time_embed` 39,333,888（`242e724` 按功能分桶之后，
+    时间步嵌入不再被 `adaln` 领走）；
     `patch_embed` 792,640 + `text_proj` 75,509,760 + `clip_proj` 6,297,600
     = **82,600,000** 正是 `io_proj` 那一桶（R8 修好前它只有 393,280，
     另三样散在 `other` 与 `text_encoder` 组件里）。
-    `breakdown` 八桶合计与词表五桶合计都等于 29,342,478,400。
+    `breakdown` 八桶合计与词表六桶合计都等于 29,342,478,400。
 
 generation:
   backbone:
@@ -389,7 +392,7 @@ precision:
       modulation: BF16
       norm: BF16
       io_proj: BF16
-      time_embed: BF16   # 手工补的一行，不来自 classify2()，见 R7
+      time_embed: BF16
     subsystem_method: >-
       **逐项核对完整权重清单，非抽样。** `facts/stepvideo-t2v-30b/shapes.json` 的
       785 个条目（transformer 6 分片全量，每条都带 shape 与 dtype，failed_shards 为空）
@@ -398,9 +401,9 @@ precision:
 
       逐桶（张量数 / 参数量 / 占 29,342,478,400）：
       注意力 240 / 14,495,514,624 / **49.401%**、稠密 FFN 96 / 14,495,514,624 / **49.401%**、
-      调制 55 / 267,644,928 / 0.912%、入口出口投影 10 / 82,600,000 / 0.282%、
-      归一化 384 / 1,204,224 / 0.004%。
-      **五桶合计 785 条 / 29,342,478,400，一条不剩、一个参数不差** ——
+      调制 51 / 228,311,040 / 0.778%、入口出口投影 10 / 82,600,000 / 0.282%、
+      时间步嵌入 4 / 39,333,888 / 0.134%、归一化 384 / 1,204,224 / 0.004%。
+      **六桶合计 785 条 / 29,342,478,400，一条不剩、一个参数不差** ——
       `other` 桶为 **0**，整份清单没有一条落在兜底桶里，所以 `other` 没有行。
 
       `io_proj` 那 10 条是：入口 `pos_embed.proj`（[6144, 64, 1, 1] 加 bias，399,360，
@@ -419,18 +422,25 @@ precision:
       两者差 **259 倍**；两个 VAE 文件的 F32 同样在作用域外
       （`weights_release_scope.FP32.in_precision_table: false`）。
 
-      **`time_embed` 这一行是手工补的，它不来自 `classify2()`。**
-      时间步嵌入在这一份里叫 `adaln_single.emb.timestep_embedder.linear_1`
-      （[6144, 256] 加 bias）与 `linear_2`（[6144, 6144] 加 bias），
-      4 条共 **39,333,888 参数，实测全 BF16**；但名字带 `adaln_single`，
-      而 `SUBSYSTEM` 里 `modulation` 排在 `time_embed` 之前，
-      于是这 4 条整块落进 `modulation` 的 267,644,928 里、`time_embed` 桶是空的。
-      **空的原因是命名与规则次序，不是这个模型没有时间步嵌入** ——
-      不补这一行，缺值判据会把它渲染成「不适用：这个子系统在这个模型里不存在」，
-      而那句话是错的。代价是两张表对不齐：derived 的 `params_by_subsystem`
-      只有五桶（`modulation` 含时间步嵌入），这张精度表有六行。
-      **这与 cogvideox-1.5-5b 的处理方式相同**（那一份的 `modulation` 行同样是手补的，
-      原因是 `norm` 抢在 `modulation` 之前），两份记录的做法有意保持一致，见 R7。
+      **`time_embed` 与 `modulation` 现在是两桶，合起来才是「调制分支」。**
+      时间步嵌入是 `adaln_single.emb.timestep_embedder.linear_1`（[6144, 256] 加 bias）
+      与 `linear_2`（[6144, 6144] 加 bias），4 条 **39,333,888**；
+      `modulation` 剩下的 51 条 **228,311,040** 是全局的
+      `adaln_single.linear [36864, 6144]` 加 bias（226,529,280）、
+      每层一个 `[6, 6144]` 的 `scale_shift_table`（48 条 1,769,472）与顶层
+      `[2, 6144]` 那一个（12,288）。
+      **两桶相加 267,644,928 = `param_scaling.per_sample`** ——
+      这不是巧合，`subsystems.py` 把它写成了排序约束（`time_embed` 必须在
+      `modulation` 之前，否则 `adaln_single.emb.*` 被 `adaln` 先领走）。
+      引调制占比时要用两桶之和，用单桶会得到 0.778% 而不是 0.912%。
+
+      这一行此前是**手补的**（2026-10-31 前两轮）：那时 `modulation` 排在 `time_embed`
+      之前，4 条被 `adaln` 先领走、`time_embed` 桶是空的，而缺值判据会把空格渲染成
+      「不适用：这个子系统在这个模型里不存在」—— 那句话是错的，所以补行。
+      `242e724` 的按功能分桶把次序倒过来之后，**这一行有了依据，不再是手补的**；
+      cogvideox-1.5-5b 的 `modulation` 行同形（`ebfb3cd` 之后也有了依据）。
+      本仓现在的约定是**桶空就不补行**（见 CLAUDE.md），而桶空且功能存在时先去看
+      `subsystems.py` 的次序 —— 那是归类问题不是填表问题。留痕见 R7。
 
       **其余 13 格都站得住。** 12 格是真的没有这个子系统：稠密主干无路由专家、
       无共享专家，router 也就不存在；3D 全注意力不存 KV，所以无 compressor、无 indexer；
@@ -496,13 +506,22 @@ bottlenecks:
       **按发布时间排看不出规律** —— 放矩阵的最早（2024-11）与最晚（2026-07）各一份，
       中间夹着 2025-11；放表的横跨 2025-02 到 2026-03。
 
-      **这九个百分比的口径是「调制分支整体 / `params.total`」，不是新的
-      `modulation` 子系统桶。** 两者在本份上恰好逐位相同（调制桶 267,644,928
-      = `param_scaling.per_sample`），在别的八份上不同 ——
-      wan 三份与 ltx-2 的时间步嵌入落在 `time_embed` 桶里（`modulation` 桶只剩百万级），
-      cogvideox 的逐层 AdaLN 矩阵因为 `norm` 排在 `modulation` 之前而整块落进 `norm`
-      （`modulation` 桶是 0）。**所以这张对照表不能从逐子系统桶直接读出来**，
-      九份全表与各自的取数口径在 cogvideox-1.5-5b 记录的 R4，别拿桶去复算它
+      **这九个百分比的口径是「调制分支整体 / `params.total`」，不是单个
+      `modulation` 子系统桶。** 本份上 **`modulation` + `time_embed`
+      = 228,311,040 + 39,333,888 = 267,644,928 = `param_scaling.per_sample`**
+      才是那个 0.91%（单看 `modulation` 桶只有 0.778%）；
+      两桶之和等于 `per_sample` 是 `subsystems.py` 写明的排序约束，不是巧合。
+
+      **按功能分桶（`242e724`）之后这张对照表基本能从桶复算了** ——
+      2026-10-31 逐份算过 `modulation` + `time_embed` 占 `params.total`：
+      cogvideox 14.348%、ltx-2 1.598%、minimax-h3 39.414%、本份 0.912%、
+      wan2.1 1.302%、wan2.2-ti2v-5b 1.349%，与引用值逐份对得上（此前只有本份对得上）。
+      **两处例外要知道**：wan2.2-t2v-a14b 得 0.651%，因为它的 `params.total`
+      是两套专家 28,576,983,168，按单套 14,288,491,584 算才是引用的 1.302%
+      （口径差，不是算错）；hunyuanvideo-1.5 得 33.212%，而它声明的
+      `per_sample` 是 2,723,964,928（引用 32.71%），两桶之和 2,765,398,016
+      **多 41,433,088** —— 那一份自己的事，已报它那条线。
+      九份全表与各自的取数口径仍以 cogvideox-1.5-5b 记录的 R4 为准
     fix: >-
       这不是一个要修的瓶颈，是一条**结构判据**（不是代际判据 —— 那一版已证伪）：
       看到「参数量」时先问逐层放的是表还是矩阵 ——
@@ -547,9 +566,10 @@ infra_signals:
       调制占 **0.91%**，是九份里最低的。放矩阵的三份（cogvideox 14.35%、
       hunyuanvideo-1.5 32.71%、minimax-h3 39.41%）全是两位数，
       放表的六份全在 2.3% 以下 —— 中间差 6.3 倍，没有过渡带。
-      （这九个百分比的口径是**调制分支整体占 `params.total`**，
-      不是新加的 `modulation` 子系统桶 —— 两者只在本份上恰好相等，
-      理由见上面那条 compute 瓶颈。）
+      （这九个百分比的口径是**调制分支整体占 `params.total`**，在词表里是
+      `modulation` + `time_embed` **两桶之和**，不是单个 `modulation` 桶 ——
+      本份单看 `modulation` 只有 0.778%。按功能分桶之后两桶之和已能复算出多数引用值，
+      两处例外见上面那条 compute 瓶颈。）
 
       这一块不参与 token 计算，所以它的膨胀**只增显存与权重搬运、不增算力** ——
       按参数量排产能的人会在「放矩阵」那组上系统性高估
@@ -637,6 +657,19 @@ reviewed:
     R7 仍开着：判据的拦路石是 `absence()` 的 `test.path` 没有 `$key` 代入，主会话确认留给后续。
     顺带数完九份确认了一件没敢直接写的事：`other` 为 0 的**不止本份**，
     cogvideox-1.5-5b / ltx-2 / minimax-h3 也是 0。
+
+    **2026-10-31 第四轮（按功能分桶 `242e724` 之后）。** 次序把 `time_embed`
+    提到 `modulation` 之前，于是 `adaln_single.emb.timestep_embedder.*` 那
+    4 条 39,333,888 不再被 `adaln` 领走 —— **上两轮手补的 `time_embed` 行现在有依据了**，
+    `modulation` 相应降到 51 条 228,311,040。独立重算与主会话给的数逐位一致，
+    六桶合计仍是 785 条 / 29,342,478,400。
+    改了 `subsystem_method`（逐桶数字、两桶关系、手补那段改成留痕）、
+    R7（实例消掉但判据未改，改成讲「实例消失让它更危险不是更安全」）、
+    `counting_note` 的 `adaln_modulation` 对照（现在对两桶）、
+    以及三处引调制占比的地方（口径是**两桶之和** 0.912%，单看 `modulation` 是 0.778%）。
+    顺带逐份复算了那张九份对照表：按功能分桶之后**两桶之和已能复算出多数引用值**
+    （此前只有本份对得上），两处例外是 wan2.2-t2v-a14b 的两套专家口径差与
+    hunyuanvideo-1.5 多出的 41,433,088，后者已报它那条线。
 
 review:
   - id: R1
@@ -799,21 +832,31 @@ review:
       它的逐层 AdaLN 矩阵（`norm1.linear` / `norm2.linear` / `norm_out.linear`）
       因为 `norm` 也排在 `modulation` 之前而整块落进 `norm` 桶，
       `modulation` 桶是 **0** —— 而它恰恰是本仓「放矩阵 AdaLN」那一组的代表（占 14.35%）。
-      那一份在 `048954f` 里的办法是**手工补一行 `modulation: BF16`** 并写明它不来自
-      `classify2()`；本份对 `time_embed` 照同一个办法办，有意保持一致。
 
       所以判据本身的毛病是：**「不适用」把「模型里没有这个子系统」与
       「被更靠前的规则领走了」合成了一句话**，而穷举说法越可信，那句话就越像结论。
-      两份记录现在都靠手补一行绕过去，**而绕过去的代价是精度表的行数与
-      derived 的 `params_by_subsystem` 桶数对不上**（本份 6 行对 5 桶、
-      cogvideox 6 行对 5 桶），这个不一致没有任何闸口在查
+
+      **两个实例后来都被归类修正消掉了**（cogvideox 在 `ebfb3cd`：
+      给「名字带 norm 的调制投影」单开一条排在 `norm` 之前；本份在 `242e724`：
+      `time_embed` 移到 `modulation` 之前）。实测现在 cogvideox 的 `modulation`
+      是 797,423,616、本份的 `time_embed` 是 39,333,888，两格都有依据。
+
+      **但判据一个字没改，而实例消失让它更危险不是更安全。**
+      本份现在仍有 **13 格**靠那句「不适用」渲染，它们站得住的理由是
+      `subsystem_method` 里逐条枚举出来的 —— **不是那道判据能分辨**。
+      闸口绿着、页面上每一格也都对，而「对」这件事由散文担保、不由判据担保
+      （规则 11 的同一张脸：锚在内侧只守得住内侧）。
+      下一次词表调整若再造出一个被领走的空桶，这 13 格里会悄悄混进一句错话
     resolution: open
     changed_to: >-
-      本记录补了一行 `time_embed: BF16` 并在 `subsystem_method` 里写明它是手补的、
-      空的原因是命名与规则次序，另外 13 格站得住的理由逐条列了依据
-      （12 格是真的没有这个子系统，第 13 格 `other` 为 0 是因为 785 条全部归了具名桶）。
-      判据与归类正则都在共享文件（`data/schema/columns.json`、
-      `scripts/lib/subsystems.py`），本记录没碰，已报主会话
+      本份的 `time_embed` 不再需要手补 —— `242e724` 之后它有 4 条张量 39,333,888。
+      `subsystem_method` 里改成陈述两桶关系（`modulation` + `time_embed`
+      = `param_scaling.per_sample`），并把 13 格缺席的理由逐条留着：
+      12 格是真的没有这个子系统，第 13 格 `other` 为 0 是因为 785 条全部归了具名桶。
+      **判据本身仍未修**，拦路石是 `absence()` 的 `test.path` 两侧都没有 `$key` 代入
+      （`scripts/lib/columns.py` 与 `site/src/lib/columns.ts`），
+      加 op 还要同改两侧、第 5 道闸比对 op 词表。已报主会话，它确认留给后续；
+      「桶空就不补行」这条约定与根因已写进 CLAUDE.md
   - id: R8
     field: precision.quantization.per_subsystem
     severity: imprecise
@@ -912,15 +955,16 @@ open_questions:
     它影响「文本编码器一共多大」这个账
   - >-
     `precision.quantization.per_subsystem` 的缺格判据还没修（R7；R8 那两条已在
-    `ebfb3cd` 修掉）：判「不适用」分不开**「模型里没有这个子系统」**与
-    **「被更靠前的规则领走了」**（本份的 `time_embed`、cogvideox 的 `modulation`
-    都是后者），两份记录现在都只能手补一行绕过去，
-    **代价是精度表行数与 derived 的桶数对不上，而没有闸口查这个不一致**。
-    拦路石不在判据措辞而在 DSL：`absence()` 的 `test.path` 两侧都是写死的字符串、
-    没有 `$key` 代入，所以「测 derived 里当前这个桶是不是 0」写不出来；
-    加 op 还要同改 `columns.ts`，第 5 道闸比对两侧词表。
-    精度结论不受影响（全模型只有 BF16 一档），受影响的是读页面上那句
-    「这个子系统在这个模型里不存在」的人。已报主会话，它确认留给后续
+    `ebfb3cd` 修掉，本份的空桶实例已在 `242e724` 消掉）：判「不适用」分不开
+    **「模型里没有这个子系统」**与**「被更靠前的规则领走了」**。
+    拦路石不在措辞而在 DSL：`absence()` 的 `test.path` 两侧都是写死的字符串、
+    没有 `$key` 代入（`scripts/lib/columns.py` 与 `site/src/lib/columns.ts`），
+    所以「测 derived 里当前这个桶是不是 0」写不出来；加 op 还要同改两侧，
+    第 5 道闸比对 op 词表。
+    **实例没了不等于问题没了**：本份现在仍有 13 格靠那句「不适用」渲染，
+    它们站得住是因为 `subsystem_method` 里逐条枚举过，**不是判据能分辨** ——
+    下一次词表调整再造出一个被领走的空桶，这 13 格里就会混进一句错话而闸口全绿。
+    精度结论不受影响（全模型只有 BF16 一档）。已报主会话，它确认留给后续
   - >-
     `stepvideo-t2v-turbo` 的蒸馏步数不知道 —— 它是另一个仓，卡上没写步数。
     按 policy 不单开记录，但 `sampling.step_distilled.steps` 因此留空
