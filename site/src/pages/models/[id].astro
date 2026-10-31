@@ -9,7 +9,7 @@ import {
   allModels, modelById, url, fmtCount, fmtBytes, fmtInt, fmtSci, FAMILY_LABEL,
   reviewStatus, SEVERITY_LABEL, RESOLUTION_LABEL, HORIZON_LABEL, SUBSYSTEMS,
   kvCachePrecision, KV_BASIS_LABEL, evidenceFor,
-  officialVariants, ORIGIN_LABEL, STRATEGY_LABEL,
+  officialVariants, excludedVariants, ORIGIN_LABEL, STRATEGY_LABEL,
 } from '../../lib/data';
 
 const SUBSYSTEM_LABEL: Record<string, string> = Object.fromEntries(
@@ -544,6 +544,32 @@ const rv = reviewStatus(m);
               />
               {v.note && <p class="small muted"><Prose text={v.note} /></p>}
             </div>
+          ))}
+        </div>
+      )
+    }
+    {/* 厂商另发了、本仓**查过并故意不收**的量化仓。
+        不印的话，上面那张精度表在这一代就是一面 BF16 的墙，而读者无从知道是
+        「查过、量化对象不对」还是「根本没查」—— 那正是本仓三态契约要分开的两件事。
+        不收的理由只有一种站得住：量化对象不是 hf.repo 那份权重。而这件事
+        **对账闸拦不住**（同族 SFT 档不改形状，参数量逐位相同），所以更要写出来。 */}
+    {
+      excludedVariants(m).length > 0 && (
+        <div class="small muted" style="margin-top:14px">
+          <div>
+            <strong>厂商另发、本仓不收的量化仓</strong>
+            <Evidence tag={evidenceFor('precision.quantization.official_variants_excluded', ev)} />
+            <span> · 它们量化的不是本记录这份权重，所以不进上面的精度表</span>
+          </div>
+          {excludedVariants(m).map((e) => (
+            <p style="margin:4px 0 0">
+              <strong>{e.dtype}</strong> · <code>{e.repo}</code>
+              {' · 量化自 '}<code>{e.quantized_from}</code>
+              {e.params_match && (
+                <span> · <b>参数量与本记录主仓逐位相同 —— 对账闸在这里拦不住</b></span>
+              )}
+              {e.reason ? <> —— <Prose text={e.reason} /></> : null}
+            </p>
           ))}
         </div>
       )

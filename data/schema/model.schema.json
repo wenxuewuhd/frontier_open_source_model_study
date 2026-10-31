@@ -953,7 +953,7 @@
                   "file": { "type": "string", "description": "变体在仓内的文件名。只有「同仓不同文件」这种发布形态才填 —— 它是 repo 等于 hf.repo 时唯一正当的理由，scripts/validate.py 的 check_variants 认这一条" },
                   "rev": { "type": "string", "description": "取数时钉的 commit 短 sha。不钉的话清单换了也看不出来" },
                   "origin": {
-                    "description": "**这一档是厂商原生发布/训练出来的精度，还是同一份权重的事后再量化。**\n\nnative：厂商就是以这个精度发布/训练的这份权重（DeepSeek 主仓的 FP4、MiniMax-M3.1-Flash 主仓的 NVFP4 都属于这一类，不过它们在主仓里、不进这个数组）。\npost_quantized：厂商拿已有的 BF16 权重事后再量化发了一个仓（通义的 GPTQ-Int4、智谱的独立 FP8 仓）。\n\n**两者不能在同一张网格里不加区分地并列** —— 跨家族横着看会把它们当成同一个工程事实。判据不是名字：事后量化的硬证据是「逐子系统参数量与主仓逐位相同 + 仓里带 quantization_config」，Qwen3.5-27B 的三个仓都是 27,781,427,952，逐子系统七桶全对。精度页据此给事后量化的色块画斜纹。",
+                    "description": "**这一档是厂商原生发布/训练出来的精度，还是同一份权重的事后再量化。**\n\nnative：厂商就是以这个精度发布/训练的这份权重（DeepSeek 主仓的 FP4、MiniMax-M3.1-Flash 主仓的 NVFP4 都属于这一类，不过它们在主仓里、不进这个数组）。\npost_quantized：厂商拿已有的 BF16 权重事后再量化发了一个仓（通义的 GPTQ-Int4、智谱的独立 FP8 仓）。\n\n**两者不能在同一张网格里不加区分地并列** —— 跨家族横着看会把它们当成同一个工程事实。判据不是名字：事后量化的硬证据是「逐子系统参数量与主仓逐位相同 + 仓里带 quantization_config」，Qwen3.5-27B 的三个仓都是 27,781,427,952，逐子系统七桶全对。精度页据此给事后量化的色块画斜纹。\n\n**但对账通过不足以判定 post_quantized，还要确认量化对象就是 hf.repo 那份权重。** 同族的 SFT 档不改形状：Qwen1.5-72B 与 Qwen1.5-72B-Chat 的参数量逐位相同（都是 72,287,920,128），Qwen2-72B / Qwen2.5-14B-Instruct-1M 等四组同样如此。所以把挂在 Chat / Instruct 档下的量化仓收进来，params_total 那道闸**会通过**，而「同一份权重的事后再量化」这句话是假的 —— 它量化的是兄弟 checkpoint。`Qwen1.5-72B-Chat-AWQ` 最危险：它的 total 与 base 分毫不差。**闸绿而话错比没有闸更危险，因为下一个人会拿闸当背书。** 这类仓记在同级的 official_variants_excluded 里，不进这个数组。",
                     "enum": ["native", "post_quantized"]
                   },
                   "tensor_count": { "type": "integer", "description": "这个仓的张量条数。和主仓不同是正常的：GPTQ 每个被量化的权重拆成 qweight / scales / qzeros / g_idx 四条" },
@@ -983,6 +983,22 @@
                   "per_subsystem_schemes": { "$ref": "#/$defs/subsystem_schemes", "description": "桶内不止一种精度时的逐方案明细，口径同主仓的同名字段" },
                   "method": { "type": "string", "description": "这一仓的实测是怎么来的（几分片几张量、怎么对账、块与 scale 凭什么形状量出来的）" },
                   "note": { "type": "string" }
+                }
+              }
+            },
+            "official_variants_excluded": {
+              "type": "array",
+              "description": "厂商确实另发了、但**故意不收进 official_variants** 的量化仓，以及不收的理由。\n\n**为什么要有这个字段，而不是干脆不写。** 不收的理由是「量化对象不是 hf.repo 那份权重」—— 而这件事**对账闸拦不住**：同族的 SFT 档不改形状，Qwen1.5-72B 与 Qwen1.5-72B-Chat 的参数量逐位相同（72,287,920,128），所以把 Qwen1.5-72B-Chat-GPTQ-Int4 收进来，params_total 那道闸会通过，而 origin: post_quantized 这句话是假的。闸绿而话错比没有闸更危险。\n\n不写则更坏：精度页上那几代会是一面 BF16 的墙，而下一个人无从知道「本仓查过、厂商确实发了、只是量化对象不对」还是「根本没查」。本仓「只剩一路的记录照录，但那个事实要显式」是同一条规矩 —— 查过而不收，比没查更需要写出来。\n\n要收进来的话得有第三个 origin 值，且对账锚要换成「与被量化的那个仓对账」，意味着那个仓的清单也得取，工作量翻倍。",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["repo", "dtype", "quantized_from", "reason"],
+                "properties": {
+                  "repo": { "type": "string", "description": "厂商那个量化仓的 HF 全名" },
+                  "dtype": { "$ref": "#/$defs/dtype", "description": "那个仓的声明精度。**它不进 weights_release** —— weights_release 说的是「这份权重发过哪几种精度」，而这一档发的不是这份权重" },
+                  "quantized_from": { "type": "string", "description": "它实际量化的是哪个仓。**与 hf.repo 不同正是不收的理由**；相同就该收进 official_variants，由 scripts/validate.py 的 check_excluded_variants 挡" },
+                  "params_match": { "type": "boolean", "description": "被量化的那个仓与本记录主仓的参数量是否逐位相同。填 true 是在说「对账闸在这里拦不住假话」，这才是记这条的意义所在；留空表示没核过" },
+                  "reason": { "type": "string", "description": "不收的理由。要说清量化对象是谁、为什么它不等于本记录这份权重" }
                 }
               }
             }

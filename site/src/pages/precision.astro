@@ -46,8 +46,8 @@ import Prose from '../components/Prose.astro';
 import {
   families, allModels, url, fmtInt, SUBSYSTEMS, DTYPE_CELL, dtypeCell,
   changesFor, evidenceFor, KV_BASIS_LABEL, TRACKED_FIELDS, type Model,
-  lowestOf, officialVariants, ORIGIN_LABEL, STRATEGY_LABEL, DTYPE_BITS,
-  type PrecisionSource,
+  lowestOf, officialVariants, excludedVariants, ORIGIN_LABEL, STRATEGY_LABEL,
+  DTYPE_BITS, type PrecisionSource,
 } from '../lib/data';
 import Cell from '../components/Cell.astro';
 // 块格式名的推导只此一份：格子的 badge/title 与 data.ts 里逐子系统的变化行共用，
@@ -655,6 +655,19 @@ const shortName = (m: Model, label: string) =>
                           )}
                         </div>
                       )) : <span class="absent unsurveyed">未录</span>}
+                      {/* 查过而不收，比没查更需要写出来：不印的话这一代就是一面
+                          BF16 的墙，读者分不清「查过、量化对象不对」与「根本没查」 */}
+                      {excludedVariants(m).length > 0 && (
+                        <div class="excl" title={excludedVariants(m)
+                          .map((e) => `${e.dtype} · ${e.repo}\n→ 量化对象是 ${e.quantized_from}，`
+                            + `不是本记录这份权重${e.params_match
+                              ? '；两者参数量逐位相同，所以 params_total 那道闸在这里拦不住'
+                              : ''}`)
+                          .join('\n\n')}>
+                          另有 {excludedVariants(m).length} 个官方量化仓未收
+                          <span class="muted">（量化的不是这份权重）</span>
+                        </div>
+                      )}
                     </td>
                     {/* 签名已经在每个子系统格子的 title 里了，这一列是「一次看全」的版本。
                         344px 宽，折起来省出的正是 KV 列要的空间 */}
@@ -873,6 +886,17 @@ const shortName = (m: Model, label: string) =>
 
   .blkhead { margin-top: 4px; font-size: 10.5px; }
   .blkhead:first-child { margin-top: 0; }
+
+  /* 不收的那几条压暗一档：它们不是这份权重的精度，不该和上面几行等重 */
+  .excl {
+    font-size: 11px;
+    color: var(--ink-3);
+    margin-top: 3px;
+    border-top: 1px dashed var(--line);
+    padding-top: 3px;
+    max-width: 22ch;
+    white-space: normal;
+  }
 
   .rel { font-size: 12.5px; white-space: nowrap; }
   .rel .ok { color: var(--accent); font-size: 11px; margin-left: 4px; }

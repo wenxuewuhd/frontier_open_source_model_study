@@ -388,6 +388,43 @@ def _():
     assert release_errors(d), "标 in_precision_table: true 却查无实据，必须继续报"
 
 
+@case("三·负例：排除清单里 quantized_from 等于 hf.repo —— 那就该收，不该排除")
+def _():
+    """`official_variants_excluded` 的理由只有一种站得住：量化对象不是这份权重。
+
+    这条闸**锚在记录内部，所以守不住「该排除的没排除」**（model-audit 规则 11），
+    它只查这条排除本身自不自洽。但自洽这一关必须守住：`quantized_from` 等于
+    `hf.repo`，说明它量化的正是这份权重，那它该逐张量读进 official_variants，
+    不该被一句「量化对象不对」挡在门外。
+    """
+    d = copy.deepcopy(RECS["qwen1.5-72b"])
+    ex = (d["precision"]["quantization"]).get("official_variants_excluded")
+    assert ex, "这条用例要一份带 official_variants_excluded 的记录"
+    errs = []
+    validate.check_excluded_variants(d, d["id"], errs)
+    assert not errs, f"记录现状应当自洽：{errs}"
+    # 把量化对象改成主仓自己 —— 不收的理由当场不成立
+    for e in d["precision"]["quantization"]["official_variants_excluded"]:
+        e["quantized_from"] = d["hf"]["repo"]
+    errs = []
+    validate.check_excluded_variants(d, d["id"], errs)
+    assert errs, "quantized_from 等于 hf.repo 必须报"
+
+
+@case("三·负例：被排除的 dtype 不能同时写进 weights_release")
+def _():
+    """weights_release 说的是「**这份**权重发过哪几种精度」。
+
+    把兄弟 checkpoint 的量化档写进去，精度页的「发布形态」那一列会印出一档
+    色块那边根本没有的精度 —— 读者会当成数据错，而两边其实各说各的。
+    """
+    d = copy.deepcopy(RECS["qwen1.5-72b"])
+    d["precision"]["weights_release"] = list(d["precision"]["weights_release"]) + ["INT4"]
+    errs = []
+    validate.check_excluded_variants(d, d["id"], errs)
+    assert errs, "被排除的 dtype 混进 weights_release 必须报"
+
+
 @case("三·负例：有实测却填 in_precision_table: false —— 说反话也要挡")
 def _():
     """闸口两个方向都要验，不能只验 true 那半边。

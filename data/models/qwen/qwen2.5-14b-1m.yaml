@@ -175,6 +175,28 @@ precision:
       来自完整权重清单（8 分片 579 条目）逐项统计，非抽样：每个条目都带 shape 与 dtype，
       failed_shards 为空，579 条全是 BF16。这一代没有 quantization_config
 
+    # 厂商确实另发了官方量化仓，本仓**查过并故意不收** —— 理由逐条写在下面。
+    # 不写的话，精度页上这一代是一面 BF16 的墙，而读者无从知道是「查过、量化对象不对」
+    # 还是「根本没查」。查过而不收，比没查更需要写出来。
+    official_variants_excluded:
+      - repo: Qwen/Qwen2.5-14B-Instruct-AWQ
+        dtype: INT4
+        quantized_from: Qwen/Qwen2.5-14B-Instruct
+        params_match: true
+        reason: >-
+          厂商官方发的量化仓，但**量化对象是 Qwen/Qwen2.5-14B-Instruct，不是本记录跟的 Qwen/Qwen2.5-14B-Instruct-1M** ——
+          它量化的是兄弟 checkpoint，不是这份权重，所以精度页那几格照实留 BF16。 **这一份不是 base / Chat 之分，是长上下文档之分**：本记录跟的是
+          1M 档，而量化仓挂在常规 Instruct 档下 —— 形状不随上下文上限变，所以同一条判据成立。 **对账闸在这里拦不住假话**：SFT
+          不改形状，两个仓的参数量逐位相同（都是 14,770,033,664，HF 的 safetensors total 实测），收进来 `params_total`
+          那道闸会通过，而 `origin: post_quantized`（「同一份权重的事后再量化」）这句话是假的。**闸绿而话错比没有闸更危险，因为下一个人会拿闸当背书。**
+          要收的话得有第三个 origin 值，且对账锚换成与 Qwen/Qwen2.5-14B-Instruct 对账 —— 那个仓的清单也得取，工作量翻倍，本轮不做。
+      - repo: Qwen/Qwen2.5-14B-Instruct-GPTQ-Int4
+        dtype: INT4
+        quantized_from: Qwen/Qwen2.5-14B-Instruct
+        params_match: true
+        reason: >-
+          同上。 量化对象同为 Qwen/Qwen2.5-14B-Instruct，理由见本列表第一条。
+
 platforms:
   - engine: transformers
     hardware: NVIDIA
@@ -255,6 +277,7 @@ evidence:
   arch.attention.layer_pattern: derived
   arch.ffn.type: derived
   precision: official
+  precision.quantization.official_variants_excluded: judgement
   precision.weights_release: derived
   precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived

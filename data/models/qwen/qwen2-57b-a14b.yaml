@@ -169,6 +169,21 @@ precision:
       failed_shards 为空，5771 条全是 BF16。这一代没有 quantization_config，
       不存在 scale 张量与量化块
 
+    # 厂商确实另发了官方量化仓，本仓**查过并故意不收** —— 理由逐条写在下面。
+    # 不写的话，精度页上这一代是一面 BF16 的墙，而读者无从知道是「查过、量化对象不对」
+    # 还是「根本没查」。查过而不收，比没查更需要写出来。
+    official_variants_excluded:
+      - repo: Qwen/Qwen2-57B-A14B-Instruct-GPTQ-Int4
+        dtype: INT4
+        quantized_from: Qwen/Qwen2-57B-A14B-Instruct
+        params_match: true
+        reason: >-
+          厂商官方发的量化仓，但**量化对象是 Qwen/Qwen2-57B-A14B-Instruct，不是本记录跟的 Qwen/Qwen2-57B-A14B** ——
+          它量化的是兄弟 checkpoint，不是这份权重，所以精度页那几格照实留 BF16。 **对账闸在这里拦不住假话**：SFT 不改形状，两个仓的参数量逐位相同（都是
+          57,408,658,944，HF 的 safetensors total 实测），收进来 `params_total` 那道闸会通过，而 `origin:
+          post_quantized`（「同一份权重的事后再量化」）这句话是假的。**闸绿而话错比没有闸更危险，因为下一个人会拿闸当背书。** 要收的话得有第三个 origin
+          值，且对账锚换成与 Qwen/Qwen2-57B-A14B-Instruct 对账 —— 那个仓的清单也得取，工作量翻倍，本轮不做。
+
 platforms:
   - engine: transformers
     hardware: NVIDIA
@@ -255,6 +270,7 @@ evidence:
   arch.moe.balance: derived
   arch.moe.storage_note: derived
   precision: official
+  precision.quantization.official_variants_excluded: judgement
   precision.weights_release: derived
   precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived

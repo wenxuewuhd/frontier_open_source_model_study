@@ -151,6 +151,33 @@ precision:
       不存在 scale 张量与量化块。同一套统计在 facts/qwen2.5-72b（同样 963 条目）上
       逐条相同，是本仓少有的「两份独立取数逐条吻合」的样本
 
+    # 厂商确实另发了官方量化仓，本仓**查过并故意不收** —— 理由逐条写在下面。
+    # 不写的话，精度页上这一代是一面 BF16 的墙，而读者无从知道是「查过、量化对象不对」
+    # 还是「根本没查」。查过而不收，比没查更需要写出来。
+    official_variants_excluded:
+      - repo: Qwen/Qwen2-72B-Instruct-GPTQ-Int4
+        dtype: INT4
+        quantized_from: Qwen/Qwen2-72B-Instruct
+        params_match: true
+        reason: >-
+          厂商官方发的量化仓，但**量化对象是 Qwen/Qwen2-72B-Instruct，不是本记录跟的 Qwen/Qwen2-72B** —— 它量化的是兄弟
+          checkpoint，不是这份权重，所以精度页那几格照实留 BF16。 **对账闸在这里拦不住假话**：SFT 不改形状，两个仓的参数量逐位相同（都是
+          72,706,203,648，HF 的 safetensors total 实测），收进来 `params_total` 那道闸会通过，而 `origin:
+          post_quantized`（「同一份权重的事后再量化」）这句话是假的。**闸绿而话错比没有闸更危险，因为下一个人会拿闸当背书。** 要收的话得有第三个 origin
+          值，且对账锚换成与 Qwen/Qwen2-72B-Instruct 对账 —— 那个仓的清单也得取，工作量翻倍，本轮不做。
+      - repo: Qwen/Qwen2-72B-Instruct-AWQ
+        dtype: INT4
+        quantized_from: Qwen/Qwen2-72B-Instruct
+        params_match: true
+        reason: >-
+          同上。 量化对象同为 Qwen/Qwen2-72B-Instruct，理由见本列表第一条。
+      - repo: Qwen/Qwen2-72B-Instruct-GPTQ-Int8
+        dtype: INT8
+        quantized_from: Qwen/Qwen2-72B-Instruct
+        params_match: true
+        reason: >-
+          同上，只是位宽是 8。 量化对象同为 Qwen/Qwen2-72B-Instruct，理由见本列表第一条。
+
 platforms:
   - engine: transformers
     hardware: NVIDIA
@@ -228,6 +255,7 @@ evidence:
   arch.attention.layer_pattern: derived
   arch.ffn.type: derived
   precision: official
+  precision.quantization.official_variants_excluded: judgement
   precision.weights_release: derived
   precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived

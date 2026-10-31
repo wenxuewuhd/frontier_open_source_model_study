@@ -556,6 +556,26 @@ export interface OfficialVariant {
 export const officialVariants = (m: Model): OfficialVariant[] =>
   ((m.precision?.quantization?.official_variants ?? []) as OfficialVariant[]);
 
+/**
+ * 厂商另发了、但本仓**查过并故意不收**的量化仓。
+ *
+ * 不收的理由只有一种站得住：量化对象不是 `hf.repo` 那份权重（通义早几代的量化仓
+ * 挂在 Chat / Instruct 档下，而那几份记录跟的是 base）。
+ *
+ * **必须渲染出来**，否则精度页上那一代是一面 BF16 的墙，而读者无从知道是
+ * 「查过、量化对象不对」还是「根本没查」—— 那正是本仓三态契约要分开的两件事。
+ */
+export interface ExcludedVariant {
+  repo: string;
+  dtype: string;
+  quantized_from: string;
+  params_match?: boolean;
+  reason?: string;
+}
+
+export const excludedVariants = (m: Model): ExcludedVariant[] =>
+  ((m.precision?.quantization?.official_variants_excluded ?? []) as ExcludedVariant[]);
+
 /** 一个子系统的精度出自哪里：主仓那一份，还是某个另发的量化仓。 */
 export interface PrecisionSource {
   dtype: string;

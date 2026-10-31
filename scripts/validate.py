@@ -296,6 +296,52 @@ def check_variants(doc, path, derived_dir, errors):
                 f"和「这一代没有这块权重」长得一样")
 
 
+def check_excluded_variants(doc, path, errors):
+    """precision.quantization.official_variants_excluded：不收的理由要站得住。
+
+    这个字段记的是「厂商确实另发了量化仓，但本仓故意不收」。不收的理由只有一种
+    站得住：**量化对象不是 hf.repo 那份权重**。所以查三条：
+
+    **一·quantized_from 不能等于 hf.repo。** 相同就说明它量化的正是这份权重，
+    那它该进 official_variants、逐张量读进来，而不是被挡在门外。
+
+    **二·同一个 repo 不能两边都在。** 一个仓要么收要么不收，两处都写就是两种说法。
+
+    **三·它的 dtype 不进 weights_release。** weights_release 说的是「**这份**权重
+    发过哪几种精度」，而这一档发的不是这份权重。写进去会让精度页的「发布形态」那一列
+    印出一档本记录根本没有的精度，而色块那边又没有它 —— 读者会当成数据错。
+
+    **这道闸锚在记录内部，所以守不住什么**（model-audit 规则 11）：它查得出
+    「这条排除写得自相矛盾」，查不出「该排除的没排除」也查不出「不该排除的排除了」。
+    后两件只能靠 scripts/find_variants.py 去厂商那边数，那是取数不是校验。
+    """
+    pq = ((doc.get("precision") or {}).get("quantization") or {})
+    ex = pq.get("official_variants_excluded") or []
+    if not ex:
+        return
+    main_repo = str((doc.get("hf") or {}).get("repo") or "")
+    kept = {str(v.get("repo") or "") for v in (pq.get("official_variants") or [])}
+    wr = {str(x).upper() for x in ((doc.get("precision") or {}).get("weights_release") or [])}
+    for e in ex:
+        e = e or {}
+        repo = str(e.get("repo") or "?")
+        tag = f"{path}: precision.quantization.official_variants_excluded[{repo}]"
+        if main_repo and str(e.get("quantized_from") or "") == main_repo:
+            errors.append(
+                f"{tag} 的 quantized_from 就是 hf.repo（{main_repo}）—— "
+                f"那它量化的正是这份权重，该逐张量读进 official_variants，"
+                f"不该被挡在门外。不收的理由只有「量化对象不是这份权重」站得住")
+        if repo in kept:
+            errors.append(
+                f"{tag} 同时出现在 official_variants 里 —— 一个仓要么收要么不收，"
+                f"两处都写就是两种说法")
+        if str(e.get("dtype") or "").upper() in wr:
+            errors.append(
+                f"{tag} 的 dtype {e.get('dtype')} 写进了 precision.weights_release。"
+                f"那一列说的是「**这份**权重发过哪几种精度」，而这一档发的不是这份权重 —— "
+                f"留着会让精度页的「发布形态」印出一档色块那边根本没有的精度")
+
+
 def _root(data_dir):
     return os.path.dirname(os.path.abspath(data_dir)) or "."
 
@@ -1106,6 +1152,7 @@ def main():
         check_pending_claims(doc, p, warnings)
         check_scope_coherence(doc, p, errors)
         check_variants(doc, p, os.path.join(args.data_dir, "derived"), errors)
+        check_excluded_variants(doc, p, errors)
         check_absence_resolves(doc, p, os.path.join(args.data_dir, "derived"),
                                errors, warnings, gaps)
     check_review_pointers(loaded, errors, warnings)
