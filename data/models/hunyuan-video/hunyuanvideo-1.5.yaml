@@ -154,6 +154,20 @@ params:
     `*_img` / `*_txt` 按双流分开记 —— 两路**参数逐字节相同**，
     但处理的 token 数差三个量级，合在一起会掩盖这件事（见 bottlenecks）。
 
+    **这张 breakdown 有两个桶是按模块切的，不是按功能切的 —— 2026-10-31 补明（见 R11）。**
+    原先只定义了 `adaln_modulation` 与 `*_img` / `*_txt` 三项，剩下的桶没写口径，
+    于是下面两件事谁也看不出来：
+    `token_refiner` 141,105,152 是 `txt_in.*` 整块，其中 **33,046,528（23.4%）
+    是 AdaLN 调制与两个条件嵌入器**（`adaLN_modulation` 16,785,408 +
+    `t_embedder.mlp` 4,722,688 + `c_embedder` 11,538,432）；
+    `patch_embed` 8,593,440 是 `img_in.*` 加 `final_layer.*`，而其中
+    **8,392,704（97.7%）是出口的 `final_layer.adaLN_modulation`** ——
+    真的 patch 投影只有 `img_in.proj` 的 135,168。
+    **所以「`patch_embed`」这个名字名不副实，而那 8,392,704 的 AdaLN 调制
+    既不在 `adaln_modulation` 里、也没被任何地方记过。**
+    桶值与总和都没错（九桶相加逐位等于 `params.total`），错的是名字与缺的那条定义；
+    改键名会动引用它的地方，单独一轮。
+
 generation:
   backbone:
     stream_design: dual_stream
@@ -535,9 +549,32 @@ precision:
       （两个真正的时间步嵌入器，入口都是 **256** = 正弦时间步特征），
       加 `txt_in.c_embedder.linear_1/2` 11,538,432。
       **`c_embedder` 按形状不是时间步嵌入** —— 入口 **3584** 正是文本编码器的 hidden，
-      它是池化文本投影；入口 256 vs 3584 这一刀纯靠形状判，没读实现
-      （`model-audit` 规则 12）。该不该把它挪进 `io_proj` 是语义题不是 bug，
-      单独一轮，见 open_questions。
+      而这一份两个真的时间步嵌入器入口都是 **256**（正弦特征宽度）。
+      这一刀纯靠形状，没读实现。
+
+      **但「它是池化的」这半句形状判不出来，这一份是 `model-audit` 规则 12
+      「形状判不出来」那一侧的样本，而且比规则里举的例子更刁**：
+      `txt_in.c_embedder.linear_1` 是 [2048, 3584]，
+      而 `txt_in.input_embedder` **也是 [2048, 3584]** —— 两个形状逐位相同，
+      一个吃池化后的单条向量、一个吃逐 token 的文本流。
+      所以「`c_embedder` 每次前向只过一遍」这个口径**不是形状结论**，
+      它来自实现（本记录 `param_scaling.note` 早先那一轮记的
+      「这三项吃的是条件向量、每次前向只过一遍」），
+      **按规则 12 的要求在此写明用的是哪一种**：前半句形状、后半句实现。
+
+      **决定：`c_embedder` 不从 `time_embed` 里切出去**（主会话把这一刀交给本线定）。
+      三条理由，按强到弱：
+      (a) **切不动** —— 要把它和 `input_embedder` 分开，形状给不出判据（两者同形），
+      只能按 `c_embedder` 这个名字切，而那是往共享文件里加一条腾讯专用名；
+      (b) **切了也不影响这张表** —— 这一格的用途是报精度，而两边都是 FP32，
+      切与不切页面上的值一个字不变；
+      (c) **按功能分桶反而支持合在一起** —— 喂给 AdaLN 的四处
+      （`img_mod` / `txt_mod` / `final_layer.adaLN` / refiner 的 adaLN）入口全是 **2048**，
+      而 `t_embedder` 与 `c_embedder` 的出口都正好是 2048：
+      两者产出的是同一个条件向量的两个加数，功能上同一级。
+      **所以真正不准的是桶的标签（「时间步嵌入」）而不是桶的成员** ——
+      要精确该改 `data/schema/subsystems.json` 里 `time_embed` 的 label / note
+      （显示层），不是改归类正则。已报主会话，本记录没碰那两个共享文件。
       前两样原先整批算在 `dense_ffn` 里（那时这一格只有 `c_embedder` 一样），
       现在由一条**只认「时间步嵌入器自己的 `mlp`」**的窄规则在 `dense_ffn` 之前截下。
       **那条窄规则现在只剩一个独有的活：`time_in.mlp.*`** ——
@@ -556,6 +593,11 @@ precision:
       `other` 只剩 `cond_type_embedding` 6,144（条件类型查表，不是投影，
       有意留在 `other`：`embed` 这个桶的含义是输入词表，塞进去会让
       「输入词表」这一行在一个没有 token 词表的 DiT 上长出值）。
+      **那 6,144 要留神一件事：它在桶里落 `other`，而 `params.breakdown` 把它
+      算进了 `adaln_modulation`**（见 `counting_note` 的分桶口径）——
+      同一个张量在两根轴上归属不同，不是哪一边错了，
+      但它是 R11 那个 41,433,088 里唯一要**减**掉的一项，
+      也正因为它在这两个桶之外，只在两桶内部做子集和永远凑不出那个差。
 
       两处归类都由主会话改在共享文件 `scripts/lib/subsystems.py` 上（`fb35da8`），
       **本记录从头到尾没碰过那个文件**；精度值一格都没变（1793 条全 F32）。
@@ -1042,7 +1084,7 @@ review:
       （ltx-2.3 76,058,624、stepvideo 39,333,888），而 ltx-2.3 的 `time_embed`
       当时判的正是「不适用」—— 那句假话会反向变成「桶里躺着 7,600 万」。
       改用键在 `\.mlp\.` 上的窄规则，全仓只动这一份 8 条。
-      `c_embedder` 该不该挪进 `io_proj` 仍单独一轮，见 open_questions
+      `c_embedder` 该不该切出去已经定了：**不切**，三条理由见 `subsystem_method`
   - id: R11
     field: generation.backbone.param_scaling
     severity: imprecise
@@ -1073,22 +1115,43 @@ review:
       共 **33,046,528**，这三项吃的是条件向量、每次前向只过一遍，口径上属 `per_sample`」。
       而 33,046,528 + `final_layer` 的 adaLN 8,392,704 − 6,144 = 41,433,088 —— 同一个数。
 
-      **所以恒等式在这一份上不成立是必然的**：`per_sample` 是**负载轴**
-      （「这些参数每次前向只过一遍」），`modulation` / `time_embed` 是**功能桶**，
-      两者对同一批张量的切法不同。这一份的 AdaLN 调制分散在三处
-      （逐层 `img_mod`/`txt_mod`、出口 `final_layer`、token refiner 内部），
-      前者进 `per_sample`、后两者按所在模块进了 `patch_embed` 与 `token_refiner`。
-      另三份成立，是因为它们的调制只有逐层一处、没有出口与 refiner 两套。
+      **这里我第一版写错了方向，按主会话 `9d3b5e6` 的更正改过来 ——
+      记在这里因为那个错法很顺口。** 我原先写的是「`per_sample` 是负载轴、
+      两个桶是功能桶，两根轴按设计切得不一样，所以不等是必然的，
+      另三份相等只是它们结构简单」。**那个读法会把一个刚挣到位置的校验器讲成噪声。**
+      正确的读法是：**这一份的 `per_sample` 本来就不纯，而且是记录自己认过的**，
+      失配是判据在起作用。四项里 ——
+      `token_refiner` 内的 modulation 16,785,408 与
+      `t_embedder` + `c_embedder` 16,261,120 两项，是 `param_scaling.note`
+      明文认过的不纯（它写了「本次未改」）；
+      `cond_type_embedding` 6,144 是桶这边的归属（它落 `other`）；
+      而 `final_layer.adaLN_modulation` **8,392,704 这一项，此前没有任何地方记过** ——
+      它既不在 `adaln_modulation` 里，也没在任何 note 里被认领，
+      是被这条判据揪出来的。**所以这次失配的净产出是一个新事实，不是一次误报。**
+      已在 `params.counting_note` 里补明那两个按模块切的桶
+      （`token_refiner` 23.4% 是调制与条件嵌入、`patch_embed` 97.7% 是出口的 AdaLN）。
 
-      **它恰好是本仓「结构规律要钉住代际 / 零例外在下一份上通常不成立」的实例**，
-      而且主会话已经自查出来并把注释改成写明实测范围（`0ca2529`）——
-      本条只补上根因与逐项分解
+      判据的正确用法因此是主会话最后定的那一条：**不等时先问「这份记录的
+      `per_sample` 纯不纯」，答案在它自己的 `param_scaling.note` 里** ——
+      而不是先怀疑归类。
+
+      **三个占比数，各自自洽，别混着引**（分母都是 `params.total` 8,326,608,160）：
+      `per_sample` 2,723,964,928 = **32.71%**（本记录散文里引的就是这个，对的）；
+      `modulation` 桶 2,744,414,208 = **32.96%**；
+      `modulation + time_embed` 2,765,398,016 = **33.21%**。
+      要讲「这些参数每次前向只过一遍」用 32.71%，要讲「调制这个子系统有多大」
+      用 32.96%，**两者不是同一个量，不要互相校验**
     resolution: confirmed
     changed_to: >-
       `param_scaling.per_sample` 2,723,964,928 **原值正确，一个字没改**；
-      `modulation` / `time_embed` 两个桶的值也没改。
-      补的是依据：差额的三项分解，以及它与 `param_scaling.note` 里
-      那条早已自曝的 33,046,528 口径不纯是同一件事。
+      `modulation` / `time_embed` 两个桶的值、九个 `breakdown` 桶的值也都没改
+      （九桶相加仍逐位等于 `params.total`）。
+      补的是依据：差额的四项分解、三个占比各自的口径，以及
+      `params.counting_note` 里原先缺的那两条桶定义 ——
+      **`patch_embed` 97.7% 是出口的 `final_layer.adaLN_modulation`、
+      `token_refiner` 23.4% 是调制与条件嵌入**，这两条此前谁也看不出来。
+      **不要去「修」成相等** —— 要让它相等得改 `breakdown` 的切法，
+      那会动已核过的数，且 `param_scaling.note` 原意就是不在这一轮改。
       **拿这个恒等式当回归判据只能对那三份用**，对这一份要先把
       `per_sample` 的分桶不纯修掉 —— 而那会动已核过的数，仍按 note 原意不在本轮改
 
@@ -1210,16 +1273,16 @@ open_questions:
     `derived.from_shapes.params_by_subsystem` 逐位相同，`io_proj` 不再是手填。
     精度值一格都没变（1793 条全 F32）。
 
-    **仍开着的两件**（都不影响已填的任何值）：
-    (1) **`c_embedder` 该不该从 `time_embed` 挪进 `io_proj`。**
-    按形状它是池化文本投影而不是时间步嵌入（入口 3584 = 文本编码器 hidden，
-    而两个真的时间步嵌入器入口都是 256 = 正弦时间步特征）。
-    全仓只有这一份命中 `c_embedder`，所以挪它不会伤到别人；
-    但**这是语义判断不是 bug 修复** —— 别家 DiT 里 `c_embedder` 可能真是
-    class embedder（条件类别嵌入），下一份带这个名字的记录进来时要重验。
-    挪了之后这一份是 `time_embed` 9,445,376 / `io_proj` 30,490,656。
-    主会话已同意单独一轮。
-    (2) `720p_t2v` 之外 3 套 `use_meanflow` checkpoint 各多的那 4 个张量
+    **`c_embedder` 那一刀已经定了：不切**（判断权由主会话交给本线，
+    理由与形状依据见 `subsystem_method`，摘要：和 `input_embedder` 同形
+    [2048, 3584] 所以形状上切不开、两边都是 FP32 所以切了这张表一个字不变、
+    而按功能分桶反而支持合在一起 —— 喂 AdaLN 的四处入口全是 2048，
+    `t_embedder` 与 `c_embedder` 的出口都正好 2048，是同一个条件向量的两个加数）。
+    **不准的是桶的标签不是桶的成员**：要精确该改
+    `data/schema/subsystems.json` 里 `time_embed` 的 label / note（显示层），
+    不是改归类正则。已报主会话，本记录没碰那两个共享文件。
+
+    **仍开着的一件**：`720p_t2v` 之外 3 套 `use_meanflow` checkpoint 各多的那 4 个张量
     **没有逐条取过名字**（4.7M 恰等于 `time_in.mlp` 整套 4,722,688，
     与 meanflow 要吃两个时间步自洽，但那是推断不是实测）。
     要钉死得对那 3 套各取一次清单
