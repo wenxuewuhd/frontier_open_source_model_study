@@ -40,6 +40,14 @@
   本仓 47 份里 17 份带「每序列固定」分量，它和「随上下文增长」不是一个量
 - **实测自权重的字段，evidence 写 `judgement` 或 `derived`**。落在 `arch: official` 的前缀继承里就不会
   出现在 `validate.py --list-judgements`，绕过 Gate C 的人工复核
+- **桶空就不补行。** 逐子系统精度表里某个桶没有张量时，不要手工补一行 dtype ——
+  理由写进 `subsystem_method`。补行的后果是页面上出现「有精度、无参数」的格子：
+  那一行与 `derived.from_shapes.params_by_subsystem` 的桶集合对不上，而**没有任何闸口
+  查这个对账**。两份记录各自独立撞上过这个形状（stepvideo 补了 `time_embed`、
+  ltx-2.3 选择不补），两种做法都写了理由，但页面上一个「不适用」一个「有值」。
+  **根因是 `$subsystem` 的「不适用」把两件事合成了一句话** ——「模型里没有这个子系统」
+  与「被更靠前的规则领走了」。桶空而功能存在时，要去看 `scripts/lib/subsystems.py`
+  的次序是不是让更靠前的规则抢走了它，那是归类问题，不是填表问题
 - **抽样与定向取数的产物**（`subsystem_dtypes.json`、`kv_widths.json`）**只回答它被瞄准的那个问题**：
   不并入 `shapes.json`、不用于参数量。形状为空的清单会让 `derive.py` 把参数量静默算成 0，而不是报错
 
