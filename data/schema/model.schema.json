@@ -908,6 +908,26 @@
               "additionalProperties": { "$ref": "#/$defs/dtype" },
               "description": "对应子系统的 scale 张量精度。和权重精度是两个值：V4 的专家权重是 FP4、scale 是 FP8_E8M0，只报一个会让反量化实现猜错"
             },
+            "per_subsystem_schemes": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["dtype", "tensors", "elements"],
+                  "properties": {
+                    "dtype": { "$ref": "#/$defs/dtype" },
+                    "block": { "type": "string", "description": "这一方案的实测块，形如 [1,32]。未量化的档（BF16 / FP32）不填" },
+                    "scale_dtype": { "$ref": "#/$defs/dtype" },
+                    "tensors": { "type": "integer", "description": "落在这一方案里的权重张量条数（清单实测）" },
+                    "elements": { "type": "integer", "description": "还原打包后的元素数。占比由页面按合计算，不在这里记派生值" }
+                  }
+                }
+              },
+              "description": "**只给 per_subsystem_block 里带 + 的那些子系统填**，把「哪个块配哪个元素格式」从散文提成数据。\n\n没有这一层时页面只能看到「一个元素格式 + 两个块」，配不起来，于是对 draft 这类格子放弃推块格式名 —— 结果是 expert 显示 MXFP4、draft 显示裸 FP4，而两者 4 bit 那一半的签名其实逐因子相同，读者横着看会得出「草稿换了格式」这个错结论。\n\n**按元素数降序排，第一条就是主方案**，页面拿它的三因子去推名字。未量化的档也要列进来，否则占比合不上 100%，读者看到 95.5% + 4.0% 会以为漏了。\n\n`elements` 是还原打包后的数（FP4 装在 INT8 里要 ×2），逐张量从清单算，不抄 config。",
+              "propertyNames": { "type": "string" }
+            },
             "subsystem_method": {
               "type": "string",
               "description": "这组实测值是怎么来的（全量清单 / 抽样读了几个分片）。抽样只能回答精度，不能用于参数量统计"

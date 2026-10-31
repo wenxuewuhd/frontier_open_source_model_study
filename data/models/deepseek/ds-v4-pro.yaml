@@ -283,6 +283,18 @@ precision:
       attention: FP8_E8M0
       indexer: FP8_E8M0
       draft: FP8_E8M0
+    # 逐方案实测，只填上面带 + 的子系统。按元素数降序，**第一条是主方案**，精度页拿它的
+    # 三因子（元素 + 块 + scale）去推块格式名；不填这一层它就只能看到「一个元素格式 +
+    # 两个块」，配不起来而放弃推导，于是 expert 显示 MXFP4、draft 显示裸 FP4，
+    # 可两者 4 bit 那一半逐因子相同。**draft 推出的名字只说那一半 MoE 路由专家**
+    # （1152 条 / 98.2%）：注意力投影与共享专家停在 FP8_E4M3、块 [128,128]，没降到 4 bit。
+    # 未量化的档也列进来，否则占比合不上 100%。字段的完整约定见 deepseek-v41-flash
+    per_subsystem_schemes:
+      draft:
+      - { dtype: FP4, block: '[1,32]', scale_dtype: FP8_E8M0, tensors: 1152, elements: 25367150592 }
+      - { dtype: FP8_E4M3, block: '[128,128]', scale_dtype: FP8_E8M0, tensors: 10, elements: 468713472 }
+      - { dtype: BF16, tensors: 8, elements: 2790400 }
+      - { dtype: FP32, tensors: 11, elements: 1491515 }
     subsystem_method: >-
       早先按抽样填（每个子系统 6 个代表张量，读 14 个分片头）。已用完整清单按 lib/subsystems.py（mtp_from=61）按元素数复核
       （I8 按 FP4 ×2 还原、不计 scale）：代表值都不变；indexer 75.3% FP8_E4M3 / 24.7% BF16（indexer.compressor 与 weights_proj 未量化）、
@@ -324,6 +336,7 @@ evidence:
   precision.quantization.per_subsystem_scale: derived
   precision.quantization.subsystem_method: derived
   precision.quantization.per_subsystem_block: derived
+  precision.quantization.per_subsystem_schemes: derived
   arch.attention.sparse.index_kv_dim: derived
   arch.attention.sparse.index_kv_source: derived
   arch.attention.kv_sharing.measured_per_token: derived

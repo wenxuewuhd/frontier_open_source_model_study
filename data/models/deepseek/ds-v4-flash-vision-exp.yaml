@@ -392,6 +392,18 @@ precision:
       attention: FP8_E8M0
       indexer: FP8_E8M0
       draft: FP8_E8M0
+    # 逐方案实测，只填上面带 + 的子系统。按元素数降序，**第一条是主方案**，精度页拿它的
+    # 三因子（元素 + 块 + scale）去推块格式名；不填这一层它就只能看到「一个元素格式 +
+    # 两个块」，配不起来而放弃推导，于是 expert 显示 MXFP4、draft 显示裸 FP4，
+    # 可两者 4 bit 那一半逐因子相同。**draft 推出的名字只说那一半 MoE 路由专家**
+    # （2304 条 / 97.4%）：注意力投影与共享专家停在 FP8_E4M3、块 [128,128]，没降到 4 bit。
+    # 未量化的档也列进来，否则占比合不上 100%。字段的完整约定见 deepseek-v41-flash
+    per_subsystem_schemes:
+      draft:
+      - { dtype: FP4, block: '[1,32]', scale_dtype: FP8_E8M0, tensors: 2304, elements: 19327352832 }
+      - { dtype: FP8_E4M3, block: '[128,128]', scale_dtype: FP8_E8M0, tensors: 25, elements: 446693376 }
+      - { dtype: BF16, tensors: 20, elements: 69378816 }
+      - { dtype: FP32, tensors: 30, elements: 2426727 }
 infra_signals:
 - text: 第二套路由偏置 gate.bias_vl 让融合 router 至少要多带一个偏置输入；它是不是「按 token 模态选偏置」，按名字推测、没有一手说明
   evidence: judgement
@@ -440,6 +452,7 @@ evidence:
   precision.quantization.subsystem_method: derived
   precision.quantization.per_subsystem_scale: derived
   precision.quantization.per_subsystem_block: derived
+  precision.quantization.per_subsystem_schemes: derived
   arch.attention.sparse.index_kv_dim: derived
   arch.attention.sparse.index_kv_source: derived
   arch.attention.kv_sharing.measured_per_token: derived

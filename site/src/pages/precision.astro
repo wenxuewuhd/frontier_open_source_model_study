@@ -78,14 +78,21 @@ const schemesOf = (m: Model, key: string): Scheme[] => {
 function mixSummary(sch: Scheme[]): string | undefined {
   const tot = sch.reduce((s, r) => s + r.elements, 0);
   if (sch.length < 2 || !tot) return undefined;
+  // 小数档不印 `0.0%` —— 那读着像零，而它们是实测到的 20 条 BF16 与 27 条 FP32，
+  // 恰恰是本页「小而对误差敏感的块反而被提上去」那条结论的样本，不能显示成不存在
+  const pct = (n: number) => {
+    const p = (n / tot) * 100;
+    return p > 0 && p < 0.05 ? '<0.1%' : `${p.toFixed(1)}%`;
+  };
   return sch
-    .map((r) => `${r.dtype}${r.block ? ` 块 ${r.block}` : ''} ${r.tensors} 条 / ${((r.elements / tot) * 100).toFixed(1)}%`)
+    .map((r) => `${r.dtype}${r.block ? ` 块 ${r.block}` : ''} ${r.tensors} 条 / ${pct(r.elements)}`)
     .join('；');
 }
 
 type Cell =
   /** `shown` 是格子上实际显示的格式名；`derived` 为真表示它是从签名推的，不是记录原值 */
-  | { kind: 'dtype'; dtype: string; shown: string; derived: boolean; sig?: string; why?: string; mix?: string; mainSub?: string }
+  /** `partial` 为真表示这个名字是从**主方案**推的，只覆盖这一格里占比最大的那一半 */
+  | { kind: 'dtype'; dtype: string; shown: string; derived: boolean; sig?: string; why?: string; mix?: string; partial?: boolean }
   | { kind: 'unsurveyed' }
   | { kind: 'not_applicable' };
 
@@ -108,9 +115,37 @@ function cellFor(m: Model, key: string): Cell {
     const q = prec(m).quantization ?? {};
     const blk = (q.per_subsystem_block ?? {})[key];
     const scl = (q.per_subsystem_scale ?? {})[key];
-    const f = blockFormat(dtype, blk, scl);
     const sig = [dtype, blk ? `块 ${blk}` : '', scl ? `scale ${scl}` : ''].filter(Boolean).join(' · ');
-    if (f) return { kind: 'dtype', dtype, shown: f.replace(' 式', ''), derived: true, sig };
+
+    // 两步推导：先按整格的三因子推，推不出再按**主方案**的三因子推。
+    //
+    // 第二步是 `per_subsystem_schemes` 买来的。带 `+` 的块（`'[1,32]+[32,32]'`）解析不出
+    // 单一块大小，第一步必然弃权 —— 而弃权的代价不是「少一个名字」：`expert` 显示 MXFP4、
+    // `draft` 显示裸 FP4，可两格 4 bit 那一半逐因子相同（E2M1 + [1,32] + E8M0），
+    // 读者横着看得到的是「草稿换了格式」，一个错结论。
+    //
+    // **不能走「取块字符串末尾那个数」的捷径**：V4.1 的 '[1,32]+[32,32]' 会取到 32 而得名，
+    // V4 三份的 '[1,32]+[128,128]' 取到 128 而不得名 —— 同一个 FP4 方案，因为后面那个
+    // FP8 块碰巧是 32 还是 128 就分了道，比统一不给名字更糟。所以配对关系必须是数据。
+    //
+    // 主方案的 dtype 要和这一格的代表值一致才认。不一致说明记录自相矛盾，
+    // 那时退回裸 dtype —— 页面不替记录在两个矛盾值里挑一个。
+    const sch = schemesOf(m, key);
+    const main = sch[0];
+    const fromMain = main && main.dtype.toUpperCase() === dtype.toUpperCase()
+      ? blockFormat(main.dtype, main.block, main.scale_dtype)
+      : undefined;
+    const whole = blockFormat(dtype, blk, scl);
+    const f = whole ?? fromMain;
+    const mix = mixSummary(sch);
+    if (f) {
+      return {
+        kind: 'dtype', dtype, shown: f.replace(' 式', ''), derived: true, sig, mix,
+        // 名字由主方案推出来时必须标上，title 里才会写明它只说那一半 ——
+        // 否则 draft 格的 `MX` 会被读成「整个草稿头都是 4 bit」，而它的注意力投影是 FP8
+        partial: !whole && !!fromMain,
+      };
+    }
     // 推不出名字时要说清是为什么，否则读者只看到一个裸 `FP4` 不知道是漏了还是有意的。
     //
     // `+` 的含义是「这个子系统里不止一种块方案」，而它底下其实有两种情况，
@@ -121,11 +156,17 @@ function cellFor(m: Model, key: string): Cell {
     //     （wkv / wo_a / wo_b，[32,32]）并存
     // 两种都不对应单一的块格式名，所以一律不推。措辞不区分这两种，是因为
     // **光看 per_subsystem_block 区分不了**，要回清单才知道 —— 页面不做那个推断。
-    const why = typeof blk === 'string' && blk.includes('+')
+    //
+    // 记了 `per_subsystem_schemes` 的格子不走这句 —— 那时候 mix 一行把两种情况直接
+    // 摊开了（retrieval 两条同为 FP8_E4M3、draft 两条跨 FP4 与 FP8），比这句含糊的
+    // 「可能还跨不止一种」强。这句留给还没补 schemes 的记录（ds-v3 一代与 glm-5.3）。
+    const why = mix
+      ? undefined
+      : typeof blk === 'string' && blk.includes('+')
       ? '这个子系统里不止一种块方案（可能还跨不止一种元素格式）'
         + ' —— 没有单一的块格式名，不硬安一个。明细见「量化块 / scale」列'
       : undefined;
-    return { kind: 'dtype', dtype, shown: dtype, derived: false, sig, why };
+    return { kind: 'dtype', dtype, shown: dtype, derived: false, sig, why, mix };
   }
   const params = byShapes(m)[key];
   if (params && params > 0) return { kind: 'unsurveyed' };
@@ -261,13 +302,18 @@ function blocks(m: Model): { sub: string; block?: string; scale?: string; fmt?: 
  *
  * **只在签名完全对上时给名字，对不上就不给。** 推名字是推断，不是记录里的事实：
  *   - scale 记成容器（如 `UINT8`，E8M0 的容器）时不推 —— 容器说明不了逻辑精度
- *   - 块是混合的（`[1,32]+[32,32]`）时不推 —— 一个子系统里两种块，没有单一名字
+ *   - 块是混合的（`[1,32]+[32,32]`）时这里不推 —— 整格没有单一名字。**但 cellFor 会退一步
+ *     按主方案再推一次**，条件是记录补了 `per_subsystem_schemes`（配对关系是数据，不是猜的），
+ *     推出的名字在 title 里标明「只说主方案那一半」
  * 页面上这个名字标成推导，读者要核就看并排的块与 scale 两列。
  */
 function blockSize(block: unknown): number | undefined {
   if (typeof block === 'number') return block;
   if (typeof block !== 'string') return undefined;
-  if (block.includes('+')) return undefined; // 混合块，不给单一名字
+  // 混合块不给单一名字。**不要改成「取末尾那个数」**：V4.1 的 '[1,32]+[32,32]' 会取到 32、
+  // V4 三份的 '[1,32]+[128,128]' 取到 128，同一个 FP4 方案因此一个得名一个不得名。
+  // 要给带 + 的格子推名字，走 cellFor 里的主方案那条路（配对关系有数据支撑）。
+  if (block.includes('+')) return undefined;
   const m = block.match(/(\d+)\s*\]?\s*$/);
   return m ? Number(m[1]) : undefined;
 }
@@ -513,6 +559,8 @@ const shortName = (m: Model, label: string) =>
                               class={`sw ${cell.cls}${c.derived ? ' drv' : ''}`}
                               title={`${SUB_LABEL[k] ?? k}：${c.sig}`
                                 + (c.derived ? `\n→ ${c.shown}（由「元素 + 块 + scale」签名推出，记录只给了 ${c.dtype}）` : '')
+                                + (c.partial ? `\n→ 这个名字只说主方案那一半，不是整格` : '')
+                                + (c.mix ? `\n→ 逐方案（按元素占比）：${c.mix}` : '')
                                 + (c.why ? `\n→ ${c.why}` : '')}
                             >
                               {cell.short}

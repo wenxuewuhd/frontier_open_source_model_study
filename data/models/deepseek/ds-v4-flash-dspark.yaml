@@ -276,6 +276,19 @@ precision:
       attention: FP8_E8M0
       indexer: FP8_E8M0
       draft: FP8_E8M0
+    # 逐方案实测，只填上面带 + 的子系统。按元素数降序，**第一条是主方案**，精度页拿它的
+    # 三因子（元素 + 块 + scale）去推块格式名；不填这一层它就只能看到「一个元素格式 +
+    # 两个块」，配不起来而放弃推导，于是 expert 显示 MXFP4、draft 显示裸 FP4，
+    # 可两者 4 bit 那一半逐因子相同。**draft 推出的名字只说那一半 MoE 路由专家**
+    # （2304 条 / 97.4%，三个 MTP 块各 256 专家）：注意力投影与共享专家停在 FP8_E4M3、
+    # 块 [128,128]，没降到 4 bit —— 草稿头内部和主干一样是异质的。
+    # 未量化的档也列进来，否则占比合不上 100%。字段的完整约定见 deepseek-v41-flash
+    per_subsystem_schemes:
+      draft:
+      - { dtype: FP4, block: '[1,32]', scale_dtype: FP8_E8M0, tensors: 2304, elements: 19327352832 }
+      - { dtype: FP8_E4M3, block: '[128,128]', scale_dtype: FP8_E8M0, tensors: 25, elements: 446693376 }
+      - { dtype: BF16, tensors: 20, elements: 69378816 }
+      - { dtype: FP32, tensors: 27, elements: 2425959 }
 infra_signals:
 - text: >-
     草稿侧仍是 transformer：3 个块与主干的纯滑窗层（L0/L1）同构，用同一套注意力与 MoE 算子。新增要排的只有 mtp.0 的 main_proj
@@ -314,6 +327,7 @@ evidence:
   precision.quantization.subsystem_method: derived
   precision.quantization.per_subsystem_scale: derived
   precision.quantization.per_subsystem_block: derived
+  precision.quantization.per_subsystem_schemes: derived
   arch.attention.sparse.index_kv_dim: derived
   arch.attention.sparse.index_kv_source: derived
   arch.attention.kv_sharing.measured_per_token: derived

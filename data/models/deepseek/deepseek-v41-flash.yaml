@@ -529,6 +529,32 @@ precision:
       indexer: FP8_E8M0
       retrieval: FP8_E8M0
       draft: FP8_E8M0
+    # 逐方案实测，**只填 per_subsystem_block 里带 + 的那些子系统**：把「哪个块配哪个元素
+    # 格式」从散文提成数据。没有这一层时精度页只看到「一个元素格式 + 两个块」，配不起来，
+    # 于是对 draft 放弃推块格式名 —— 结果 expert 显示 MXFP4、draft 显示裸 FP4，而两者
+    # 4 bit 那一半逐因子相同（E2M1 + [1,32] + E8M0），读者横着看会以为草稿换了格式。
+    # 按元素数降序排，**第一条就是主方案**，页面拿它的三因子去推名字。
+    #
+    # **draft 推出的 MXFP4 只说那一半 MoE 路由专家**（1152 条 / 95.5%）：同一格里注意力
+    # 五个投影与共享专家停在 FP8_E4M3、块 [32,32]，没降到 4 bit。这一列整列都是代表值
+    # （attention 那格同样盖掉了 BF16 的 norm），异质性归隔壁「量化块」列管 —— 但代表值
+    # 指向谁，得在这里和页面的 title 里都写明，否则「草稿头全是 4 bit」是个很自然的误读。
+    #
+    # retrieval 两条的 dtype 相同（engram.embed 的 [1,32] 与 engram.wkv 的 [32,32] 都是
+    # FP8_E4M3），去重后仍是一个名字、显示不变。列在这里是为了让「同 dtype 两种瓦片」与
+    # 「跨两种元素格式」在数据上分得开 —— 光看 per_subsystem_block 的 '[1,32]+[32,32]'
+    # 两者长得一模一样，而它们该不该得一个 4 bit 名字是相反的。
+    # 未量化的档也列进来，否则占比合不上 100%，读者看到 95.5% + 4.0% 会以为漏了
+    per_subsystem_schemes:
+      retrieval:
+      - { dtype: FP8_E4M3, block: '[1,32]', scale_dtype: FP8_E8M0, tensors: 2, elements: 196613849600 }
+      - { dtype: FP8_E4M3, block: '[32,32]', scale_dtype: FP8_E8M0, tensors: 2, elements: 314572800 }
+      - { dtype: BF16, tensors: 4, elements: 81920 }
+      draft:
+      - { dtype: FP4, block: '[1,32]', scale_dtype: FP8_E8M0, tensors: 1152, elements: 13589544960 }
+      - { dtype: FP8_E4M3, block: '[32,32]', scale_dtype: FP8_E8M0, tensors: 25, elements: 564658176 }
+      - { dtype: BF16, tensors: 20, elements: 68209152 }
+      - { dtype: FP32, tensors: 27, elements: 2950242 }
     subsystem_method: >-
       per_subsystem 来自完整权重清单（48 分片 96085 张量）逐项核对；
       per_subsystem_scale 由 fetch_dtypes.py 抽样读 14 个分片头得出，
@@ -653,6 +679,7 @@ evidence:
   precision.quantization.per_subsystem: derived
   precision.quantization.per_subsystem_scale: derived
   precision.quantization.per_subsystem_block: derived
+  precision.quantization.per_subsystem_schemes: derived
   precision.quantization.subsystem_method: derived
   # 读实现得来、本项目未直接核对代码，不能跟着 precision: official 走
   precision.kv_cache: judgement
