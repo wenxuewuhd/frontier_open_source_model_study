@@ -579,22 +579,26 @@ precision:
         前代是 194 个 / 3,256,320 —— 涨的是本代新增的 prompt 调制表
         与 6 行扩成 9 行那部分，不是精度策略变了
     FP8_E4M3:
-      manifest_taken: false
-      in_precision_table: false
+      manifest_taken: true
+      in_precision_table: true
       repo: Lightricks/LTX-2.3-fp8
       note: >-
-        **独立仓，本轮连清单都没取** —— 两个布尔都是假，和前代那两档
-        （头读过、没进表）不是同一种空。 前代的 fp8 是主仓内的文件、实测到「只量化 DiT、
-        覆盖 DiT 参数的 85.9%」；本代搬到独立仓后这件事没有实测依据。
-        文件大小 dev 29,145,431,166 B 比 BF16 档的 46,149,344,974 B 小 36.8%，
-        量级上与前代的 fp8（小 37.4%）接近，但**这只是文件大小的旁证，
-        不能当覆盖面的结论**
+        独立仓，**2026-10-31 取了清单**（`ltx-2.3-22b-distilled-fp8.safetensors`
+        8,871 条目，与本记录 BF16 侧取的 distilled 档同一个），逐子系统实测落在
+        quantization.official_variants 里。
+        原先这里写着「只有文件大小的旁证，不能当覆盖面的结论」—— 现在有实测了：
+        参数量 23,069,505,387 与主仓逐位相同。
+        **这个仓没有任何 config**，Gate B 的双路对账在它身上只剩清单一路
     NVFP4:
-      manifest_taken: false
-      in_precision_table: false
+      manifest_taken: true
+      in_precision_table: true
       repo: Lightricks/LTX-2.3-nvfp4
       note: >-
-        **独立仓，本轮连清单都没取**，只有 dev 一档。
+        独立仓，只有 dev 一档（`ltx-2.3-22b-dev-nvfp4.safetensors`）。
+        **2026-10-31 取了清单**（8,939 条目），逐子系统实测落在
+        quantization.official_variants 里；参数量 23,069,505,387 与主仓逐位相同，
+        所以 dev 与 distilled 两档的形状一致这件事也顺带验了。
+        **这个仓同样没有任何 config**，只剩清单一路。
         文件 21,701,367,310 B，比 BF16 档小 53.0%
   quantization:
     # 这一组值测自单文件整包的 BF16 全量档。逐子系统的桶只拆 DiT 一个组件，
@@ -657,6 +661,76 @@ precision:
       连接器 258 条 2,016,166,400、文本嵌入投影 4 条 1,156,061,184、
       视觉 VAE 170 条 726,106,225、声码器 1,227 条 129,085,032、
       音频 VAE 102 条 53,248,402。整包里的 F32 一条都不在这五个组件里
+    official_variants:
+      - dtype: NVFP4
+        repo: Lightricks/LTX-2.3-nvfp4
+        rev: 56fc3df60582
+        origin: post_quantized
+        tensor_count: 8939
+        params_total: 23069505387
+        weight_bytes_total: 21699921462
+        per_subsystem:
+          attention: NVFP4
+          dense_ffn: NVFP4
+          modulation: BF16
+          norm: BF16
+          io_proj: BF16
+          time_embed: BF16
+        per_subsystem_block:
+          attention: '[1,16]'
+          dense_ffn: '[1,16]'
+        per_subsystem_strategy:
+          attention: group
+          dense_ffn: group
+        per_subsystem_scale:
+          attention: FP8_E4M3
+          dense_ffn: FP8_E4M3
+        per_subsystem_schemes:
+          attention:
+            - { dtype: NVFP4, block: '[1,16]', scale_dtype: FP8_E4M3, tensors: 1320, elements: 9622519808 }
+            - { dtype: BF16, tensors: 1560, elements: 878027776 }
+          dense_ffn:
+            - { dtype: NVFP4, block: '[1,16]', scale_dtype: FP8_E4M3, tensors: 176, elements: 7381975040 }
+            - { dtype: BF16, tensors: 208, elements: 672563200 }
+        method: >-
+          完整清单逐项统计（1 分片 8,939 条目，failed_shards 为空），非抽样。 **逐子系统参数量与主仓逐位相同，11 桶零例外**，合计同为
+          23,069,505,387 —— 这是「同一份权重的两种存法」的硬证据，也是把 origin 判成 post_quantized 的判据之一。 NVFP4
+          覆盖注意力（9,622,519,808）、稠密 FFN（7,381,975,040），占参数量 73.7%；其余桶原样留在高精度上。 **打包存储**：NVFP4
+          装在 UINT8 容器里 —— numel 是容器数不是参数数，还原因子由 scale 形状逐张量复核过（权重还原后的逻辑长度必须等于 scale
+          的组数乘组大小）。 块与 scale 由形状量出、不抄 config：注意力 [1,16]、稠密 FFN [1,16]。 落盘 21,699,921,462
+          B（20.21 GiB）。
+      - dtype: FP8_E4M3
+        repo: Lightricks/LTX-2.3-fp8
+        rev: 91eda216f820
+        origin: post_quantized
+        tensor_count: 8871
+        params_total: 23069505387
+        weight_bytes_total: 29530455174
+        per_subsystem:
+          attention: FP8_E4M3
+          dense_ffn: FP8_E4M3
+          modulation: BF16
+          norm: BF16
+          io_proj: BF16
+          time_embed: BF16
+        per_subsystem_scale:
+          attention: FP32
+          dense_ffn: FP32
+        per_subsystem_schemes:
+          attention:
+            - { dtype: FP8_E4M3, tensors: 1290, elements: 9403826176 }
+            - { dtype: BF16, tensors: 1590, elements: 1096721408 }
+          dense_ffn:
+            - { dtype: FP8_E4M3, tensors: 172, elements: 7214202880 }
+            - { dtype: BF16, tensors: 212, elements: 840335360 }
+          modulation:
+            - { dtype: BF16, tensors: 16, elements: 335642624 }
+            - { dtype: FP32, tensors: 290, elements: 4730880 }
+        method: >-
+          完整清单逐项统计（2 分片 8,871 条目，failed_shards 为空），非抽样。 **逐子系统参数量与主仓逐位相同，11 桶零例外**，合计同为
+          23,069,505,387 —— 这是「同一份权重的两种存法」的硬证据，也是把 origin 判成 post_quantized 的判据之一。 FP8_E4M3
+          覆盖注意力（9,403,826,176）、稠密 FFN（7,214,202,880），占参数量 72.0%；其余桶原样留在高精度上。 落盘
+          29,530,455,174 B（27.50 GiB）。
   inference_default: BF16
 
 bottlenecks:
@@ -763,6 +837,7 @@ evidence:
   generation.checkpoint_variants: official
   precision: derived
   precision.weights_release_scope: derived
+  precision.quantization.official_variants: derived
   # 逐子系统精度是从单文件整包的 safetensors 头实测的。上面的 precision: derived
   # 本来就会继承出 derived，这一条写出来是为了让它在 Gate C 里有名有姓
   precision.quantization: derived

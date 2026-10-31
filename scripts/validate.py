@@ -176,10 +176,12 @@ def check_variants(doc, path, derived_dir, errors):
     两处就在说不同的话，而页面从两处分别取数（色块从变体取、「发布形态」列从
     weights_release 取），读者会看到同一行自相矛盾。
 
-    **二·repo 不能等于 hf.repo。** 相同说明它不是独立变体，这条记录该直接走
+    **二·repo 不能等于 hf.repo，除非给了 file。** 生成类常把几个精度档打包进同一个仓的
+    不同文件（LTX-2 的 ltx-2-19b-dev-fp8.safetensors 与 BF16 档同仓），那时仓相同而权重
+    不同，file 是它唯一正当的理由。没有 file 又相同，说明它不是独立变体，这条记录该直接走
     per_subsystem；留在这里会让页面把主仓的精度标成「另发的仓」。
 
-    **三·params_total 必须等于 derived.from_shapes.params_total。**
+    **三·params_total 必须等于 derived.from_shapes.params_total（± 声明过的 params_delta）。**
     这是全场唯一的硬锚：量化仓与主仓是**同一份权重的两种存法**，逐位相同是可验证的
     事实（Qwen3.5-27B 的 BF16 / FP8 / GPTQ-Int4 三仓都是 27,781,427,952，逐子系统七桶全对）。
     不等就说明归类或打包因子错了 —— 而本仓的教训是这种错**页面上看不出来**：
@@ -225,17 +227,32 @@ def check_variants(doc, path, derived_dir, errors):
             errors.append(f"{tag} 这个 dtype 出现了两次 —— 页面取「最低精度」时"
                           f"不知道该用哪一条")
         seen.add(dt.upper())
-        if main_repo and str(v.get("repo") or "") == main_repo:
+        # 同仓不同文件是生成类的常见发布形态（LTX-2 把 fp8 档与 BF16 档打包进同一个仓），
+        # 那时 repo 相同而权重不同，所以 file 是它唯一正当的理由。
+        # 没有 file 又同仓，就是把主仓的精度抄了一份放这儿
+        if main_repo and str(v.get("repo") or "") == main_repo and not v.get("file"):
             errors.append(
-                f"{tag} 的 repo 就是 hf.repo（{main_repo}）—— 那不是另发的变体，"
-                f"主仓的精度走 per_subsystem，留在这里会被页面标成「另发的仓」")
+                f"{tag} 的 repo 就是 hf.repo（{main_repo}）而没给 file —— "
+                f"那不是另发的变体，主仓的精度走 per_subsystem，"
+                f"留在这里会被页面标成「另发的仓」。同仓不同文件的发布形态请填 file")
         got = v.get("params_total")
-        if want and got is not None and abs(float(got) - float(want)) >= 1:
+        delta = v.get("params_delta") or 0
+        if want and got is not None and abs(float(got) - float(want) - delta) >= 1:
             errors.append(
                 f"{tag} 的 params_total {int(got):,} 与主仓 derived 的 "
-                f"{int(want):,} 不等（差 {int(got) - int(want):+,}）。量化仓与主仓是"
-                f"同一份权重的两种存法，逐位相同；不等说明子系统归类或打包因子错了 —— "
+                f"{int(want):,} 差 {int(got) - int(want):+,}，而声明的 params_delta 是 "
+                f"{delta:+,}。量化仓与主仓是同一份权重的两种存法，默认逐位相同；"
+                f"对不上说明子系统归类或打包因子错了 —— "
                 f"用 scripts/variant_precision.py 重算，别手改这个数")
+        # 差额必须带理由。**没有理由的差额一律当算错**：本仓真有讲得通的差
+        # （GLM-4.6 主仓把草稿块的 embed/head 与主干绑定不落盘，FP8 仓实体化了），
+        # 但那种差说得出是哪几张张量；说不出来的差就是归类或打包错了，
+        # 而那种错一旦被一个 params_delta 吞掉，页面上再也看不出来
+        if delta and not str(v.get("params_delta_reason") or "").strip():
+            errors.append(
+                f"{tag} 声明了 params_delta {delta:+,} 却没写 params_delta_reason。"
+                f"同一份权重的两种存法默认逐位相同，差额要说清差的是哪几张张量、"
+                f"为什么同一个模型会有两种落盘 —— 没有理由的差额一律当成算错")
         bad = sorted(set(v.get("per_subsystem") or {}) - subs)
         if bad:
             errors.append(

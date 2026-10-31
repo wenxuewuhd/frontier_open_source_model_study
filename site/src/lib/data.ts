@@ -535,9 +535,18 @@ export interface OfficialVariant {
   origin: 'native' | 'post_quantized';
   tensor_count?: number;
   params_total?: number;
+  /** 与主仓 derived 的差，默认 0；非 0 必须带 params_delta_reason（闸口卡着） */
+  params_delta?: number;
+  params_delta_reason?: string;
+  /** 同仓不同文件的发布形态里，这一档的文件名 */
+  file?: string;
+  /** 这一条只覆盖哪个组件（整包量化仓 vs 只收了一个组件的主记录） */
+  component?: string;
   weight_bytes_total?: number;
   per_subsystem?: Record<string, string>;
   per_subsystem_block?: Record<string, string>;
+  /** 量化粒度：group / channel / tensor / block。逐通道没有块，是另一根轴 */
+  per_subsystem_strategy?: Record<string, string>;
   per_subsystem_scale?: Record<string, string>;
   per_subsystem_schemes?: Record<string, any[]>;
   method?: string;
@@ -555,6 +564,8 @@ export interface PrecisionSource {
   /** native＝厂商原生发布/训练出来的精度；post_quantized＝同一份权重的事后再量化 */
   origin: 'native' | 'post_quantized';
   block?: string;
+  /** 量化粒度。逐通道（channel）没有块 —— 那一格印「块」会凭空造出一个不存在的量 */
+  strategy?: string;
   scale?: string;
   schemes?: any[];
   /** 主仓那一份。主仓的精度按定义是原生的 —— 那就是厂商发布的这个模型本身 */
@@ -603,6 +614,7 @@ export function lowestOf(m: Model, key: string): PrecisionSource | undefined {
       repo: v.repo,
       origin: v.origin,
       block: (v.per_subsystem_block ?? {})[key],
+      strategy: (v.per_subsystem_strategy ?? {})[key],
       scale: (v.per_subsystem_scale ?? {})[key],
       schemes: (v.per_subsystem_schemes ?? {})[key],
       fromMain: false,
@@ -814,6 +826,19 @@ export const TRACKED_FIELDS: TrackedField[] = [
 export const ORIGIN_LABEL: Record<string, string> = {
   native: '原生发布',
   post_quantized: '事后量化',
+};
+
+/**
+ * 量化粒度。**逐通道没有「块」这个量** —— 智谱五代官方 FP8 仓是 compressed-tensors
+ * 的 `strategy: channel`（每个输出通道一个 F32 scale，`block_structure: null`）。
+ * 把它写成「块 = [1, 输入维]」会让不同投影的输入维各写一个块，被 `+` 的约定读成
+ * 「这个子系统里不止一种块方案」—— 方案只有一种，叫逐通道。
+ */
+export const STRATEGY_LABEL: Record<string, string> = {
+  group: '逐组',
+  channel: '逐通道',
+  tensor: '逐张量',
+  block: '逐块',
 };
 
 /**

@@ -362,9 +362,16 @@ arch:
         safetensors 头的数据偏移是否重合，weight_map 答不了，本轮没读偏移
 
 precision:
-  weights_release: [BF16]
+  weights_release: [BF16, FP8_E4M3]
   weights_release_scope:
     BF16: { manifest_taken: true, in_precision_table: true }
+    FP8_E4M3:
+      manifest_taken: true
+      in_precision_table: true
+      repo: stepfun-ai/step3-fp8
+      note: >-
+        厂商另发的官方量化仓，本轮取了完整清单，逐子系统实测落在 quantization.official_variants 里 —— 精度表的第二个来源。**主仓的
+        per_subsystem 不受影响**：那个字段是 derive.py 识别打包用的承重件，口径只能是 hf.repo 那一份权重
   quantization:
     per_subsystem:
       expert: BF16
@@ -381,6 +388,43 @@ precision:
       没有 FP32、没有 FP8、没有 scale。norm 与 router 也是 BF16。
       仓里另有 stepfun-ai/step3-fp8 是 FP8 量化变体，本记录不覆盖它
 
+    official_variants:
+      - dtype: FP8_E4M3
+        repo: stepfun-ai/step3-fp8
+        rev: 491200c54c8a
+        origin: post_quantized
+        tensor_count: 2319
+        params_total: 320969912832
+        weight_bytes_total: 327589017984
+        per_subsystem:
+          expert: FP8_E4M3
+          shared_expert: FP8_E4M3
+          attention: FP8_E4M3
+          dense_ffn: FP8_E4M3
+          router: BF16
+          embed: BF16
+          lm_head: BF16
+          norm: BF16
+          vision: BF16
+        per_subsystem_block:
+          shared_expert: '[128,128]'
+          attention: '[128,128]'
+          dense_ffn: '[128,128]'
+        per_subsystem_strategy:
+          shared_expert: block
+          attention: block
+          dense_ffn: block
+        per_subsystem_scale:
+          expert: FP32
+          shared_expert: FP32
+          attention: FP32
+          dense_ffn: FP32
+        method: >-
+          完整清单逐项统计（89 分片 2,319 条目，failed_shards 为空），非抽样。 **逐子系统参数量与主仓逐位相同，9 桶零例外**，合计同为
+          320,969,912,832 —— 这是「同一份权重的两种存法」的硬证据，也是把 origin 判成 post_quantized 的判据之一。 FP8_E4M3
+          覆盖路由专家（295,950,090,240）、共享专家（6,165,626,880）、注意力（10,330,046,464）、稠密
+          FFN（1,981,808,640），占参数量 98.0%；其余桶原样留在高精度上。 块与 scale 由形状量出、不抄 config：稠密 FFN
+          [128,128]、注意力 [128,128]、共享专家 [128,128]。 落盘 327,589,017,984 B（305.09 GiB）。
 platforms:
   - engine: vLLM
     hardware: NVIDIA
@@ -553,6 +597,7 @@ evidence:
   precision.weights_release: derived
   precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived
+  precision.quantization.official_variants: derived
   precision.quantization.subsystem_method: derived
   platforms: official
   bottlenecks: judgement

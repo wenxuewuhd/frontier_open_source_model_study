@@ -95,8 +95,14 @@ def packing_factor(logical_dtype: str, container_dtype: str) -> int:
 # 打包进 I32 的零点。不排掉它们，参数量会比主仓多出 1.5 亿，而两个仓本该逐位相同 ——
 # 真实情况正是如此：排掉之后 27,781,427,952 与主仓分毫不差。
 # HF 自己的 tally 也排掉它们（那份只报 I32 / BF16 / F32 三档，F16 的 scales 根本不出现）。
+#
+# **weight_scale_2 / input_scale 是 modelopt 那一套的两个额外 scale**（NVFP4 的双层
+# scale：per-group 的 weight_scale 是 E4M3，再配一个 per-tensor 的 F32 weight_scale_2；
+# input_scale 是激活的静态 scale）。两者都占字节、都不是参数。不排掉的后果很小但很烦：
+# ltx-2.3-nvfp4 多 1,496 个（每个张量一个标量）、step-5-preview-nvfp4 多 179,520 ——
+# 而对账要求与主仓**逐位相同**，差一个就全红，于是真正的打包错误被淹在噪声里。
 _SCALE_LEAVES = {"scale", "scale_inv", "weight_scale", "weight_scale_inv",
-                 "scales", "qzeros"}
+                 "scales", "qzeros", "weight_scale_2", "input_scale"}
 
 
 def is_scale_tensor(name: str, dtype: str) -> bool:

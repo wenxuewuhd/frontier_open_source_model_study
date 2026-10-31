@@ -518,9 +518,16 @@ arch:
         即没有重名共享。落盘层面的 tied weights 要看数据偏移，本轮没读
 
 precision:
-  weights_release: [BF16]
+  weights_release: [BF16, FP8_E4M3]
   weights_release_scope:
     BF16: { manifest_taken: true, in_precision_table: true }
+    FP8_E4M3:
+      manifest_taken: true
+      in_precision_table: true
+      repo: Qwen/Qwen3.8-Flash-Next-FP8
+      note: >-
+        厂商另发的官方量化仓，本轮取了完整清单，逐子系统实测落在 quantization.official_variants 里 —— 精度表的第二个来源。**主仓的
+        per_subsystem 不受影响**：那个字段是 derive.py 识别打包用的承重件，口径只能是 hf.repo 那一份权重
   quantization:
     per_subsystem:
       attention: BF16
@@ -548,6 +555,52 @@ precision:
       Qwen3.8-Flash-Next-FP8 两个 —— 后者存在，但本仓没有取它的清单，
       所以 weights_release 只写 BF16，FP8 那一项留 open question）
 
+    official_variants:
+      - dtype: FP8_E4M3
+        repo: Qwen/Qwen3.8-Flash-Next-FP8
+        rev: 236dfdf28582
+        origin: post_quantized
+        tensor_count: 152089
+        params_total: 179999981459
+        weight_bytes_total: 185502232570
+        per_subsystem:
+          expert: FP8_E4M3
+          shared_expert: BF16
+          attention: BF16
+          indexer: BF16
+          retrieval: FP8_E4M3
+          router: BF16
+          embed: BF16
+          lm_head: BF16
+          norm: BF16
+          residual: BF16
+          draft: FP8_E4M3
+          vision: BF16
+          other: BF16
+        per_subsystem_block:
+          expert: '[128,128]'
+          draft: '[128,128]'
+        per_subsystem_strategy:
+          expert: block
+          draft: block
+        per_subsystem_scale:
+          expert: BF16
+          retrieval: BF16
+          draft: BF16
+        per_subsystem_schemes:
+          retrieval:
+            - { dtype: FP8_E4M3, tensors: 128, elements: 51200245760 }
+            - { dtype: INT64, tensors: 3, elements: 35 }
+          draft:
+            - { dtype: FP8_E4M3, block: '[128,128]', scale_dtype: BF16, tensors: 1536, elements: 2516582400 }
+            - { dtype: BF16, tensors: 29, elements: 90568448 }
+        method: >-
+          完整清单逐项统计（131 分片 152,089 条目，failed_shards 为空），非抽样。 **逐子系统参数量与主仓逐位相同，13 桶零例外**，合计同为
+          179,999,981,459 —— 这是「同一份权重的两种存法」的硬证据，也是把 origin 判成 post_quantized 的判据之一。 FP8_E4M3
+          覆盖路由专家（120,795,955,200）、检索表（51,200,245,760）、草稿 / MTP（2,516,582,400），占参数量
+          97.0%；其余桶原样留在高精度上。 块与 scale 由形状量出、不抄 config：路由专家 [128,128]、草稿 / MTP [128,128]。
+          config 的 modules_to_not_convert 点名了 943 条不量化的模块，与清单逐张量对得上。 落盘 185,502,232,570
+          B（172.76 GiB）。
 platforms:
   - engine: transformers
     hardware: NVIDIA
@@ -689,6 +742,7 @@ evidence:
   precision.weights_release: derived
   precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived
+  precision.quantization.official_variants: derived
   precision.quantization.subsystem_method: derived
   platforms: official
   bottlenecks: judgement

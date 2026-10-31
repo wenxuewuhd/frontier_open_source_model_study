@@ -283,9 +283,16 @@ arch:
       而权重里有 1 块」—— 两个方向都出现过，所以 MTP 层数一律以清单为准
 
 precision:
-  weights_release: [BF16]
+  weights_release: [BF16, FP8_E4M3]
   weights_release_scope:
     BF16: { manifest_taken: true, in_precision_table: true }
+    FP8_E4M3:
+      manifest_taken: true
+      in_precision_table: true
+      repo: Qwen/Qwen3-Next-80B-A3B-Instruct-FP8
+      note: >-
+        厂商另发的官方量化仓，本轮取了完整清单，逐子系统实测落在 quantization.official_variants 里 —— 精度表的第二个来源。**主仓的
+        per_subsystem 不受影响**：那个字段是 derive.py 识别打包用的承重件，口径只能是 hf.repo 那一份权重
   quantization:
     per_subsystem:
       attention: BF16
@@ -303,6 +310,55 @@ precision:
       所以「线性注意力的衰减参数是什么精度」每代都要重测。
       这一代没有 quantization_config；同代另有 FP8 与 GGUF 发布，本仓不另录
 
+    official_variants:
+      - dtype: FP8_E4M3
+        repo: Qwen/Qwen3-Next-80B-A3B-Instruct-FP8
+        rev: c5f5f263bdd5
+        origin: post_quantized
+        tensor_count: 151479
+        params_total: 81324862720
+        weight_bytes_total: 82032869120
+        per_subsystem:
+          expert: FP8_E4M3
+          shared_expert: FP8_E4M3
+          attention: FP8_E4M3
+          router: BF16
+          embed: BF16
+          lm_head: BF16
+          norm: BF16
+          draft: FP8_E4M3
+        per_subsystem_block:
+          expert: '[128,128]'
+          shared_expert: '[128,128]'
+          attention: '[128,128]'
+          draft: '[128,128]'
+        per_subsystem_strategy:
+          expert: block
+          shared_expert: block
+          attention: block
+          draft: block
+        per_subsystem_scale:
+          expert: FP32
+          shared_expert: FP32
+          attention: FP32
+          draft: FP32
+        per_subsystem_schemes:
+          shared_expert:
+            - { dtype: FP8_E4M3, block: '[128,128]', scale_dtype: FP32, tensors: 144, elements: 150994944 }
+            - { dtype: BF16, tensors: 48, elements: 98304 }
+          attention:
+            - { dtype: FP8_E4M3, block: '[128,128]', scale_dtype: FP32, tensors: 120, elements: 1535115264 }
+            - { dtype: BF16, tensors: 144, elements: 5900544 }
+          draft:
+            - { dtype: FP8_E4M3, block: '[128,128]', scale_dtype: FP32, tensors: 1543, elements: 1641021440 }
+            - { dtype: BF16, tensors: 10, elements: 9449984 }
+        method: >-
+          完整清单逐项统计（8 分片 151,479 条目，failed_shards 为空），非抽样。 **逐子系统参数量与主仓逐位相同，8 桶零例外**，合计同为
+          81,324,862,720 —— 这是「同一份权重的两种存法」的硬证据，也是把 origin 判成 post_quantized 的判据之一。 FP8_E4M3
+          覆盖路由专家（77,309,411,328）、共享专家（150,994,944）、注意力（1,535,115,264）、草稿 /
+          MTP（1,641,021,440），占参数量 99.2%；其余桶原样留在高精度上。 块与 scale 由形状量出、不抄 config：路由专家
+          [128,128]、共享专家 [128,128]、注意力 [128,128]、草稿 / MTP [128,128]。 config 的
+          modules_to_not_convert 点名了 407 条不量化的模块，与清单逐张量对得上。 落盘 82,032,869,120 B（76.40 GiB）。
 platforms:
   - engine: transformers
     hardware: NVIDIA
@@ -416,6 +472,7 @@ evidence:
   precision.weights_release: derived
   precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived
+  precision.quantization.official_variants: derived
   precision.quantization.subsystem_method: derived
   platforms: official
   bottlenecks: judgement

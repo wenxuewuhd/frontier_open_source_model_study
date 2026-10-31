@@ -146,10 +146,17 @@ arch:
       enorm、hnorm、shared_head.norm 都还在
 
 precision:
-  weights_release: [BF16, FP32]
+  weights_release: [BF16, FP32, FP8_E4M3]
   weights_release_scope:
     BF16: { manifest_taken: true, in_precision_table: true }
     FP32: { manifest_taken: true, in_precision_table: true }
+    FP8_E4M3:
+      manifest_taken: true
+      in_precision_table: true
+      repo: zai-org/GLM-4.6-FP8
+      note: >-
+        厂商另发的官方量化仓，本轮取了完整清单，逐子系统实测落在 quantization.official_variants 里 —— 精度表的第二个来源。**主仓的
+        per_subsystem 不受影响**：那个字段是 derive.py 识别打包用的承重件，口径只能是 hf.repo 那一份权重
   quantization:
     per_subsystem:
       expert: BF16
@@ -168,6 +175,65 @@ precision:
       是 F32 真参数（不是 scale 容器；本代不量化，没有 per_subsystem_scale 字段），按元素数 router 桶 99.98% 是 BF16。
       这一代没有 quantization_config，不存在 scale 张量与量化块
 
+    official_variants:
+      - dtype: FP8_E4M3
+        repo: zai-org/GLM-4.6-FP8
+        rev: c064d336a8d0
+        origin: post_quantized
+        tensor_count: 88543
+        params_total: 358337791296
+        params_delta: 1551892480
+        params_delta_reason: >-
+          **主仓把草稿块的两张大表与主干绑定、不单独落盘，而官方 FP8 仓把它们实体化了。**
+          差的正好是 `model.layers.92.embed_tokens.weight` 与
+          `model.layers.92.shared_head.head.weight`，两张都是 [151552, 5120]，
+          775,946,240 × 2 = 1,551,892,480 —— 逐张量比过名字集合，主仓的第 92 层
+          （MTP 块）只有 500 个张量，FP8 仓有 990 个，非专家部分就差这两张。
+          **这是代际内的差异，不是本仓算错**：同族的 GLM-4.5 主仓**落了**这两张
+          （502 个张量，draft 桶 5,539,962,272），而 GLM-4.5-FP8 与 GLM-4.6-FP8 的
+          draft 桶逐位相同，都是 5,539,962,272。所以变的是 4.6 主仓的 tied-weight
+          落盘策略，不是模型结构，更不是 FP8 仓多了一块权重。
+          两边 failed_shards 都是空的，不是取数缺分片。
+        weight_bytes_total: 361277168384
+        per_subsystem:
+          expert: FP8_E4M3
+          shared_expert: FP8_E4M3
+          attention: FP8_E4M3
+          dense_ffn: FP8_E4M3
+          router: BF16
+          embed: BF16
+          lm_head: BF16
+          norm: BF16
+          draft: FP8_E4M3
+        per_subsystem_strategy:
+          expert: channel
+          shared_expert: channel
+          attention: channel
+          dense_ffn: channel
+          draft: channel
+        per_subsystem_scale:
+          expert: FP32
+          shared_expert: FP32
+          attention: FP32
+          dense_ffn: FP32
+          draft: FP32
+        per_subsystem_schemes:
+          attention:
+            - { dtype: FP8_E4M3, tensors: 368, elements: 12540968960 }
+            - { dtype: BF16, tensors: 276, elements: 1318912 }
+          router:
+            - { dtype: BF16, tensors: 89, elements: 72908800 }
+            - { dtype: FP32, tensors: 89, elements: 14240 }
+          draft:
+            - { dtype: FP8_E4M3, tensors: 488, elements: 4710727680 }
+            - { dtype: BF16, tensors: 13, elements: 829234432 }
+            - { dtype: FP32, tensors: 1, elements: 160 }
+        method: >-
+          完整清单逐项统计（93 分片 88,543 条目，failed_shards 为空），非抽样。 **逐子系统参数量与主仓差 +1,551,892,480**，理由见
+          params_delta_reason。 FP8_E4M3
+          覆盖路由专家（335,963,750,400）、共享专家（2,099,773,440）、注意力（12,540,968,960）、稠密
+          FFN（566,231,040）、草稿 / MTP（4,710,727,680），占参数量 99.3%；其余桶原样留在高精度上。 config 的 ignore
+          点名了 839 条不量化的模块，与清单逐张量对得上。 落盘 361,277,168,384 B（336.47 GiB）。
 platforms:
   - engine: transformers
     hardware: NVIDIA
@@ -236,6 +302,7 @@ evidence:
   precision.weights_release: derived
   precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived
+  precision.quantization.official_variants: derived
   precision.quantization.subsystem_method: derived
   platforms: official
   bottlenecks: judgement
@@ -389,6 +456,31 @@ review:
     resolution: corrected
     changed_to: >-
       context 轴补卡侧说法，open question 收窄，sources 补卡正文一条
+  - id: R10
+    field: precision.quantization.official_variants
+    severity: missing
+    claim: >-
+      本记录的逐子系统精度只覆盖主仓那一份权重，而 weights_release 里连
+      zai-org/GLM-4.6-FP8 这个官方量化仓都没列
+    finding: >-
+      精度页的取数口径 2026-10-31 从「主仓那一份权重」扩到「厂商官方发布过的最低精度」，
+      于是这个仓要逐张量读进来。读下来有一件本记录原先只在 notes 里说过一句的事
+      **第一次有了数**：主仓的 MTP 块（第 92 层）**不带词表副本与输出头**，
+      而官方 FP8 仓把这两张实体化了 —— 差的正好是
+      `model.layers.92.embed_tokens.weight` 与 `model.layers.92.shared_head.head.weight`，
+      两张都是 [151552, 5120]，775,946,240 × 2 = **1,551,892,480**。
+      主仓第 92 层 500 个张量、FP8 仓 990 个，非专家部分就差这两张；两边 failed_shards 都空。
+      **同族对照确认这是代际差而不是取数差**：GLM-4.5 主仓落了这两张
+      （draft 桶 5,539,962,272），而 GLM-4.5-FP8 与 GLM-4.6-FP8 的 draft 桶逐位相同。
+      所以变的是 4.6 主仓的 tied-weight 落盘策略，不是模型结构。
+      **这件事是对账闸逼出来的**：official_variants 默认要求逐子系统参数量与主仓逐位相同，
+      它一红才有人去数那两张张量 —— 如果当初给了个宽松容差，这个差会被静默吞掉
+    resolution: corrected
+    changed_to: >-
+      新增 official_variants 一条（zai-org/GLM-4.6-FP8 @ c064d336a8d0，88,543 条目，
+      逐通道 FP8、F32 scale），weights_release 补 FP8_E4M3 并带 scope 交代；
+      差额写成 `params_delta: 1551892480` 与 `params_delta_reason`，
+      **写成数而不是散文**，这样闸口能验「实测差正好等于声明差」
 notes: >-
   相对 GLM-4.5 只动了两件事：上下文 131072 → 202752，以及 MTP 块不再自带词表副本与输出头。
   两件都是逐张量比对出来的（44691 → 44689，差的那两张有名有姓），不是从模型卡抄的。

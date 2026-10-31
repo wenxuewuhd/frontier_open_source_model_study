@@ -256,10 +256,17 @@ arch:
       所以它既产出自己的 MLA KV，也产出自己的 index K
 
 precision:
-  weights_release: [BF16, FP32]
+  weights_release: [BF16, FP32, FP8_E4M3]
   weights_release_scope:
     BF16: { manifest_taken: true, in_precision_table: true }
     FP32: { manifest_taken: true, in_precision_table: true }
+    FP8_E4M3:
+      manifest_taken: true
+      in_precision_table: true
+      repo: zai-org/GLM-5-FP8
+      note: >-
+        厂商另发的官方量化仓，本轮取了完整清单，逐子系统实测落在 quantization.official_variants 里 —— 精度表的第二个来源。**主仓的
+        per_subsystem 不受影响**：那个字段是 derive.py 识别打包用的承重件，口径只能是 hf.repo 那一份权重
   quantization:
     per_subsystem:
       expert: BF16
@@ -285,6 +292,66 @@ precision:
       所以不存在 scale 张量与量化块，也没有 GLM-5.3 那种
       「indexer 桶里 weights_proj 是 BF16 而其余是 FP8」的桶内异质
 
+    official_variants:
+      - dtype: FP8_E4M3
+        repo: zai-org/GLM-5-FP8
+        rev: 4f96cc5eec29
+        origin: post_quantized
+        tensor_count: 119028
+        params_total: 753864139008
+        weight_bytes_total: 756162687872
+        per_subsystem:
+          expert: FP8_E4M3
+          shared_expert: FP8_E4M3
+          attention: FP8_E4M3
+          indexer: FP8_E4M3
+          dense_ffn: FP8_E4M3
+          router: BF16
+          embed: BF16
+          lm_head: BF16
+          norm: BF16
+          draft: FP8_E4M3
+        per_subsystem_block:
+          expert: '[128,128]'
+          shared_expert: '[128,128]'
+          attention: '[116ceil,128]+[128,128]'
+          indexer: '[128,128]'
+          dense_ffn: '[128,128]'
+          draft: '[116ceil,128]+[128,128]'
+        per_subsystem_strategy:
+          expert: block
+          shared_expert: block
+          attention: block
+          indexer: block
+          dense_ffn: block
+          draft: block
+        per_subsystem_scale:
+          expert: FP32
+          shared_expert: FP32
+          attention: FP32
+          indexer: FP32
+          dense_ffn: FP32
+          draft: FP32
+        per_subsystem_schemes:
+          indexer:
+            - { dtype: FP8_E4M3, block: '[128,128]', scale_dtype: FP32, tensors: 156, elements: 715653120 }
+            - { dtype: BF16, tensors: 78, elements: 15335424 }
+          router:
+            - { dtype: BF16, tensors: 75, elements: 117964800 }
+            - { dtype: FP32, tensors: 75, elements: 19200 }
+          draft:
+            - { dtype: FP8_E4M3, block: '[116ceil,128]', scale_dtype: FP32, tensors: 778, elements: 9875619840 }
+            - { dtype: BF16, tensors: 12, elements: 77300480 }
+            - { dtype: FP32, tensors: 1, elements: 256 }
+        method: >-
+          完整清单逐项统计（142 分片 119,028 条目，failed_shards 为空），非抽样。 **逐子系统参数量与主仓逐位相同，10 桶零例外**，合计同为
+          753,864,139,008 —— 这是「同一份权重的两种存法」的硬证据，也是把 origin 判成 post_quantized 的判据之一。 FP8_E4M3
+          覆盖路由专家（724,775,731,200）、共享专家（2,831,155,200）、注意力（12,871,532,544）、稀疏索引器（715,653,120）、稠密
+          FFN（679,477,248）、草稿 / MTP（9,875,619,840），占参数量 99.7%；其余桶原样留在高精度上。 块与 scale 由形状量出、不抄
+          config：路由专家 [128,128]、稠密 FFN [128,128]、稀疏索引器 [128,128]、注意力
+          [116ceil,128]+[128,128]、共享专家 [128,128]、草稿 / MTP [116ceil,128]+[128,128]。 config 的
+          modules_to_not_convert 点名了 712 条不量化的模块，与清单逐张量对得上。 落盘 756,162,687,872 B（704.23
+          GiB）。
 platforms:
   - engine: transformers
     hardware: NVIDIA
@@ -399,6 +466,7 @@ evidence:
   precision.weights_release: derived
   precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived
+  precision.quantization.official_variants: derived
   precision.quantization.subsystem_method: derived
   platforms: official
   bottlenecks: judgement

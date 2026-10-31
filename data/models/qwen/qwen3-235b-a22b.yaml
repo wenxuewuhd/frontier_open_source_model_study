@@ -172,9 +172,23 @@ arch:
       **没有共享专家张量**，所以 FFN 侧没有旁路通道
 
 precision:
-  weights_release: [BF16]
+  weights_release: [BF16, INT4, FP8_E4M3]
   weights_release_scope:
     BF16: { manifest_taken: true, in_precision_table: true }
+    INT4:
+      manifest_taken: true
+      in_precision_table: true
+      repo: Qwen/Qwen3-235B-A22B-GPTQ-Int4
+      note: >-
+        厂商另发的官方量化仓，本轮取了完整清单，逐子系统实测落在 quantization.official_variants 里 —— 精度表的第二个来源。**主仓的
+        per_subsystem 不受影响**：那个字段是 derive.py 识别打包用的承重件，口径只能是 hf.repo 那一份权重
+    FP8_E4M3:
+      manifest_taken: true
+      in_precision_table: true
+      repo: Qwen/Qwen3-235B-A22B-FP8
+      note: >-
+        厂商另发的官方量化仓，本轮取了完整清单，逐子系统实测落在 quantization.official_variants 里 —— 精度表的第二个来源。**主仓的
+        per_subsystem 不受影响**：那个字段是 derive.py 识别打包用的承重件，口径只能是 hf.repo 那一份权重
   quantization:
     per_subsystem:
       attention: BF16
@@ -188,6 +202,66 @@ precision:
       failed_shards 为空，36945 条全是 BF16。这一代没有 quantization_config；
       同代另有 FP8 / GPTQ-Int4 / GGUF 发布，是同一份结构的再发布，本仓不另录
 
+    official_variants:
+      - dtype: INT4
+        repo: Qwen/Qwen3-235B-A22B-GPTQ-Int4
+        rev: dff138951f38
+        origin: post_quantized
+        tensor_count: 146361
+        params_total: 235093634560
+        weight_bytes_total: 124531203072
+        per_subsystem:
+          expert: INT4
+          attention: INT4
+          router: FP16
+          embed: FP16
+          lm_head: FP16
+          norm: FP16
+        per_subsystem_block:
+          expert: '[1,128]'
+          attention: '[1,128]'
+        per_subsystem_strategy:
+          expert: group
+          attention: group
+        per_subsystem_scale:
+          expert: FP16
+          attention: FP16
+        method: >-
+          完整清单逐项统计（32 分片 146,361 条目，failed_shards 为空），非抽样。 **逐子系统参数量与主仓逐位相同，6 桶零例外**，合计同为
+          235,093,634,560 —— 这是「同一份权重的两种存法」的硬证据，也是把 origin 判成 post_quantized 的判据之一。 INT4
+          覆盖路由专家（227,096,395,776）、注意力（6,702,497,792），占参数量 99.4%；其余桶原样留在高精度上。 **打包存储**：INT4
+          装在 INT32 容器里 —— numel 是容器数不是参数数，还原因子由 scale 形状逐张量复核过（权重还原后的逻辑长度必须等于 scale
+          的组数乘组大小）。 块与 scale 由形状量出、不抄 config：路由专家 [1,128]、注意力 [1,128]。 落盘 124,531,203,072
+          B（115.98 GiB）。
+      - dtype: FP8_E4M3
+        repo: Qwen/Qwen3-235B-A22B-FP8
+        rev: 39eb2b067ea6
+        origin: post_quantized
+        tensor_count: 73417
+        params_total: 235093634560
+        weight_bytes_total: 239034937344
+        per_subsystem:
+          expert: FP8_E4M3
+          attention: FP8_E4M3
+          router: FP32
+          embed: FP32
+          lm_head: FP32
+          norm: FP32
+        per_subsystem_block:
+          expert: '[128,128]'
+          attention: '[128,128]'
+        per_subsystem_strategy:
+          expert: block
+          attention: block
+        per_subsystem_scale:
+          expert: FP32
+          attention: FP32
+        method: >-
+          完整清单逐项统计（48 分片 73,417 条目，failed_shards 为空），非抽样。 **逐子系统参数量与主仓逐位相同，6 桶零例外**，合计同为
+          235,093,634,560 —— 这是「同一份权重的两种存法」的硬证据，也是把 origin 判成 post_quantized 的判据之一。 FP8_E4M3
+          覆盖路由专家（227,096,395,776）、注意力（6,702,497,792），占参数量 99.4%；其余桶原样留在高精度上。 块与 scale
+          由形状量出、不抄 config：路由专家 [128,128]、注意力 [128,128]。 config 的 modules_to_not_convert 点名了
+          283 条不量化的模块，与清单逐张量对得上。 落盘 239,034,937,344 B（222.62 GiB）。
 platforms:
   - engine: transformers
     hardware: NVIDIA
@@ -275,6 +349,7 @@ evidence:
   precision.weights_release: derived
   precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived
+  precision.quantization.official_variants: derived
   precision.quantization.subsystem_method: derived
   platforms: official
   bottlenecks: judgement

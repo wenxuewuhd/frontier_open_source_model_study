@@ -9,7 +9,7 @@ import {
   allModels, modelById, url, fmtCount, fmtBytes, fmtInt, fmtSci, FAMILY_LABEL,
   reviewStatus, SEVERITY_LABEL, RESOLUTION_LABEL, HORIZON_LABEL, SUBSYSTEMS,
   kvCachePrecision, KV_BASIS_LABEL, evidenceFor,
-  officialVariants, ORIGIN_LABEL,
+  officialVariants, ORIGIN_LABEL, STRATEGY_LABEL,
 } from '../../lib/data';
 
 const SUBSYSTEM_LABEL: Record<string, string> = Object.fromEntries(
@@ -484,7 +484,15 @@ const rv = reviewStatus(m);
                 <strong>{v.dtype}</strong>
                 <span class="muted"> · {ORIGIN_LABEL[v.origin] ?? v.origin}</span>
                 {' · '}<code>{v.repo}</code>
+                {/* 同仓不同文件的发布形态：仓名一样，权重不一样。不印文件名的话
+                    LTX-2 的 fp8 / fp4 两条会显示成「同一个仓发了两次」 */}
+                {v.file && <> · <code>{v.file}</code></>}
                 {v.rev && <span class="muted"> @ {v.rev}</span>}
+                {/* 整包量化仓 vs 只收了一个组件的主记录：不写明覆盖面，
+                    下面那个「与主仓逐位相同」会被读成覆盖了整个仓 */}
+                {v.component && (
+                  <span class="muted"> · 口径只到 <code>{v.component}</code> 组件（与本记录的清单同口径）</span>
+                )}
               </div>
               <Facts
                 evidence={ev}
@@ -495,8 +503,14 @@ const rv = reviewStatus(m);
                       .map(([k, d]) => {
                         const sc = v.per_subsystem_scale?.[k];
                         const bk = v.per_subsystem_block?.[k];
+                        // 粒度与块是两件事：逐通道的那几份根本没有块，
+                        // 只印三元组会让这一格看起来「块没查到」
+                        const st = v.per_subsystem_strategy?.[k];
+                        const gr = st && st !== 'block' && st !== 'group'
+                          ? STRATEGY_LABEL[st] ?? st : undefined;
                         return `${SUBSYSTEM_LABEL[k] ?? k} ${d}`
-                          + `${sc ? ` / ${sc}` : ''}${bk ? ` / ${bk}` : ''}`;
+                          + `${sc ? ` / ${sc}` : ''}${bk ? ` / ${bk}` : ''}`
+                          + `${gr ? `（${gr}）` : ''}`;
                       })
                       .join('，'),
                     path: 'precision.quantization.official_variants',
@@ -506,9 +520,19 @@ const rv = reviewStatus(m);
                   // 参数量与主仓逐位相同是**可验证的事实**，不是巧合：同一份权重的两种存法。
                   // 印出来是为了让读者自己和上面「参数量」那节对一眼 —— validate 的
                   // check_variants 守这一条，但闸口绿了不等于读者看过
+                  // 差额不能只在散文里说。默认是 0（同一份权重的两种存法），
+                  // 非 0 的那几份是真有讲得通的差（GLM-4.6 主仓把草稿块的
+                  // embed/head 与主干绑定不落盘，FP8 仓实体化了），
+                  // 印出来才看得见「这里不是逐位相同」
                   { label: '参数量（还原打包）',
-                    value: v.params_total ? `${fmtInt(v.params_total)}（与主仓逐位相同）` : undefined,
+                    value: v.params_total
+                      ? `${fmtInt(v.params_total)}（${v.params_delta
+                          ? `比主仓多 ${fmtInt(v.params_delta)}`
+                          : '与主仓逐位相同'}）`
+                      : undefined,
                     path: 'precision.quantization.official_variants', mono: true },
+                  { label: '参数量差额的来由', value: v.params_delta_reason,
+                    path: 'precision.quantization.official_variants' },
                   { label: '权重存储',
                     value: v.weight_bytes_total
                       ? `${fmtBytes(v.weight_bytes_total)}（${fmtInt(v.weight_bytes_total)} B）`

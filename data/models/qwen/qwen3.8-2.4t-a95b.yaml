@@ -259,10 +259,14 @@ precision:
   weights_release_scope:
     BF16: { manifest_taken: true, in_precision_table: true }
     FP8_E4M3:
-      manifest_taken: false
-      in_precision_table: false
+      manifest_taken: true
+      in_precision_table: true
       repo: Qwen/Qwen3.8-2.4T-A95B-FP8
-      note: 厂商另发的独立仓，本仓没有取过权重清单；本记录的实测口径只覆盖主仓
+      note: >-
+        厂商另发的独立仓，本轮取了完整清单（213 分片 287,119 条目），逐子系统实测落在
+        quantization.official_variants 里 —— 精度表的第二个来源。
+        **主仓的 per_subsystem 不受影响**：那个字段是 derive.py 识别打包用的承重件，
+        口径只能是 hf.repo 那一份权重
   quantization:
     per_subsystem:
       expert: BF16
@@ -297,6 +301,43 @@ precision:
       Qwen/Qwen3.8-2.4T-A95B @ 207bd685a7e3，所以「声明发了 FP8」与「实测全是 BF16」
       并排出现不是矛盾，是两个仓。两版的量化配置差异见 open_questions
 
+    official_variants:
+      - dtype: FP8_E4M3
+        repo: Qwen/Qwen3.8-2.4T-A95B-FP8
+        rev: d2dc35658bcf
+        origin: post_quantized
+        tensor_count: 287119
+        params_total: 2446182725504
+        weight_bytes_total: 2496066252544
+        per_subsystem:
+          expert: FP8_E4M3
+          shared_expert: BF16
+          attention: BF16
+          router: BF16
+          embed: BF16
+          lm_head: BF16
+          norm: BF16
+          draft: FP8_E4M3
+        per_subsystem_block:
+          expert: '[128,128]'
+          draft: '[128,128]'
+        per_subsystem_strategy:
+          expert: block
+          draft: block
+        per_subsystem_scale:
+          expert: BF16
+          draft: BF16
+        per_subsystem_schemes:
+          draft:
+            - { dtype: FP8_E4M3, block: '[128,128]', scale_dtype: BF16, tensors: 1536, elements: 25769803776 }
+            - { dtype: BF16, tensors: 17, elements: 608223744 }
+        method: >-
+          完整清单逐项统计（213 分片 287,119 条目，failed_shards 为空），非抽样。 **逐子系统参数量与主仓逐位相同，8 桶零例外**，合计同为
+          2,446,182,725,504 —— 这是「同一份权重的两种存法」的硬证据，也是把 origin 判成 post_quantized 的判据之一。
+          FP8_E4M3 覆盖路由专家（2,370,821,947,392）、草稿 / MTP（25,769,803,776），占参数量
+          98.0%；其余桶原样留在高精度上。 块与 scale 由形状量出、不抄 config：路由专家 [128,128]、草稿 / MTP [128,128]。
+          config 的 modules_to_not_convert 点名了 978 条不量化的模块，与清单逐张量对得上。 落盘 2,496,066,252,544
+          B（2.27 TiB）。
 platforms:
   - engine: transformers
     hardware: NVIDIA
@@ -390,6 +431,7 @@ evidence:
   precision.weights_release_scope: judgement
   # 实测自权重清单，不是厂商说法 —— 落在 precision: official 的前缀继承里会绕过 Gate C
   precision.quantization.per_subsystem: derived
+  precision.quantization.official_variants: derived
   precision.quantization.subsystem_method: derived
   platforms: official
   bottlenecks: judgement
@@ -649,3 +691,24 @@ review:
       与条目数，并点明按 BF16 写的 grouped GEMM 路径用不了；
       sources[2] 补实测量化块 [128,128]（零例外）、scale 的 BF16 dtype、
       字节与 tally 的对账，以及「HF 这个仓的 tally 不含 scale」
+  - id: R14
+    field: precision.quantization.official_variants
+    severity: stale
+    claim: >-
+      FP8 仓的实测只活在 sources[2] 与 R13 的散文里；`weights_release_scope` 的两个布尔
+      都是 false，注意力图上写着「两个发布的差别只在路由专家」
+    finding: >-
+      **一·两个布尔在说反话。** R13 那一轮已经取过这个仓的完整清单
+      （213 分片 287,119 条目），而 `manifest_taken` 还是 false —— 散文更新了、字段没跟上。
+      **二·「差别只在路由专家」漏了草稿块。** 逐子系统读下来，FP8 仓里
+      `draft` 整块也是 FP8_E4M3（块 [128,128]），不只 `expert`。
+      注意力一侧确实逐条仍是 BF16（非 BF16 张量数为 0，本轮由完整清单复核），
+      所以那张图本身成立，错的是它末尾那句范围声明。
+      草稿块的注意力投影仍 BF16、变的是它的 FFN —— 图画的那条路径因此不受影响。
+    resolution: corrected
+    changed_to: >-
+      新增 official_variants 一条（Qwen/Qwen3.8-2.4T-A95B-FP8 @ d2dc35658bcf），
+      逐子系统精度 / 块 / scale / 对账数落库，参数量 2,446,182,725,504 与主仓逐位相同；
+      两个布尔翻成 true；
+      `site/src/components/attention/qwen3.8-2.4t-a95b.astro` 的图注与文件头注释
+      都把「差别只在路由专家」改成「路由专家与草稿块的 FFN」

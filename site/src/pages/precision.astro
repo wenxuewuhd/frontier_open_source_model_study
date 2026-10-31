@@ -46,7 +46,8 @@ import Prose from '../components/Prose.astro';
 import {
   families, allModels, url, fmtInt, SUBSYSTEMS, DTYPE_CELL, dtypeCell,
   changesFor, evidenceFor, KV_BASIS_LABEL, TRACKED_FIELDS, type Model,
-  lowestOf, officialVariants, ORIGIN_LABEL, DTYPE_BITS, type PrecisionSource,
+  lowestOf, officialVariants, ORIGIN_LABEL, STRATEGY_LABEL, DTYPE_BITS,
+  type PrecisionSource,
 } from '../lib/data';
 import Cell from '../components/Cell.astro';
 // 块格式名的推导只此一份：格子的 badge/title 与 data.ts 里逐子系统的变化行共用，
@@ -100,7 +101,13 @@ function cellFor(m: Model, key: string): Cell {
     const dtype = src.dtype;
     const blk = src.block;
     const scl = src.scale;
-    const sig = [dtype, blk ? `块 ${blk}` : '', scl ? `scale ${scl}` : ''].filter(Boolean).join(' · ');
+    // 粒度进签名：逐通道根本没有块，只印 dtype + scale 会让读者以为「块没查到」，
+    // 而事实是这一档的粒度就不是块（智谱五代官方 FP8 仓全是 strategy: channel）
+    const gran = src.strategy && src.strategy !== 'block' && src.strategy !== 'group'
+      ? STRATEGY_LABEL[src.strategy] ?? src.strategy
+      : undefined;
+    const sig = [dtype, blk ? `块 ${blk}` : '', gran, scl ? `scale ${scl}` : '']
+      .filter(Boolean).join(' · ');
 
     // 两步推导：先按整格的三因子推，推不出再按**主方案**的三因子推（mainFormat）。
     //
@@ -266,7 +273,7 @@ function lineageOrder(models: Model[]): { m: Model; depth: number }[] {
  */
 function releases(m: Model): {
   dtype: string; taken?: boolean; inTable?: boolean; note?: string;
-  repo?: string; origin?: string; bytes?: number; isMain: boolean;
+  repo?: string; origin?: string; bytes?: number; isMain: boolean; delta?: number;
 }[] {
   const list: string[] = prec(m).weights_release ?? [];
   const scope: Record<string, any> = prec(m).weights_release_scope ?? {};
@@ -282,6 +289,7 @@ function releases(m: Model): {
       repo,
       origin: v?.origin,
       bytes: v?.weight_bytes_total,
+      delta: v?.params_delta,
       // 没有独立仓、也没在 scope 里标别的仓 → 它就在主仓里，按定义是原生发布
       isMain: !v && (!repo || repo === m.hf?.repo),
     };
@@ -633,7 +641,12 @@ const shortName = (m: Model, label: string) =>
                               class={r.origin === 'post_quantized' ? 'pqtag' : 'muted'}
                               title={`${r.repo}${r.bytes ? ` · 落盘 ${fmtInt(r.bytes)} B` : ''}`
                                 + (r.origin === 'post_quantized'
-                                  ? '\n事后再量化：同一份权重的另一种存法（逐子系统参数量与主仓逐位相同）'
+                                  // 「逐位相同」不能写死：GLM-4.6 的主仓把草稿块的
+                                  // 词表副本与输出头与主干绑定不落盘，而 FP8 仓实体化了，
+                                  // 两边差 1,551,892,480。写死就是在这一格上说假话
+                                  ? `\n事后再量化：同一份权重的另一种存法（${r.delta
+                                      ? `逐子系统参数量比主仓多 ${fmtInt(r.delta)}，来由见模型页`
+                                      : '逐子系统参数量与主仓逐位相同'}）`
                                   : '\n厂商原生发布/训练出来的精度')}
                             >{ORIGIN_LABEL[r.origin]}</span>
                           )}

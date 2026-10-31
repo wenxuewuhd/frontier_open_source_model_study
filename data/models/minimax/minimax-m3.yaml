@@ -377,13 +377,21 @@ precision:
       # 但实测值没有并进上面的 per_subsystem 表。原来的单个 measured 只能填 false，
       # 于是字段在说「没取过」—— 见 R18 / R20
       manifest_taken: true
-      in_precision_table: false
+      in_precision_table: true
       repo: MiniMaxAI/MiniMax-M3-MXFP8
       note: >-
         与主仓是同一批权重逐张量量化而来：22,422 条权重 F8_E4M3 配 U8 scale、
         块实测全部 [1, 32] 零例外，落盘 413.27 GiB（主仓 BF16 是 795.51 GiB）。
-        清单取过但未并进上面的精度表，逐张量对账的全过程见核查 R18，
-        字节与参数量两项对账见 sources 里那条 MiniMax-M3-MXFP8
+        逐张量对账的全过程见核查 R18，字节与参数量两项对账见 sources 里那条
+        MiniMax-M3-MXFP8。
+        **in_precision_table 2026-10-31 翻成 true**：精度页的取数口径从「主仓那一份
+        权重」扩到「厂商官方发布过的最低精度」，这一档的逐子系统实测随之落进
+        quantization.official_variants —— 那是精度表的第二个来源。
+        这一条正是当初逼出拆字段的那个例子（清单取过、没进表），现在它进表了，
+        而两个布尔各自说各自的事，仍然不重叠。
+        **逐子系统记的是 MXFP8 而不是 F8_E4M3**：元素确实是 E4M3，但每 32 个配一个
+        E8M0（落盘为 U8）scale —— 本仓「认签名不认名字」那条规矩在 8 bit 这一档
+        同样成立，只报元素格式会让它和 Qwen 那种 [128,128] 块的 FP8 看起来一样
   quantization:
     per_subsystem:
       expert: BF16
@@ -403,6 +411,54 @@ precision:
       patch_embedding（1,505,280），合计与 HF tally 的 F32 一项逐位相同。
       其余 426,993,800,960 个参数全是 BF16，无量化
 
+    official_variants:
+      - dtype: MXFP8
+        repo: MiniMaxAI/MiniMax-M3-MXFP8
+        rev: d2be410f4832
+        origin: post_quantized
+        tensor_count: 45838
+        params_total: 427040140160
+        weight_bytes_total: 443742085120
+        per_subsystem:
+          expert: MXFP8
+          shared_expert: MXFP8
+          attention: MXFP8
+          indexer: MXFP8
+          dense_ffn: MXFP8
+          router: FP32
+          embed: BF16
+          lm_head: BF16
+          norm: BF16
+          vision: BF16
+        per_subsystem_block:
+          expert: '[1,32]'
+          shared_expert: '[1,32]'
+          attention: '[1,32]'
+          indexer: '[1,32]'
+          dense_ffn: '[1,32]'
+        per_subsystem_strategy:
+          expert: block
+          shared_expert: block
+          attention: block
+          indexer: block
+          dense_ffn: block
+        per_subsystem_scale:
+          expert: UINT8
+          shared_expert: UINT8
+          attention: UINT8
+          indexer: UINT8
+          dense_ffn: UINT8
+        per_subsystem_schemes:
+          vision:
+            - { dtype: BF16, tensors: 522, elements: 864061952 }
+            - { dtype: FP32, tensors: 1, elements: 1505280 }
+        method: >-
+          完整清单逐项统计（31 分片 45,838 条目，failed_shards 为空），非抽样。 **逐子系统参数量与主仓逐位相同，10 桶零例外**，合计同为
+          427,040,140,160 —— 这是「同一份权重的两种存法」的硬证据，也是把 origin 判成 post_quantized 的判据之一。 MXFP8
+          覆盖路由专家（413,122,166,784）、共享专家（3,227,516,928）、注意力（6,417,285,120）、稀疏索引器（224,133,120）、稠密
+          FFN（679,477,248），占参数量 99.2%；其余桶原样留在高精度上。 块与 scale 由形状量出、不抄 config：稠密 FFN
+          [1,32]、注意力 [1,32]、路由专家 [1,32]、共享专家 [1,32]、稀疏索引器 [1,32]。 落盘 443,742,085,120
+          B（413.27 GiB）。
 platforms:
   - engine: transformers
     hardware: NVIDIA
@@ -520,6 +576,7 @@ evidence:
   precision.weights_release: derived
   precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived
+  precision.quantization.official_variants: derived
   precision.quantization.subsystem_method: derived
   platforms: official
   bottlenecks: judgement

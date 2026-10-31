@@ -358,11 +358,18 @@ arch:
         重名张量，不过那 18 个都在主干侧，没有一个跨视觉–主干边界
 
 precision:
-  weights_release: [FP8_E4M3, BF16, FP32]
+  weights_release: [FP8_E4M3, BF16, FP32, NVFP4]
   weights_release_scope:
     FP8_E4M3: { manifest_taken: true, in_precision_table: true }
     BF16: { manifest_taken: true, in_precision_table: true }
     FP32: { manifest_taken: true, in_precision_table: true }
+    NVFP4:
+      manifest_taken: true
+      in_precision_table: true
+      repo: stepfun-ai/Step-5-Preview-NVFP4
+      note: >-
+        厂商另发的官方量化仓，本轮取了完整清单，逐子系统实测落在 quantization.official_variants 里 —— 精度表的第二个来源。**主仓的
+        per_subsystem 不受影响**：那个字段是 derive.py 识别打包用的承重件，口径只能是 hf.repo 那一份权重
   kv_cache: MIXED
   kv_cache_components:
     global_kv:
@@ -416,6 +423,55 @@ precision:
       0.08495760 ≈ 1/ln(vocab)，是未训练的 SSMax 初值，参考实现不读它（索引打分用 ReLU、无 softmax），
       shape 按 64 个 query 头 replicate 只为 checkpoint 兼容
 
+    official_variants:
+      - dtype: NVFP4
+        repo: stepfun-ai/Step-5-Preview-NVFP4
+        rev: bc246cc2848e
+        origin: post_quantized
+        tensor_count: 3214
+        params_total: 602972927296
+        weight_bytes_total: 394164831232
+        per_subsystem:
+          expert: NVFP4
+          shared_expert: BF16
+          attention: BF16
+          indexer: BF16
+          dense_ffn: BF16
+          router: BF16
+          embed: BF16
+          lm_head: BF16
+          norm: FP32
+          draft: BF16
+          vision: BF16
+        per_subsystem_block:
+          expert: '[1,16]'
+        per_subsystem_strategy:
+          expert: group
+        per_subsystem_scale:
+          expert: FP8_E4M3
+        per_subsystem_schemes:
+          expert:
+            - { dtype: NVFP4, block: '[1,16]', scale_dtype: FP8_E4M3, tensors: 255, elements: 564721090560 }
+            - { dtype: BF16, tensors: 9, elements: 19931332608 }
+          attention:
+            - { dtype: BF16, tensors: 460, elements: 9863954432 }
+            - { dtype: FP32, tensors: 23, elements: 1472 }
+          indexer:
+            - { dtype: BF16, tensors: 69, elements: 434110464 }
+            - { dtype: FP32, tensors: 23, elements: 1507328 }
+          router:
+            - { dtype: BF16, tensors: 88, elements: 126877696 }
+            - { dtype: FP32, tensors: 88, elements: 30976 }
+          draft:
+            - { dtype: BF16, tensors: 30, elements: 2515795968 }
+            - { dtype: FP32, tensors: 21, elements: 62592 }
+        method: >-
+          完整清单逐项统计（95 分片 3,214 条目，failed_shards 为空），非抽样。 **逐子系统参数量与主仓逐位相同，11 桶零例外**，合计同为
+          602,972,927,296 —— 这是「同一份权重的两种存法」的硬证据，也是把 origin 判成 post_quantized 的判据之一。 NVFP4
+          覆盖路由专家（564,721,090,560），占参数量 93.7%；其余桶原样留在高精度上。 **打包存储**：NVFP4 装在 UINT8 容器里 ——
+          numel 是容器数不是参数数，还原因子由 scale 形状逐张量复核过（权重还原后的逻辑长度必须等于 scale 的组数乘组大小）。 块与 scale
+          由形状量出、不抄 config：路由专家 [1,16]。 config 的 ignore 点名了 371 条不量化的模块，与清单逐张量对得上。 落盘
+          394,164,831,232 B（367.09 GiB）。
 platforms:
   - engine: vLLM
     hardware: NVIDIA
@@ -531,6 +587,7 @@ evidence:
   precision.weights_release: derived
   precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived
+  precision.quantization.official_variants: derived
   precision.quantization.per_subsystem_scale: derived
   precision.quantization.per_subsystem_block: derived
   precision.quantization.block_size_note: derived

@@ -66,13 +66,13 @@
       }
     },
     "dtype": {
-      "description": "权重/激活的数据类型记号，沿用 safetensors 与各家量化方案的写法",
+      "description": "权重/激活的数据类型记号，沿用 safetensors 与各家量化方案的写法。**INT64 / INT32 / INT16 在这里不是「一种精度」，是落盘里确实出现的整型张量**：Qwen3.8-Flash-Next 的 n-gram 查表带 35 个 I64 的 layer_multipliers，逐方案明细要如实列出来才凑得满 100%。它们计入参数量（derive.py 一直如此），所以必须写得出来",
       "type": "string",
       "enum": [
         "FP32", "TF32", "BF16", "FP16",
         "FP8_E4M3", "FP8_E5M2", "MXFP8", "HIF8",
         "FP6", "MXFP4", "NVFP4", "FP4", "HIF4",
-        "INT8", "INT4", "UINT8",
+        "INT64", "INT32", "INT16", "INT8", "INT4", "UINT8",
         "FP8_E8M0", "MIXED"
       ]
     },
@@ -949,7 +949,8 @@
                     "$ref": "#/$defs/dtype",
                     "description": "这一档在 weights_release / weights_release_scope 里的键。两处必须对得上，由 scripts/validate.py 的 check_variants 查"
                   },
-                  "repo": { "type": "string", "description": "这个变体所在的 HF 仓。与 hf.repo 不同是常态 —— 相同就说明它不是独立变体，不该出现在这里" },
+                  "repo": { "type": "string", "description": "这个变体所在的 HF 仓。与 hf.repo 不同是常态。**相同只在同时给了 file 时成立**：生成类常把几个精度档打包进同一个仓的不同文件（LTX-2 的 ltx-2-19b-dev-fp8.safetensors 与 BF16 档同仓），那时仓相同而权重不同；没有 file 又与 hf.repo 相同，就不是独立变体，不该出现在这里" },
+                  "file": { "type": "string", "description": "变体在仓内的文件名。只有「同仓不同文件」这种发布形态才填 —— 它是 repo 等于 hf.repo 时唯一正当的理由，scripts/validate.py 的 check_variants 认这一条" },
                   "rev": { "type": "string", "description": "取数时钉的 commit 短 sha。不钉的话清单换了也看不出来" },
                   "origin": {
                     "description": "**这一档是厂商原生发布/训练出来的精度，还是同一份权重的事后再量化。**\n\nnative：厂商就是以这个精度发布/训练的这份权重（DeepSeek 主仓的 FP4、MiniMax-M3.1-Flash 主仓的 NVFP4 都属于这一类，不过它们在主仓里、不进这个数组）。\npost_quantized：厂商拿已有的 BF16 权重事后再量化发了一个仓（通义的 GPTQ-Int4、智谱的独立 FP8 仓）。\n\n**两者不能在同一张网格里不加区分地并列** —— 跨家族横着看会把它们当成同一个工程事实。判据不是名字：事后量化的硬证据是「逐子系统参数量与主仓逐位相同 + 仓里带 quantization_config」，Qwen3.5-27B 的三个仓都是 27,781,427,952，逐子系统七桶全对。精度页据此给事后量化的色块画斜纹。",
@@ -960,14 +961,25 @@
                     "type": "integer",
                     "description": "还原打包后的逻辑参数总量。**这是对账锚**：与 derived.from_shapes.params_total 必须相等，由 scripts/validate.py 的 check_variants 查。不等说明归类或打包因子错了，而错了之后页面上看不出来"
                   },
-                  "weight_bytes_total": { "type": "integer", "description": "这个仓的落盘字节（含 scale 与格式元数据，不还原打包 —— 容器就是真实存储）" },
+                  "params_delta": {
+                    "type": "integer",
+                    "description": "这个仓的 params_total 减去主仓 derived 的 params_total。**默认必须是 0**，给了非 0 就必须同时给 params_delta_reason，由 scripts/validate.py 的 check_variants 卡住。\n\n留这个口子不是为了放宽对账，而是因为真有讲得通的差：GLM-4.6 主仓把草稿块的 embed_tokens 与 shared_head.head **与主干绑定、不单独落盘**（同族的 GLM-4.5 落了），而官方 FP8 仓把它们实体化了 —— 两张都是 [151552, 5120]，775,946,240 × 2 = 1,551,892,480。模型没变，变的是 tied weight 的落盘策略。\n\n**差额要写成数、不能写成散文**：写成数才能被闸口验（实测差必须正好等于声明差），写成散文就只是一句谁也没核过的话"
+                  },
+                  "params_delta_reason": { "type": "string", "description": "params_delta 不为 0 的理由，要说清差的是哪几张张量、为什么同一个模型会有两种落盘。没有理由的差额一律当成归类或打包因子算错" },
+                  "component": { "type": "string", "description": "这一条只覆盖哪个组件（data/schema/components.json 的 key）。生成类的量化仓常常是整包（DiT + VAE + 文本编码器 + 声码器），而本记录的清单可能只收了其中一个组件（facts/ltx-2 取的是 transformer/*）—— 那时两边口径不同，整包对账必然红，而那不是算错。给了这个字段就表示「这一条的口径收到了该组件」，与主仓记录对齐" },
+                  "weight_bytes_total": { "type": "integer", "description": "这个仓的落盘字节（含 scale 与格式元数据，不还原打包 —— 容器就是真实存储）。**给了 component 时它只覆盖那个组件**" },
                   "per_subsystem": {
                     "type": "object",
                     "additionalProperties": { "$ref": "#/$defs/dtype" },
                     "description": "这个仓的逐子系统**逻辑**精度（qweight 的 I32 容器已按 config 的 bits 还原成 INT4）。键用 data/schema/subsystems.json 里的 key，口径与主仓的 per_subsystem 同一套归类（scripts/lib/subsystems.py）"
                   },
                   "per_subsystem_block": { "type": "object", "additionalProperties": { "type": "string" }, "description": "这个仓的实测量化块，形如 [1,128]（沿 out, 沿 in）。**不抄 config** —— GPTQ 的块由 scales 形状量出（qweight 的逻辑 in 维 ÷ scales 的组数），FP8 的 tile 由 weight_scale_inv 的两维量出" },
-                  "per_subsystem_scale": { "type": "object", "additionalProperties": { "$ref": "#/$defs/dtype" }, "description": "这个仓的 scale 张量精度。GPTQ 的 scales 常是 F16，和主干权重的 BF16 不是一套" },
+                  "per_subsystem_strategy": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": "这个仓逐子系统的量化**粒度**：group（沿单轴分组，配 per_subsystem_block）、channel（每个输出通道一个 scale，没有块）、tensor（整张一个 scale）、block（二维 tile，配 per_subsystem_block）。同一桶里出现多种时用 + 连接。\n\n**为什么要和 per_subsystem_block 分开。** 逐通道根本没有「块」这个量 —— 智谱五代官方 FP8 仓全是 compressed-tensors 的 `strategy: channel`（`block_structure: null`、`group_size: null`），scale 形状 [out, 1]。硬把它写成「块 = [1, in]」在本仓的记法里是「块大小等于输入维」，而不同投影的输入维不同，于是一个桶里会出现 `[1,12288]+[1,5120]`，被 `+` 的约定读成「这个子系统里不止一种块方案」—— 那是个错结论：方案只有一种，叫逐通道。值由形状量出（scale 是 [out,1] 就是 channel），不抄 config。"
+                  },
+                  "per_subsystem_scale": { "type": "object", "additionalProperties": { "$ref": "#/$defs/dtype" }, "description": "这个仓的 scale 张量精度。GPTQ 的 scales 常是 F16、compressed-tensors 的逐通道 scale 是 F32，和主干权重的 BF16 都不是一套" },
                   "per_subsystem_schemes": { "$ref": "#/$defs/subsystem_schemes", "description": "桶内不止一种精度时的逐方案明细，口径同主仓的同名字段" },
                   "method": { "type": "string", "description": "这一仓的实测是怎么来的（几分片几张量、怎么对账、块与 scale 凭什么形状量出来的）" },
                   "note": { "type": "string" }

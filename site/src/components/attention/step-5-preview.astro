@@ -29,7 +29,7 @@
 
 <figure class="attn-fig">
   <div class="figbox">
-    <svg class="dia" viewBox="0 0 940 376" role="img"
+    <svg class="dia" viewBox="0 0 940 392" role="img"
          aria-label="Step-5-Preview 生产侧：95 层共用一套投影签名；69 个滑窗层把 K/V 存进定长 512 位置的环，23 个全局层保留全量 K/V 并额外产出每 8 token 一条的 FP8 区域摘要">
       <defs>
         <marker id="s5-pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -122,6 +122,7 @@
       <text x="688" y="343" class="lbl-x">sparse_indexer_z 只出 logits、不缓存</text>
 
       <text x="18" y="370" class="lbl-x">主干口径（L0–L91），不含 3 个 MTP 层；全局层另有 pending key / z 缓冲 2 × 8 × 256 BF16（23 层共 94,208 元素、184 KiB/序列），未计入上面任何一格</text>
+      <text x="18" y="386" class="lbl-x">本图按主仓 BF16 发布画，对官方 NVFP4 发布（Step-5-Preview-NVFP4）同样成立：那个仓只量化路由专家（[1,16] + E4M3 scale），注意力一侧逐张量仍是 BF16，实测自完整清单。</text>
     </svg>
   </div>
   <figcaption>

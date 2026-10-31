@@ -378,6 +378,10 @@ def _():
     # 声明了、derived 的 by_dtype 里没有、却标 in_precision_table: true：
     # 这是自相矛盾，不该被放行
     d = copy.deepcopy(RECS["qwen3.8-2.4t-a95b"])
+    # official_variants 要摘掉：这条查的是「布尔说了算还是实测说了算」，
+    # 而那份记录现在**真有**同 dtype 的逐仓实测，留着就等于给它找了个正当理由，
+    # 用例会静默失效（2026-10-31 口径扩到另发量化仓之后新出现的坑）
+    (d["precision"].get("quantization") or {}).pop("official_variants", None)
     d["precision"]["weights_release_scope"] = {
         "FP8_E4M3": {"manifest_taken": True, "in_precision_table": True},
     }
@@ -394,6 +398,8 @@ def _():
     反过来只写 manifest_taken 而不写 in_precision_table，不能蒙混过关。
     """
     d = copy.deepcopy(RECS["qwen3.8-2.4t-a95b"])
+    # 同上：摘掉另一种交代，这条才验得到 scope 这套机制本身
+    (d["precision"].get("quantization") or {}).pop("official_variants", None)
     # 只说取过清单，不说进没进表 —— 闸口应当照旧报
     d["precision"]["weights_release_scope"] = {"FP8_E4M3": {"manifest_taken": True}}
     assert release_errors(d), "只写 manifest_taken 不构成交代，必须继续报"

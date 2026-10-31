@@ -134,10 +134,17 @@ arch:
       外加 eh_proj [5120, 10240]、enorm、hnorm、shared_head.norm，构成与 GLM-4.5 相同
 
 precision:
-  weights_release: [BF16, FP32]
+  weights_release: [BF16, FP32, FP8_E4M3]
   weights_release_scope:
     BF16: { manifest_taken: true, in_precision_table: true }
     FP32: { manifest_taken: true, in_precision_table: true }
+    FP8_E4M3:
+      manifest_taken: true
+      in_precision_table: true
+      repo: zai-org/GLM-4.7-FP8
+      note: >-
+        厂商另发的官方量化仓，本轮取了完整清单，逐子系统实测落在 quantization.official_variants 里 —— 精度表的第二个来源。**主仓的
+        per_subsystem 不受影响**：那个字段是 derive.py 识别打包用的承重件，口径只能是 hf.repo 那一份权重
   quantization:
     per_subsystem:
       expert: BF16
@@ -156,6 +163,53 @@ precision:
       是 F32 真参数（不是 scale 容器；本代不量化，没有 per_subsystem_scale 字段），按元素数 router 桶 99.98% 是 BF16。
       这一代没有 quantization_config，不存在 scale 张量与量化块
 
+    official_variants:
+      - dtype: FP8_E4M3
+        repo: zai-org/GLM-4.7-FP8
+        rev: 7b3b5f81eee8
+        origin: post_quantized
+        tensor_count: 88542
+        params_total: 358337791296
+        weight_bytes_total: 362052508416
+        per_subsystem:
+          expert: FP8_E4M3
+          shared_expert: FP8_E4M3
+          attention: FP8_E4M3
+          dense_ffn: FP8_E4M3
+          router: BF16
+          embed: BF16
+          lm_head: BF16
+          norm: BF16
+          draft: FP8_E4M3
+        per_subsystem_strategy:
+          expert: channel
+          shared_expert: channel
+          attention: channel
+          dense_ffn: channel
+          draft: channel
+        per_subsystem_scale:
+          expert: FP32
+          shared_expert: FP32
+          attention: FP32
+          dense_ffn: FP32
+          draft: FP32
+        per_subsystem_schemes:
+          attention:
+            - { dtype: FP8_E4M3, tensors: 368, elements: 12540968960 }
+            - { dtype: BF16, tensors: 276, elements: 1318912 }
+          router:
+            - { dtype: BF16, tensors: 89, elements: 72908800 }
+            - { dtype: FP32, tensors: 89, elements: 14240 }
+          draft:
+            - { dtype: FP8_E4M3, tensors: 487, elements: 3934781440 }
+            - { dtype: BF16, tensors: 14, elements: 1605180672 }
+            - { dtype: FP32, tensors: 1, elements: 160 }
+        method: >-
+          完整清单逐项统计（93 分片 88,542 条目，failed_shards 为空），非抽样。 **逐子系统参数量与主仓逐位相同，9 桶零例外**，合计同为
+          358,337,791,296 —— 这是「同一份权重的两种存法」的硬证据，也是把 origin 判成 post_quantized 的判据之一。 FP8_E4M3
+          覆盖路由专家（335,963,750,400）、共享专家（2,099,773,440）、注意力（12,540,968,960）、稠密
+          FFN（566,231,040）、草稿 / MTP（3,934,781,440），占参数量 99.1%；其余桶原样留在高精度上。 config 的 ignore
+          点名了 839 条不量化的模块，与清单逐张量对得上。 落盘 362,052,508,416 B（337.19 GiB）。
 platforms:
   - engine: transformers
     hardware: NVIDIA
@@ -239,6 +293,7 @@ evidence:
   precision.weights_release: derived
   precision.weights_release_scope: derived
   precision.quantization.per_subsystem: derived
+  precision.quantization.official_variants: derived
   precision.quantization.subsystem_method: derived
   platforms: official
   bottlenecks: judgement
