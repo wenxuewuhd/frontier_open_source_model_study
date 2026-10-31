@@ -305,10 +305,10 @@ precision:
       scale 张量或打包容器（derived 的 `scale_elements` 为 0、
       `weight_dtype_containers` 为空）。
 
-      逐桶参数量（五桶相加 = 5,570,676,352，`other` 桶为 **0**）：
+      逐桶参数量（六桶相加 = 5,570,676,352，`other` 桶为 **0**）：
       `dense_ffn` 3,171,538,944（168 条）、`attention` 1,585,963,008（336 条）、
-      `norm` 797,962,752（510 条）、`io_proj` 13,375,616（6 条）、
-      `time_embed` 1,836,032（4 条）。
+      **`modulation` 794,271,744（168 条）**、`io_proj` 13,375,616（6 条）、
+      `norm` 3,691,008（342 条）、`time_embed` 1,836,032（4 条）。
 
       **口径与 `params.total` 同一套：只含 DiT。** 同仓的 T5-XXL（219 条）与
       VAE（436 条）全 F32，取数时 `include_globs` 是 `transformer/*`，
@@ -316,25 +316,32 @@ precision:
       所以这张表上**缺席的子系统读作「DiT 里没有」，不是「这个仓里没有」**：
       `embed` 就是例子，DiT 没有词表，而 T5-XXL 有。
 
-      **`modulation` 这一行是手工补的，它不来自 `classify2()`。**
-      CogVideoX 的 AdaLN 叫 `norm1.linear` / `norm2.linear` / `norm_out.linear`，
-      `norm` 那条正则先命中（SUBSYSTEM 里 norm 排在 modulation 之前，而 modulation
-      认的是 `adaln` / `ada_ln` / `_mod.linear` / `modulation` / `scale_shift`，
-      一个都配不上），于是调制参数整块落在 `norm` 桶里、`modulation` 桶是空的。
-      **空的原因是命名，不是这个模型没有 AdaLN** —— bottlenecks 与 infra_signals
-      整整两段都在讲这一份的调制有多贵（14.35%）。不补这一行，缺值判据会把它
-      渲染成「不适用：这个子系统在这个模型里不存在」，而那句话是错的。
-      代价是两张表对不齐：derived 的 `params_by_subsystem` 只有五桶
-      （`norm` 含调制），这张精度表有六行。归类正则是共用基建，已报主会话。
+      **`modulation` 桶的 794,271,744 = 42 套 `norm1.linear` + 42 套
+      `norm2.linear`，各 [18432, 512] 带 bias**（18432 = 6×3072，入口 512 是
+      `time_embedding` 的出口宽度，不是 hidden —— 这就是 bottlenecks 与
+      infra_signals 两段所说的「逐层放矩阵」）。
+      **初录时这 168 条落在 `norm` 桶里**：CogVideoX 把调制实现成
+      `norm1.linear` / `norm2.linear`，名字带 norm 被 `norm` 规则领走，而当时
+      `modulation` 认的是 `adaln` / `ada_ln` / `_mod.linear` / `modulation` /
+      `scale_shift`，一个都配不上。`lib/subsystems.py` 已加 `\bnorm\d*\.linear\b`
+      并排在 `norm` 之前（`ebfb3cd`），所以这一行现在有真实张量支撑，不是手补的。
 
-      `norm` 桶的 797,962,752 拆开是：**调制 797,423,616**
-      （42 套 `norm1.linear` + 42 套 `norm2.linear`，各 [18432, 512] 带 bias；
-      加 `norm_out.linear` [6144, 512] 带 bias）
-      **+ 真正的归一化 539,136**（42 层各两组 LayerNorm 的 weight/bias [3072]
+      **`modulation` 桶与 `param_scaling.per_sample` 不是同一个量，不要互相代入。**
+      桶是 794,271,744，`per_sample` 是 799,259,648，差 **4,987,904**，由两项组成：
+      `time_embedding` 1,836,032（单列为 `time_embed` 桶）与
+      `norm_out.linear` 3,151,872（**仍在 `norm` 桶里**，见下）。
+      两个比例因此也不同：桶占总量 14.26%，`per_sample` 占 14.35%。
+      散文里一律用 `per_sample` 那一套（14.35%），那是「每次前向只过一遍」的口径；
+      14.26% 只是这张精度表的桶占比。
+
+      **`norm` 桶的 3,691,008 里有 85.4% 其实还是调制**：
+      `norm_out.linear` [6144, 512] 带 bias 共 3,151,872 是最终输出前的那一套 AdaLN，
+      而新正则 `\bnorm\d*\.linear\b` 要求 `norm` 后面是数字或空，`norm_out` 配不上。
+      真正的归一化只有 **539,136**（42 层各两组 LayerNorm 的 weight/bias [3072]
       共 516,096、42 层 QK-norm 的 [64] 共 10,752、`norm_final` 与
       `norm_out.norm` 共 12,288）。
-      797,423,616 与 `params.breakdown.adaln_modulation` 799,259,648 差的
-      1,836,032 就是 `time_embedding` —— 它在这张表里单列为 `time_embed` 桶。
+      这一格仍填 BF16 —— 342 条全 BF16，混不混不影响精度结论，只影响参数量归属。
+      已报主会话（全仓同形的只有这一份与 minimax-h3，各 2 条）。
 
       `io_proj` 的 13,375,616 横跨 `param_scaling` 的两个桶：
       `patch_embed.text_proj` 12,585,984 是 `per_text_token`，
@@ -767,15 +774,16 @@ open_questions:
     训练精度无一手来源。发布权重 DiT 全 BF16、文本编码器与 VAE 全 F32 是实测，
     卡上「BF16（推荐）…不支持 INT4」说的是**支持的推理精度**，不是训练格式
   - >-
-    **`modulation` 桶在这一份上是空的，而这个模型 14.35% 的参数是 AdaLN。**
-    `lib/subsystems.py` 的归类正则里 `norm` 排在 `modulation` 之前，
-    CogVideoX 的调制矩阵又恰好叫 `norm1.linear` / `norm2.linear` /
-    `norm_out.linear`，于是 797,423,616 个参数整块落进 `norm` 桶。
-    本记录的 `per_subsystem` 手工补了 `modulation: BF16` 那一行，
-    否则缺值判据会把它渲染成「不适用：这个子系统在这个模型里不存在」。
-    **补这一行只挡住了错话，没有修好归类** —— derived 的
-    `params_by_subsystem` 仍是五桶，两张表的行数对不齐。
-    归类正则是共用基建，已报主会话
+    **`norm_out.linear` 仍归在 `norm` 桶，而它是最终输出前的那一套 AdaLN。**
+    `ebfb3cd` 给 `lib/subsystems.py` 加的 `\bnorm\d*\.linear\b` 把逐层的
+    168 条（794,271,744）捞进了 `modulation`，但它要求 `norm` 后面是数字或空，
+    `norm_out` 配不上，于是 3,151,872（2 条）留在 `norm` 里 ——
+    **新 `norm` 桶 3,691,008 的 85.4%**。
+    参数量归属偏了这么多，而精度结论不受影响（342 条全 BF16）。
+    全仓同形的只有这一份与 `minimax-h3`（它那 2 条是
+    `norm_out.linear [10752, 2688]` 28,912,128，占它 `norm` 桶的 **98.0%**），
+    两份合计 4 条张量。要补就是把那条正则的 `\d*` 放宽到认 `_out`
+    （实扫 57 份只多命中这 4 条，不抢别的桶）。共用基建，本次只报不改
   - >-
     **derived 的 `gate_b` 说「仓里没有任何 config（顶层与组件目录都没有）」，
     而组件目录下有四份 config，`facts/` 里就存着
