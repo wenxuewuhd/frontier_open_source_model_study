@@ -145,13 +145,24 @@ const BELOW16 = new Set(['FP4', 'MXFP4', 'NVFP4', 'INT4', 'FP8_E4M3']);
  *   有任何一代低于 16 bit，或者有任何一代「未录」（调研进度，得看得见）→ 摊开
  *   其余 → 折进一格汇总
  *
- * 折叠不是藏，是**把恒定的那部分变成一句话**。而且折完之后家族之间的差别反而跳出来：
- * Qwen 的 14 列里 13 列可折 —— 它的旗舰权重一格都没量化过，量化只出现在旁路
- * 发布仓，这正是它和 DeepSeek 最大的差别，摊开时反而被一排 BF16 盖住了。
+ * 折叠不是藏，是**把恒定的那部分变成一句话**。
+ *
+ * **但折到只剩一两列就过头了，那时整段不折。** 这里原先写着「折完之后 Qwen 的差别
+ * 反而跳出来」—— 看过页面的人给的反馈相反：Qwen 那段只剩 1 个真列，色块网格塌掉、
+ * 五个文字列膨胀占满，看起来不像「从没量化过」，像「这个家族没数据」。
+ * 更糟的是**留下的恰恰是调研缺口**：Qwen 13 个子系统实测全 BF16 全被折走，
+ * 唯一摊开的 `其他` 是 qwen3.8-flash-next 那 32,808,960 个未录参数。
+ * 表上站着缺口、结论全不见，正好反过来。
+ *
+ * 所以摊开数不足 MIN_OPEN 时整段不折：13 个 BF16 色块排成一行，
+ * 「一格都没量化过」才真的看得见，代价是这两段表会横向滚动（DeepSeek 那段本来就滚）。
  *
  * **FP32 不能被折没。** 「小而对误差敏感的块反而被提上去」是本页的结论之一，
  * 所以汇总格里单独点名 FP32 的那几块。
  */
+/** 摊开不足这个数就整段不折 —— 只影响 Qwen 与阶跃星辰两段（各只有 1 个真列）。 */
+const MIN_OPEN = 3;
+
 function columnsFor(models: Model[]): { open: string[]; folded: string[] } {
   const used = new Set<string>();
   for (const m of models) {
@@ -164,6 +175,7 @@ function columnsFor(models: Model[]): { open: string[]; folded: string[] } {
     if (d) return BELOW16.has(String(d));
     return (byShapes(m)[k] ?? 0) > 0; // 未录
   }));
+  if (open.length < MIN_OPEN) return { open: all, folded: [] };
   return { open, folded: all.filter((k) => !open.includes(k)) };
 }
 
