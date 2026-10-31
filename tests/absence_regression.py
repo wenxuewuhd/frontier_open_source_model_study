@@ -388,6 +388,51 @@ def _():
     assert release_errors(d), "标 in_precision_table: true 却查无实据，必须继续报"
 
 
+@case("三·负例：有实测却填 in_precision_table: false —— 说反话也要挡")
+def _():
+    """闸口两个方向都要验，不能只验 true 那半边。
+
+    原先 `in_precision_table: false` 被无条件当成正当交代直接放行，于是
+    「official_variants 里明明有同 dtype 的逐子系统实测、布尔却填 false」
+    一个都查不出来。那正是本仓栽过的方向：`measured` 当年拆成两个布尔，
+    就因为 MiniMax-M3 的 MXFP8「取过清单、没进表」只能填 false，字段说反话，
+    照着它复述的人写出了错声明（minimax-m3 的 R18 / R20）。
+    一个字段说反话，页面就跟着印一句通顺的、具体的、错的话 ——
+    而且就印在这份记录最详细的精度数据旁边。
+    """
+    d = copy.deepcopy(RECS["qwen3.5-27b"])
+    vs = d["precision"]["quantization"]["official_variants"]
+    assert vs, "这条用例要一份带 official_variants 的记录"
+    # 实测俱在，布尔却说「没进表」
+    for v in vs:
+        d["precision"]["weights_release_scope"][v["dtype"]] = {
+            "manifest_taken": True, "in_precision_table": False,
+        }
+    errs = release_errors(d)
+    assert errs, "有实测却填 false，必须报"
+    assert "说反话" in errs[0], f"报的理由要点明是说反话：{errs}"
+
+
+@case("三·正例：两条检查的顺序 —— 先验实据，再认 false 那种交代")
+def _():
+    """顺序反了两条检查会互相遮蔽。
+
+    若先认 `in_precision_table: false`（continue），上面那条「说反话」的检查
+    就永远到不了；若只保留说反话那条，真正「厂商发了、本仓确实没取」的记录
+    又会被误报。所以必须是：有实据 → 放行；没实据而填了 false → 放行；
+    没实据又没填 false → 报。
+    """
+    d = copy.deepcopy(RECS["qwen3.5-27b"])
+    # 没有任何逐仓实测，而两档都老老实实填了 false —— 这是正当交代，不该报
+    (d["precision"]["quantization"]).pop("official_variants", None)
+    for dt in ("FP8_E4M3", "INT4"):
+        d["precision"]["weights_release_scope"][dt] = {
+            "manifest_taken": False, "in_precision_table": False,
+        }
+    assert not release_errors(d), \
+        f"没实据而填 false 是正当交代，不该报：{release_errors(d)}"
+
+
 @case("三·负例：拆字段之后，manifest_taken 单独不足以当交代")
 def _():
     """这条是拆字段（2026-10-30）的核心回归。

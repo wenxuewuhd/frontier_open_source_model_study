@@ -485,8 +485,10 @@ precision:
         **所以不要按这份清单读参数量**：按容器数会得到 11,785,706,032，
         少算 4.1B。文件 19,988,416,674 B，按清单算 19,987,202,954 B，差 1,213,720 B（头）
   quantization:
-    # 这一组值只覆盖 BF16 全量档（`transformer/` 组件）。fp8 与 fp4 两档是定向取数、
-    # 没有落成 shapes.json，所以它们的 in_precision_table 为假，不在这组值里。
+    # 这一组值只覆盖 BF16 全量档（`transformer/` 组件），测自 derived 的主仓直方图。
+    # fp8 与 fp4 两档的逐子系统实测记在同一层的 official_variants 里
+    # （同仓不同文件，口径同样收在 dit 组件上），两边都喂精度演进页 ——
+    # 所以那两档的 in_precision_table 为真。
     per_subsystem:
       attention: BF16
       dense_ffn: BF16

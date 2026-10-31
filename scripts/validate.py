@@ -85,6 +85,14 @@ def check_release_vs_measured(doc, path, derived_dir, errors):
 
     顺带查一条自相矛盾：in_precision_table 为真而 manifest_taken 为假 ——
     没取过清单不可能有实测值进表，两个键拆开之后这种组合写得出来，所以得挡。
+
+    **2026-10-31 补上反方向。** 这道闸原先只验一个方向：true 必须拿得出实据，
+    而 false 被无条件当成正当交代放行 —— 于是「有实测却填 false」一个都查不出来。
+    那正是本仓栽过的那个方向（minimax-m3 的 MXFP8「取过清单、没进表」只能填 false，
+    字段于是说反话，照着它复述的人写出了错声明，见 R18 / R20）。
+    现在 false 而 official_variants 里有同 dtype 的实测也报错。
+    两条检查的顺序不能反：先验实据、再认 false，否则 false 先放行、
+    说反话那条永远到不了。
     """
     wr = ((doc.get("precision") or {}).get("weights_release")) or []
     mid = doc.get("id")
@@ -125,12 +133,39 @@ def check_release_vs_measured(doc, path, derived_dir, errors):
               .get("official_variants") or []):
         got = {str(x).upper() for x in (v.get("per_subsystem") or {}).values()}
         variants.setdefault(str(v.get("dtype") or "").upper(), set()).update(got)
+    #
+    # **反方向那半句**（2026-10-31 补）：`in_precision_table: false` 原先被无条件当成
+    # 正当交代直接放行，于是「有实测却填 false」这种说反话的格子一个都查不出来。
+    # 这道闸原本只验一个方向 —— true 必须拿得出实据 —— 而本仓栽过的恰恰是另一个方向：
+    # `measured` 当年拆成两个布尔，就是因为 MiniMax-M3 的 MXFP8「取过清单、没进表」
+    # 只能填 false，字段于是在说反话，照着它复述的人写出了错声明（见 minimax-m3 的
+    # R18 / R20）。一个字段说反话，页面就跟着说反话 —— 而且是一句**通顺的、具体的、
+    # 错的话**，紧挨着这份记录里最详细的精度数据。
+    # 判据是现成的，就是 schema 里 in_precision_table 的那句：一个变体进了
+    # official_variants 就算进了表，这个布尔跟着为真。所以反过来也必须成立。
+    liars = []
+    for v in missing:
+        s = scope.get(v) or scope.get(str(v).upper()) or {}
+        if s.get("in_precision_table") is False \
+                and str(v).upper() in variants.get(str(v).upper(), set()):
+            liars.append(v)
+    if liars:
+        errors.append(
+            f"{path}: precision.weights_release_scope 里 {liars} 填着 "
+            f"in_precision_table: false，而 precision.quantization.official_variants "
+            f"里有同 dtype 的逐子系统实测 —— 那就是进了精度表。这个布尔在说反话，"
+            f"而页面会照着它印「厂商发了、本仓没取清单、没进精度表」，"
+            f"就印在这份记录最详细的精度数据旁边。翻成 true，"
+            f"并把同一处散文里「没取过 / 没进表」的理由一起改掉")
+
     unexplained = []
     for v in missing:
         s = scope.get(v) or scope.get(str(v).upper()) or {}
-        if s.get("in_precision_table") is False or s.get("container"):
-            continue
+        # 先验「有没有实据」，再认 false 这种交代。**顺序不能反**：反了的话
+        # 上面那条说反话的检查就永远到不了（false 先放行），两条检查互相遮蔽
         if str(v).upper() in variants.get(str(v).upper(), set()):
+            continue
+        if s.get("in_precision_table") is False or s.get("container"):
             continue
         unexplained.append(v)
     if not unexplained:

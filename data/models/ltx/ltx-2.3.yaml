@@ -602,8 +602,9 @@ precision:
         文件 21,701,367,310 B，比 BF16 档小 53.0%
   quantization:
     # 这一组值测自单文件整包的 BF16 全量档。逐子系统的桶只拆 DiT 一个组件，
-    # 另外五个组件的 dtype 写在 subsystem_method 末段。fp8 与 nvfp4 搬到独立仓、
-    # 本轮连清单都没取，所以它们的两个布尔都是假，也不在这组值里。
+    # 另外五个组件的 dtype 写在 subsystem_method 末段。fp8 与 nvfp4 在两个独立仓，
+    # 清单已取（8,871 / 8,939 条），逐子系统实测记在同一层的 official_variants 里 ——
+    # 两边都喂精度演进页，所以那两档的两个布尔都为真。
     per_subsystem:
       attention: BF16
       dense_ffn: BF16
