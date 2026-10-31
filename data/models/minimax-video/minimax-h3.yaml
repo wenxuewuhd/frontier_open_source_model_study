@@ -152,36 +152,45 @@ params:
     [5376, 14336] 的 down；token_refiner 是入口那 2 层 refiner 的全部权重，
     它没有 adaln_proj，所以单列而不是并进上面三桶。
 
-    **`breakdown` 这一轴与页面「按子系统」表不是同一套分桶，桶名字像、数不等。**
-    `breakdown` 按**部件**分（入口的 refiner 单列成一桶），子系统轴按**功能**分
-    （归类正则在共享文件 `scripts/lib/subsystems.py`）。两边都合到 33,122,992,896，
-    逐项对账：
-    子系统 `modulation` 13,010,457,600 = `breakdown.adaln_modulation` 13,055,204,736
-    − `time_embedder` 15,835,008 − `norm_out.linear` 28,912,128
-    （weight 28,901,376 + bias 10,752）；
-    子系统 `time_embed` 15,835,008 就是被拆出去的 `time_embedder`，
-    而 `norm_out.linear` 按「带 norm 的就是归一化」落进子系统 `norm`；
+    **`breakdown` 这一轴与页面「按子系统」表不是同一套分桶**：`breakdown` 按**部件**分
+    （入口的 refiner 单列成一桶），子系统轴按**功能**分（归类正则在共享文件
+    `scripts/lib/subsystems.py`）。两边都合到 33,122,992,896，逐项对账：
+    子系统 `modulation` 13,039,369,728 = `breakdown.adaln_modulation` 13,055,204,736
+    − `time_embedder` 15,835,008（它另立 `time_embed` 桶；逐层 `adaln_proj.linear`
+    与顶层 `norm_out.linear` 都归 `modulation`）；
     子系统 `attention` 8,015,314,944 = `breakdown.self_attention` 7,707,046,400
     − QK-norm 12,800 + refiner 注意力 308,281,344；
     子系统 `dense_ffn` 12,022,972,416 = `breakdown.ffn` 11,560,550,400
     + refiner FFN 462,422,016；
-    子系统 `norm` 29,495,296 = `breakdown.norm` 542,976 + QK-norm 12,800
-    + `norm_out.linear` 28,912,128 + refiner norm 27,392；
-    子系统 `io_proj` 28,568,160 = `breakdown.patch_embed_video` 1,037,664
-    + `breakdown.text_proj` 27,530,496 —— 两者都是进出口投影，只是一个吃 latent
-    一个吃文本隐状态（`breakdown` 按部件把它们分开，子系统轴按功能并成一桶）；
-    `audio` = `breakdown.patch_embed_audio` 349,472，这一项两轴逐字相同。
-    **子系统轴上没有 `other` 桶** —— 638 条全部归进了词表。
-    `breakdown.token_refiner` 770,730,752 在子系统轴上不存在 ——
-    它被摊成 308,281,344 + 462,422,016 + 27,392。
+    子系统 `norm` 583,168 = `breakdown.norm` 542,976 + QK-norm 12,800
+    + refiner norm 27,392；
+    子系统 `io_proj` 28,917,632 = `breakdown.patch_embed_video` 1,037,664
+    + `breakdown.text_proj` 27,530,496 + `breakdown.patch_embed_audio` 349,472
+    —— 三者都是进出口投影，只是分别吃 latent、文本隐状态与音频 latent
+    （`breakdown` 按部件把三个入口分开，子系统轴按功能并成一桶）。
+    `breakdown.token_refiner` 770,730,752 在子系统轴上不存在，被摊成
+    attention 308,281,344 + dense_ffn 462,422,016 + norm 27,392。
+    **子系统轴上没有 `other` 桶、也没有 `audio` 桶** —— 638 条全部归进了词表，
+    而 `audio` 桶量的是音频塔 / 音频编码器，这一份没有。
 
-    **所以「AdaLN 占主干 39.41%」与「调制桶占 39.28%」是两个数，不要互相代入。**
-    39.41% 的分子是 `breakdown.adaln_modulation`（= `param_scaling.per_sample`）
-    13,055,204,736 ——「吃时间步条件向量、每个样本只算一次」的全部权重；
-    39.28% 的分子是子系统桶 `modulation` 13,010,457,600 —— 只有 50 层的
-    `adaln_proj.linear`。两者差 **44,747,136**，分解就在上一段。
-    FFN 与注意力同理：`breakdown` 轴 34.90% / 23.27%，子系统轴 36.30% / 24.20%，
-    差的是 refiner。两轴都对，**在散文里把哪一个数报出去就要说明是哪一轴**。
+    **`modulation` 与 `time_embed` 两桶之和就是 `param_scaling.per_sample`，
+    而且是逐位相等：13,039,369,728 + 15,835,008 = 13,055,204,736。**
+    这不是数值吻合 —— **两边的张量集合完全相同**，各 106 条（50 层 × 2 个
+    `adaln_proj.linear` + `norm_out.linear` 2 条 + `time_embedder` 4 条），
+    双向取差都是空集。所以「吃时间步条件向量、每样本只算一次」这个量在子系统轴上
+    就是这两桶之和，占主干 **39.41%**；单看 `modulation` 一桶是 39.37%，
+    少掉的 0.05% 正是时间步嵌入。
+    **这条恒等有作用域，不是定律。** 本仓四份带 `param_scaling` 的记录里它成立三份
+    （minimax-h3 / cogvideox-1.5-5b / stepvideo-t2v-30b），
+    而 **hunyuanvideo-1.5 不成立**：那一份是双流（`text_conditioning: dual_stream`），
+    文本支路的 token refiner 自带 AdaLN 与两个 embedder（共 33,046,528），
+    记录把它们算进 `per_text_token`，而子系统轴把它们算进 `modulation` / `time_embed`
+    —— 两桶之和比 `per_sample` 高 41,433,088。
+    所以引这条恒等要带**单流**这个前提。
+
+    **FFN 与注意力这两轴仍然不等，别顺手推广上面那条恒等**：`breakdown` 轴
+    34.90% / 23.27%，子系统轴 36.30% / 24.20%，差的就是上面那笔 refiner。
+    **报这两个数时仍要说明是哪一轴。**
 
 generation:
   backbone:
@@ -218,11 +227,14 @@ generation:
         只有注意力矩阵联合）要分成 per_video_token + per_text_token 两桶，
         别照着这一份填。
 
-        **`per_sample` 13,055,204,736 与页面「按子系统」表「调制（AdaLN）」那一行的
-        13,010,457,600 不是同一个量**，差 44,747,136（= `time_embedder` 15,835,008
-        + `norm_out.linear` 28,912,128）：这一桶按「乘什么」分，那一行按功能命名分、
-        只含 `adaln_proj.linear`。逐项分解见 `params.counting_note`，
-        **两处都对，不要互相代入**
+        **`per_sample` 就是页面「按子系统」表上 `modulation` 与 `time_embed`
+        两行之和，逐位相等**：13,039,369,728 + 15,835,008 = 13,055,204,736，
+        而且两边的张量集合完全相同（各 106 条，双向取差都是空集）。
+        所以读那张表时要**把这两行加起来**再和这里对；
+        单看 `modulation` 一行是 39.37%，少掉的 0.05% 是时间步嵌入。
+        **这条恒等的前提是单流** —— 双流模型的文本支路自带 AdaLN 与 embedder，
+        它们按功能落进这两桶、按「乘什么」却属于 `per_text_token`
+        （hunyuanvideo-1.5 就差 41,433,088）。作用域与逐项核对见 `params.counting_note`
     patch_size: [1, 2, 2]
     position: 3D MM-RoPE (t, h, w)，rope_freq_dim 16、rope_theta 10000
     note: >-
@@ -233,8 +245,11 @@ generation:
       5120 正是 Qwen3-VL 的 hidden）。
       **AdaLN 是这份记录最反直觉的一块**：按「乘什么」分的 `per_sample` 桶 13.06B，
       占主干 39.41%，比同一轴上的 FFN（34.90%）和注意力（23.27%）都大。
-      **这三个百分比是 `params.breakdown` 那一轴的**，与页面「按子系统」表的
-      39.28% / 36.30% / 24.20% 不是同一套分桶，差别与逐项对账见 `params.counting_note`。
+      这 39.41% 在页面「按子系统」表上是 `modulation` 与 `time_embed` **两行之和**
+      （13,039,369,728 + 15,835,008，逐位相等、张量集合相同）；
+      而 FFN 与注意力那两个百分比**只在 `params.breakdown` 这一轴上成立** ——
+      子系统轴是 36.30% / 24.20%，差的是入口 refiner。两轴的逐项对账见
+      `params.counting_note`。
       每层 `adaln_proj.linear` 是 [96768, 2688]，
       96768 = 18 × 5376 = 3 种模态 × 6 组调制，2688 = 5376 / 2 是时间步条件向量的宽度。
       卡说这部分「输出可预计算并缓存，推理-only 部署不必加载」——
@@ -435,7 +450,7 @@ precision:
       in_precision_table: true
       repo: MiniMaxAI/MiniMax-H3
       note: >-
-        DiT 的 626 / 638 条是 BF16（全部注意力 208、FFN 104、AdaLN 投影 100、norm 212，
+        DiT 的 626 / 638 条是 BF16（注意力 208、FFN 104、调制 102、norm 210，
         外加文本入口 `context_embedder` 2 条 —— 加起来正好 626），
         文本编码器 1058 条**全部** BF16。卡的 checkpoint 表也写 BF16
     FP32:
@@ -457,46 +472,45 @@ precision:
       io_proj: MIXED
       time_embed: FP32
     subsystem_method: >-
-      **下面这段散文还是按旧归类写的，v2-h3 正在重算。** 本轮按功能分桶之后
-      `audio_proj_in/out` 并进了 `io_proj`，`audio` 桶不再存在（行已删）：
-      桶数 七 → 六，F32 落在两个桶而不是三个，`io_proj` 变 10 条 / 28,917,632。
-      留这一句是为了不让陈旧的计数静默留在页面上。
-
       **对 DiT 主干的完整权重清单 638 条逐项穷举，不是抽样**：14 个分片的 `weight_map`
       全覆盖、`failed_shards` 为空、`duplicate_tensors` 为 0，626 BF16 + 12 F32，
       numel × 每元素字节 = 66,280,430,080 B 与 `transformer/` 的 index.json
       `total_size` 逐字相同。取数用 `fetch_hf.py --include 'transformer/*'`
       把范围收到一个组件上，理由见 R2。
 
-      **七个桶里只有 `io_proj` 一个是混的，另外六个各自只有一种 dtype。**
-      12 条 F32 落在三个桶：
+      **六个桶里只有 `io_proj` 一个是混的，另外五个各自只有一种 dtype。**
+      12 条 F32 落在两个桶：
       `time_embed`（`time_embedder.linear_1/2` 的 weight 与 bias，4 条、15,835,008 参数，
       **整格 100% F32**）、
-      `audio`（`audio_proj_in` / `audio_proj_out` 的 weight 与 bias，4 条、349,472，
-      **整格 100% F32**）、
-      `io_proj`（`proj_in` / `proj_out` 的 weight 与 bias，4 条、1,037,664，
-      与同桶 BF16 的 `context_embedder` 并存）。
+      `io_proj`（`proj_in` / `proj_out` 与 `audio_proj_in` / `audio_proj_out` 的
+      weight 与 bias，8 条、1,387,136，与同桶 BF16 的 `context_embedder` 并存）。
       即**时间步嵌入与视频 / 音频的进出口投影是 F32**，而注意力 / FFN /
       AdaLN 投影 / norm 整条是 BF16。
 
       **`io_proj` 报 MIXED 是实话，不是「多数值 + 异类」。**
-      这一桶 6 条装的是三个模态的进出口投影，而**三个入口并不同精度**：
-      视频 `proj_in` / `proj_out` 与音频入口是 F32，文本入口
-      `context_embedder` [5376, 5120] 是 BF16 —— 后者接的正是 BF16 的文本编码器，
-      这是落盘实测不是推测。两半**都是货真价实的进出口投影**，所以这一桶确实同时
-      装着两种精度，和 LTX-2 的 `audio` 那一格同类；而 LTX-2 的 `attention` 报 BF16
-      不报 MIXED，是因为那桶里的 F32 根本不是注意力权重。判据是「两半是不是都属于
-      这个桶」，不是占比。
-      **而占比本身在这一格上自相矛盾，这也是不能报代表值的理由**：按元素数 96.37%
-      是 BF16（`context_embedder` 27,530,496 / 28,568,160），按条目数 66.7% 是 F32
-      （4/6）—— 两套计数基各指一个「多数」。报 BF16 会让「视频入口是 F32」从表上消失，
+      按功能分桶之后这一桶 10 条装齐了**三个模态的全部进出口投影**
+      （视频 `proj_in` / `proj_out`、音频 `audio_proj_in` / `audio_proj_out`、
+      文本 `context_embedder`），而**三个入口并不同精度**：
+      视频与音频那 8 条是 F32，文本入口 `context_embedder` [5376, 5120] 是 BF16 ——
+      后者接的正是 BF16 的文本编码器，这是落盘实测不是推测。
+      三者**都是货真价实的进出口投影**，所以这一桶确实同时装着两种精度，
+      和 LTX-2 的 `audio` 那一格同类；而 LTX-2 的 `attention` 报 BF16 不报 MIXED，
+      是因为那桶里的 F32 根本不是注意力权重。
+      判据是「每一半是不是都属于这个桶」，不是占比。
+      **而占比本身在这一格上自相矛盾，这也是不能报代表值的理由**：按元素数 95.20%
+      是 BF16（`context_embedder` 27,530,496 / 28,917,632），按条目数 80% 是 F32
+      （8/10）—— 两套计数基各指一个「多数」，而**`fetch_dtypes.py` 的 60% 规则按元素数
+      会给出 BF16**。报 BF16 会让「视频与音频入口是 F32」从表上消失，
       报 FP32 会让文本入口消失。
       没有 quantization_config、没有 scale 容器、没有低位打包，所以**本记录根本没有
       `per_subsystem_scale` / `per_subsystem_block` 这两个字段** —— 不量化，
       不存在 scale 张量与量化块。
 
-      **`other` 桶是空的，所以它那一格是「不适用」而不是「未录」** ——
-      638 条没有一条归不进已有的子系统词表。
+      **`other` 与 `audio` 两个桶都是空的，所以它们那两格是「不适用」而不是「未录」。**
+      `other` 空是因为 638 条没有一条归不进已有的子系统词表；
+      `audio` 空是因为**按功能分桶之后它量的是音频塔 / 音频编码器，而 H3 的 DiT 里
+      没有这种东西** —— 音频在这一份里只以 32 通道的 latent 进出口出现，归 `io_proj`。
+      桶空不补行，照 CLAUDE.md 那条约定；理由写在这里。
       这一格此前不是空的：`context_embedder` 两条曾经落在 `other` 里，
       因为 `io_proj` 的正则认 `text_proj` / `caption_proj` 而 diffusers 把它叫
       `context_embedder`。词表已在 `ebfb3cd` 补上 `\bcontext_embedder\b`，
@@ -537,9 +551,10 @@ bottlenecks:
       如果成立，这是一次性省掉近四成权重搬运的机会，但本仓没有验证过
     quantified: >-
       `params.breakdown.adaln_modulation` 13,055,204,736 / 33,122,992,896 = 39.41%
-      —— 这一轴含 `adaln_proj.linear` + `norm_out.linear` + `time_embedder`；
-      子系统轴的 `modulation` 桶只含 `adaln_proj.linear`，是 13,010,457,600 / 39.28%，
-      两个口径的分解见 `params.counting_note`。
+      —— 含 `adaln_proj.linear` + `norm_out.linear` + `time_embedder`，
+      与 `param_scaling.per_sample` 同一个量，也等于子系统轴 `modulation`
+      13,039,369,728 加 `time_embed` 15,835,008（逐位相等，核对见
+      `params.counting_note`）。
       每层 `adaln_proj.linear` [96768, 2688]，96768 = 18 × 5376 = 3 模态 × 6 组调制
     fix: >-
       先验「预计算后实际驻留多少」再谈收益。**不要用 33B − 13B = 20B 当结论** ——
