@@ -77,8 +77,10 @@ lineage:
       text: BF16 直接发布，config 没有 quantization_config，963 个条目全是 BF16
       benefit: >-
         没有量化 scale 容器、没有低位打包，所以条目数即张量数、numel 即参数数。
-        同代另有 AWQ / GPTQ-Int4/Int8 / GGUF 发布，但那是同一份权重的再发布，
-        本仓不单独立记录
+        同代另有 AWQ / GPTQ-Int4/Int8 发布，但**量化对象不是这份权重** —— 那三个官方仓
+        挂在 Qwen1.5-72B-Chat 下，而本记录跟的是 Base。AWQ 那一档的参数量与 Base 分毫不差，
+        所以收进来逐位对账会通过、错误完全隐形；逐仓判据写在
+        quantization.official_variants_excluded。GGUF 不在来源阶梯上
     - axis: decoding
       text: 没有 MTP 草稿块（config 无相关键，层号止于 79）
       benefit: >-

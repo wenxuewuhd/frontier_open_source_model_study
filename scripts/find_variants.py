@@ -17,6 +17,13 @@
 **宁可漏不可误**：漏了由人补，误了会把一个社区仓写进「厂商官方发布」。
 所以输出永远要人过一遍，不要拿它直接落库。
 
+**跑干净了不等于外面没有。** 判据是「同 org + 主仓名加后缀」，所以厂商把量化仓挂在
+**另一个名字**的 checkpoint 下时，下面两节都看不见它：qwen2.5-14b-1m 跟的是
+`Qwen/Qwen2.5-14B-Instruct-1M`，而官方量化仓叫 `Qwen/Qwen2.5-14B-Instruct-AWQ` ——
+不以主仓名开头，于是连「兄弟 checkpoint」那一节也不列（那节同样要求主仓名前缀）。
+那两条是人翻模型卡翻出来的，不是这里查出来的。**一次空输出只说明
+「这个名字下没有带后缀的官方仓」，不说明「厂商没发过量化权重」。**
+
 用法:
   .venv/bin/python scripts/find_variants.py                 # 全仓 57 份
   .venv/bin/python scripts/find_variants.py --id qwen3.5-27b
@@ -114,6 +121,12 @@ def variants_for(repo, names):
         tail = name[len(repo):]
         if any(tail.endswith(s) for s in SKIP):
             continue
+        # 另一种产物（llama.cpp / Apple MLX / ONNX），不是 safetensors 低位打包。
+        # **名字里带就跳过，不只看结尾** —— 通义的 MLX 档叫 `-MLX-4bit`，结尾是位宽，
+        # 哪天有人往 SUFFIX_DTYPE 里加一条 `-4bit`，它就会被当成一个 INT4 safetensors
+        # 仓收进来。上面那张 SKIP 只比结尾，拦不住这个形状。
+        if any(s in tail for s in ("-MLX", "-GGUF", "-ONNX")):
+            continue
         for sfx, dt in SUFFIX_DTYPE:
             if tail.lower() == sfx.lower():
                 hits.append((name, dt, sfx))
@@ -185,12 +198,17 @@ def main():
             flag = "+" if v["dtype"] not in r["recorded"] else " "
             dec = "" if v["dtype"] in r["declared"] else "   ← weights_release 里没有"
             print(f"      {flag} {v['dtype']:<10} {v['repo']}{dec}")
-    sib_rows = [r for r in rows if r["siblings"] and not r["variants"]]
+    # **自己有变体不代表旁边没有陷阱。** 这里原来写 `and not r["variants"]`，
+    # 于是恰好在最要紧的那种形状上哑掉：一份记录既有自己的官方量化仓、边上又有个
+    # 同前缀的兄弟量化仓时，上面那节打出 `ok`，兄弟那几个一个字都不出现。
+    # 实测被盖住两处 —— glm-4.5 边上的 `GLM-4.5-Air-FP8`、qwen3-235b-a22b 边上的
+    # 两个 `-2507-FP8`，而本仓没有 Air / 2507 的记录，也就是说那三个仓谁都没在看。
+    sib_rows = [r for r in rows if r["siblings"]]
     if sib_rows:
-        print(f"\n--- 另有 {len(sib_rows)} 份：官方量化仓挂在**兄弟 checkpoint** 下，"
+        print(f"\n--- {len(sib_rows)} 份记录的边上有：官方量化仓挂在**兄弟 checkpoint** 下，"
               f"量化的不是本记录跟的这一份权重 ---")
         print("    结构相同、参数量相同，所以逐位对账会通过 —— 收进来错误完全隐形。")
-        print("    只列不收，怎么记由人定。")
+        print("    只列不收，怎么记由人定。这几份可能同时出现在上面（自己也有变体仓）。")
         for r in sib_rows:
             print(f"    {r['id']:<22} 本记录跟 {r['repo']}")
             for v in r["siblings"]:

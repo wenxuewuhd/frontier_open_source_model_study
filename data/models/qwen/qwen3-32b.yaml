@@ -175,7 +175,12 @@ precision:
     subsystem_method: >-
       来自完整权重清单（17 分片 707 条目）逐项统计，非抽样：每个条目都带 shape 与 dtype，
       failed_shards 为空，707 条全是 BF16。这一代没有 quantization_config；
-      同代另有 FP8 / AWQ / GPTQ / GGUF 发布，是同一份结构的再发布，本仓不另录
+      同代另有 FP8 / AWQ / GGUF / MLX 发布。FP8 与 AWQ 两个官方仓本轮已逐张量取过，
+      落在 quantization.official_variants 里 —— **上面这张表不受影响**，它的口径只能是
+      hf.repo 那一份权重；GGUF 与 MLX 是另一种产物，不在来源阶梯上。
+      **这里原先还写着一档 GPTQ，查无此仓**：Qwen org 下 Qwen3-32B 前缀只有
+      AWQ / FP8 / GGUF / MLX（bf16、8bit、6bit、4bit）七个（2026-10-31 查），
+      那一档大概是把社区仓算进来了
 
     official_variants:
       - dtype: INT4

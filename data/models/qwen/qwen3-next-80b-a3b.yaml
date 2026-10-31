@@ -308,7 +308,9 @@ precision:
       failed_shards 为空，75944 条全是 BF16 —— **包括 A_log 与 linear_attn.norm**。
       这一点要记住：Qwen3.5 一代把这两类升成了 F32，Qwen3.6 又回到 BF16，
       所以「线性注意力的衰减参数是什么精度」每代都要重测。
-      这一代没有 quantization_config；同代另有 FP8 与 GGUF 发布，本仓不另录
+      这一代没有 quantization_config；同代另有 FP8 与 GGUF 发布。FP8 那个官方仓本轮
+      已逐张量取过，落在 quantization.official_variants 里 —— **上面这张表不受影响**，
+      它的口径只能是 hf.repo 那一份权重；GGUF 不在来源阶梯上，不录
 
     official_variants:
       - dtype: FP8_E4M3

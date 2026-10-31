@@ -200,7 +200,11 @@ precision:
     subsystem_method: >-
       来自完整权重清单（118 分片 36945 条目）逐项统计，非抽样：每个条目都带 shape 与 dtype，
       failed_shards 为空，36945 条全是 BF16。这一代没有 quantization_config；
-      同代另有 FP8 / GPTQ-Int4 / GGUF 发布，是同一份结构的再发布，本仓不另录
+      同代另有 FP8 / GPTQ-Int4 / GGUF 发布。FP8 与 GPTQ-Int4 两个官方仓本轮已逐张量取过，
+      落在 quantization.official_variants 里 —— **上面这张表不受影响**，它的口径只能是
+      hf.repo 那一份权重；GGUF 不在来源阶梯上，不录。另有 Instruct-2507 / Thinking-2507
+      两个刷新 checkpoint 各自的 -FP8 仓，**量化对象不是本记录跟的这份权重**，
+      只在 scripts/find_variants.py 的「兄弟 checkpoint」一节列出，不收
 
     official_variants:
       - dtype: INT4
