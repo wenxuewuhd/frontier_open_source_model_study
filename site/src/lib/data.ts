@@ -511,6 +511,116 @@ export const DTYPE_CELL: Record<string, { short: string; cls: string }> = {
 export const dtypeCell = (d?: string | null) =>
   DTYPE_CELL[d ?? ''] ?? { short: '?', cls: 'dt-other' };
 
+/**
+ * 每元素位宽，用来回答「这两档谁更低」。和 scripts/lib/dtypes.py 的 BYTES 同一套事实，
+ * 两边各写一份是有意的 —— TS 侧只需要比大小，不需要字节账；要的是**别在这里重算字节**。
+ *
+ * **MIXED 不在表里，而且必须不在。** 它不是一档精度，是「这一桶内部不止一种」；
+ * 给它安一个位宽就会让它参与比较，于是一个桶会因为「混了」而被判成比 FP8 更低或更高。
+ * 查不到位宽的一律视为「比不出来」，由调用方决定怎么处置（见 lowestOf）。
+ */
+export const DTYPE_BITS: Record<string, number> = {
+  FP32: 32, TF32: 32,
+  BF16: 16, FP16: 16,
+  FP8_E4M3: 8, FP8_E5M2: 8, MXFP8: 8, HIF8: 8, FP8_E8M0: 8, INT8: 8, UINT8: 8,
+  FP6: 6,
+  FP4: 4, MXFP4: 4, NVFP4: 4, HIF4: 4, INT4: 4,
+};
+
+/** 厂商另发在独立仓里的官方量化变体（precision.quantization.official_variants）。 */
+export interface OfficialVariant {
+  dtype: string;
+  repo: string;
+  rev?: string;
+  origin: 'native' | 'post_quantized';
+  tensor_count?: number;
+  params_total?: number;
+  weight_bytes_total?: number;
+  per_subsystem?: Record<string, string>;
+  per_subsystem_block?: Record<string, string>;
+  per_subsystem_scale?: Record<string, string>;
+  per_subsystem_schemes?: Record<string, any[]>;
+  method?: string;
+  note?: string;
+}
+
+export const officialVariants = (m: Model): OfficialVariant[] =>
+  ((m.precision?.quantization?.official_variants ?? []) as OfficialVariant[]);
+
+/** 一个子系统的精度出自哪里：主仓那一份，还是某个另发的量化仓。 */
+export interface PrecisionSource {
+  dtype: string;
+  /** 主仓时是 hf.repo；变体时是那个变体的仓 */
+  repo?: string;
+  /** native＝厂商原生发布/训练出来的精度；post_quantized＝同一份权重的事后再量化 */
+  origin: 'native' | 'post_quantized';
+  block?: string;
+  scale?: string;
+  schemes?: any[];
+  /** 主仓那一份。主仓的精度按定义是原生的 —— 那就是厂商发布的这个模型本身 */
+  fromMain: boolean;
+  /** 其余官方仓在这一格给出的别的精度，用来在 tooltip 里说明「另一个仓不是这个数」 */
+  others: { dtype: string; repo: string }[];
+}
+
+/**
+ * 这一格取「**厂商官方发布过的最低精度**」，而不是只看主仓。
+ *
+ * 为什么换口径：主仓口径下 Qwen 13 份记录逐子系统实测全是 BF16，精度页是一面绿墙 ——
+ * 而厂商每一代旗舰都另发官方 FP8 仓、好几代还有 GPTQ-Int4。那不是「没量化」，
+ * 是本仓的取数口径比厂商的发布窄一圈（model-audit 规则 11：锚在内侧只守得住一半）。
+ *
+ * **逐格取最低，不是整行取一个仓**，因为「位宽最低的仓」不等于「量化得最彻底的仓」：
+ * Qwen3.5-27B 的 GPTQ-Int4 仓只碰稠密 FFN，而 FP8 仓把注意力（99.6%）与草稿块（87.6%）
+ * 也压到了 8 bit。整行只认 Int4 仓的话，注意力那一格仍画 BF16 —— 绿墙只掉了一格。
+ * **代价是一行可能横跨两个仓，于是这一行不对应任何一个能下载的权重**，
+ * 所以每一格都带着自己的来源（repo + origin），页脚也写明这件事。
+ *
+ * MIXED 这类比不出位宽的值：不参与「谁更低」，但在没有任何可比值时照原样留下 ——
+ * 否则一个「桶内两种精度」的格子会被静默换成别的仓的某一档。
+ */
+export function lowestOf(m: Model, key: string): PrecisionSource | undefined {
+  const q = m.precision?.quantization ?? {};
+  const mainDtype = (q.per_subsystem ?? {})[key];
+  const cands: PrecisionSource[] = [];
+  if (mainDtype) {
+    cands.push({
+      dtype: String(mainDtype),
+      repo: m.hf?.repo,
+      origin: 'native',
+      block: (q.per_subsystem_block ?? {})[key],
+      scale: (q.per_subsystem_scale ?? {})[key],
+      schemes: (q.per_subsystem_schemes ?? {})[key],
+      fromMain: true,
+      others: [],
+    });
+  }
+  for (const v of officialVariants(m)) {
+    const d = (v.per_subsystem ?? {})[key];
+    if (!d) continue;
+    cands.push({
+      dtype: String(d),
+      repo: v.repo,
+      origin: v.origin,
+      block: (v.per_subsystem_block ?? {})[key],
+      scale: (v.per_subsystem_scale ?? {})[key],
+      schemes: (v.per_subsystem_schemes ?? {})[key],
+      fromMain: false,
+      others: [],
+    });
+  }
+  if (!cands.length) return undefined;
+  const bits = (c: PrecisionSource) => DTYPE_BITS[c.dtype] ?? Infinity;
+  // 全都比不出位宽（整列 MIXED）时退回主仓那一条 —— cands[0] 就是它
+  const best = cands.reduce((a, b) => (bits(b) < bits(a) ? b : a), cands[0]);
+  return {
+    ...best,
+    others: cands
+      .filter((c) => c !== best && c.dtype !== best.dtype && c.repo)
+      .map((c) => ({ dtype: c.dtype, repo: c.repo! })),
+  };
+}
+
 export const KV_BASIS_LABEL: Record<string, string> = {
   theoretical_floor: '理论下限',
   vendor_declared: '厂商公布',
@@ -672,8 +782,39 @@ export const TRACKED_FIELDS: TrackedField[] = [
       const b = KV_BASIS_LABEL[kv.bytes_basis];
       return `${fmtInt(Math.round(kv.per_token_bytes))} B${b ? `（${b}）` : ''}`;
     } },
+  // 厂商另发的官方量化仓。**一行而不是逐子系统 14 行**：逐格的值已经进了精度页的
+  // 网格，这里要答的是另一个问题 —— 这一代厂商多发了哪几档、是原生还是事后量化。
+  // 两件事分开，矩阵里才看得出「上一代只有 FP8、这一代多了 Int4」这种发布策略的变化。
+  // diff: 'both-measured' —— 缺值是「这一份还没把厂商的另发仓读进来」，不是「厂商取消了」。
+  // 没有这个守卫，一份已录的记录后面跟一份未录的，矩阵里会印出
+  // 「INT4（事后量化），FP8_E4M3（事后量化）→ 取消」—— 那是本仓的调研进度，
+  // 被渲染成了厂商的发布策略变化。全仓 23 份要补，中间态会持续一阵子
+  { key: 'official_variants', label: '另发的官方量化仓', axis: 'precision', group: 'precision',
+    diff: 'both-measured',
+    get: (m) => {
+      const vs = officialVariants(m);
+      if (!vs.length) return undefined;
+      return vs
+        .slice()
+        .sort((a, b) => (DTYPE_BITS[a.dtype] ?? 99) - (DTYPE_BITS[b.dtype] ?? 99))
+        .map((v) => `${v.dtype}（${ORIGIN_LABEL[v.origin] ?? v.origin}）`)
+        .join('，');
+    } },
   ...subsystemFields(),
 ];
+
+/**
+ * 原生发布 vs 事后再量化。**这个区别不能省。**
+ *
+ * DeepSeek 主仓的 FP4、MiniMax-M3.1-Flash 主仓的 NVFP4 是厂商原生发布/训练出来的精度；
+ * 通义的 GPTQ-Int4、智谱的独立 FP8 仓是同一份权重的事后再量化。
+ * 两者在同一张网格里不加区分地并列，跨家族横着看就会被当成同一个工程事实 ——
+ * 一个是「这一代的权重就长这样」，另一个是「这一代的权重还是 BF16，厂商另外提供了一份压过的」。
+ */
+export const ORIGIN_LABEL: Record<string, string> = {
+  native: '原生发布',
+  post_quantized: '事后量化',
+};
 
 /**
  * 逐子系统的实测精度，每个子系统一行，格子里是「权重精度 / scale 精度」。
@@ -685,7 +826,10 @@ export const TRACKED_FIELDS: TrackedField[] = [
 function subsystemFields(): TrackedField[] {
   return SUBSYSTEMS.map((s) => ({
     key: `sub_${s.key}`,
-    label: `${s.label}（实测）`,
+    // 「主仓实测」而不是「实测」：精度页的网格逐格取「厂商官方发布过的最低精度」
+    // （含另发的量化仓），而这一行永远只说 hf.repo 那一份权重。
+    // 两处都叫「实测」的话，同一个子系统在两张表上给出两个值而读者不知道差在哪
+    label: `${s.label}（主仓实测）`,
     axis: 'precision',
     group: 'precision' as const,
     diff: 'both-measured' as const,

@@ -8,7 +8,8 @@
               derived 的字段不允许手写；judgement 的字段列出来给人看
   3. 防泄漏   公开仓里不允许出现 visibility: internal 或 source.type: self
   4. 声明对账 precision.weights_release 里声明的每种精度，都要在实测清单里出现，
-              或者在 weights_release_scope 里交代清楚它在哪个仓 / 装在哪种容器里
+              或者在 weights_release_scope 里交代清楚它在哪个仓 / 装在哪种容器里；
+              另发量化仓的 official_variants 还要与主仓逐位对账（同一份权重的两种存法）
   5. 缺值三态 每一个会渲染成空格子的列，都要能说出自己是「没查」「不适用」
               还是「查了但没有」（data/schema/columns.json 的声明；第三态是信息，
               前两态是缺口，渲染成同一个 `—` 就等于把信息和缺口混为一谈）
@@ -163,6 +164,84 @@ def check_scope_coherence(doc, path, errors):
                 f"in_precision_table: true 说实测值进了逐子系统精度表，"
                 f"而 manifest_taken: false 说本仓没取过这个仓的清单。"
                 f"没有清单就没有实测值，两者不能同时成立")
+
+
+def check_variants(doc, path, derived_dir, errors):
+    """precision.quantization.official_variants：每一条都要和主仓对得上。
+
+    这个字段把精度页的取数口径从「主仓那一份权重」扩到「厂商官方发布过的最低精度」，
+    所以它一错，页面就会把一个不存在的权重画成事实。四件事在这里查：
+
+    **一·dtype 要在 weights_release 里。** 变体写了 INT4 而发布形态那一列没有 INT4，
+    两处就在说不同的话，而页面从两处分别取数（色块从变体取、「发布形态」列从
+    weights_release 取），读者会看到同一行自相矛盾。
+
+    **二·repo 不能等于 hf.repo。** 相同说明它不是独立变体，这条记录该直接走
+    per_subsystem；留在这里会让页面把主仓的精度标成「另发的仓」。
+
+    **三·params_total 必须等于 derived.from_shapes.params_total。**
+    这是全场唯一的硬锚：量化仓与主仓是**同一份权重的两种存法**，逐位相同是可验证的
+    事实（Qwen3.5-27B 的 BF16 / FP8 / GPTQ-Int4 三仓都是 27,781,427,952，逐子系统七桶全对）。
+    不等就说明归类或打包因子错了 —— 而本仓的教训是这种错**页面上看不出来**：
+    8 个 INT4 打包进一个 I32，少了 INT32 这一档整条 MoE 静默少算 8 倍。
+    对账的另一侧取 derived（提交过的），不是 facts/（在 gitignore 里，CI 上没有）。
+
+    **四·per_subsystem 的键要是真子系统。** 写错一个键，那一格在页面上静默消失，
+    而「没有这块权重」和「键打错了」渲染成同一个样子。
+
+    **这道闸锚在哪一侧、因此守不住什么**（model-audit 规则 11）：它锚在**本仓已有的
+    主仓实测**上，所以查得出「这条变体的归类/打包算错了」，查不出**「厂商还发了别的仓
+    而这里没列」** —— 后者正是这个字段要补的那个盲区，而它自己补不了自己。
+    外侧的锚只有厂商的发布清单 / HF 的仓列表，那是取数，不是校验。
+    """
+    q = ((doc.get("precision") or {}).get("quantization") or {})
+    variants = q.get("official_variants") or []
+    if not variants:
+        return
+    mid = doc.get("id")
+    wr = {str(x).upper() for x in ((doc.get("precision") or {}).get("weights_release") or [])}
+    main_repo = str((doc.get("hf") or {}).get("repo") or "")
+    subs = {s["key"] for s in json.load(open(os.path.join(
+        os.path.dirname(derived_dir), "schema", "subsystems.json")))["subsystems"]}
+    dp = os.path.join(derived_dir, f"{mid}.json")
+    want = None
+    if os.path.exists(dp):
+        try:
+            want = ((json.load(open(dp)) or {}).get("from_shapes") or {}).get("params_total")
+        except (ValueError, OSError):
+            want = None
+
+    seen = set()
+    for v in variants:
+        v = v or {}
+        dt = str(v.get("dtype") or "")
+        tag = f"{path}: precision.quantization.official_variants[{dt or '?'}]"
+        if dt.upper() not in wr:
+            errors.append(
+                f"{tag} 的 dtype 不在 precision.weights_release（{sorted(wr)}）里。"
+                f"色块从这里取数、「发布形态」那一列从 weights_release 取数，"
+                f"两处对不上会让同一行自相矛盾")
+        if dt.upper() in seen:
+            errors.append(f"{tag} 这个 dtype 出现了两次 —— 页面取「最低精度」时"
+                          f"不知道该用哪一条")
+        seen.add(dt.upper())
+        if main_repo and str(v.get("repo") or "") == main_repo:
+            errors.append(
+                f"{tag} 的 repo 就是 hf.repo（{main_repo}）—— 那不是另发的变体，"
+                f"主仓的精度走 per_subsystem，留在这里会被页面标成「另发的仓」")
+        got = v.get("params_total")
+        if want and got is not None and abs(float(got) - float(want)) >= 1:
+            errors.append(
+                f"{tag} 的 params_total {int(got):,} 与主仓 derived 的 "
+                f"{int(want):,} 不等（差 {int(got) - int(want):+,}）。量化仓与主仓是"
+                f"同一份权重的两种存法，逐位相同；不等说明子系统归类或打包因子错了 —— "
+                f"用 scripts/variant_precision.py 重算，别手改这个数")
+        bad = sorted(set(v.get("per_subsystem") or {}) - subs)
+        if bad:
+            errors.append(
+                f"{tag} 的 per_subsystem 里有不认识的子系统键 {bad}"
+                f"（合法键见 data/schema/subsystems.json）。写错的键在页面上静默消失，"
+                f"和「这一代没有这块权重」长得一样")
 
 
 def _root(data_dir):
@@ -925,6 +1004,7 @@ def main():
         check_release_vs_measured(doc, p, os.path.join(args.data_dir, "derived"), errors)
         check_speedup_baseline(doc, p, errors)
         check_scope_coherence(doc, p, errors)
+        check_variants(doc, p, os.path.join(args.data_dir, "derived"), errors)
         check_absence_resolves(doc, p, os.path.join(args.data_dir, "derived"),
                                errors, warnings, gaps)
     check_review_pointers(loaded, errors, warnings)

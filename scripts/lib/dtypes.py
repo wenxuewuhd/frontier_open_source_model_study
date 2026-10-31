@@ -88,7 +88,15 @@ def packing_factor(logical_dtype: str, container_dtype: str) -> int:
 
 # scale 容器的叶名。各代不一样：ds-v3 一代是 weight_scale_inv，V4 一代改成了 scale
 # （见 ds-v4-flash.yaml 的 lineage 条目）。另两个是旧代码按子串判断时写的变体。
-_SCALE_LEAVES = {"scale", "scale_inv", "weight_scale", "weight_scale_inv"}
+#
+# **scales / qzeros 是 GPTQ 那一套的量化参数**（autogptq 的叶名，复数、带 q 前缀，
+# 和上面四个一个都配不上）。两者都是「每 group 一个值」的量化参数而不是模型参数：
+# Qwen3.5-27B-GPTQ-Int4 里 scales 是 133,693,440 个 F16、qzeros 是 16,711,680 个
+# 打包进 I32 的零点。不排掉它们，参数量会比主仓多出 1.5 亿，而两个仓本该逐位相同 ——
+# 真实情况正是如此：排掉之后 27,781,427,952 与主仓分毫不差。
+# HF 自己的 tally 也排掉它们（那份只报 I32 / BF16 / F32 三档，F16 的 scales 根本不出现）。
+_SCALE_LEAVES = {"scale", "scale_inv", "weight_scale", "weight_scale_inv",
+                 "scales", "qzeros"}
 
 
 def is_scale_tensor(name: str, dtype: str) -> bool:
@@ -113,7 +121,11 @@ def is_scale_tensor(name: str, dtype: str) -> bool:
 # 打包权重配一个 weight_shape（I32 [2]，记打包前的逻辑形状）。它占字节，但既不是
 # 参数也不是 scale —— HF 的 tally 把它排除在外，本仓原先按叶名白名单算进了参数。
 # 单张量只有 2 个元素，但 69120 个张量就是 138,240，对账差不上。
-_METADATA_LEAVES = {"weight_shape"}
+#
+# g_idx 是 GPTQ 的 group 索引（I32 [in_features]，desc_act 为 false 时是恒等排列）。
+# 它和 scales / qzeros 不同档：那两个是量化参数，这个是重排下标 —— 所以归元数据。
+# 两类的字节都算、参数都不算，分开只为「scale_elements 这个对账量别混进索引」。
+_METADATA_LEAVES = {"weight_shape", "g_idx"}
 
 
 def is_metadata_tensor(name: str, dtype: str = "") -> bool:

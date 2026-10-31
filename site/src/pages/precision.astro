@@ -2,8 +2,23 @@
 /**
  * 精度演进：各家族逐代的**落盘精度**怎么变。
  *
+ * **口径（2026-10-31 改）：逐格取「厂商官方发布过的最低精度」，不再只看主仓。**
+ * 原先每一格都来自 `precision.quantization.per_subsystem`，而那个字段的口径是
+ * `hf.repo` 那一份权重 —— 它是 derive.py 识别打包用的承重件，不能换。
+ * 后果是 Qwen 13 份记录逐子系统实测全是 BF16，这一页画出来是一面绿墙，
+ * 而厂商每一代旗舰都另发官方 FP8 仓、好几代还有 GPTQ-Int4。
+ * 那不是「通义没量化」，是本仓的取数口径比厂商的发布窄一圈
+ * （model-audit 规则 11：锚在内侧的闸只守得住一半）。
+ * 现在每一格在主仓与 `precision.quantization.official_variants` 之间取位宽最低的那一档，
+ * 并把来源（哪个仓、原生还是事后量化）带在格子上 —— 判据与取舍见 lib/data 的 lowestOf。
+ *
+ * **原生发布与事后再量化必须分得开。** DeepSeek 主仓的 FP4、MiniMax-M3.1-Flash 主仓的
+ * NVFP4 是厂商原生发布/训练出来的精度；通义的 GPTQ-Int4、智谱的独立 FP8 仓是同一份权重的
+ * 事后再量化。不加区分地并列，跨家族横着看会把它们当成同一个工程事实。
+ * 所以事后量化的色块**画斜纹**，页首那三档统计也分两套数，不混成一个。
+ *
  * 主语是**子系统**，不是发布形态。两者回答的是不同问题：
- *   子系统   —— 模型内部哪一块被量化了（`precision.quantization.per_subsystem`，48/48 全有）
+ *   子系统   —— 模型内部哪一块被量化了（主仓 per_subsystem + 另发量化仓的逐仓实测）
  *   发布形态 —— 厂商对外发了哪几种精度（`precision.weights_release`，41/48）
  * 混在一张表里，读者分不清「这个模型是 FP8 的」说的是它的专家落盘是 FP8，
  * 还是厂商另发了一个 FP8 仓。所以子系统做主表，发布形态做其中一列。
@@ -31,6 +46,7 @@ import Prose from '../components/Prose.astro';
 import {
   families, allModels, url, fmtInt, SUBSYSTEMS, DTYPE_CELL, dtypeCell,
   changesFor, evidenceFor, KV_BASIS_LABEL, TRACKED_FIELDS, type Model,
+  lowestOf, officialVariants, ORIGIN_LABEL, DTYPE_BITS, type PrecisionSource,
 } from '../lib/data';
 import Cell from '../components/Cell.astro';
 // 块格式名的推导只此一份：格子的 badge/title 与 data.ts 里逐子系统的变化行共用，
@@ -55,14 +71,11 @@ const perSub = (m: Model): Record<string, string> =>
 const byShapes = (m: Model): Record<string, number> =>
   (m.derived as any)?.from_shapes?.params_by_subsystem ?? {};
 
-/** 这一格的逐方案实测，按元素数降序 —— **第一条就是主方案**，格子的名字由它推。 */
-const schemesOf = (m: Model, key: string): Scheme[] =>
-  sortSchemes(prec(m).quantization?.per_subsystem_schemes?.[key]);
-
 type Cell =
   /** `shown` 是格子上实际显示的格式名；`derived` 为真表示它是从签名推的，不是记录原值 */
   /** `partial` 为真表示这个名字是从**主方案**推的，只覆盖这一格里占比最大的那一半 */
-  | { kind: 'dtype'; dtype: string; shown: string; derived: boolean; sig?: string; why?: string; mix?: string; partial?: boolean }
+  /** `src` 是这一格的取数来源：哪个仓、原生还是事后量化、别的仓给的是什么 */
+  | { kind: 'dtype'; dtype: string; shown: string; derived: boolean; sig?: string; why?: string; mix?: string; partial?: boolean; src: PrecisionSource }
   | { kind: 'unsurveyed' }
   | { kind: 'not_applicable' };
 
@@ -79,12 +92,14 @@ type Cell =
  * 理由见 NAMED_BLOCK_FORMAT 那段 —— 推导只补空缺。
  */
 function cellFor(m: Model, key: string): Cell {
-  const d = perSub(m)[key];
-  if (d) {
-    const dtype = String(d);
-    const q = prec(m).quantization ?? {};
-    const blk = (q.per_subsystem_block ?? {})[key];
-    const scl = (q.per_subsystem_scale ?? {})[key];
+  // 口径换了：不再直接读主仓的 per_subsystem，而是在主仓与另发的官方量化仓之间
+  // 逐格取位宽最低的那一档（lowestOf）。块、scale、逐方案明细都跟着来源那一份走 ——
+  // 跟错了就会出现「Int4 仓的格子配着主仓的块」这种拼接出来的签名
+  const src = lowestOf(m, key);
+  if (src) {
+    const dtype = src.dtype;
+    const blk = src.block;
+    const scl = src.scale;
     const sig = [dtype, blk ? `块 ${blk}` : '', scl ? `scale ${scl}` : ''].filter(Boolean).join(' · ');
 
     // 两步推导：先按整格的三因子推，推不出再按**主方案**的三因子推（mainFormat）。
@@ -94,17 +109,17 @@ function cellFor(m: Model, key: string): Cell {
     // `draft` 显示裸 FP4，可两格 4 bit 那一半逐因子相同（E2M1 + [1,32] + E8M0），
     // 读者横着看得到的是「草稿换了格式」，一个错结论。
     // 为什么不走「取块字符串末尾那个数」的捷径，见 lib/blockformat 的 blockSize。
-    const sch = schemesOf(m, key);
+    const sch = sortSchemes(src.schemes);
     const whole = blockFormat(dtype, blk, scl);
-    const fromMain = whole ? undefined : mainFormat(dtype, sch);
-    const f = whole ?? fromMain;
+    const fromMainScheme = whole ? undefined : mainFormat(dtype, sch);
+    const f = whole ?? fromMainScheme;
     const mix = mixSummary(sch);
     if (f) {
       return {
-        kind: 'dtype', dtype, shown: f.replace(' 式', ''), derived: true, sig, mix,
+        kind: 'dtype', dtype, shown: f.replace(' 式', ''), derived: true, sig, mix, src,
         // 名字由主方案推出来时必须标上，title 里才会写明它只说那一半 ——
         // 否则 draft 格的 `MX` 会被读成「整个草稿头都是 4 bit」，而它的注意力投影是 FP8
-        partial: !!fromMain,
+        partial: !!fromMainScheme,
       };
     }
     // 推不出名字时要说清是为什么，否则读者只看到一个裸 `FP4` 不知道是漏了还是有意的。
@@ -127,7 +142,7 @@ function cellFor(m: Model, key: string): Cell {
       ? '这个子系统里不止一种块方案（可能还跨不止一种元素格式）'
         + ' —— 没有单一的块格式名，不硬安一个。明细见「量化块 / scale」列'
       : undefined;
-    return { kind: 'dtype', dtype, shown: dtype, derived: false, sig, why, mix };
+    return { kind: 'dtype', dtype, shown: dtype, derived: false, sig, why, mix, src };
   }
   const params = byShapes(m)[key];
   if (params && params > 0) return { kind: 'unsurveyed' };
@@ -167,12 +182,18 @@ function columnsFor(models: Model[]): { open: string[]; folded: string[] } {
   const used = new Set<string>();
   for (const m of models) {
     for (const k of Object.keys(perSub(m))) used.add(k);
+    for (const v of officialVariants(m)) {
+      for (const k of Object.keys(v.per_subsystem ?? {})) used.add(k);
+    }
     for (const [k, v] of Object.entries(byShapes(m))) if (v > 0) used.add(k);
   }
   const all = SUB_ORDER.filter((k) => used.has(k));
+  // 摊开判据跟着口径走：这一格低于 16 bit 说的是「厂商官方发布过的最低精度低于 16 bit」，
+  // 不是「主仓低于 16 bit」。用主仓判的话，Qwen 新亮起来的三列会被折进汇总格 ——
+  // 换了口径却仍按旧口径决定摊开哪几列，结论还是看不见
   const open = all.filter((k) => models.some((m) => {
-    const d = perSub(m)[k];
-    if (d) return BELOW16.has(String(d));
+    const src = lowestOf(m, k);
+    if (src) return BELOW16.has(src.dtype);
     return (byShapes(m)[k] ?? 0) > 0; // 未录
   }));
   if (open.length < MIN_OPEN) return { open: all, folded: [] };
@@ -236,31 +257,70 @@ function lineageOrder(models: Model[]): { m: Model; depth: number }[] {
  * 在页面上打着「未取」、tooltip 写着「本仓没取清单」—— 而那份清单当时已经取过了
  * （facts/minimax-m3-mxfp8，45,838 条）。字段说反话，页面就跟着说反话。
  */
+/**
+ * 这一列同时回答「厂商发了哪几档」和「左边那些色块出自哪个仓」。
+ *
+ * 没有单开一列是有意的：这一页的表已经宽到要横向滚动，而 KV 那一列按文件头的理由
+ * 必须紧跟色块 —— 再插一列就会把它挤出 1024px 的可视区。而且这两件事本来就该并排：
+ * 「官方发了 INT4」和「稠密 FFN 那一格就是从那个 INT4 仓量出来的」是同一句话的两半。
+ */
 function releases(m: Model): {
   dtype: string; taken?: boolean; inTable?: boolean; note?: string;
+  repo?: string; origin?: string; bytes?: number; isMain: boolean;
 }[] {
   const list: string[] = prec(m).weights_release ?? [];
   const scope: Record<string, any> = prec(m).weights_release_scope ?? {};
-  return list.map((d) => ({
-    dtype: String(d),
-    taken: scope[d]?.manifest_taken,
-    inTable: scope[d]?.in_precision_table,
-    note: scope[d]?.note,
-  }));
+  const vars = new Map(officialVariants(m).map((v) => [String(v.dtype), v]));
+  return list.map((d) => {
+    const v = vars.get(String(d));
+    const repo = v?.repo ?? scope[d]?.repo;
+    return {
+      dtype: String(d),
+      taken: scope[d]?.manifest_taken,
+      inTable: scope[d]?.in_precision_table,
+      note: scope[d]?.note,
+      repo,
+      origin: v?.origin,
+      bytes: v?.weight_bytes_total,
+      // 没有独立仓、也没在 scope 里标别的仓 → 它就在主仓里，按定义是原生发布
+      isMain: !v && (!repo || repo === m.hf?.repo),
+    };
+  });
 }
 
-/** 量化块与 scale：只有一部分记录有，没有的照三态走，不留裸 `—`。 */
-function blocks(m: Model): { sub: string; block?: string; scale?: string; fmt?: string }[] {
+/**
+ * 量化块与 scale：只有一部分记录有，没有的照三态走，不留裸 `—`。
+ *
+ * **主仓与每个另发的量化仓各列一段。** 不能把它们合进一张平表：块与 scale 只有和
+ * 「哪个仓的哪个精度」绑在一起才有意义 —— 反量化要照着一组 (dtype, 块, scale) 做，
+ * 拼出来的组合会让人按错的 scale 行数去读权重（本仓的 DeepSeek 一代就差 128 倍）。
+ */
+function blocks(m: Model): {
+  label?: string; repo?: string; origin?: string;
+  rows: { sub: string; block?: string; scale?: string; fmt?: string }[];
+}[] {
+  const pick = (
+    per: Record<string, any>, blk: Record<string, any>, scl: Record<string, any>,
+  ) => {
+    const keys = [...new Set([...Object.keys(blk), ...Object.keys(scl)])];
+    return SUB_ORDER.filter((k) => keys.includes(k)).map((k) => ({
+      sub: k,
+      block: blk[k] ? String(blk[k]) : undefined,
+      scale: scl[k] ? String(scl[k]) : undefined,
+      fmt: blockFormat(per[k], blk[k], scl[k]),
+    }));
+  };
   const q = prec(m).quantization ?? {};
-  const blk: Record<string, any> = q.per_subsystem_block ?? {};
-  const scl: Record<string, any> = q.per_subsystem_scale ?? {};
-  const keys = [...new Set([...Object.keys(blk), ...Object.keys(scl)])];
-  return SUB_ORDER.filter((k) => keys.includes(k)).map((k) => ({
-    sub: k,
-    block: blk[k] ? String(blk[k]) : undefined,
-    scale: scl[k] ? String(scl[k]) : undefined,
-    fmt: blockFormat((q.per_subsystem ?? {})[k], blk[k], scl[k]),
-  }));
+  const out: ReturnType<typeof blocks> = [];
+  const mainRows = pick(q.per_subsystem ?? {}, q.per_subsystem_block ?? {},
+                        q.per_subsystem_scale ?? {});
+  if (mainRows.length) out.push({ rows: mainRows, repo: m.hf?.repo, origin: 'native' });
+  for (const v of officialVariants(m)) {
+    const rows = pick(v.per_subsystem ?? {}, v.per_subsystem_block ?? {},
+                      v.per_subsystem_scale ?? {});
+    if (rows.length) out.push({ label: v.dtype, rows, repo: v.repo, origin: v.origin });
+  }
+  return out;
 }
 
 
@@ -325,22 +385,33 @@ const all = allModels();
 const LOW4 = new Set(['FP4', 'MXFP4', 'NVFP4', 'INT4']);
 const LOW8 = new Set(['FP8_E4M3']);
 const tally: Record<string, number> = {};
-/** 每个子系统：总格数 / 4bit 格数 / 8bit 格数 / FP32 格数 */
-const perSubStat = new Map<string, { n: number; b4: number; b8: number; f32: number }>();
+/** 每个子系统：总格数 / 4bit / 8bit / FP32，低位那两档再按原生与事后量化各记一份 */
+const perSubStat = new Map<string, {
+  n: number; b4: number; b8: number; f32: number; b4n: number; b8n: number;
+}>();
 let cells = 0;
+/** 事后量化贡献的低位格数 —— 和原生那些**不能合并成一个数**（见文件头） */
+let pqCells = 0;
 for (const m of all) {
-  for (const [k, v] of Object.entries(perSub(m))) {
-    const d = String(v);
+  for (const k of SUB_ORDER) {
+    const src = lowestOf(m, k);
+    if (!src) continue;
+    const d = src.dtype;
+    const nat = src.origin === 'native';
     tally[d] = (tally[d] ?? 0) + 1;
     cells += 1;
-    const st = perSubStat.get(k) ?? { n: 0, b4: 0, b8: 0, f32: 0 };
+    if (!nat) pqCells += 1;
+    const st = perSubStat.get(k) ?? { n: 0, b4: 0, b8: 0, f32: 0, b4n: 0, b8n: 0 };
     st.n += 1;
-    if (LOW4.has(d)) st.b4 += 1;
-    if (LOW8.has(d)) st.b8 += 1;
+    if (LOW4.has(d)) { st.b4 += 1; if (nat) st.b4n += 1; }
+    if (LOW8.has(d)) { st.b8 += 1; if (nat) st.b8n += 1; }
     if (d === 'FP32') st.f32 += 1;
     perSubStat.set(k, st);
   }
 }
+/** 另发官方量化仓的记录数与仓数 —— 页首要先交代这一页现在从几处取数 */
+const varModels = all.filter((m) => officialVariants(m).length > 0);
+const varRepos = varModels.reduce((n, m) => n + officialVariants(m).length, 0);
 const tallyRows = Object.entries(tally).sort((a, b) => b[1] - a[1]);
 const stat = [...perSubStat.entries()];
 const subs4 = stat.filter(([, s]) => s.b4 > 0).sort((a, b) => b[1].b4 - a[1].b4);
@@ -372,6 +443,16 @@ const shortName = (m: Model, label: string) =>
     逻辑精度与容器也是两件事：MXFP4 装在 UINT8 里，清单上看到的是容器，
     这里报的是<strong>逻辑精度</strong>。
   </p>
+  <p class="small muted">
+    取数范围：每一格取<strong>厂商官方发布过的最低精度</strong>，在模型主仓与厂商另发的
+    官方量化仓之间逐格比位宽。全仓 {all.length} 份里 {varModels.length} 份有另发的量化仓，
+    共 {varRepos} 个仓逐仓取过清单。<b>只看主仓会把结论反过来</b> ——
+    通义 13 份记录的主仓逐子系统实测全是 BF16，而厂商每一代旗舰都另发官方 FP8 仓、
+    好几代还有 GPTQ-Int4。<strong>代价是一行可能横跨两个仓</strong>：
+    Qwen3.5-27B 的稠密 FFN 取自 GPTQ-Int4 仓、注意力取自 FP8 仓，
+    所以<b>这一行不对应任何一个能下载的权重</b>，每一格的来源写在它自己的悬停提示和
+    「精度来源」列里。<b>斜纹的格子是事后再量化</b>，不是厂商原生发布的落盘精度。
+  </p>
 
   <div class="callout">
     <p>
@@ -381,12 +462,22 @@ const shortName = (m: Model, label: string) =>
     <p>
       <b>4 bit 只出现在 {subs4.length} 个子系统上</b>：
       {subs4.map(([k, s], i) => (
-        <>{i > 0 && '、'}<b>{SUB_LABEL[k] ?? k}</b>（{s.b4}/{s.n}）</>
+        <>{i > 0 && '、'}<b>{SUB_LABEL[k] ?? k}</b>（{s.b4}/{s.n}
+          {s.b4 > s.b4n && <>，其中 <b>{s.b4 - s.b4n} 格是事后量化</b></>}）</>
       ))}，别处一次都没有。
       FP8 铺得广一些，另外还到了
       {subs8only.map(([k, s], i) => (
-        <>{i > 0 && '、'}{SUB_LABEL[k] ?? k}（{s.b8}/{s.n}）</>
+        <>{i > 0 && '、'}{SUB_LABEL[k] ?? k}（{s.b8}/{s.n}
+          {s.b8 > s.b8n && <>，其中 {s.b8 - s.b8n} 格是事后量化</>}）</>
       ))}。
+    </p>
+    <p class="small">
+      <strong>括号里的「事后量化」不是旁注，是两种不同的工程事实。</strong>
+      {fmtInt(pqCells)} 格（共 {fmtInt(cells)} 格）的最低精度来自厂商另发的量化仓 ——
+      那一代的权重本身还是 BF16，厂商另外提供了一份压过的。
+      DeepSeek 主仓的 FP4、MiniMax-M3.1-Flash 主仓的 NVFP4 是另一回事：
+      <b>权重发出来就是那个精度</b>。合成一个数会让「这一代做到了 4 bit 训练/发布」
+      和「这一代另发了一个 4 bit 量化版」看起来一样。
     </p>
     <p>
       <b>这 {subsNever.length} 个子系统跨全部记录从没低于 16 bit</b>：
@@ -409,6 +500,7 @@ const shortName = (m: Model, label: string) =>
     {Object.keys(DTYPE_CELL).map((d) => (
       <span><i class={`sw ${dtypeCell(d).cls}`}>{dtypeCell(d).short}</i>{d}</span>
     ))}
+    <span><i class="sw dt-fp4 pq">I4</i>斜纹＝事后再量化的另发仓，非原生发布的落盘精度</span>
     <span><i class="sw dt-fp4 drv">MX</i>底部虚线＝名字由签名推出，非记录原值</span>
     <span><i class="sw dt-fp4">4</i>裸 FP4＝元素是 E2M1，但块布局不是单一有名格式</span>
     <span><i class="sw abs">·</i>不适用（这一代没有这块权重，或根本不建 KV）</span>
@@ -467,11 +559,18 @@ const shortName = (m: Model, label: string) =>
                       const c = cellFor(m, k);
                       if (c.kind === 'dtype') {
                         const cell = dtypeCell(c.shown);
+                        const pq = c.src.origin === 'post_quantized';
                         return (
                           <td class="sub">
                             <i
-                              class={`sw ${cell.cls}${c.derived ? ' drv' : ''}`}
+                              class={`sw ${cell.cls}${c.derived ? ' drv' : ''}${pq ? ' pq' : ''}`}
                               title={`${SUB_LABEL[k] ?? k}：${c.sig}`
+                                + `\n→ 取自 ${c.src.fromMain ? '模型主仓' : '另发的官方量化仓'} `
+                                + `${c.src.repo ?? '（仓未记）'}（${ORIGIN_LABEL[c.src.origin]}）`
+                                + (pq ? `\n→ 事后再量化：这一代的权重本身不是这个精度，厂商另发了一份压过的` : '')
+                                + (c.src.others.length
+                                  ? `\n→ 其余官方仓在这一格是：${c.src.others.map((o) => `${o.dtype}（${o.repo}）`).join('、')}`
+                                  : '')
                                 + (c.derived ? `\n→ ${c.shown}（由「元素 + 块 + scale」签名推出，记录只给了 ${c.dtype}）` : '')
                                 + (c.partial ? `\n→ 这个名字只说主方案那一半，不是整格` : '')
                                 + (c.mix ? `\n→ 逐方案（按元素占比）：${c.mix}` : '')
@@ -527,6 +626,20 @@ const shortName = (m: Model, label: string) =>
                           {r.inTable === false && r.taken !== true && (
                             <span class="muted" title="厂商发了，本仓没取过这个仓的清单">未取</span>
                           )}
+                          {/* 原生与事后量化在这里也要分得开：只标在色块上的话，
+                              「厂商发了 INT4」这一行看起来就像这一代的权重是 INT4 的 */}
+                          {r.origin && (
+                            <span
+                              class={r.origin === 'post_quantized' ? 'pqtag' : 'muted'}
+                              title={`${r.repo}${r.bytes ? ` · 落盘 ${fmtInt(r.bytes)} B` : ''}`
+                                + (r.origin === 'post_quantized'
+                                  ? '\n事后再量化：同一份权重的另一种存法（逐子系统参数量与主仓逐位相同）'
+                                  : '\n厂商原生发布/训练出来的精度')}
+                            >{ORIGIN_LABEL[r.origin]}</span>
+                          )}
+                          {!r.origin && r.isMain && (
+                            <span class="muted" title={`就在模型主仓 ${m.hf?.repo ?? ''} 里 —— 厂商原生发布的落盘精度`}>主仓</span>
+                          )}
                         </div>
                       )) : <span class="absent unsurveyed">未录</span>}
                     </td>
@@ -534,18 +647,26 @@ const shortName = (m: Model, label: string) =>
                         344px 宽，折起来省出的正是 KV 列要的空间 */}
                     <td class="small basis">
                       {blk.length
-                        ? <details><summary>{blk.length} 块</summary>
-                            {blk.map((b) => (
-                              <div class="small">
-                                {SUB_LABEL[b.sub] ?? b.sub}
-                                {b.block && <> <code>{b.block}</code></>}
-                                {b.scale && <> · scale <code>{b.scale}</code></>}
-                                {b.fmt && (
-                                  <b class="fmt" title="由「块 + scale」签名推出，不是记录的 dtype 字段">
-                                    {b.fmt}
-                                  </b>
-                                )}
-                              </div>
+                        ? <details><summary>{blk.reduce((n, g) => n + g.rows.length, 0)} 块</summary>
+                            {blk.map((g) => (
+                              <>
+                                <div class="small muted blkhead" title={g.repo}>
+                                  {g.label ? `${g.label} · ` : '主仓 · '}
+                                  {g.origin ? ORIGIN_LABEL[g.origin] ?? g.origin : ''}
+                                </div>
+                                {g.rows.map((b) => (
+                                  <div class="small">
+                                    {SUB_LABEL[b.sub] ?? b.sub}
+                                    {b.block && <> <code>{b.block}</code></>}
+                                    {b.scale && <> · scale <code>{b.scale}</code></>}
+                                    {b.fmt && (
+                                      <b class="fmt" title="由「块 + scale」签名推出，不是记录的 dtype 字段">
+                                        {b.fmt}
+                                      </b>
+                                    )}
+                                  </div>
+                                ))}
+                              </>
                             ))}
                           </details>
                         : <span class="absent unsurveyed">未录</span>}
@@ -619,6 +740,16 @@ const shortName = (m: Model, label: string) =>
       而两者签名相同（<code>[1,32]</code> + E8M0）—— 这个差是厂商之差，不是本仓之差。
     </p>
     <p class="small">
+      <strong>一行可能横跨两个仓，所以它不对应任何一个能下载的权重。</strong>
+      每一格取的是「厂商官方发布过的最低精度」，逐格比 —— 因为<b>位宽最低的仓不等于
+      量化得最彻底的仓</b>：Qwen3.5-27B 的 GPTQ-Int4 仓只碰稠密 FFN，而同代的 FP8 仓
+      把注意力与草稿块也压到了 8 bit。整行只认一个仓，另一个仓压过的那几格就还画着 BF16。
+      代价是这一行成了一条「包络」。每一格的来源在它自己的悬停提示里（哪个仓、
+      原生还是事后量化、其余官方仓在这一格是什么），整份名单在「发布形态」那一列。
+      <b>逐仓的实测口径一致</b>：每个量化仓都逐张量读过清单，逐子系统参数量与主仓
+      逐位相同才落库（<code>scripts/validate.py</code> 的 <code>check_variants</code> 守这一条）。
+    </p>
+    <p class="small">
       <strong>训练精度这一列没有</strong>：{trainDeclared} 份有。厂商公布的
       <code>torch_dtype</code> 说的是发布权重的格式，不是训练时用的数值格式，
       两者不能互相代替 —— 所以这一列是空的，而不是填上 BF16。空列不画，
@@ -664,6 +795,27 @@ const shortName = (m: Model, label: string) =>
      「MX 是厂商说的还是我们推的」就看不出来了 */
   .sw.drv { box-shadow: inset 0 -2px 0 0 color-mix(in oklab, var(--dt-ink) 70%, transparent); }
 
+  /* 事后再量化：斜纹。
+     为什么是图案而不是另一种颜色或另一个字母 —— 色相已经被「位宽」占满了
+     （四种 4 bit 共用一个色槽），再加一档颜色会让读者在图例里找一档不存在的精度；
+     而字母位只有 1–2 格宽，`I4` 已经满了。
+     图案是这张表上唯一还空着的那根轴，而且它在**横着扫**的时候最显眼 ——
+     「跨家族横着看会把原生发布和事后量化当成同一个工程事实」正是要防的那件事。
+     叠在 background 之上用 background-image，所以不碰 dt-* 那些色槽。 */
+  .sw.pq {
+    background-image: repeating-linear-gradient(
+      135deg,
+      transparent 0 2px,
+      color-mix(in oklab, var(--dt-ink) 45%, transparent) 2px 3.5px
+    );
+  }
+  .pqtag {
+    font-size: 11px;
+    margin-left: 4px;
+    color: var(--judgement);
+    border-bottom: 1px dotted var(--judgement);
+  }
+
   .sw.abs { background: none; border: 1px solid var(--line); color: var(--ink-3); }
   .sw.uns { background: none; border: 1px dashed var(--ink-3); color: var(--ink-3); }
 
@@ -705,6 +857,9 @@ const shortName = (m: Model, label: string) =>
   td.basis { max-width: 22ch; }
   td.basis summary { cursor: pointer; white-space: nowrap; }
   td.basis details[open] { max-width: 60ch; white-space: normal; }
+
+  .blkhead { margin-top: 4px; font-size: 10.5px; }
+  .blkhead:first-child { margin-top: 0; }
 
   .rel { font-size: 12.5px; white-space: nowrap; }
   .rel .ok { color: var(--accent); font-size: 11px; margin-left: 4px; }

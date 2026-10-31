@@ -9,6 +9,7 @@ import {
   allModels, modelById, url, fmtCount, fmtBytes, fmtInt, fmtSci, FAMILY_LABEL,
   reviewStatus, SEVERITY_LABEL, RESOLUTION_LABEL, HORIZON_LABEL, SUBSYSTEMS,
   kvCachePrecision, KV_BASIS_LABEL, evidenceFor,
+  officialVariants, ORIGIN_LABEL,
 } from '../../lib/data';
 
 const SUBSYSTEM_LABEL: Record<string, string> = Object.fromEntries(
@@ -414,7 +415,7 @@ const rv = reviewStatus(m);
         { label: '权重元素格式', value: q.weight_format, path: 'precision.quantization', mono: true },
         { label: 'scale 格式', value: q.scale_format, path: 'precision.quantization', mono: true },
         {
-          label: '分子系统精度（实测）',
+          label: '分子系统精度（主仓实测）',
           // 权重精度与 scale 精度要并排看：FP4 权重配 FP8_E8M0 的 scale，
           // 只看一个会让反量化实现猜错 scale 张量的大小
           value: q.per_subsystem
@@ -458,6 +459,67 @@ const rv = reviewStatus(m);
               }`}
               {sc?.note ? <> —— <Prose text={sc.note} /></> : null}
             </p>
+          ))}
+        </div>
+      )
+    }
+    {/* 厂商另发在独立仓里的官方量化变体，逐仓逐张量实测。
+        **为什么单成一段，而不是并进上面那张「分子系统精度」。** 那一行的口径是
+        hf.repo 那一份权重 —— 它是 derive.py 识别打包用的承重件，不能换；
+        而精度演进页逐格取「厂商官方发布过的最低精度」，取数就来自下面这几条。
+        两处给出不同的值是对的，所以必须让读者看见第二份在哪、测自哪个仓。
+        **原生发布与事后再量化分开标**：同一张表里不加区分地并列，
+        「这一代的权重就是 4 bit」和「这一代另发了一个 4 bit 量化版」看起来一样。 */}
+    {
+      officialVariants(m).length > 0 && (
+        <div style="margin-top:14px">
+          <div class="small">
+            <strong>另发的官方量化仓（逐仓实测）</strong>
+            <Evidence tag={evidenceFor('precision.quantization.official_variants', ev)} />
+            <span class="muted"> · 口径与上面那行不同：上面是模型主仓，下面逐条是各自那个仓</span>
+          </div>
+          {officialVariants(m).map((v) => (
+            <div class="card" style="margin-top:8px">
+              <div class="small">
+                <strong>{v.dtype}</strong>
+                <span class="muted"> · {ORIGIN_LABEL[v.origin] ?? v.origin}</span>
+                {' · '}<code>{v.repo}</code>
+                {v.rev && <span class="muted"> @ {v.rev}</span>}
+              </div>
+              <Facts
+                evidence={ev}
+                rows={[
+                  {
+                    label: '逐子系统精度',
+                    value: Object.entries(v.per_subsystem ?? {})
+                      .map(([k, d]) => {
+                        const sc = v.per_subsystem_scale?.[k];
+                        const bk = v.per_subsystem_block?.[k];
+                        return `${SUBSYSTEM_LABEL[k] ?? k} ${d}`
+                          + `${sc ? ` / ${sc}` : ''}${bk ? ` / ${bk}` : ''}`;
+                      })
+                      .join('，'),
+                    path: 'precision.quantization.official_variants',
+                  },
+                  { label: '张量数', value: v.tensor_count ? fmtInt(v.tensor_count) : undefined,
+                    path: 'precision.quantization.official_variants', mono: true },
+                  // 参数量与主仓逐位相同是**可验证的事实**，不是巧合：同一份权重的两种存法。
+                  // 印出来是为了让读者自己和上面「参数量」那节对一眼 —— validate 的
+                  // check_variants 守这一条，但闸口绿了不等于读者看过
+                  { label: '参数量（还原打包）',
+                    value: v.params_total ? `${fmtInt(v.params_total)}（与主仓逐位相同）` : undefined,
+                    path: 'precision.quantization.official_variants', mono: true },
+                  { label: '权重存储',
+                    value: v.weight_bytes_total
+                      ? `${fmtBytes(v.weight_bytes_total)}（${fmtInt(v.weight_bytes_total)} B）`
+                      : undefined,
+                    path: 'precision.quantization.official_variants', mono: true },
+                  { label: '实测方式', value: v.method,
+                    path: 'precision.quantization.official_variants' },
+                ]}
+              />
+              {v.note && <p class="small muted"><Prose text={v.note} /></p>}
+            </div>
           ))}
         </div>
       )

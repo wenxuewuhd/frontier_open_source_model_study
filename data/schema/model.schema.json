@@ -75,6 +75,26 @@
         "INT8", "INT4", "UINT8",
         "FP8_E8M0", "MIXED"
       ]
+    },
+    "subsystem_schemes": {
+      "type": "object",
+      "description": "一个子系统内部的逐量化方案。形状提到 $defs 是因为它现在有两个用处：主仓的 precision.quantization.per_subsystem_schemes，和每个 official_variants 条目里的同名键。两处各写一份就会在加字段时只改一边",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dtype", "tensors", "elements"],
+          "properties": {
+            "dtype": { "$ref": "#/$defs/dtype" },
+            "block": { "type": "string", "description": "这一方案的实测块，形如 [1,32]。未量化的档（BF16 / FP32）不填" },
+            "scale_dtype": { "$ref": "#/$defs/dtype" },
+            "tensors": { "type": "integer", "description": "落在这一方案里的权重张量条数（清单实测）" },
+            "elements": { "type": "integer", "description": "还原打包后的元素数。占比由页面按合计算，不在这里记派生值" }
+          }
+        }
+      },
+      "propertyNames": { "type": "string" }
     }
   },
 
@@ -832,7 +852,7 @@
               },
               "in_precision_table": {
                 "type": "boolean",
-                "description": "这个变体的实测值进没进本记录的逐子系统精度表（precision.quantization.per_subsystem 那一套）。**scripts/validate.py 的 check_release_vs_measured 认的是这一个**：它查「声明了某精度、而本记录 derived 的 weight_bytes_by_dtype 里没有」，false 就是对这种缺席的正当交代。为真而 manifest_taken 为假是自相矛盾 —— 没取过清单不可能有实测值进表，那道闸会报"
+                "description": "这个变体的实测值进没进本记录的逐子系统精度表。**2026-10-31 起「精度表」有两个来源**：主仓那一份是 precision.quantization.per_subsystem，厂商另发的量化仓逐仓记在 precision.quantization.official_variants 里 —— 两者都喂精度演进页，所以一个变体进了 official_variants 就算进了表，这个布尔跟着为真。\n\n**scripts/validate.py 的 check_release_vs_measured 认的是这一个**：它查「声明了某精度、而本记录 derived 的 weight_bytes_by_dtype 里没有」（derived 只覆盖主仓），false 是对这种缺席的正当交代；为真则必须拿得出证据 —— official_variants 里要有一条同 dtype 的、其 per_subsystem 里真的出现了这个精度，否则照旧报错。**光把布尔翻成 true 不算交代**，那只是换了个地方说谎。\n\n为真而 manifest_taken 为假是自相矛盾 —— 没取过清单不可能有实测值进表，check_scope_coherence 会报"
               },
               "repo": {
                 "type": "string",
@@ -909,28 +929,50 @@
               "description": "对应子系统的 scale 张量精度。和权重精度是两个值：V4 的专家权重是 FP4、scale 是 FP8_E8M0，只报一个会让反量化实现猜错"
             },
             "per_subsystem_schemes": {
-              "type": "object",
-              "additionalProperties": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "required": ["dtype", "tensors", "elements"],
-                  "properties": {
-                    "dtype": { "$ref": "#/$defs/dtype" },
-                    "block": { "type": "string", "description": "这一方案的实测块，形如 [1,32]。未量化的档（BF16 / FP32）不填" },
-                    "scale_dtype": { "$ref": "#/$defs/dtype" },
-                    "tensors": { "type": "integer", "description": "落在这一方案里的权重张量条数（清单实测）" },
-                    "elements": { "type": "integer", "description": "还原打包后的元素数。占比由页面按合计算，不在这里记派生值" }
-                  }
-                }
-              },
+              "$ref": "#/$defs/subsystem_schemes",
               "description": "**只给 per_subsystem_block 里带 + 的那些子系统填**，把「哪个块配哪个元素格式」从散文提成数据。\n\n没有这一层时页面只能看到「一个元素格式 + 两个块」，配不起来，于是对 draft 这类格子放弃推块格式名 —— 结果是 expert 显示 MXFP4、draft 显示裸 FP4，而两者 4 bit 那一半的签名其实逐因子相同，读者横着看会得出「草稿换了格式」这个错结论。\n\n**按元素数降序排，第一条就是主方案**，页面拿它的三因子去推名字。未量化的档也要列进来，否则占比合不上 100%，读者看到 95.5% + 4.0% 会以为漏了。\n\n`elements` 是还原打包后的数（FP4 装在 INT8 里要 ×2），逐张量从清单算，不抄 config。",
               "propertyNames": { "type": "string" }
             },
             "subsystem_method": {
               "type": "string",
-              "description": "这组实测值是怎么来的（全量清单 / 抽样读了几个分片）。抽样只能回答精度，不能用于参数量统计"
+              "description": "这组实测值是怎么来的（全量清单 / 抽样读了几个分片）。抽样只能回答精度，不能用于参数量统计。**口径是 hf.repo 那一份权重**，厂商另发的量化仓逐仓记在 official_variants 里"
+            },
+            "official_variants": {
+              "type": "array",
+              "description": "厂商另发在**独立仓**里的官方量化变体，逐仓逐张量实测。\n\n**为什么不能把它们填进 per_subsystem。** 那个字段是承重件：derive.py 拿它当 `logical` 去识别打包（packing_factor），而它读的清单是 hf.repo 那一份。把低精度仓的值填进去，参数量就按一份不存在的权重还原 —— 本仓有过教训（往 draft 格填 MIXED 让打包还原失效、静默少算 68 亿参数且不报警）。所以两件事两个地方：per_subsystem 永远说主仓，official_variants 逐条说各自那个仓。\n\n**为什么必须有这个字段。** model-audit 规则 11：锚在内侧的闸只守得住一半 —— weights_release 那道闸查得出「记录声明了而主仓清单里没有」，查不出「厂商发了而记录压根没声明」。通义每一代旗舰都另发官方 FP8 仓、好几代还有 GPTQ-Int4 / AWQ，而 13 份 Qwen 记录逐子系统实测全是 BF16，精度页画出来是一面绿墙 —— 声明与实测完全自洽，闸全绿。这个字段把锚换到外侧（厂商的发布清单）。\n\n**HF 的汇总数不能当来源。** `?expand[]=safetensors` 对 GPTQ 仓给的数既不是容器数也不是参数数：Qwen3.5-27B-GPTQ-Int4 报 `I32 17,112,760,320`，而清单里 I32 的真实 numel 是 2,157,576,192；那个 171 亿是 qweight 还原打包后的逻辑参数数（×8），挂在容器 dtype 名下，同时折掉 qzeros、整类丢掉 F16 的 scales。必须逐张量读 —— `scripts/variant_precision.py` 做这件事，并把逐子系统参数量与主仓对账（同一份权重的两种存法，必须逐位相同；不同就非零退出）。",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["dtype", "repo", "origin", "per_subsystem", "method"],
+                "properties": {
+                  "dtype": {
+                    "$ref": "#/$defs/dtype",
+                    "description": "这一档在 weights_release / weights_release_scope 里的键。两处必须对得上，由 scripts/validate.py 的 check_variants 查"
+                  },
+                  "repo": { "type": "string", "description": "这个变体所在的 HF 仓。与 hf.repo 不同是常态 —— 相同就说明它不是独立变体，不该出现在这里" },
+                  "rev": { "type": "string", "description": "取数时钉的 commit 短 sha。不钉的话清单换了也看不出来" },
+                  "origin": {
+                    "description": "**这一档是厂商原生发布/训练出来的精度，还是同一份权重的事后再量化。**\n\nnative：厂商就是以这个精度发布/训练的这份权重（DeepSeek 主仓的 FP4、MiniMax-M3.1-Flash 主仓的 NVFP4 都属于这一类，不过它们在主仓里、不进这个数组）。\npost_quantized：厂商拿已有的 BF16 权重事后再量化发了一个仓（通义的 GPTQ-Int4、智谱的独立 FP8 仓）。\n\n**两者不能在同一张网格里不加区分地并列** —— 跨家族横着看会把它们当成同一个工程事实。判据不是名字：事后量化的硬证据是「逐子系统参数量与主仓逐位相同 + 仓里带 quantization_config」，Qwen3.5-27B 的三个仓都是 27,781,427,952，逐子系统七桶全对。精度页据此给事后量化的色块画斜纹。",
+                    "enum": ["native", "post_quantized"]
+                  },
+                  "tensor_count": { "type": "integer", "description": "这个仓的张量条数。和主仓不同是正常的：GPTQ 每个被量化的权重拆成 qweight / scales / qzeros / g_idx 四条" },
+                  "params_total": {
+                    "type": "integer",
+                    "description": "还原打包后的逻辑参数总量。**这是对账锚**：与 derived.from_shapes.params_total 必须相等，由 scripts/validate.py 的 check_variants 查。不等说明归类或打包因子错了，而错了之后页面上看不出来"
+                  },
+                  "weight_bytes_total": { "type": "integer", "description": "这个仓的落盘字节（含 scale 与格式元数据，不还原打包 —— 容器就是真实存储）" },
+                  "per_subsystem": {
+                    "type": "object",
+                    "additionalProperties": { "$ref": "#/$defs/dtype" },
+                    "description": "这个仓的逐子系统**逻辑**精度（qweight 的 I32 容器已按 config 的 bits 还原成 INT4）。键用 data/schema/subsystems.json 里的 key，口径与主仓的 per_subsystem 同一套归类（scripts/lib/subsystems.py）"
+                  },
+                  "per_subsystem_block": { "type": "object", "additionalProperties": { "type": "string" }, "description": "这个仓的实测量化块，形如 [1,128]（沿 out, 沿 in）。**不抄 config** —— GPTQ 的块由 scales 形状量出（qweight 的逻辑 in 维 ÷ scales 的组数），FP8 的 tile 由 weight_scale_inv 的两维量出" },
+                  "per_subsystem_scale": { "type": "object", "additionalProperties": { "$ref": "#/$defs/dtype" }, "description": "这个仓的 scale 张量精度。GPTQ 的 scales 常是 F16，和主干权重的 BF16 不是一套" },
+                  "per_subsystem_schemes": { "$ref": "#/$defs/subsystem_schemes", "description": "桶内不止一种精度时的逐方案明细，口径同主仓的同名字段" },
+                  "method": { "type": "string", "description": "这一仓的实测是怎么来的（几分片几张量、怎么对账、块与 scale 凭什么形状量出来的）" },
+                  "note": { "type": "string" }
+                }
+              }
             }
           }
         },

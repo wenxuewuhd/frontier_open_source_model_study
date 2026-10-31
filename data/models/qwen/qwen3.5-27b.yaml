@@ -370,15 +370,22 @@ precision:
   weights_release_scope:
     BF16: { manifest_taken: true, in_precision_table: true }
     FP8_E4M3:
-      manifest_taken: false
-      in_precision_table: false
+      manifest_taken: true
+      in_precision_table: true
       repo: Qwen/Qwen3.5-27B-FP8
-      note: 厂商另发的独立仓，本仓没有取过权重清单；本记录的实测口径只覆盖主仓
+      note: >-
+        厂商另发的独立仓，本轮取了完整清单（1,606 个张量），逐子系统实测落在
+        quantization.official_variants 里 —— 精度表的第二个来源。
+        **主仓的 per_subsystem 不受影响**：那个字段是 derive.py 识别打包用的承重件，
+        口径只能是 hf.repo 那一份权重
     INT4:
-      manifest_taken: false
-      in_precision_table: false
+      manifest_taken: true
+      in_precision_table: true
       repo: Qwen/Qwen3.5-27B-GPTQ-Int4
-      note: 厂商另发的独立仓，本仓没有取过权重清单；本记录的实测口径只覆盖主仓
+      note: >-
+        厂商另发的独立仓，清单已取（1,775 个张量，R10），本轮把逐子系统实测
+        落进 quantization.official_variants。**这两个布尔原先都是 false，而 R10 那一轮
+        早已取过清单** —— 字段落在了散文后面没跟上，正是「说反话的字段比留空更坏」那一条
   quantization:
     per_subsystem:
       attention: BF16
@@ -404,9 +411,102 @@ precision:
       **本轮补取了 Int4 仓的 config（见 sources[2]）**：GPTQ、bits 4、group_size 128、
       sym、desc_act false，而它的逐 dtype tally 说明**只量化了主干稠密 FFN**
       （I32 17,112,760,320 与本记录的 dense_ffn 逐位相同），注意力 / 视觉塔 / 草稿块 /
-      词表仍 BF16。FP8 仓的 config 没取（同代旗舰那份取了，见 qwen3.8-2.4t-a95b 的
-      sources —— 那一代 FP8 只量化路由专家，本档是稠密 FFN 档，不能照搬）。
-      两个仓都没取清单，所以本记录不填 per_subsystem_block 之类的实测量化块
+      词表仍 BF16。
+      **这一段的口径是主仓那一份权重。** 主仓没有 quantization_config，所以这里
+      per_subsystem_block / per_subsystem_scale 不填 —— 不是没查，是主仓真没有量化块。
+      厂商另发的 FP8 与 GPTQ-Int4 两个仓**逐仓实测在 official_variants 里**，
+      块与 scale 记在各自那一条下面
+    official_variants:
+      # 按元素位宽升序列（最低的在前）。精度页逐格取「厂商官方发布过的最低精度」，
+      # 所以这个顺序只是给人读的，页面不依赖它。
+      - dtype: INT4
+        repo: Qwen/Qwen3.5-27B-GPTQ-Int4
+        rev: 8f0c09f227ae
+        origin: post_quantized
+        tensor_count: 1775
+        params_total: 27781427952
+        weight_bytes_total: 30235043808
+        per_subsystem:
+          attention: BF16
+          dense_ffn: INT4
+          draft: BF16
+          vision: BF16
+          embed: BF16
+          lm_head: BF16
+          norm: MIXED
+        per_subsystem_block:
+          dense_ffn: '[1,128]'
+        per_subsystem_scale:
+          dense_ffn: FP16
+        method: >-
+          完整清单逐项统计（11 分片 1,775 条目，failed_shards 为空），非抽样。
+          **逐子系统参数量与主仓逐位相同，七桶零例外**，合计同为 27,781,427,952 ——
+          这是「同一份权重的两种存法」的硬证据，也是把 origin 判成 post_quantized 的判据
+          （另一半判据是仓里带 quantization_config）。
+          **参数量不能照抄 HF 的 tally**：它报 `I32 17,112,760,320`，而清单里 I32 的
+          真实 numel 是 2,157,576,192 —— 那个 171 亿是 192 个 `qweight` 还原打包后的
+          逻辑参数数（2,139,095,040 × 8），挂在容器 dtype 的名下，同时把 `qzeros`
+          （16,711,680 个 I32 零点）折掉、把 `scales`（133,693,440 个 **F16**）整类丢掉。
+          所以那个数既不是容器数也不是参数数，两种读法都解释不通，只能逐张量读。
+          量化只覆盖主干稠密 FFN 的 192 个投影（64 层 × 3），**草稿块的那 3 个没量化**；
+          注意力 / 视觉塔 / 两份词表全留 BF16。
+          块由形状量出、不抄 config：gate/up 的 qweight [640, 17408] 还原后逻辑 in = 5120
+          而 scales [40, 17408]，5120 / 40 = 128；down 的 [2176, 5120] → 逻辑 in 17408
+          而 scales [136, 5120]，17408 / 136 = 128。沿 in 单轴分组、每个 out 通道一组，
+          所以写成 [1,128]。
+          落盘 30,235,043,808 B（28.16 GiB），主仓 55,562,872,800 B（51.75 GiB），1.838×
+          —— 只有 1.84 倍是因为降到 4 bit 的那 171 亿只占参数量的 61.6%。
+          norm 一项标 MIXED 与主仓同口径（48 条 F32 + 161 条 BF16，这个仓没动它们）
+      - dtype: FP8_E4M3
+        repo: Qwen/Qwen3.5-27B-FP8
+        rev: 97f5941bf617
+        origin: post_quantized
+        tensor_count: 1606
+        params_total: 27781427952
+        weight_bytes_total: 30866680160
+        per_subsystem:
+          attention: FP8_E4M3
+          dense_ffn: FP8_E4M3
+          draft: FP8_E4M3
+          vision: BF16
+          embed: BF16
+          lm_head: BF16
+          norm: MIXED
+        per_subsystem_block:
+          attention: '[128,128]'
+          dense_ffn: '[128,128]'
+          draft: '[128,128]'
+        per_subsystem_scale:
+          attention: BF16
+          dense_ffn: BF16
+          draft: BF16
+        per_subsystem_schemes:
+          attention:
+            - { dtype: FP8_E4M3, block: '[128,128]', scale_dtype: BF16, tensors: 208, elements: 7214202880 }
+            - { dtype: BF16, tensors: 192, elements: 25561344 }
+            - { dtype: FP32, tensors: 48, elements: 2304 }
+          draft:
+            - { dtype: FP8_E4M3, block: '[128,128]', scale_dtype: BF16, tensors: 7, elements: 372244480 }
+            - { dtype: BF16, tensors: 8, elements: 52454912 }
+        method: >-
+          完整清单逐项统计（11 分片 1,606 条目，failed_shards 为空），非抽样。
+          **逐子系统参数量与主仓逐位相同，七桶零例外**，合计同为 27,781,427,952。
+          这个仓的覆盖面**比 Int4 仓宽得多，而元素位宽更高** —— 两件事要一起看，
+          否则「最低精度仓」会被读成「量化得最彻底的仓」：
+          Int4 仓只碰稠密 FFN，这个仓把注意力（99.6%）与草稿块（87.6%）也压到了 FP8。
+          attention 报 FP8_E4M3 而 per_subsystem_schemes 列全三档：FP8 的是 48 层线性
+          注意力的 in_proj_qkv / in_proj_z / out_proj 与 16 层全注意力的 q/k/v/o
+          （208 张，7,214,202,880），BF16 holdout 是 48 层的 conv1d / in_proj_a /
+          in_proj_b / dt_bias（192 张，25,561,344），F32 仍是 A_log（48 张，2,304）。
+          **holdout 不是推断，是 config 的 modules_to_not_convert 逐条点名的**，
+          与清单逐张量对得上。draft 的 BF16 那一截是 mtp.fc（52,428,800）加五个 norm，
+          同样在 modules_to_not_convert 里；embed_tokens / lm_head / 整个视觉塔也在那张名单上。
+          块由形状量出：down_proj 权重 [5120, 17408] 配 weight_scale_inv [40, 136]，
+          5120 / 40 = 17408 / 136 = 128，两维都分块，所以是 [128,128]（不是 Int4 那种单轴 group）。
+          落盘 30,866,680,160 B（28.75 GiB），1.800× —— **比 Int4 仓还大 6.31 亿字节**：
+          FP8 把 FFN 压到 8 bit 而 Int4 压到 4 bit，这一块的差（8.5 GB）盖过了
+          FP8 在注意力上多省的那 7.2 GB。所以「最低位宽」与「最小落盘」在本档同向
+          （Int4 仓两项都更低），但**不是同一个判据**，别处可能分叉
 
 platforms:
   - engine: transformers
@@ -514,6 +614,7 @@ evidence:
   precision.weights_release_scope: judgement
   precision.quantization.per_subsystem: derived
   precision.quantization.subsystem_method: derived
+  precision.quantization.official_variants: derived
   platforms: official
   bottlenecks: judgement
   infra_signals: judgement
@@ -788,3 +889,44 @@ review:
       所以「config 的量化块不可信」要改成「**必须实测，但它也可能是对的**」——
       实测的价值在于把它从声明变成事实，不在于一定能抓到错
     resolution: confirmed
+  - id: R11
+    field: precision.quantization.official_variants
+    severity: missing
+    claim: >-
+      精度页逐格画的是**主仓那一份权重**的落盘精度，而 `weights_release_scope` 的
+      两个布尔对 FP8 / Int4 两档都填 false
+    finding: >-
+      **一·口径太窄，窄到把结论反过来。** Qwen 13 份记录逐子系统实测全是 BF16，
+      精度页画出来是一面绿墙 —— 而厂商每一代旗舰都另发官方 FP8 仓、这一代还有 GPTQ-Int4。
+      本档的两个官方量化仓逐张量读下来：Int4 仓把稠密 FFN（171 亿，占参数量 61.6%）
+      压到 4 bit，FP8 仓把注意力（99.6%）与草稿块（87.6%）压到 8 bit。
+      这是 model-audit 规则 11 那个盲区的实例：声明与实测完全自洽、闸全绿，
+      而「厂商发了而记录压根没把它读进来」查不出来。
+      **二·两个布尔在说反话。** R10 那一轮已经取过 Int4 仓的完整清单（1,775 个张量），
+      而 `manifest_taken` 还是 false —— 散文更新了、字段没跟上。
+      **三·HF 的汇总数不能当来源。** 原先 sources[2] 与 subsystem_method 都引
+      `I32 17,112,760,320` 作为「只量化了稠密 FFN」的依据，而清单里 I32 的真实 numel
+      是 2,157,576,192。那个 171 亿是 192 个 qweight 还原打包后的**逻辑参数数**
+      （2,139,095,040 × 8），挂在容器 dtype 名下，同时折掉 qzeros、整类丢掉 F16 的
+      scales。结论碰巧是对的（它确实等于 dense_ffn），但**依据是错的** ——
+      既不是容器数也不是参数数，而本仓的坑恰恰叫「numel 是容器数不是参数数」，
+      这是它的第三种变体
+    resolution: corrected
+    changed_to: >-
+      新增 `precision.quantization.official_variants`：两个官方量化仓逐仓逐张量实测，
+      各带 repo / rev / origin / 逐子系统精度 / 块 / scale / 对账数。
+      **`per_subsystem` 一个字不动** —— 它是 derive.py 识别打包的承重件
+      （`logical` → `packing_factor`），读的清单是 hf.repo 那一份，
+      换成低精度仓的值就会按一份不存在的权重还原参数量。
+      两档的 `manifest_taken` / `in_precision_table` 翻成 true，
+      而 `scripts/validate.py` 的 `check_release_vs_measured` 随之收紧：
+      翻布尔必须拿得出证据（official_variants 里有同 dtype 的一条、其 per_subsystem
+      里真的出现了这个精度），光填 true 照旧报错。
+      新增 `check_variants` 四查：dtype 要在 weights_release 里、repo 不能等于 hf.repo、
+      **params_total 必须等于主仓 derived 的 params_total**、per_subsystem 的键要合法。
+      取数由新脚本 `scripts/variant_precision.py` 做，对账不过就非零退出；
+      `lib/dtypes.py` 补认 GPTQ 的三个叶名（scales / qzeros 归量化参数，g_idx 归元数据）——
+      不排掉它们，参数量会比主仓多出 1.5 亿，而两个仓本该逐位相同。
+      **原生发布与事后再量化分开**：每条变体带 `origin`，本档两档都是 post_quantized
+      （判据：逐子系统参数量与主仓逐位相同 + 仓里带 quantization_config），
+      精度页据此给这些色块画斜纹，不与 DeepSeek 主仓的 FP4 那类原生精度并列

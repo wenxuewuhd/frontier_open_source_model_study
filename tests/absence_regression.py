@@ -281,10 +281,17 @@ def _():
     # 但没进 per_subsystem 表）与三份通义变体。LTX 两份进来之后是六份。
     # 闸口照旧放行（它们有 scope），这条查的是更底下那一层：
     # 摘掉交代之后还认不认得出来。
+    #
+    # **2026-10-31 起「交代」有两种。** 精度页的取数口径从「主仓那一份权重」扩到
+    # 「厂商官方发布过的最低精度」，于是一个变体可以不靠 scope 的布尔、而靠
+    # precision.quantization.official_variants 里的**实测值**为自己的缺席作证
+    # （那份缺席只是「主仓的 derived 直方图里没有」，而它本来就不该有）。
+    # 所以这条用例两样都摘：摘完还报错的，才是真正「只能靠 scope 交代」的那些。
     need, missing = [], []
     for mid, d in RECS.items():
         bare = copy.deepcopy(d)
         bare.get("precision", {}).pop("weights_release_scope", None)
+        (bare.get("precision", {}).get("quantization") or {}).pop("official_variants", None)
         if not release_errors(bare):
             continue
         need.append(mid)
@@ -300,13 +307,48 @@ def _():
                 f"{mid} 的 {prec} 档缺两个布尔之一 —— 一个布尔装不下两件事"
 
 
-@case("三·负例：把 scope 摘掉，那一份立刻报错")
+@case("三·负例：把两种交代都摘掉，那一份立刻报错")
 def _():
-    # 这四份是全仓真正「声明了而清单里没有」的，交代摘掉就该拦住
+    # 这四份是全仓真正「声明了而主仓清单里没有」的，交代摘掉就该拦住。
+    # **两种交代都要摘**：scope 的布尔，和 official_variants 里的实测值 ——
+    # 后者是 2026-10-31 新增的第二种，只摘前一种的话这条用例会在
+    # qwen3.5-27b 上静默失效（它已有逐仓实测，自己就能为缺席作证）
     for mid in ("minimax-m3", "qwen3.5-27b", "qwen3.5-397b-a17b", "qwen3.8-2.4t-a95b"):
         d = copy.deepcopy(RECS[mid])
         d["precision"].pop("weights_release_scope", None)
-        assert release_errors(d), f"{mid} 摘掉 scope 之后应当报错"
+        (d["precision"].get("quantization") or {}).pop("official_variants", None)
+        assert release_errors(d), f"{mid} 摘掉两种交代之后应当报错"
+
+
+@case("三·正例：official_variants 的实测值本身就是交代，不必再靠 scope 的布尔")
+def _():
+    """口径扩到「厂商官方发布过的最低精度」之后新增的一条。
+
+    一个变体在厂商另发的独立仓里，本仓取过那个仓的清单并把逐子系统实测落了库 ——
+    那时它从主仓的 derived 直方图里缺席是**正常的**，不是缺口：主仓根本没有那个精度。
+    所以 official_variants 里有同 dtype 的一条、且那一条的 per_subsystem 里真的
+    出现了这个精度时，闸口放行，不要求 scope 再说一遍。
+    """
+    d = copy.deepcopy(RECS["qwen3.5-27b"])
+    d["precision"].pop("weights_release_scope", None)
+    assert not release_errors(d), \
+        f"逐仓实测在 official_variants 里，这就是交代：{release_errors(d)}"
+
+
+@case("三·负例：official_variants 列了一档却没测出那个精度 —— 不算交代")
+def _():
+    """**判据是实测值，不是「有这么一条」。**
+
+    光把 dtype 写进 official_variants、而那一条的 per_subsystem 里一格都不是这个精度，
+    等于换了个地方说谎 —— 和「标 in_precision_table: true 却查无实据」是同一种错法，
+    所以要用同一种方式挡住。
+    """
+    d = copy.deepcopy(RECS["qwen3.5-27b"])
+    d["precision"].pop("weights_release_scope", None)
+    for v in d["precision"]["quantization"]["official_variants"]:
+        # 精度全改成 BF16：条目还在、dtype 还写着 INT4 / FP8，但一格实测都对不上
+        v["per_subsystem"] = {k: "BF16" for k in (v.get("per_subsystem") or {})}
+    assert release_errors(d), "条目在而实测值不在，必须继续报"
 
 
 @case("三·正例：40 份迁完之后，真实记录一条都不报")
@@ -318,6 +360,9 @@ def _():
 @case("三·负例：只交代一半，剩下那半照旧报")
 def _():
     d = copy.deepcopy(RECS["qwen3.5-27b"])
+    # 这一条查的是 scope 这套机制本身，所以把另一种交代摘掉 ——
+    # 留着的话两档都被 official_variants 的实测值放行，用例就验不到东西了
+    (d["precision"].get("quantization") or {}).pop("official_variants", None)
     d["precision"]["weights_release_scope"] = {
         "FP8_E4M3": {"manifest_taken": False, "in_precision_table": False,
                      "repo": "Qwen/Qwen3.5-27B-FP8"},
