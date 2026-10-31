@@ -471,6 +471,79 @@ precision:
         逐文件读头确认。和 wan 全系一样，发布格式不是部署格式 ——
         `generate.py` 的 `--dtype` 默认就是 `bf16`
   inference_default: BF16
+  # 这一份没有任何量化：15 份组件 config 一个 `quantization_config` 都没有，
+  # 落盘也没有 scale 容器与打包容器。所以 method / weight_block_size /
+  # scale_format / activation_scheme 一律**不填** —— 字段缺席在三态契约里判成
+  # 「未声明」，填一个值等于凭空造出一次量化声明。
+  # per_subsystem 照填：**「全 F32」是结论不是缺口**，而它恰恰是这一份最该被看见的
+  # 那个事实 —— 一套 DiT 33.3 GB，而部署按 `--dtype bf16` 走，落盘与部署差一倍。
+  quantization:
+    per_subsystem:
+      attention: FP32
+      dense_ffn: FP32
+      modulation: FP32
+      time_embed: FP32
+      io_proj: FP32
+      norm: FP32
+      vision: FP32
+      other: FP32
+    subsystem_method: >-
+      **测自 `transformer/720p_t2v` 这一套 checkpoint**，对它的完整权重清单用
+      `scripts/lib/subsystems.py` 的 `classify2()` 逐条分桶统计 ——
+      **穷举，非抽样**：1793 条张量全部参与，`fetched.json` 的 `failed_shards` 为空，
+      逐桶参数量相加 8,326,608,160 与 `params.total` 逐位相同。
+      **1793 条里 1793 条是 F32，一条例外都没有**，所以每一格的 FP32 是全量结论
+      而不是代表值；清单里没有任何 scale 容器、没有任何打包容器，
+      `per_subsystem_scale` 与 `per_subsystem_block` 因此是「不存在」而不是「没测」。
+
+      **为什么必须说明是哪一套**：这个仓有 11 套各 33.3 GB 的完整 DiT，
+      本表与 `params` 量的都是 `720p_t2v`（理由见 `params.counting_note`）。
+      「全 F32」这一句覆盖整个仓 —— 14 个 safetensors 逐文件读头确认，见
+      `weights_release_scope`；**但逐子系统的分桶只在 720p_t2v 上做过**。
+      其中 8 套（含唯一那套稀疏 `720p_i2v_distilled_sparse`）张量数、参数量、
+      字节数三项逐字同形（1793 / 8,326,608,160 / 33,306,432,640），分桶可以照搬；
+      另外 3 套（两个 SR 与 `480p_i2v_step_distilled`，都开 `use_meanflow`）
+      各多 4 个张量 / 约 4.7M 参数，**那 4 条没有逐条取过名字**
+      （4.7M 恰等于 `time_in.mlp` 整套 4,722,688，与 meanflow 要吃两个时间步自洽，
+      但这是推断不是实测）。
+
+      **逐桶实测**（条数 / 参数量，全 F32）：
+      `dense_ffn` 448 / 3,701,559,296；`modulation` 222 / 2,744,414,208；
+      `attention` 872 / 1,846,394,880；`other` 13 / 18,958,368；
+      `time_embed` 4 / 11,538,432；`vision` 8 / 3,696,000；`norm` 226 / 46,976。
+
+      **空桶 11 个，判「不适用」的依据逐条如下**（裸正则在这 1793 个名字上命中 0 次，
+      不只是优先级被抢走）：`expert` / `shared_expert` / `router` —— 稠密 DiT，没有 MoE；
+      `compressor` / `indexer` —— SSTA 的稀疏是从 Q·K 现算的、不带权重，判据是
+      `720p_i2v_distilled_sparse` 与 `720p_i2v_distilled` 的张量数、参数量、字节数
+      三项完全相同，多一个索引器必然同时改这三个数（见 R2）；`retrieval` —— 无检索表；
+      `embed` / `lm_head` —— DiT 既没有 token 词表也没有输出头，出口是
+      `final_layer.linear` [32, 2048]（回到 32 个 latent 通道），归入口/出口投影；
+      `draft` —— 非自回归，没有 MTP / 草稿块；`audio` —— 不生成音频，
+      15 份组件 config 里没有 audio VAE 也没有声码器。
+      `residual` 这一格要读窄一点：**它只说「这个子系统没有权重」，不等于「残差是普通相加」**
+      —— minimax 两份就是系数藏在 config 标量里的非常规残差，照「清单里没张量」
+      推残差形态会推反（这是 `tracking` 侧 C7 那条的同一个坑）。
+
+      **三条生成类新词条在这一份上的落点，与 derived 对不上的地方写在这里。**
+      (1) `time_embed` 这一格量到的只有 `txt_in.c_embedder.linear_1/2`
+      （4 条 / 11,538,432），而 `c_embedder` 是**池化文本投影**不是时间步嵌入 ——
+      入口 3584 正是文本编码器的 hidden。真正的两个时间步嵌入器
+      `time_in.mlp.*` 与 `txt_in.t_embedder.mlp.*`（**8 条 / 9,445,376**，
+      入口都是 256 = 正弦时间步特征）**仍归在 `dense_ffn`**：`time_embed` 词条排在
+      `dense_ffn` 之后，`mlp` 先匹配先得，而 `time_in` 连 `time_embed` 的裸正则都不命中。
+      所以上面 `dense_ffn` 的 3,701,559,296 里含这 8 条。
+      (2) `io_proj` 这一格是**手填的**：该词条的六个模式
+      （patch_embed / proj_in / proj_out / text_proj / caption_proj / unpatchify）
+      在这一份上一条都不命中，入口与出口投影整批落在 `other` ——
+      `txt_in.input_embedder` 7,342,080 + `byt5_in.fc1/2/3` 11,409,408 +
+      `img_in.proj` 135,168 + `final_layer.linear` 65,568 = **18,952,224**，
+      `other` 剩下的 6,144 是 `cond_type_embedding`。
+      **这一格不能留空** —— 留空会被三态契约判成「这个子系统在这个模型里不存在」，
+      而它明明存在；填 FP32 在事实上是对的（那 12 条都是 F32）。
+      代价是这一格与 `derived.from_shapes.params_by_subsystem` 对不上，
+      所以在这里写明。归类该不该改是 `scripts/lib/subsystems.py` 的事，
+      **本记录没碰那个共享文件，已报主会话**（见 R10）
 
 performance:
   # 技术报告 §6 Table 7/8。**这组数能进 performance 的理由是它带基线** ——
@@ -538,7 +611,12 @@ bottlenecks:
       单步线性只有 **6.088e14** —— 按真正逐视频 token 的那 2,727,511,584 参数算，
       不是按全部 8.33B（AdaLN 那 32.71% 是逐样本的，见 R4）。
       **注意力占 90.0%。** 对照 minimax-h3 同口径：72,576 token、注意力占 66.2%。
-      （`data/derived/` 里的数是 74.8% 与 54.2%，那是把 AdaLN 当逐 token 算出来的）
+      **2026-10-31 复核：这一行原先还跟着一句「`data/derived/` 里的数是 74.8% 与
+      54.2%，那是把 AdaLN 当逐 token 算出来的」—— 那句已经过期并删掉了。**
+      `param_scaling` 落地之后 derive 自己算的就是 **89.9% 与 66.2%**（见 R9）。
+      与本行 90.0% 差的那 0.1 个百分点是口径不是误差：本行的线性项 6.088e14
+      只含逐视频 token 那一路，derive 的 6.202e14 另含逐文本 token
+      （2,871,435,648 × 1,985）与逐样本两项。两种读法都对，引的时候说清是哪一种
     fix: >-
       SSTA 就是冲这里来的，**而且报告给了带基线的数**（§6 Table 7，8×H800、
       无工程加速、CFG 蒸馏档、每步秒）：
@@ -745,11 +823,28 @@ review:
       derive 自己知道这件事 —— `end_to_end_terms.note` 写着「各阶段按同一个单步
       FLOPs 估算…这里是粗估，不要当精确值」。**但那条 note 没有渲染到页面上**，
       页面只显示 8.400e17 与求和公式。产物存在、没有消费点
-    resolution: open
+
+      **2026-10-31 复核：共享改法已落地，而本条自己那三个数现在都不对了。**
+      `gen_workload()` 现在逐段按该段自己的 `out_width` / `out_height` 算 token
+      与单步（产物里每段带 `tokens_source: stage`），1080p SR 段记的是 247,163，
+      结构性缺陷已消。而本条写的 7.368e15 / 1.030e18 / 低 18.5% **全是用那个
+      偏高 3.05 倍的线性项算出来的**（见 R4）—— 换成正确的单步之后逐段是：
+      DiT 100×6.118e15 = 6.118e17、720p SR 6×6.118e15 = 3.671e16、
+      1080p SR 8×2.837e16 = 2.270e17，**合计 8.755e17**，与 derive 现值逐位相同。
+      **所以「低 18%」与「真值 1.030e18」两句都要作废**：一句的根因已修，
+      另一句本身是旧线性项的产物。这正是 R4 那个错数字的第二处落点 ——
+      **一个错数字进了记录，会在引用它的地方各长出一份**
+
+      顺带一处小的、未修的：逐段那条线性项只算
+      `per_video_token × 本段 token + per_sample`，**漏了
+      `per_text_token × text_tokens`** 这一项（每步 1.140e13），
+      于是逐段之和比 `flops_per_step.total × 次数` 少 1.30e15，占端到端 0.15%。
+      量级可忽略，但它是口径不一致不是测量误差。`derive.py` 是共享文件，本记录没碰，已报主会话
+    resolution: corrected
     changed_to: >-
-      真值记在这里。建议的共享改法：`gen_workload()` 对带 `resolution` 的阶段
-      按该阶段自己的 token 数算单步，并把 `end_to_end_terms.note` 渲染出来。
-      在没改之前，引端到端请用本条的 1.030e18。已报主会话
+      本条的 `claim` 与前半段原文保留做对照，结论换成复核后的 **8.755e17**
+      （derive 现值，逐段口径）。**引端到端请用这个数，不要再用本条原先写的 1.030e18**。
+      对应的 open_question 已标为已解决。逐段线性项漏文本项那一处仍开着，已报主会话
   - id: R7
     field: '-'
     severity: missing
@@ -767,13 +862,21 @@ review:
       那正是本仓反复强调不能做的事。
 
       本记录因此没有 `performance` 块，数据放在 bottlenecks.quantified 里带出处
-    resolution: open
+
+      **2026-10-31 复核：建议的字段已落地，所以上面那句话现在是错的 ——
+      本记录有 2 条 `performance`。** schema 的 `performance[]` 现在带
+      `seconds_per_step` / `seconds_end_to_end` / `steps` / `frames` /
+      `resolution` / `speedup` 与 `baseline` 子块，并且 `speedup` 填了就必须填
+      `baseline.what`（闸口查），正是本条要的那一套。
+      Table 7 的两档（241 帧 5.5070→2.9475、121 帧 2.0084→1.5638）已经进字段。
+      **留着原文是因为它记着为什么不能硬塞 `tpot_ms`**，那条理由没有过期；
+      过期的只是「本记录因此没有 performance 块」这一句事实陈述
+    resolution: corrected
     changed_to: >-
-      建议给 `performance[]` 加生成类字段：`seconds_per_step`、`seconds_end_to_end`、
-      `steps`、`frames`、`resolution`，以及一个 `baseline` 子块
-      （对照项是什么、同一配置下的值）—— 「有没有基线」是本仓判断一个倍数能不能用的
-      分水岭，值得做成字段而不是写在 note 里。
-      `data/schema/` 是共享文件，本记录没碰。已报主会话
+      schema 侧由主会话加了生成类字段，本记录随后填了 2 条 `performance`
+      （Table 7 的 241 帧与 121 帧两档，各带 `baseline.what: FlashAttention-3`）。
+      `finding` 末尾补了日期与「那句话已不成立」，原文保留做对照。
+      `data/schema/` 是共享文件，本记录没碰过它
   - id: R5
     field: generation.text_encoders
     severity: miscategorized
@@ -841,6 +944,58 @@ review:
     changed_to: >-
       open_question 标为已解决并保留原文对照；bottlenecks 里的
       「注意力占单步算力的四分之三」改成 **90%**
+  - id: R10
+    field: precision.quantization.per_subsystem
+    severity: missing
+    claim: >-
+      逐子系统精度这一块在这一份上「没什么可填的」——
+      反正全是 F32，而且 `precision.weights_release` 已经写了 FP32
+    finding: >-
+      **留空的后果不是少一格，是页面在说假话。** `precision.quantization` 整块缺席时，
+      三态契约把 19 个子系统行**全部**判成「未录」（本仓 `validate.py --list-gaps`
+      当时把这一份连同另外几份生成记录一起列着）—— 而「未录」的含义是
+      **本仓没查过**，可事实一直在手边：`facts/hunyuanvideo-1.5/shapes.json`
+      每个张量都带 dtype。于是精度演进页逐子系统那片全是 `?`、家族页整块 0 行，
+      **一份实测得最彻底的记录在精度表上看起来像没取过数**。
+      `weights_release: [FP32]` 补不上这件事：它是整仓一个值，答不出
+      「哪个子系统是什么精度」，而 `weights_release_scope.FP32.in_precision_table`
+      当时已经填着 `true` —— 那张表其实不存在。
+
+      这次按 `classify2()` 对 `transformer/720p_t2v` 的完整清单 1793 条穷举
+      （非抽样，逐桶参数量相加与 `params.total` 逐位相同），结论见
+      `subsystem_method`：**1793 条全 F32，一条例外都没有**，7 个桶有权重、
+      11 个桶为空。「全 F32」是结论不是缺口 —— 一套 DiT 落盘 33.3 GB
+      而 `generate.py` 按 `--dtype bf16` 跑，这一倍差正是这张表该让人看见的东西。
+
+      **复核中查出的两处归类落点，都在共享文件 `scripts/lib/subsystems.py` 上。**
+      (1) `time_embed` 在这一份上量到的只有 `txt_in.c_embedder.linear_1/2`
+      （4 条 / 11,538,432），而 `c_embedder` 按形状就不是时间步嵌入 ——
+      入口 3584 是文本编码器的 hidden，它是池化文本投影。真正的两个时间步嵌入器
+      `time_in.mlp.*` 与 `txt_in.t_embedder.mlp.*`（**8 条 / 9,445,376**，
+      入口都是 256 = 正弦时间步特征）**仍归在 `dense_ffn`**：新词条排在
+      `dense_ffn` 之后，`mlp` 先匹配先得；而 `time_in` 连 `time_embed` 的裸正则
+      都不命中（词条写的是 `time_embed` / `timestep_embed` / `\bt_embedder\b` /
+      `c_embedder` / `time_projection`）。**派活时给的前提说是 4 条，实际是 8 条** ——
+      少的那 4 条是 `time_in.mlp.*`，它不是被抢走的，是压根没被匹配。
+      (2) `io_proj` 的六个模式在这一份上一条都不命中，入口与出口投影整批落在
+      `other`：`txt_in.input_embedder` 7,342,080 + `byt5_in.fc1/2/3` 11,409,408
+      + `img_in.proj` 135,168 + `final_layer.linear` 65,568 = **18,952,224**，
+      `other` 剩下的 6,144 是 `cond_type_embedding`。
+      **这一格因此不能留空** —— 留空会被判成「这个子系统在这个模型里不存在」，
+      而它占了 `other` 的 99.97%。
+      形状判据照 `model-audit` 规则 12 走，**没有去读实现**：
+      256 入口 vs 3584 入口、65 通道 patch 投影、[32, 2048] 出口，
+      这四个形状各自就定了性质
+    resolution: open
+    changed_to: >-
+      本记录填了 `per_subsystem` 八格（含手填的 `io_proj`）与 `subsystem_method`，
+      两处归类落点逐条写进 `subsystem_method` 以便和
+      `derived.from_shapes.params_by_subsystem` 对照。
+      **`scripts/lib/subsystems.py` 是共享文件，本记录没碰，已报主会话**：
+      建议 `time_embed` 加 `time_in` 一类的裸前缀并移到 `dense_ffn` 之前
+      （或在 `dense_ffn` 的 `mlp` 上加否定前瞻），`io_proj` 加
+      `input_embedder` / `img_in\.proj` / `final_layer` / `byt5_in\.fc` 一类的模式。
+      **顺序一改就会动到别的记录**，所以不在这一份上单方面改
 
 notes: >-
   **字节对账。** 14 个 safetensors 实测 numel×4 B 之和 371,757,753,484 B，
@@ -885,9 +1040,17 @@ open_questions:
     **三个数现在都不对了** —— 前两个是 R4 已记的初稿错（真实是高 3.05 倍），
     第三个是用当时那个偏高的线性项算出来的占比。留着原文是为了能对照看
   - >-
-    **推导给的端到端 FLOPs 偏低约 18%（R6）**：三个阶段按同一个单步 FLOPs 相加，
+    ~~**推导给的端到端 FLOPs 偏低约 18%（R6）**：三个阶段按同一个单步 FLOPs 相加，
     而 1080p SR 那段的 token 数是 247,163 不是 111,600。真值约 1.030e18。
-    derive 的 `end_to_end_terms.note` 已经声明了这是粗估，但那条 note 没渲染到页面
+    derive 的 `end_to_end_terms.note` 已经声明了这是粗估，但那条 note 没渲染到页面~~
+    **已解决（2026-10-31 复核）。** `gen_workload()` 现在逐段按该段自己的
+    `out_width` / `out_height` 算 token 与单步，产物里每段带 `tokens_source: stage`，
+    1080p SR 段记的是 247,163。端到端现值 **8.755e17**（= DiT 6.118e17 +
+    720p SR 3.671e16 + 1080p SR 2.270e17）。
+    **本条原先那个「真值 1.030e18」也不对** —— 它是用 R4 那个偏高 3.05 倍的线性项
+    算出来的，一个错数字在引用它的地方又长了一份。留着原文是为了能对照看。
+    仍开着的只有一处小的：逐段线性项漏了 `per_text_token × text_tokens`
+    （每步 1.140e13，端到端占 0.15%），`derive.py` 是共享文件，已报主会话
   - >-
     官方 HunyuanMLLM 未发布，文本编码器那栏填的是社区替代品 Qwen2.5-VL-7B-Instruct 的数。
     官方 MLLM 多大、与替代品的 hidden 是否同为 3584，都不知道 ——
@@ -941,3 +1104,14 @@ open_questions:
   - >-
     训练精度无一手来源。发布权重全 F32 是实测，`generate.py` 默认 bf16 也是实测，
     但那说的都是落盘与推理格式，不是训练格式
+  - >-
+    **`per_subsystem` 的两个桶与归类正则对不上（R10），要改的是共享文件。**
+    `time_embed` 这一格量到的是池化文本投影 `c_embedder`，而真正的两个时间步嵌入器
+    （`time_in.mlp.*` 与 `txt_in.t_embedder.mlp.*`，8 条 / 9,445,376）仍在 `dense_ffn` 里；
+    `io_proj` 这一格是手填的 —— `scripts/lib/subsystems.py` 的六个模式在这一份上
+    一条都不命中，入口与出口投影 18,952,224 全落在 `other`。
+    两处都只影响分桶归属、不影响任何精度值（1793 条全 F32），
+    但**这一格与 `derived.from_shapes.params_by_subsystem` 现在是对不上的**。
+    归类正则的顺序一改就会动到别的记录，所以由主会话定，本记录没碰那个文件。
+    另有一处同源的：`720p_t2v` 之外 3 套 `use_meanflow` checkpoint 各多的那 4 个张量
+    没有逐条取过名字（4.7M 恰等于 `time_in.mlp` 整套，但那是推断不是实测）
