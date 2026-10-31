@@ -1,7 +1,7 @@
 {
  "id": "minimax-h3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-31T03:46:35+00:00",
+ "generated_at": "2026-10-31T04:01:09+00:00",
  "inputs": {
   "facts_dir": "facts/minimax-h3",
   "config_present": false,
@@ -22,33 +22,30 @@
   "tensor_count": 638,
   "params_total": 33122992896.0,
   "params_by_subsystem": {
-   "modulation": 13010457600.0,
-   "norm": 29495296.0,
+   "modulation": 13039369728.0,
+   "norm": 583168.0,
    "attention": 8015314944.0,
    "dense_ffn": 12022972416.0,
-   "audio": 349472.0,
-   "io_proj": 28568160.0,
+   "io_proj": 28917632.0,
    "time_embed": 15835008.0
   },
   "params_total_container": 33122992896.0,
   "params_container_by_subsystem": {
-   "modulation": 13010457600.0,
-   "norm": 29495296.0,
+   "modulation": 13039369728.0,
+   "norm": 583168.0,
    "attention": 8015314944.0,
    "dense_ffn": 12022972416.0,
-   "audio": 349472.0,
-   "io_proj": 28568160.0,
+   "io_proj": 28917632.0,
    "time_embed": 15835008.0
   },
   "scale_elements": 0.0,
   "weight_bytes_total": 66280430080.0,
   "weight_bytes_by_subsystem": {
-   "modulation": 26020915200.0,
-   "norm": 58990592.0,
+   "modulation": 26078739456.0,
+   "norm": 1166336.0,
    "attention": 16030629888.0,
    "dense_ffn": 24045944832.0,
-   "audio": 1397888.0,
-   "io_proj": 59211648.0,
+   "io_proj": 60609536.0,
    "time_embed": 63340032.0
   },
   "weight_bytes_by_dtype": {

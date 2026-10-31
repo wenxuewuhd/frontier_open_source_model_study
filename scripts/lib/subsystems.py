@@ -30,7 +30,16 @@ SUBSYSTEM = [
     # \bvit[._] 而不是 vit\.：Step-3 的两级下采样卷积叫裸的 vit_downsampler / vit_downsampler2
     # （4 个张量、331,362,304 参数），没有点号也没有 vision_model. 前缀，要求字面点号就落进 other
     ("vision", re.compile(r"vision|visual|\bvit[._]|aligner|image_|projector|patch_merge", re.I)),
-    ("audio", re.compile(r"audio|speech|whisper", re.I)),
+    # **`audio` 必须写成 `audio_<具体词>`，不能是裸 `audio`。** 它原先是
+    # `audio|speech|whisper`，于是命中每一个 `audio_*` 名字 —— 音视频联合 DiT 里，
+    # LTX 的整条音频支路（ltx-2 57.14 亿、ltx-2.3 57.35 亿）连带它的注意力、FFN、
+    # 调制、时间步嵌入整块落进「音频」一桶。那是**按流分桶**，而本仓的 param_scaling
+    # 轴已经把「流」单列（per_sample / per_video_token / per_text_token），
+    # 子系统这一层必须按**功能**分才和它一致。收紧后这一条只认真正的音频塔
+    # （理解类多模态那一侧），生成侧的音频支路交给各功能桶。
+    # **只挪位置无效** —— 它在任何位置都命中每个 `audio_*`，必须改模式。
+    ("audio", re.compile(r"audio_tower|audio_encoder|audio_model|audio_embed"
+                         r"|speech|whisper", re.I)),
     # eh_proj / enorm / hnorm / shared_head 是 DeepSeek V3 一代 MTP 模块的名字 ——
     # 那一代 MTP 借用层索引（第 61 层），名字里没有 mtp，只按 mtp 匹配会把它算进主干
     ("draft", re.compile(r"mtp|draft|dspark|eagle|eh_proj|enorm|hnorm|shared_head", re.I)),
@@ -68,11 +77,89 @@ SUBSYSTEM = [
     # 上移会从 attention 与 audio 抢走 LTX 的 54 与 103–175 个张量（实测过）。
     # 全仓只有 cogvideox-1.5-5b 有 normN.linear 这种写法，168 条，
     # 抢占仅此一处、非生成类受影响为 0。
-    ("modulation", re.compile(r"\bnorm\d*\.linear\b", re.I)),
+    #
+    # **`norm_out.linear` 是第二刀，第一版漏了。** `\bnorm\d*\.linear\b` 要求数字，
+    # 配不上最后一层的 `norm_out.linear`：改完之后 cogvideox 新 norm 桶的 85.4%、
+    # h3 的 98.0% 仍是调制（v2-cog 发现）。补上之后两份各有一个**逐位恒等式**成立：
+    #     modulation + time_embed == generation.backbone.param_scaling.per_sample
+    #     cogvideox   797,423,616 + 1,836,032      == 799,259,648
+    #     minimax-h3  13,039,369,728 + 15,835,008  == 13,055,204,736
+    # 在此之前我两次把这两个数说成「量级吻合但不是同一个量」——**它本来就是同一个量，
+    # 只是张量在错桶里**。这个恒等式现在是本条规则最硬的回归判据。
+    ("modulation", re.compile(r"\bnorm(?:\d+|_out)\.linear\b", re.I)),
     # norm 必须排在 attention / dense_ffn 之前：attn_norm、ffn_norm、kv_norm、q_norm
     # 名字里带 attn / ffn / kv / q，按那两条先匹配会把归一化算成注意力或 FFN 权重。
     # 带 norm 的就是归一化，没有例外，所以提前判定是安全的
     ("norm", re.compile(r"norm|\bln\b|layernorm", re.I)),
+    # ── 以下四条是生成类 DiT 的桶。**次序被四个约束同时钉死，每一条都踩出来过。** ──
+    #
+    #   1. 在 `vision` 之后。否则 `patch_embed` 抢走视觉塔的 ViT patch embedding，
+    #      13 份语言模型记录受影响。
+    #   2. 在 `norm` 之后。否则抢走 h3 的 `norm_out.linear` 之外的真 norm；
+    #      而「名字带 norm 的调制投影」由上面那条单独的 modulation 在 norm 之前截。
+    #   3. 在 `attention` / `dense_ffn` 之前。否则 `*cross_attn*scale_shift*` 被 `attn`
+    #      抢走 —— ltx-2 的 60 条 / 120,557,568 就是这么丢的；`audio_ff.` 被 `ffn` 抢走。
+    #   4. `time_embed` 在 `modulation` 之前。否则 `adaln` 先命中
+    #      `*adaln_single.emb.timestep_embedder.*`，**时间步嵌入整桶消失** ——
+    #      stepvideo 的 39,333,888 与 ltx-2.3 的 90,226,688 原先就是这么没的，
+    #      而 ltx-2.3 那一格判的正是「不适用 = 这个子系统在这个模型里不存在」。
+    #
+    # **「合并成一条放在 norm 之前」行不通，v2-ltx 两条路都试了。** 把上面那条
+    # `\bnorm(?:\d+|_out)\.linear\b` 换成全量 modulation 模式，cogvideox 的 7.94 亿
+    # 整块退回 norm（撤销 ebfb3cd 的修正）；而合并后的 modulation 置于 norm 之前，
+    # 就也在 time_embed 之前，于是约束 4 当场破。**modulation 出现两次不是冗余**：
+    # 前一条管「名字带 norm 的调制投影」，这一条管其余，中间夹的 norm 与 time_embed
+    # 各要截一刀。
+    #
+    # 「音频支路的调制归 modulation 还是 audio」这个按功能 / 按流的问题已定：按功能。
+    # 依据是本仓 param_scaling 轴已把「流」单列，子系统再按流分就是两套口径。
+    # 代价是 LTX 两份的数字要重写，由 v2-ltx 那条线做。
+    #
+    # 全仓 64 个非空事实目录 / 3,014,489 个张量上实跑：**有记录的非生成类受影响 0**，
+    # 受影响 7 个目录（5 份生成记录 + ltx-2-pack / ltx-2.5，后两个还没有记录）。
+    # **时间步嵌入器的 MLP 要在 dense_ffn 之前截下来，但只截带 `.mlp.` 的那种。**
+    # HunyuanVideo 的两个时间步嵌入器 8 条 / 9,445,376 全算进了稠密 FFN，
+    # 两条失效原因还不一样：`txt_in.t_embedder.mlp.*` 是 \bt_embedder\b 命中了
+    # 但 time_embed 排在 dense_ffn 之后、`mlp` 先匹配先得（优先级问题）；
+    # `time_in.mlp.*` 是词条里压根没有 `time_in` 这个写法（词表缺项）。
+    #
+    # **键在 `\.mlp\.` 上，不是把宽的那条 time_embed 整体前移。** 前移会同时跑到
+    # modulation 前面，抢走 LTX 与 stepvideo 的 `adaln_single.emb.timestep_embedder.*`
+    # （ltx-2.3 20 条 / 76,058,624、stepvideo 4 条 / 39,333,888），而 ltx-2.3 的
+    # time_embed 这一格现在判的正是「不适用 = 这个子系统在这个模型里不存在」——
+    # 那句假话会变成「桶里躺着 7,600 万个参数」。那些名字是 `...timestep_embedder.linear_1`，
+    # **不带 `.mlp.`**，所以这条一条都碰不到。全仓实测：只有 hunyuanvideo-1.5 一处变动。
+    #
+    # 那个口径问题已经定了（见下面那段）：`adaln_single.emb.timestep_embedder` 归
+    # time_embed。所以这一条现在只剩一个独有的活 —— `time_in.mlp.*`，
+    # 宽的那条词表里没有 `time_in` 这个写法。
+    ("time_embed", re.compile(r"(?:time_in|t_embedder|time_embedder|timestep_embedder)"
+                              r"\.mlp\.", re.I)),
+    ("time_embed", re.compile(r"timestep_embed|time_embedder|time_embedding|time_projection"
+                              r"|\bt_embedder\b|c_embedder", re.I)),
+    ("modulation", re.compile(r"adaln|ada_ln|\bmodulation\b|scale_shift"
+                             r"|(?:_mod|_gate|_scale_shift|adaln|time_embed)\w*\.linear\b",
+                             re.I)),
+    # `\bpos_embed\b` 的词界不是风格，是判据：裸 `pos_embed` 会把 ltx-2.5 的
+    # `keyframes_abs_pos_embedding` 捞进来，而那是一张绝对位置嵌入表、不是入口投影。
+    # 三个追加词条各自堵的洞：stepvideo 的入口叫 `pos_embed` 而不是 `patch_embed`
+    # （于是「入口/出口投影」桶只剩出口，少掉的一半在叫「其它」的桶里）、
+    # stepvideo 的 `clip_projection` 与已有的 text_proj / caption_proj 同类、
+    # h3 的 `context_embedder` 是它整个 other 桶（27,530,496）。
+    # HunyuanVideo 的入口/出口投影在原有六个模式上一条都不命中，整批落在 other：
+    # `txt_in.input_embedder` 7,342,080 + `byt5_in.fc1/2/3` 11,409,408
+    # + `img_in.proj` 135,168 + `final_layer.linear` 65,568 = 18,952,224，
+    # 是它 other 桶的 99.97%。剩下的 6,144 是 `cond_type_embedding`，**有意留在 other**：
+    # 它不是投影，塞进 embed 会让「输入词表」在一个没有 token 词表的 DiT 上长出值。
+    # `final_layer.adaLN_modulation` 仍归 modulation、`byt5_in.layernorm` 仍归 norm，
+    # 因为这一条排在 modulation 与 norm 之后 —— 逐条点验过。
+    # `patchify` 顺带吃掉 `unpatchify`，所以不再单列后者；
+    # `\bproj_in\b` 改成 `(?:^|[._])proj_(?:in|out)\b` 是因为 `\b` 配不上
+    # `audio_proj_in` —— 下划线本身就是 word char，词界在那里不成立。
+    ("io_proj", re.compile(r"patch_embed|patchify|\bpos_embed\b|(?:^|[._])proj_(?:in|out)\b"
+                           r"|text_proj|caption_proj|clip_proj|\bcontext_embedder\b"
+                           r"|input_embedder|\bimg_in\b|\bfinal_layer\b|\bbyt5_in\b",
+                           re.I)),
     # indexer / compressor 必须排在 attention 之前：它们挂在 attn. 下，名字带 attn，
     # 但精度和注意力主投影不同 —— DeepSeek V4 一代主投影是 FP8，压缩器整条与
     # indexer.wk 却是 BF16，并成一桶后表上只剩 FP8，看不出 BF16 那一截。
@@ -88,62 +175,20 @@ SUBSYSTEM = [
     # 那会把 mlp.dense_4h_to_h 从 dense_ffn 抢走（本条排在 dense_ffn 之前）
     ("attention", re.compile(
         r"attn|self_attention|query_key_value|\bwq|\bwk|\bwv|\bwo\b"
-        r"|q_proj|k_proj|v_proj|o_proj|kv_[ab]|q_[ab]", re.I)),
-    # **时间步嵌入器的 MLP 要在 dense_ffn 之前截下来，但只截带 `.mlp.` 的那种。**
-    # HunyuanVideo 的两个时间步嵌入器 8 条 / 9,445,376 全算进了稠密 FFN，
-    # 两条失效原因还不一样：`txt_in.t_embedder.mlp.*` 是 \bt_embedder\b 命中了
-    # 但 time_embed 排在 dense_ffn 之后、`mlp` 先匹配先得（优先级问题）；
-    # `time_in.mlp.*` 是词条里压根没有 `time_in` 这个写法（词表缺项）。
-    #
-    # **键在 `\.mlp\.` 上，不是把宽的那条 time_embed 整体前移。** 前移会同时跑到
-    # modulation 前面，抢走 LTX 与 stepvideo 的 `adaln_single.emb.timestep_embedder.*`
-    # （ltx-2.3 20 条 / 76,058,624、stepvideo 4 条 / 39,333,888），而 ltx-2.3 的
-    # time_embed 这一格现在判的正是「不适用 = 这个子系统在这个模型里不存在」——
-    # 那句假话会变成「桶里躺着 7,600 万个参数」。那些名字是 `...timestep_embedder.linear_1`，
-    # **不带 `.mlp.`**，所以这条一条都碰不到。全仓实测：只有 hunyuanvideo-1.5 一处变动。
-    #
-    # 「`adaln_single.emb.timestep_embedder` 到底该归 time_embed 还是 modulation」
-    # 是另一个口径问题，v2-ltx 与 v2-hy15 的答案相反，留给那一轮一起定。
-    ("time_embed", re.compile(r"(?:time_in|t_embedder|time_embedder|timestep_embedder)"
-                              r"\.mlp\.", re.I)),
+    # **`o_proj` 要补左边界**：这三个字符就在 audi`o_proj`_in 里面（v2-ltx 试跑撞出来的）。
+    # 现在被排在前面的 audio 挡着看不见，audio 一收紧，h3 的 4 条 I/O 投影就落进注意力。
+    # 收紧代价实测为 0：全仓 o_proj 合法命中 3,130 条前面全是行首 / `.` / `_`，
+    # 收紧后不再匹配的 18 种名字全是 audio_proj_in/out。坑 #2 的又一个实例 ——
+    # 子串恰好是另一个词的中段。
+        r"|q_proj|k_proj|v_proj|(?:^|[._])o_proj|kv_[ab]|q_[ab]", re.I)),
     # (?:^|\.)ff\. 是 diffusers 的 FeedForward（transformer_blocks.N.ff.net.0.proj）。
     # **a-t-t-n 不是 attention 的子串，f-f 也不是 ffn 的子串** —— 不认它的后果是
     # 五份生成记录的整个 FFN 落进 other：ltx-2 6.44B、h3 11.56B、cogvideox 3.17B、
-    # stepvideo 14.50B、ltx-2.3 6.45B。要求前面是行首或点号，所以 `...diff.` 不会误中
+    # stepvideo 14.50B、ltx-2.3 6.45B。要求前面是行首 / `.` / `_`，所以 `...diff.` 不会误中。
+    # `_` 是后来补的：LTX 的 `audio_ff.` 前面是下划线，audio 收紧之后不补这个
+    # 就有 16.1 亿掉进 other
     ("dense_ffn", re.compile(r"mlp|ffn|gate_proj|up_proj|down_proj|w1|w2|w3"
-                             r"|(?:^|\.)ff\.", re.I)),
-    # ── 以下三条是生成类 DiT 的桶，**一律排在全部已有规则之后** ──
-    #
-    # 次序不是风格问题：这三条只许从 other 里捞，不许抢任何已有归类。
-    # 排在前面会立刻出事 —— `patch_embed` 会把视觉塔的 ViT patch embedding 从 vision
-    # 抢走（13 份语言模型记录受影响）、`scale_shift` 会把 LTX 音频支路的 103–175 个
-    # 张量从 audio 抢走、`timestep_embed` 会把 HunyuanVideo 时间步嵌入里的 4 个 mlp
-    # 从 dense_ffn 抢走。这几条都在全仓 57 份的张量名上验过（见提交信息）。
-    #
-    # 「音频支路的调制该归 modulation 还是 audio」是按功能分桶还是按流分桶的问题，
-    # 本仓的 param_scaling 轴已经把「流」单列，所以子系统按功能分才一致 ——
-    # 但那会改动 LTX 两份已成文的数字，留给 ltx 那条线自己核，不在这里单方面改。
-    ("modulation", re.compile(r"adaln|ada_ln|_mod\.linear|\bmodulation\b|scale_shift", re.I)),
-    ("time_embed", re.compile(r"timestep_embed|time_embed|time_projection"
-                              r"|\bt_embedder\b|c_embedder", re.I)),
-    # `\bpos_embed\b` 的词界不是风格，是判据：裸 `pos_embed` 会把 ltx-2.5 的
-    # `keyframes_abs_pos_embedding` 捞进来，而那是一张绝对位置嵌入表、不是入口投影。
-    # 三个追加词条各自堵的洞：stepvideo 的入口叫 `pos_embed` 而不是 `patch_embed`
-    # （于是「入口/出口投影」桶只剩出口，少掉的一半在叫「其它」的桶里）、
-    # stepvideo 的 `clip_projection` 与已有的 text_proj / caption_proj 同类、
-    # h3 的 `context_embedder` 是它整个 other 桶（27,530,496）。
-    # 三条都只从 other 里捞：io_proj 已是本表最后一条，后面只有 return "other"。
-    # HunyuanVideo 的入口/出口投影在原有六个模式上一条都不命中，整批落在 other：
-    # `txt_in.input_embedder` 7,342,080 + `byt5_in.fc1/2/3` 11,409,408
-    # + `img_in.proj` 135,168 + `final_layer.linear` 65,568 = 18,952,224，
-    # 是它 other 桶的 99.97%。剩下的 6,144 是 `cond_type_embedding`，**有意留在 other**：
-    # 它不是投影，塞进 embed 会让「输入词表」在一个没有 token 词表的 DiT 上长出值。
-    # 位置仍排最后，所以 `final_layer.adaLN_modulation` 仍归 modulation、
-    # `byt5_in.layernorm` 仍归 norm —— 实测确认没被抢走。
-    ("io_proj", re.compile(r"patch_embed|\bpos_embed\b|\bproj_in\b|\bproj_out\b"
-                           r"|text_proj|caption_proj|clip_proj|\bcontext_embedder\b"
-                           r"|input_embedder|\bimg_in\b|\bfinal_layer\b|\bbyt5_in\b"
-                           r"|unpatchify", re.I)),
+                             r"|(?:^|[._])ff\.", re.I)),
 ]
 
 # 展示顺序与中文名存在 data/schema/subsystems.json，站点侧读同一个文件 ——

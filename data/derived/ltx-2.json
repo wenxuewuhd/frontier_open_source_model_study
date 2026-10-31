@@ -1,7 +1,7 @@
 {
  "id": "ltx-2",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-31T03:41:00+00:00",
+ "generated_at": "2026-10-31T04:01:09+00:00",
  "inputs": {
   "facts_dir": "facts/ltx-2",
   "config_present": false,
@@ -22,34 +22,31 @@
   "tensor_count": 3510,
   "params_total": 18876174592.0,
   "params_by_subsystem": {
-   "audio": 5714096256.0,
-   "modulation": 1187840.0,
-   "attention": 6564581376.0,
-   "norm": 786432.0,
-   "dense_ffn": 6443433984.0,
-   "io_proj": 33566848.0,
-   "time_embed": 118521856.0
+   "modulation": 234010624.0,
+   "dense_ffn": 8054538240.0,
+   "norm": 1572864.0,
+   "attention": 10472226816.0,
+   "io_proj": 46156032.0,
+   "time_embed": 67670016.0
   },
   "params_total_container": 18876174592.0,
   "params_container_by_subsystem": {
-   "audio": 5714096256.0,
-   "modulation": 1187840.0,
-   "attention": 6564581376.0,
-   "norm": 786432.0,
-   "dense_ffn": 6443433984.0,
-   "io_proj": 33566848.0,
-   "time_embed": 118521856.0
+   "modulation": 234010624.0,
+   "dense_ffn": 8054538240.0,
+   "norm": 1572864.0,
+   "attention": 10472226816.0,
+   "io_proj": 46156032.0,
+   "time_embed": 67670016.0
   },
   "scale_elements": 0.0,
   "weight_bytes_total": 37758861824.0,
   "weight_bytes_by_subsystem": {
-   "audio": 11430363392.0,
-   "modulation": 4751360.0,
-   "attention": 13131128832.0,
-   "norm": 1572864.0,
-   "dense_ffn": 12886867968.0,
-   "io_proj": 67133696.0,
-   "time_embed": 237043712.0
+   "modulation": 474533888.0,
+   "dense_ffn": 16109076480.0,
+   "norm": 3145728.0,
+   "attention": 20944453632.0,
+   "io_proj": 92312064.0,
+   "time_embed": 135340032.0
   },
   "weight_bytes_by_dtype": {
    "FP32": 13025280.0,

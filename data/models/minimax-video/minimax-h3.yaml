@@ -456,8 +456,12 @@ precision:
       norm: BF16
       io_proj: MIXED
       time_embed: FP32
-      audio: FP32
     subsystem_method: >-
+      **下面这段散文还是按旧归类写的，v2-h3 正在重算。** 本轮按功能分桶之后
+      `audio_proj_in/out` 并进了 `io_proj`，`audio` 桶不再存在（行已删）：
+      桶数 七 → 六，F32 落在两个桶而不是三个，`io_proj` 变 10 条 / 28,917,632。
+      留这一句是为了不让陈旧的计数静默留在页面上。
+
       **对 DiT 主干的完整权重清单 638 条逐项穷举，不是抽样**：14 个分片的 `weight_map`
       全覆盖、`failed_shards` 为空、`duplicate_tensors` 为 0，626 BF16 + 12 F32，
       numel × 每元素字节 = 66,280,430,080 B 与 `transformer/` 的 index.json
