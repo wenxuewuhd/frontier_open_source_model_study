@@ -10,6 +10,11 @@ visibility: public
 # 全库现为九份 —— 本文件里凡「已录 N 份里唯一 / 最 X」都已按九份重核，
 # 口径沿用 wan2.2-ti2v-5b：params.total 只算 DiT；不建 arch 块；没有 KV cache 这笔账。
 #
+# 但上面这句「都已按九份重核」自己就是待验证的：2026-10-31 第二轮又核出两处
+# 计数错，而且都在上一轮改正后写下的句子里（「16× 空间并列第四」实为四份并列第三、
+# 「patch 全 1 的只有本份与 ltx 两份」漏了 hunyuanvideo-1.5）。
+# 改一句计数错的时候照样可以只数一半 —— 见 generation.vae.note 与 reviewed.method。
+#
 # 这一份的三个看点：空间 16× / 时间 8× / 64 通道且两维全靠 VAE（patch 都是 1）、
 # AdaLN-Single（调制只占 0.91%，九份里最低；「放表」那组的代表）、
 # 以及**模型卡上有实测性能**（峰值显存与端到端秒数，4 卡）。
@@ -117,10 +122,24 @@ params:
 
     分桶口径：`self_attention` 是 `attn1`（`wqkv [18432,6144]` = 3×6144 融合、
     `wo [6144,6144]`、两个 [128] 的 QK-norm）；`cross_attention` 是 `attn2`
-    （`wq` + `wkv [12288,6144]` = 2×6144 + `wo`）；
+    （`wq` + `wkv [12288,6144]` = 2×6144 + `wo`，**同样含两个 [128] 的 QK-norm** ——
+    两桶各 150,995,200/层正是这么来的，逐字节相同不是巧合而是两侧张量集同构）；
     `ffn` 是 `[24576,6144]` + `[6144,24576]`，24576 = 4×6144，**非门控**；
     `adaln_modulation` 含全局的 `adaln_single.linear [36864,6144]`（36864 = 6×6144）、
     时间步嵌入，以及每层一个 `[6, 6144]` 的 `scale_shift_table`。
+
+    **`breakdown` 的桶与 `precision.quantization.per_subsystem` 的桶不是同一套切法。**
+    两处数字有两点差，都逐条核过，不是哪一边算错了：
+    一、**QK-norm** —— `breakdown` 把每层 4 个 [128] 的 QK-norm 算进注意力两桶，
+    而 `classify2()` 按「带 norm 的就是归一化，没有例外」统一归 `norm`，
+    于是注意力两桶合计少 48 × 4 × 128 = **24,576**（14,495,539,200 → 14,495,514,624）、
+    `norm` 多同样的 24,576（1,179,648 → 1,204,224）。
+    二、**入口出口** —— `breakdown` 的 `patch_embed` 792,640 是入口 `pos_embed.proj`
+    399,360 加出口 `proj_out` 393,280 两样，而词表把出口归 `io_proj`、
+    入口连同 `clip_projection` 归 `other`（见 R8）。
+    `ffn` / `adaln_modulation` 与 `dense_ffn` / `modulation` 逐位相同，
+    `text_proj` 75,509,760 在词表里是 `text_encoder` **组件**不是子系统
+    （见 `precision.quantization.subsystem_method`）。
 
 generation:
   backbone:
@@ -157,9 +176,14 @@ generation:
         注意这一份是**单流但带独立交叉注意力**：文本不在主序列里，
         所以 `per_text_token` 用的是它本来的语义，而不是 schema 描述里说的
         「单流就并进 per_video_token」那种情形。
-        **推导会提示「没给文本 token 数、线性项是下界」—— 那个提示是对的，
-        但漏掉的量是 2 × 3,705,686,016 × 512 = 3.79e12，占单步 1.064e16 的 0.04%**，
-        不影响任何结论。没地方声明 m（见 R6）
+        **文本那一项现在进了推导。** 原话写的是「推导会提示『没给文本 token 数、
+        线性项是下界』」—— 那个提示已经不会出现了：`buckets[].text_tokens` 字段有了、
+        这一份填了 512，derive 的 `linear_terms.factors.text_tokens` 就是它
+        （见 R6）。它贡献 2 × 3,705,686,016 × 512 = **3.79e12**，
+        占单步 1.065e16 的 **0.04%** —— 进不进来都不影响任何结论。
+        顺带一提，`sequence_tokens_is_lower_bound` 在这一份上**本来就不会是 true**：
+        那个标记只对 `text_conditioning: in_sequence` 成立，而这一份是 `cross_attn`，
+        文本不在主序列里，所以注意力项从来不缺这一截
     note: >-
       **单流 + 独立交叉注意力**，与 wan 同构、与 hunyuanvideo-1.5 的双流相反。
       卡称「DiT w/ 3D Full Attention」，48 层 × 48 头 × 128 维与 config 和清单三处一致。
@@ -184,10 +208,17 @@ generation:
       空间 16× / 时间 8× / 64 latent 通道。
       **原话写的是「压缩率在已录的五份里最激进」，那句写下来的那一刻就是错的** ——
       ltx-2 与 ltx-2.3 已录在先，它俩是 32× 空间 / 8× 时间，时间维持平、空间维高一倍；
-      本份的 16× 空间在九份里只排到并列第四。而且那份自己的表头就把 ltx 两份
+      本份的 16× 空间在九份里**四份并列第三**（本份、hunyuanvideo-1.5、minimax-h3、
+      wan2.2-ti2v-5b，只有 ltx 两份的 32× 在前；口径是 VAE 自己的空间压缩率，不含 patch）。
+      而且那份自己的表头就把 ltx 两份
       列成了前序记录 —— 手边有全量数据却没去数（见 cogvideox 记录的 R4）。
       真正少见的是**两个维度都压到底而且全靠 VAE**：patch 的 t 与 h/w 都是 1，
-      九份里只有本份与 ltx 两份做到（截至 2026-10-31，九份已录）。
+      九份里**四份**做到 —— 本份、ltx 两份、**以及 hunyuanvideo-1.5**
+      （截至 2026-10-31，九份逐份读过 `backbone.patch_size`）。
+      **改正「最激进」那句时写的「只有本份与 ltx 两份」又漏了一份**，
+      而 hunyuanvideo-1.5 自己的 `generation.backbone.note` 写的就是
+      「patch_size 是 (1,1,1)，VAE 已经压到 16×/4×，DiT 不再 patchify」——
+      同一种毛病连犯两次：改数的时候还是只数了一半。
       `params` 填的是 `vae_v2.safetensors`（498,818,819，262 张量全 F32）——
       仓里还有一个 `vae.safetensors`（258,828,195），**那是 16 通道的另一版，
       不是这个模型用的**，见 R1。
@@ -265,7 +296,8 @@ generation:
       note: >-
         参考实现的默认值（`--width 992 --height 544 --num_frames 204`）。
         **`latent_frames` 是声明的不是公式算的**：204 / 17 = 12 块整，
-        每块 3 个 latent 帧 → 36。按 `(F−1)/8+1` 会得 26.375，差 36%（见 R2）。
+        每块 3 个 latent 帧 → 36。按 `(F−1)/8+1` 会得 26.375，
+        **比真值 36 低 26.7%**（见 R2）。
         992/16 = 62、544/16 = 34，都整除 → latent 36 × 34 × 62 = **75,888 token**。
         **fps 没有一手来源**：卡与参考实现都没写，25 是按卡上
         「204 帧」与常见口径填的占位 —— 见 open_questions
@@ -347,6 +379,60 @@ precision:
         所以 `in_precision_table: false` —— 精度表里只有 DiT 的 BF16，
         这一行说的是同一个仓里另外两个文件，是实测不是声明。
         与 h3、hunyuanvideo-1.5 的 VAE 同样是 F32
+  quantization:
+    # 这一代没有 quantization_config：清单里零 scale 张量、零打包容器
+    # （derive 的 `scale_elements` 为 0），所以 per_subsystem_scale 与
+    # per_subsystem_block 不是「留空待测」，是不适用 —— 没有块可量。
+    per_subsystem:
+      attention: BF16
+      dense_ffn: BF16
+      modulation: BF16
+      norm: BF16
+      io_proj: BF16
+      time_embed: BF16   # 手工补的一行，不来自 classify2()，见 R7
+      other: BF16
+    subsystem_method: >-
+      **逐项核对完整权重清单，非抽样。** `facts/stepvideo-t2v-30b/shapes.json` 的
+      785 个条目（transformer 6 分片全量，每条都带 shape 与 dtype，failed_shards 为空）
+      用 `scripts/lib/subsystems.py` 的 `classify2()` 逐条分桶，**785/785 全是 BF16** ——
+      所以各子系统的 BF16 是全量结论，不是代表值。
+
+      逐桶（张量数 / 参数量 / 占 29,342,478,400）：
+      注意力 240 / 14,495,514,624 / **49.401%**、稠密 FFN 96 / 14,495,514,624 / **49.401%**、
+      调制 55 / 267,644,928 / 0.912%、归一化 384 / 1,204,224 / 0.004%、
+      入口出口投影 2 / 393,280 / 0.001%、其它 4 / 6,696,960 / 0.023%。
+      六桶合计 781 条 / 29,266,968,640，等于 derive 的 `params_by_component.backbone`。
+
+      **另外 4 条 75,509,760 参数不在上表里。** `caption_projection.linear_1` 与
+      `linear_2` 的权重与 bias 命中 `components.json` 的 `caption_` 前缀，
+      落进 `text_encoder` 这个**组件** —— 组件不是子系统，`per_subsystem` 的键
+      只取 `subsystems.json` 的 19 个，所以它没有行。781 + 4 = 785、
+      29,266,968,640 + 75,509,760 = 29,342,478,400，两头都对得上。
+      **这 4 条是 DiT 内部把 Step-LLM 的 6144 维嵌入投进主干的那两层，不是 Step-LLM 本身**：
+      Step-LLM 的 289 张量 19,579,600,896 参数压根不在 `shapes.json` 里
+      （取数用 `--include 'transformer/*'` 收窄过，原因见 notes），
+      把这 0.0755B 读成「文本编码器只有 0.08B」会差 **259 倍**。
+      Step-LLM 全 BF16 这个事实来自逐文件读头，记在 `weights_release_scope` 里，
+      不在这张精度表的作用域内。
+
+      **`time_embed` 这一行是手工补的，它不来自 `classify2()`。**
+      时间步嵌入在这一份里叫 `adaln_single.emb.timestep_embedder.linear_1`
+      （[6144, 256] 加 bias）与 `linear_2`（[6144, 6144] 加 bias），
+      4 条共 **39,333,888 参数，实测全 BF16**；但名字带 `adaln_single`，
+      而 `SUBSYSTEM` 里 `modulation` 排在 `time_embed` 之前，
+      于是这 4 条整块落进 `modulation` 的 267,644,928 里、`time_embed` 桶是空的。
+      **空的原因是命名与规则次序，不是这个模型没有时间步嵌入** ——
+      不补这一行，缺值判据会把它渲染成「不适用：这个子系统在这个模型里不存在」，
+      而那句话是错的。代价是两张表对不齐：derived 的 `params_by_subsystem`
+      只有六桶（`modulation` 含时间步嵌入），这张精度表有七行。
+      **这与 cogvideox-1.5-5b 的处理方式相同**（那一份的 `modulation` 行同样是手补的，
+      原因是 `norm` 抢在 `modulation` 之前），两份记录的做法有意保持一致，见 R7。
+
+      **其余 12 格是真的没有**：稠密主干无路由专家、无共享专家，router 也就不存在；
+      3D 全注意力不存 KV，所以无 compressor、无 indexer；无检索查表；
+      输入是 latent 不是 token，所以无词表 embed、无 lm_head；
+      残差是普通相加，清单里没有系数张量；无草稿模块；无视觉塔；T2V 无音频支路。
+      `io_proj` 这一桶**在这一份上只装到了出口**，入口在「其它」里，见 R8
   inference_default: BF16
 
 performance:
@@ -399,7 +485,15 @@ bottlenecks:
       minimax-h3 39.41%（2688）；**放表**的本份 0.91%、wan 三份 1.30–1.35%、
       ltx 两份 1.60 / 2.27%。
       **按发布时间排看不出规律** —— 放矩阵的最早（2024-11）与最晚（2026-07）各一份，
-      中间夹着 2025-11；放表的横跨 2025-02 到 2026-03
+      中间夹着 2025-11；放表的横跨 2025-02 到 2026-03。
+
+      **这九个百分比的口径是「调制分支整体 / `params.total`」，不是新的
+      `modulation` 子系统桶。** 两者在本份上恰好逐位相同（调制桶 267,644,928
+      = `param_scaling.per_sample`），在别的八份上不同 ——
+      wan 三份与 ltx-2 的时间步嵌入落在 `time_embed` 桶里（`modulation` 桶只剩百万级），
+      cogvideox 的逐层 AdaLN 矩阵因为 `norm` 排在 `modulation` 之前而整块落进 `norm`
+      （`modulation` 桶是 0）。**所以这张对照表不能从逐子系统桶直接读出来**，
+      九份全表与各自的取数口径在 cogvideox-1.5-5b 记录的 R4，别拿桶去复算它
     fix: >-
       这不是一个要修的瓶颈，是一条**结构判据**（不是代际判据 —— 那一版已证伪）：
       看到「参数量」时先问逐层放的是表还是矩阵 ——
@@ -427,8 +521,9 @@ bottlenecks:
       卡 §4.1：544×992×204f 峰值 **77.64 GB**、50 步 flash-attn **743 s** /
       不开 **1232 s**；544×992×136f 峰值 72.48 GB、408 s / 605 s。
       测试用 **4 卡**，卡上只说「recommend 80GB」。
-      按 743 s / 100 次前向 = 7.43 s 每次前向，而本记录推出的单步是 1.069e16 FLOPs ——
-      要换成利用率还差 GPU 型号这个因子
+      按 743 s / 100 次前向 = 7.43 s 每次前向，而本记录推出的单步是 1.065e16 FLOPs
+      （derive 的 `flops_per_step.total` 1.0648e16；**原话写 1.069e16，是笔误**，
+      同一份记录里另两处写的是同一个量）—— 要换成利用率还差 GPU 型号这个因子
     fix: 读技术报告 arXiv 2502.10248 补硬件型号；在那之前这组数只能当量级参照
     visibility: public
 
@@ -443,6 +538,9 @@ infra_signals:
       调制占 **0.91%**，是九份里最低的。放矩阵的三份（cogvideox 14.35%、
       hunyuanvideo-1.5 32.71%、minimax-h3 39.41%）全是两位数，
       放表的六份全在 2.3% 以下 —— 中间差 6.3 倍，没有过渡带。
+      （这九个百分比的口径是**调制分支整体占 `params.total`**，
+      不是新加的 `modulation` 子系统桶 —— 两者只在本份上恰好相等，
+      理由见上面那条 compute 瓶颈。）
 
       这一块不参与 token 计算，所以它的膨胀**只增显存与权重搬运、不增算力** ——
       按参数量排产能的人会在「放矩阵」那组上系统性高估
@@ -484,6 +582,8 @@ evidence:
   generation.constraints: derived
   generation.checkpoint_variants: derived
   precision: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.subsystem_method: derived
   performance: official
   bottlenecks: judgement
   infra_signals: judgement
@@ -504,6 +604,18 @@ reviewed:
     外部对账：实测 29,342,478,400 与 **HF 自己的 safetensors tally 逐位相同**。
     专门验了两件：两个 VAE 文件哪一个在用（R1）、「8× 时间压缩」是不是端到端比值（R2）。
     Gate C：判断类字段 8 处，逐条在 evidence 里标了 judgement。
+
+    **2026-10-31 第二轮（逐子系统精度 + 按新子系统词表复核）。**
+    `precision.quantization.per_subsystem` 本轮补齐：对 `shapes.json` 的 785 条
+    用 `classify2()` **穷举**分桶（不是抽样），六桶全 BF16，口径与逐桶数字见
+    `subsystem_method`。按新词表重核了记录里的数字与散文，改掉五处：
+    「16× 空间并列第四」（实为四份并列第三）、
+    「patch 全 1 的只有本份与 ltx 两份」（漏了 hunyuanvideo-1.5，实为四份）、
+    单步 FLOPs 的笔误 1.069e16（应为 1.065e16）、
+    R2 的「低 36%」基数记反（应为公式值比真值低 26.7%）、
+    以及 R4 / R6 两条已经落地却还挂着 `open` 的核查项。
+    另补两条新发现 R7（`time_embed` 的「不适用」是规则次序造成的）与
+    R8（`io_proj` 只装到出口），都在共享文件里，本记录没碰。
 
 review:
   - id: R1
@@ -546,7 +658,10 @@ review:
       （那边 17 帧 → 5 个 token 再整段丢 3，端到端 3.375 而声明 4）。
       **差距这一份更大：29% vs 16%**，因为块内比值越大，每块重付的「+1」占比越高。
 
-      按 `(F−1)/8+1` 算会得 26.375（非整数，推导会报警告），真值 36 —— **低 36%**
+      按 `(F−1)/8+1` 算会得 26.375（非整数，推导会报警告），真值 36 ——
+      **公式值比真值低 26.7%**。原话写的是「低 36%」，那是**基数记反了**：
+      36.5% 是以公式值 26.375 为基数算出来的（真值比它高 36.5%），
+      而那个句子的主语是公式值。两个数描述同一个差，但只有一个配得上那个句子
     resolution: corrected
     changed_to: >-
       `buckets[].latent_frames` 直接声明 36（与 136 帧档的 24），
@@ -584,34 +699,54 @@ review:
 
       而且这一组比 hunyuanvideo-1.5 那组多一个缺口：**卡上没写 GPU 型号**，
       只说「four GPUs」「recommend 80GB」。所以即便字段有了，
-      `hardware` 那一栏也填不出来
-    resolution: open
+      `hardware` 那一栏也填不出来。
+
+      **字段后来加上了，而这一条一直挂着「open」。** `a4f59d4` 把
+      `seconds_end_to_end` / `steps` / `frames` / `resolution` / `baseline`
+      与 `peak_memory_bytes` 都补进了 schema，本记录的 `performance[]`
+      现在就是按它填的（743 s / 1232 s 的对照、83,361,205,125 B = 77.64 GiB）。
+      本轮复核确认那一条 `performance` 项与卡 §4.1 的 544×992×204 帧那一行逐项对上
+    resolution: corrected
     changed_to: >-
-      数据放在 `bottlenecks.quantified` 里带出处。
-      两个实例一起支持 hunyuanvideo-1.5 R7 里提的那组字段
-      （`seconds_per_step` / `seconds_end_to_end` / `steps` / `frames` /
-      `resolution` + `baseline` 子块），**再加一个 `peak_memory_bytes`**。
-      已报主会话
+      `performance[]` 填了一条（source.type official、`device_count: 4`、
+      `seconds_end_to_end: 743`、`baseline` 装不开 flash-attn 的 1232 s、
+      `peak_memory_bytes: 83361205125`），`hardware` 那一栏照实写「未声明」、
+      不替卡猜一个型号；136 帧那一档与利用率仍留在 `bottlenecks.quantified` 里带出处。
+      **resolution 本轮由 open 改成 corrected** —— 字段是主会话加的（`a4f59d4`），
+      不是本记录改的
   - id: R6
     field: generation.backbone.param_scaling
     severity: missing
     claim: 填了 `per_text_token` 就能把文本那一路的线性 FLOPs 算进去
     finding: >-
-      算不进去 —— **schema 没有地方声明文本 token 数 m**。
+      录入时算不进去 —— **schema 没有地方声明文本 token 数 m**。
       `param_scaling.per_text_token` 有了，但 `backbone` 与 `buckets` 下
       都没有对应的 `text_tokens` 字段，所以 `gen_workload()` 只能跳过这一项并
-      标「线性项是下界」。提示本身是对的。
+      标「线性项是下界」。
 
       这一份上漏掉的量可以手算：2 × 3,705,686,016 × 512 = **3.79e12**，
-      占单步 1.064e16 的 **0.04%** —— 可忽略。
+      占单步 1.065e16 的 **0.04%** —— 可忽略。
       但对 hunyuanvideo-1.5 那种双流模型不可忽略：它的 `per_text_token`
       是 2,871,435,648，文本 token 数若按 byT5 的 256 加 MLLM 的若干算，
-      量级会到 1e15，占单步的百分之几
-    resolution: open
+      量级会到 1e15，占单步的百分之几。
+
+      **这一条已经不是待办了，而原话一直挂着「open」。** 字段在 `a4f59d4`
+      进了 `buckets[]`（连同 `performance` 的两个字段，见 R4），
+      `bf509c9` 又补齐了 derive 侧只消费一半的那个洞。
+      本轮复核确认：这一份的 `buckets[0].text_tokens` 是 512，
+      derived 的 `linear_terms.factors.text_tokens` 就是它，线性项不再是下界。
+      **本记录与 open_questions 里「没地方声明 m」那两处说法已过时，是这次改掉的**
+    resolution: corrected
     changed_to: >-
-      建议 `backbone` 加一个 `text_tokens`（或放进 `buckets[]`，因为长 prompt
-      档位可能不同）。这一份填 512（参考实现的 `text_len`）。
-      `data/schema/` 是共享文件，本记录没碰。已报主会话
+      字段由主会话落地（`a4f59d4` 加 `buckets[].text_tokens`、
+      `bf509c9` 修 derive 的半消费），本记录只做三处同步：
+      `param_scaling.note` 改成「文本那一项现在进了推导」并给出它的量，
+      原先那条 open question 换成 R7 / R8 的归类口径问题，
+      resolution 从 open 改成 corrected。
+      **仍然留着的一个坑**：`derive.py` 的 `gen_workload()` 里，
+      算线性项那几行上方的注释还写着「文本 token 数本仓目前没有字段装」，
+      而同一个函数在上面十几行处已经在读 `bucket.get("text_tokens")` ——
+      注释不是证据（skill 规则 9），已报主会话
   - id: R5
     field: generation.text_encoders
     severity: missing
@@ -623,6 +758,62 @@ review:
       hidden 1024 倒是能实测 —— DiT 的 `clip_projection.weight` 是 [6144, 1024]
     resolution: open
     changed_to: HunyuanCLIP 的 params 留空并在 note 写明是哪一种空
+  - id: R7
+    field: precision.quantization.per_subsystem
+    severity: miscategorized
+    claim: 穷举过完整清单之后，缺的那一格就表示「这个模型里没有这个子系统」
+    finding: >-
+      **对 `time_embed` 这一格不成立 —— 它的空是规则次序造成的，不是模型事实。**
+      时间步嵌入在这一份里确实存在：`adaln_single.emb.timestep_embedder.linear_1`
+      （[6144, 256] 加 bias）与 `linear_2`（[6144, 6144] 加 bias）共 4 条、
+      **39,333,888 参数**。但 `scripts/lib/subsystems.py` 的 `SUBSYSTEM` 顺序即优先级，
+      `modulation` 的 `adaln` 排在 `time_embed` 之前，而这 4 条的名字带 `adaln_single`，
+      于是整块落进 `modulation` 的 267,644,928 里。
+      参数量账上没有错 —— 这与 `params.breakdown.adaln_modulation`
+      「含⋯⋯时间步嵌入」的口径本来就一致（见 counting_note）。
+      错的是 `columns.json` 的 `$subsystem` 规则会把这一格渲染成
+      「已对完整权重清单穷举过，这个子系统在这个模型里不存在」。
+
+      **这不是本份的个例，cogvideox-1.5-5b 同一天独立撞上了同一个毛病**：
+      它的逐层 AdaLN 矩阵（`norm1.linear` / `norm2.linear` / `norm_out.linear`）
+      因为 `norm` 也排在 `modulation` 之前而整块落进 `norm` 桶，
+      `modulation` 桶是 **0** —— 而它恰恰是本仓「放矩阵 AdaLN」那一组的代表（占 14.35%）。
+      那一份在 `048954f` 里的办法是**手工补一行 `modulation: BF16`** 并写明它不来自
+      `classify2()`；本份对 `time_embed` 照同一个办法办，有意保持一致。
+
+      所以判据本身的毛病是：**「不适用」把「模型里没有这个子系统」与
+      「被更靠前的规则领走了」合成了一句话**，而穷举说法越可信，那句话就越像结论。
+      两份记录现在都靠手补一行绕过去，**而绕过去的代价是精度表的行数与
+      derived 的 `params_by_subsystem` 桶数对不上**（本份 7 行对 6 桶、
+      cogvideox 6 行对 5 桶），这个不一致没有任何闸口在查
+    resolution: open
+    changed_to: >-
+      本记录补了一行 `time_embed: BF16` 并在 `subsystem_method` 里写明它是手补的、
+      空的原因是命名与规则次序，另外 12 格「真的没有」逐条列了依据。
+      判据与归类正则都在共享文件（`data/schema/columns.json`、
+      `scripts/lib/subsystems.py`），本记录没碰，已报主会话
+  - id: R8
+    field: precision.quantization.per_subsystem
+    severity: imprecise
+    claim: '`io_proj`（入口出口投影）这一桶装的是 DiT 的入口与出口投影'
+    finding: >-
+      **这一份只装到了出口。** 出口 `proj_out`（[64, 6144] 加 bias，2 条 393,280）
+      命中 `\bproj_out\b`；入口是 `pos_embed.proj`（[6144, 64, 1, 1] 加 bias，2 条 399,360，
+      就是把 64 通道 latent 投进 6144 维的那一层），名字是 `pos_embed`
+      而规则写的是 `patch_embed`，**一个词之差**，于是它和
+      `clip_projection`（2 条 6,297,600）一起落进 `other` ——
+      `other` 的 6,696,960 恰好就是这两样（399,360 + 6,297,600）。
+
+      精度上没有影响（两桶都是 BF16，全模型只有 BF16 一档），但按桶读参数量的人
+      会看到一个 393,280 的「入口出口投影」，比真实的入口加出口 792,640 少一半，
+      而少掉的那一半在一个叫「其它」的桶里。
+      **这和 `dense_ffn` 补 diffusers 的 `ff.` 之前是同一种毛病**：
+      生成类的命名不在语言模型那套词表里，而落进 `other` 不会报错
+    resolution: open
+    changed_to: >-
+      本记录照实填 `io_proj` 393,280 与 `other` 6,696,960，并在
+      `subsystem_method` 与本条写明每个桶里到底装的是哪几条张量。
+      归类正则在 `scripts/lib/subsystems.py`，本记录没碰，已报主会话
 
 notes: >-
   **字节对账。** transformer 58,684,956,800 + step_llm 39,159,201,792
@@ -673,9 +864,13 @@ open_questions:
     `pytorch_model.bin` 是 pickle，读头拿不到清单，dtype 也未声明。
     它影响「文本编码器一共多大」这个账
   - >-
-    `generation.backbone.param_scaling` 的 `per_text_token` 进不了推导（R6）：
-    schema 没有声明文本 token 数的地方。这一份影响 0.04%，可忽略；
-    双流模型上不可忽略
+    `precision.quantization.per_subsystem` 的两个归类口径问题都还在共享文件里
+    （R7 / R8）：缺格判「不适用」分不开「模型里没有」与「被更靠前的规则领走了」
+    （本份的 `time_embed`、cogvideox 的 `modulation` 都是后者，
+    两份都只能手补一行绕过去，代价是精度表行数与 derived 的桶数对不上），
+    而 `io_proj` 的正则认 `patch_embed` 不认 `pos_embed`，
+    这一份的入口投影因此落在「其它」里。精度结论不受影响（全模型只有 BF16 一档），
+    受影响的是按桶读参数量和读页面上那句「这个模型里不存在」的人。两条都已报主会话
   - >-
     `stepvideo-t2v-turbo` 的蒸馏步数不知道 —— 它是另一个仓，卡上没写步数。
     按 policy 不单开记录，但 `sampling.step_distilled.steps` 因此留空

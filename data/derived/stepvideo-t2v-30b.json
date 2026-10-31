@@ -1,7 +1,7 @@
 {
  "id": "stepvideo-t2v-30b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-31T02:54:08+00:00",
+ "generated_at": "2026-10-31T03:17:48+00:00",
  "inputs": {
   "facts_dir": "facts/stepvideo-t2v-30b",
   "config_present": false,
@@ -128,7 +128,7 @@
    "fps": 25,
    "duration_s": 8.16,
    "default": true,
-   "note": "参考实现的默认值（`--width 992 --height 544 --num_frames 204`）。 **`latent_frames` 是声明的不是公式算的**：204 / 17 = 12 块整， 每块 3 个 latent 帧 → 36。按 `(F−1)/8+1` 会得 26.375，差 36%（见 R2）。 992/16 = 62、544/16 = 34，都整除 → latent 36 × 34 × 62 = **75,888 token**。 **fps 没有一手来源**：卡与参考实现都没写，25 是按卡上 「204 帧」与常见口径填的占位 —— 见 open_questions"
+   "note": "参考实现的默认值（`--width 992 --height 544 --num_frames 204`）。 **`latent_frames` 是声明的不是公式算的**：204 / 17 = 12 块整， 每块 3 个 latent 帧 → 36。按 `(F−1)/8+1` 会得 26.375， **比真值 36 低 26.7%**（见 R2）。 992/16 = 62、544/16 = 34，都整除 → latent 36 × 34 × 62 = **75,888 token**。 **fps 没有一手来源**：卡与参考实现都没写，25 是按卡上 「204 帧」与常见口径填的占位 —— 见 open_questions"
   },
   "effective_compression": {
    "temporal": 8,
