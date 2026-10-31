@@ -128,18 +128,18 @@ params:
     `adaln_modulation` 含全局的 `adaln_single.linear [36864,6144]`（36864 = 6×6144）、
     时间步嵌入，以及每层一个 `[6, 6144]` 的 `scale_shift_table`。
 
-    **`breakdown` 的桶与 `precision.quantization.per_subsystem` 的桶不是同一套切法。**
-    两处数字有两点差，都逐条核过，不是哪一边算错了：
-    一、**QK-norm** —— `breakdown` 把每层 4 个 [128] 的 QK-norm 算进注意力两桶，
+    **`breakdown` 的桶与 `precision.quantization.per_subsystem` 的桶不是同一套切法，
+    但 2026-10-31 的归类三修（`ebfb3cd`）之后只剩一点差了**，逐条核过、不是哪一边算错：
+    **QK-norm** —— `breakdown` 把每层 4 个 [128] 的 QK-norm 算进注意力两桶，
     而 `classify2()` 按「带 norm 的就是归一化，没有例外」统一归 `norm`，
     于是注意力两桶合计少 48 × 4 × 128 = **24,576**（14,495,539,200 → 14,495,514,624）、
     `norm` 多同样的 24,576（1,179,648 → 1,204,224）。
-    二、**入口出口** —— `breakdown` 的 `patch_embed` 792,640 是入口 `pos_embed.proj`
-    399,360 加出口 `proj_out` 393,280 两样，而词表把出口归 `io_proj`、
-    入口连同 `clip_projection` 归 `other`（见 R8）。
-    `ffn` / `adaln_modulation` 与 `dense_ffn` / `modulation` 逐位相同，
-    `text_proj` 75,509,760 在词表里是 `text_encoder` **组件**不是子系统
-    （见 `precision.quantization.subsystem_method`）。
+
+    其余都对得上：`ffn` / `adaln_modulation` 与 `dense_ffn` / `modulation` 逐位相同；
+    `patch_embed` 792,640 + `text_proj` 75,509,760 + `clip_proj` 6,297,600
+    = **82,600,000** 正是 `io_proj` 那一桶（R8 修好前它只有 393,280，
+    另三样散在 `other` 与 `text_encoder` 组件里）。
+    `breakdown` 八桶合计与词表五桶合计都等于 29,342,478,400。
 
 generation:
   backbone:
@@ -390,7 +390,6 @@ precision:
       norm: BF16
       io_proj: BF16
       time_embed: BF16   # 手工补的一行，不来自 classify2()，见 R7
-      other: BF16
     subsystem_method: >-
       **逐项核对完整权重清单，非抽样。** `facts/stepvideo-t2v-30b/shapes.json` 的
       785 个条目（transformer 6 分片全量，每条都带 shape 与 dtype，failed_shards 为空）
@@ -399,21 +398,26 @@ precision:
 
       逐桶（张量数 / 参数量 / 占 29,342,478,400）：
       注意力 240 / 14,495,514,624 / **49.401%**、稠密 FFN 96 / 14,495,514,624 / **49.401%**、
-      调制 55 / 267,644,928 / 0.912%、归一化 384 / 1,204,224 / 0.004%、
-      入口出口投影 2 / 393,280 / 0.001%、其它 4 / 6,696,960 / 0.023%。
-      六桶合计 781 条 / 29,266,968,640，等于 derive 的 `params_by_component.backbone`。
+      调制 55 / 267,644,928 / 0.912%、入口出口投影 10 / 82,600,000 / 0.282%、
+      归一化 384 / 1,204,224 / 0.004%。
+      **五桶合计 785 条 / 29,342,478,400，一条不剩、一个参数不差** ——
+      `other` 桶为 **0**，整份清单没有一条落在兜底桶里，所以 `other` 没有行。
 
-      **另外 4 条 75,509,760 参数不在上表里。** `caption_projection.linear_1` 与
-      `linear_2` 的权重与 bias 命中 `components.json` 的 `caption_` 前缀，
-      落进 `text_encoder` 这个**组件** —— 组件不是子系统，`per_subsystem` 的键
-      只取 `subsystems.json` 的 19 个，所以它没有行。781 + 4 = 785、
-      29,266,968,640 + 75,509,760 = 29,342,478,400，两头都对得上。
-      **这 4 条是 DiT 内部把 Step-LLM 的 6144 维嵌入投进主干的那两层，不是 Step-LLM 本身**：
-      Step-LLM 的 289 张量 19,579,600,896 参数压根不在 `shapes.json` 里
-      （取数用 `--include 'transformer/*'` 收窄过，原因见 notes），
-      把这 0.0755B 读成「文本编码器只有 0.08B」会差 **259 倍**。
-      Step-LLM 全 BF16 这个事实来自逐文件读头，记在 `weights_release_scope` 里，
-      不在这张精度表的作用域内。
+      `io_proj` 那 10 条是：入口 `pos_embed.proj`（[6144, 64, 1, 1] 加 bias，399,360，
+      把 64 通道 latent 投进 6144 维）、出口 `proj_out`（[64, 6144] 加 bias，393,280）、
+      `caption_projection.linear_{1,2}`（两个 [6144, 6144] 加 bias，75,509,760，
+      把 Step-LLM 的 6144 维嵌入投进主干）、`clip_projection`（[6144, 1024] 加 bias，
+      6,297,600，HunyuanCLIP 那一路的 pooled 投影）。**四样合计 82,600,000。**
+      这一桶原先只有出口 393,280，另三样散在 `other` 与 `text_encoder` 组件里 ——
+      归类正则与组件前缀都已在 `ebfb3cd` 修好，见 R8。
+
+      **这张表的作用域是 DiT，不是这个仓。** 真正的文本编码器 Step-LLM
+      是另一个模型，289 张量 19,579,600,896 参数，**压根不在 `shapes.json` 里**
+      （取数用 `--include 'transformer/*'` 收窄过，原因见 notes）；
+      它全 BF16 这个事实来自逐文件读头，记在 `weights_release_scope` 里。
+      所以 `io_proj` 里那 75,509,760 是 DiT 投它的那两层、不是它本身，
+      两者差 **259 倍**；两个 VAE 文件的 F32 同样在作用域外
+      （`weights_release_scope.FP32.in_precision_table: false`）。
 
       **`time_embed` 这一行是手工补的，它不来自 `classify2()`。**
       时间步嵌入在这一份里叫 `adaln_single.emb.timestep_embedder.linear_1`
@@ -424,15 +428,20 @@ precision:
       **空的原因是命名与规则次序，不是这个模型没有时间步嵌入** ——
       不补这一行，缺值判据会把它渲染成「不适用：这个子系统在这个模型里不存在」，
       而那句话是错的。代价是两张表对不齐：derived 的 `params_by_subsystem`
-      只有六桶（`modulation` 含时间步嵌入），这张精度表有七行。
+      只有五桶（`modulation` 含时间步嵌入），这张精度表有六行。
       **这与 cogvideox-1.5-5b 的处理方式相同**（那一份的 `modulation` 行同样是手补的，
       原因是 `norm` 抢在 `modulation` 之前），两份记录的做法有意保持一致，见 R7。
 
-      **其余 12 格是真的没有**：稠密主干无路由专家、无共享专家，router 也就不存在；
-      3D 全注意力不存 KV，所以无 compressor、无 indexer；无检索查表；
-      输入是 latent 不是 token，所以无词表 embed、无 lm_head；
+      **其余 13 格都站得住。** 12 格是真的没有这个子系统：稠密主干无路由专家、
+      无共享专家，router 也就不存在；3D 全注意力不存 KV，所以无 compressor、无 indexer；
+      无检索查表；输入是 latent 不是 token，所以无词表 embed、无 lm_head；
       残差是普通相加，清单里没有系数张量；无草稿模块；无视觉塔；T2V 无音频支路。
-      `io_proj` 这一桶**在这一份上只装到了出口**，入口在「其它」里，见 R8
+      第 13 格是 `other`，它的空是**另一种意思**：785 条全部落进具名桶，
+      没有一条要靠兜底。**这不是本份独有的** —— 2026-10-31 逐份算过，
+      九份里四份的 `other` 为 0（本份、cogvideox-1.5-5b、ltx-2、minimax-h3），
+      另五份在 0.002%（ltx-2.3）到 0.452%（wan2.2-ti2v-5b）之间。
+      （差点在这里写成「第一份 `other` 为 0 的记录」—— 这一份被这类句子栽过三次了，
+      所以这个数是数完九份才写下的，不是推的。）
   inference_default: BF16
 
 performance:
@@ -617,6 +626,18 @@ reviewed:
     另补两条新发现 R7（`time_embed` 的「不适用」是规则次序造成的）与
     R8（`io_proj` 只装到出口），都在共享文件里，本记录没碰。
 
+    **2026-10-31 第三轮（按归类三修后的词表重算）。** R8 报的两条已由主会话在
+    `ebfb3cd` 修掉（`io_proj` 正则加 `\bpos_embed\b|clip_proj`、`components.json`
+    去掉 `caption_` 前缀），本轮按新词表独立重算过逐桶并与主会话给的数逐位核对一致：
+    五桶合计 **785 条 / 29,342,478,400**，`io_proj` 10 条 82,600,000、`other` 归零、
+    785 条全落 `backbone`（于是 derived 不再输出组件拆分那两个键）。
+    改了 `per_subsystem`（去掉 `other` 行）、
+    `subsystem_method`、R8（→ corrected）、`counting_note` 的口径对照
+    （两套切法现在只差 QK-norm 那 24,576）与那条 open question（只剩 R7）。
+    R7 仍开着：判据的拦路石是 `absence()` 的 `test.path` 没有 `$key` 代入，主会话确认留给后续。
+    顺带数完九份确认了一件没敢直接写的事：`other` 为 0 的**不止本份**，
+    cogvideox-1.5-5b / ltx-2 / minimax-h3 也是 0。
+
 review:
   - id: R1
     field: generation.vae.params
@@ -784,12 +805,13 @@ review:
       所以判据本身的毛病是：**「不适用」把「模型里没有这个子系统」与
       「被更靠前的规则领走了」合成了一句话**，而穷举说法越可信，那句话就越像结论。
       两份记录现在都靠手补一行绕过去，**而绕过去的代价是精度表的行数与
-      derived 的 `params_by_subsystem` 桶数对不上**（本份 7 行对 6 桶、
+      derived 的 `params_by_subsystem` 桶数对不上**（本份 6 行对 5 桶、
       cogvideox 6 行对 5 桶），这个不一致没有任何闸口在查
     resolution: open
     changed_to: >-
       本记录补了一行 `time_embed: BF16` 并在 `subsystem_method` 里写明它是手补的、
-      空的原因是命名与规则次序，另外 12 格「真的没有」逐条列了依据。
+      空的原因是命名与规则次序，另外 13 格站得住的理由逐条列了依据
+      （12 格是真的没有这个子系统，第 13 格 `other` 为 0 是因为 785 条全部归了具名桶）。
       判据与归类正则都在共享文件（`data/schema/columns.json`、
       `scripts/lib/subsystems.py`），本记录没碰，已报主会话
   - id: R8
@@ -797,7 +819,7 @@ review:
     severity: imprecise
     claim: '`io_proj`（入口出口投影）这一桶装的是 DiT 的入口与出口投影'
     finding: >-
-      **这一份只装到了出口。** 出口 `proj_out`（[64, 6144] 加 bias，2 条 393,280）
+      **核查时这一份只装到了出口。** 出口 `proj_out`（[64, 6144] 加 bias，2 条 393,280）
       命中 `\bproj_out\b`；入口是 `pos_embed.proj`（[6144, 64, 1, 1] 加 bias，2 条 399,360，
       就是把 64 通道 latent 投进 6144 维的那一层），名字是 `pos_embed`
       而规则写的是 `patch_embed`，**一个词之差**，于是它和
@@ -808,12 +830,37 @@ review:
       会看到一个 393,280 的「入口出口投影」，比真实的入口加出口 792,640 少一半，
       而少掉的那一半在一个叫「其它」的桶里。
       **这和 `dense_ffn` 补 diffusers 的 `ff.` 之前是同一种毛病**：
-      生成类的命名不在语言模型那套词表里，而落进 `other` 不会报错
-    resolution: open
+      生成类的命名不在语言模型那套词表里，而落进 `other` 不会报错。
+
+      **顺带一个同族的问题（本条一并记）**：`caption_projection.linear_{1,2}`
+      那 4 条 75,509,760 更早一步就被分走了 —— `components.json` 的
+      `text_encoder` 前缀表里有 `caption_`，于是它们在**组件层**就落进
+      `text_encoder`，压根到不了子系统正则（`SPLIT_INSIDE` 不含 `text_encoder`）。
+      它们是 DiT 内部投 Step-LLM 嵌入的那两层，不是编码器本体。
+      **判据不靠论证，同一个仓的两种布局自己打起来了**：`facts/ltx-2` 与
+      `facts/ltx-2-pack` 是同一个 repo 同一个 revision
+      （`Lightricks/LTX-2` @ `64f65d09e0b7`）的两种布局，而同一批
+      `caption_projection` 在前者归 `text_encoder`、在后者因为带
+      `model.diffusion_model.` 前缀（最长前缀优先）而归 `dit`/`io_proj` ——
+      **取数布局的差别不该改变一个张量是什么**
+    resolution: corrected
     changed_to: >-
-      本记录照实填 `io_proj` 393,280 与 `other` 6,696,960，并在
-      `subsystem_method` 与本条写明每个桶里到底装的是哪几条张量。
-      归类正则在 `scripts/lib/subsystems.py`，本记录没碰，已报主会话
+      两条都在 `ebfb3cd` 修好了（共享基建，主会话改的；候选正则的影响面由本会话
+      在 64 份有清单的记录、3,014,489 条张量上实跑验过）：
+      `io_proj` 的正则加了 `\bpos_embed\b|clip_proj`（**词界不是风格是判据** ——
+      裸 `pos_embed` 会捞走 ltx-2.5 的 `keyframes_abs_pos_embedding`，
+      那是位置嵌入表不是入口投影；带词界后全仓零抢占、非生成类受影响 0 份），
+      `components.json` 去掉了 `caption_` 前缀。
+
+      本份的结果：`io_proj` 从 2 条 393,280 变成 **10 条 82,600,000**
+      （入口 399,360 + 出口 393,280 + caption 75,509,760 + clip 6,297,600），
+      `other` 从 4 条 6,696,960 **归零**（那一行已从 `per_subsystem` 去掉）。
+      组件侧更干净：785 条全落 `backbone`，而 derive 只在真跨组件时才输出组件拆分
+      （`len(bytes_comp) > 1`），所以 `params_by_component` / `weight_bytes_by_component`
+      **这两个键现在整个不出现了** —— 那个会被读成「文本编码器只有 0.08B」的
+      `text_encoder: 75,509,760` 不是改对了数，是不再存在。
+      derived 已重跑，五桶合计 785 条 / 29,342,478,400，与主会话 `ebfb3cd` 里
+      提交的那份除 `generated_at` 外逐字节相同
 
 notes: >-
   **字节对账。** transformer 58,684,956,800 + step_llm 39,159,201,792
@@ -864,13 +911,16 @@ open_questions:
     `pytorch_model.bin` 是 pickle，读头拿不到清单，dtype 也未声明。
     它影响「文本编码器一共多大」这个账
   - >-
-    `precision.quantization.per_subsystem` 的两个归类口径问题都还在共享文件里
-    （R7 / R8）：缺格判「不适用」分不开「模型里没有」与「被更靠前的规则领走了」
-    （本份的 `time_embed`、cogvideox 的 `modulation` 都是后者，
-    两份都只能手补一行绕过去，代价是精度表行数与 derived 的桶数对不上），
-    而 `io_proj` 的正则认 `patch_embed` 不认 `pos_embed`，
-    这一份的入口投影因此落在「其它」里。精度结论不受影响（全模型只有 BF16 一档），
-    受影响的是按桶读参数量和读页面上那句「这个模型里不存在」的人。两条都已报主会话
+    `precision.quantization.per_subsystem` 的缺格判据还没修（R7；R8 那两条已在
+    `ebfb3cd` 修掉）：判「不适用」分不开**「模型里没有这个子系统」**与
+    **「被更靠前的规则领走了」**（本份的 `time_embed`、cogvideox 的 `modulation`
+    都是后者），两份记录现在都只能手补一行绕过去，
+    **代价是精度表行数与 derived 的桶数对不上，而没有闸口查这个不一致**。
+    拦路石不在判据措辞而在 DSL：`absence()` 的 `test.path` 两侧都是写死的字符串、
+    没有 `$key` 代入，所以「测 derived 里当前这个桶是不是 0」写不出来；
+    加 op 还要同改 `columns.ts`，第 5 道闸比对两侧词表。
+    精度结论不受影响（全模型只有 BF16 一档），受影响的是读页面上那句
+    「这个子系统在这个模型里不存在」的人。已报主会话，它确认留给后续
   - >-
     `stepvideo-t2v-turbo` 的蒸馏步数不知道 —— 它是另一个仓，卡上没写步数。
     按 policy 不单开记录，但 `sampling.step_distilled.steps` 因此留空
