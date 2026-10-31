@@ -57,6 +57,9 @@ git worktree remove --force $T
 | **读 config 收口** | `lib/cfgio.py` 一个入口。量化声明**跟着模态走**：纯文本在顶层、VLM 嵌 `text_config` 下，所以只读顶层的新代码每多一份 VLM 就多漏一份 |
 | **第六道闸：字段消费点棘轮** | schema 的字段站点上得有人读。当前欠 45 个（基本是整个 `generation` 块）。**这个数是低估**，判据会被字符串里的同名词顶掉，见 C8 |
 | **名册对账（`check_roster`）** | `tracking.yaml` 的 `video_families` 陈旧过一整条线：九条 `status: planned` 对着已落地的记录，外加两条 `released` 口径错、一条写下时就错的 note。**原因是没有消费点** —— 站点只读 `families`，那张表没人看过。现在站点两张都读（总览与家族演进按线分表），status / released 按记录对账，分线判据再与记录有没有 `generation` 块互核 |
+| **生成线逐子系统精度（九份）** | 此前 `precision.quantization` 在 48 份语言模型记录里全有、九份生成记录里一份都没有，`--list-gaps` 的「未录」名单 12 份。事实其实在手（`facts/*/shapes.json` 每个张量都带 dtype），是填的动作没做。六个 family session 各填一族，名单降到 3 份 |
+| **子系统词表加生成三桶** | `modulation` / `time_embed` / `io_proj`，并给 `dense_ffn` 补 `(?:^\|\.)ff\.` —— **f-f 不是 ffn 的子串**，五份记录的整个 FFN 原先在 `other` 里。h3 的 `other` 从 75.7% 降到 0。三条新词条一律排在已有规则之后：只许从 `other` 里捞，排前面会从 `vision` / `audio` / `dense_ffn` 抢走 13 份语言模型记录与 LTX 的张量（实测过） |
+| **cogvideox 的 AdaLN 在错桶里** | 它把调制实现成 `normN.linear`，名字带 norm 就被 `norm` 规则领走：**7.94 亿参数（14.26%）标成「归一化」，而这一份的全部意义就是它是「逐层放矩阵」那组的代表**。`modulation` 因此在 `SUBSYSTEM` 里出现两次 —— 这条排 `norm` 之前，尾部那条不能上移 |
 | **M3.1-Flash（原 B1）** | 录为支线。顺带修掉三个页面早就印着的字面量 `undefined`（五道闸当时全绿） |
 | **LayerMap 三修** | 零 MTP 块的轨道错位（`repeat(0,…)` 被钳成 1）、`DT` 补 `MXFP4`、**`recurrent_state` 进表**。第三条原被当成「图的口径限制」，实际是 kimi 93 层里 69 层的缓存去向在表上不存在、而每 token 合计看着像覆盖全部层 |
 
@@ -308,6 +311,24 @@ git worktree remove --force $T
    「比过 N / M 个字段」，一个字段都没比过的不进这一段，
    而「矩阵看不见什么」按线取词（生成线提 VAE 与采样步数，语言模型线提权重存储口径），
    否则免责声明自己就成了另一条悬空断言。
+22. **共用工作区里 `git add <paths>` 不够，`git commit` 也必须带 pathspec** ——
+   六个 family session 共用同一个 checkout 时撞上：cogvideo 那个 session 的 add 写的是
+   两个具体文件路径（没有目录、没有通配、没有 `-A`），commit 也没有 `-a` ——
+   但 **commit 没带 pathspec，提交的是整个 index**，而 wan 那个 session 在它 add 之后、
+   commit 之前把自己的三份记录 add 进了同一个 index。于是 `048954f` 的说明只写
+   cogvideox，内容里混进了 wan 三份。内容没丢（wan 补了空提交 `0de757c` 留痕），
+   但历史上那个提交说的不是它做的事。**「只 add 指定路径」这条规矩只管住了一半。**
+   正确做法是 `git commit -- <paths>`，或者先 `git stash` 别人的改动 —— 而后者在
+   共用工作区里恰恰是**禁止**的：`git stash` 会把别的 session 未提交的改动一起藏走
+   （我自己为了做棘轮基线对比踩过一次，7 个文件被藏，pop 回来才没出事）。
+   要做基线对比就另开 `git worktree`，或者在内存里算。
+23. **锚不住就要说出来，不能静默通过** —— validate 的「`resolution: open` 必须有
+   对应 open_question」那道检查，判据是 `field.split(".")[-1] in open_q`，
+   而 `field: '-'` 时 key 就是 `-`，**一个「——」就有两个破折号**，于是 `in` 恒真。
+   stepvideo 的 R4 挂了两轮 `open` 而这道检查从没管过它。坑 #2 的又一例，
+   但这回撞的不是另一个同名词，是散文里到处都有的标点 —— 判据按结构不按词，
+   「词」里也包括标点。改成锚不住就明说「这一条要人看」之后，
+   **立刻报出 4 条此前不可见的条目**（cogvideox 3 条、hunyuanvideo-1.5 1 条）。
 
 ## 会话地图
 
