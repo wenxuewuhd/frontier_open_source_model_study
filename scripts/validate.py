@@ -716,7 +716,12 @@ def check_pending_claims(doc, path, warnings):
                 warnings.append(
                     f"{path}: {where} 写着「{m.group(0)}」—— 这是对共享文件待办状态的陈述，"
                     "那件事一落地这句话就成了假话。**本闸判不出它落地了没有**，"
-                    "只能提出来让人核：落地了就改这句话，没落地就留着")
+                    "只能提出来让人核：落地了就改这句话；**确实还没落地的，"
+                    "给这句话补一个可机械判伪的收尾条件** —— 否则它每次重跑都红一次、"
+                    "每次都要人去问一遍，而那会训练人不读告警（D3 的原话）。"
+                    "样本见 hunyuanvideo-1.5 的 open_questions：它写明了"
+                    "「顶层 flops_per_step.total 与同 token 数那两段相等的那天，这一条整段删掉」，"
+                    "下一个看到告警的人跑一条比较就能收尾，不用来问人")
         elif isinstance(node, dict):
             for k, v in node.items():
                 if k == "review":      # 当时的记录，不是现在的陈述

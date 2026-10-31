@@ -202,6 +202,14 @@ git worktree remove --force $T
 
 - **D1 `derive.py` 的算术强度按参数量比例折算 decode 权重字节** —— 对混合精度模型不成立
   （kimi-k3 偏 2.34×）。
+- **D9 `subsystems.json` 的条目注释没有消费点** —— 站点侧（`site/src/lib/data.ts`）
+  只读 `key` 与 `label`，顶层 `$comment` 与条目的 `note` 字段**零消费点**
+  （`note` 连 schema 里都没人填）。后果立刻可见：`time_embed` 的列头 2026-10-31 改成
+  「时间步与条件嵌入」之后，**九份里八份那一桶 100% 是时间步嵌入器**
+  （只有 HunyuanVideo-1.5 混着 c_embedder，占它那一桶 55%），而读者在页面上
+  既看不到这个定义也看不到比例 —— 改标签的理由只活在一个没人读的字段里。
+  与 C8「产物存在、没有消费点」同形，v2-hy15 发现。
+  要真让读者看见得动站点侧：最小做法是列头 `title` 挂上该桶在这份记录里的实际成员。
 - **D8 组件层的桶在逐子系统精度表上没有列** —— `classify2()` 是两层的：
   非 `SPLIT_INSIDE` 的组件（vae / connector / text_encoder / vocoder / audio_vae / upsampler）
   整块算一桶，桶名就是组件名。而逐子系统精度表的列来自 `data/schema/subsystems.json`，
