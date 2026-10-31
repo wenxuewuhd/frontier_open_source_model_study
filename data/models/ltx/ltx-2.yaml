@@ -140,11 +140,14 @@ params:
     video_self/cross_attention 各 67,133,440/块（q/k/v/o 四个 [4096,4096] 加 bias
     与两个 [4096] 的 QK-norm），audio 侧同构但宽 2048；a2v 与 v2a 是音视频互相的
     交叉注意力，q 或 k/v 一侧 4096、另一侧 2048，所以两者差 98,304（= 48 × 2,048）。
-    adaln_modulation 含 6 个全局 adaLN 模块（adaln_single 118,521,856、
-    av_ca_video_scale_shift 84,959,232、av_ca_a2v_gate 34,615,296、
-    audio_adaln_single 29,900,800、av_ca_audio_scale_shift 21,508,096、
-    av_ca_v2a_gate 8,919,040 = 298,424,320）、顶层两张表 12,288、
-    以及逐块 scale_shift_table 3,244,032。
+    adaln_modulation 含 6 个全局 adaLN 模块，**名字用本代的写法**
+    （`time_embed` 118,521,856、`av_cross_attn_video_scale_shift` 84,959,232、
+    `av_cross_attn_video_a2v_gate` 34,615,296、`audio_time_embed` 29,900,800、
+    `av_cross_attn_audio_scale_shift` 21,508,096、
+    `av_cross_attn_audio_v2a_gate` 8,919,040 = 298,424,320）、顶层两张表 12,288、
+    以及逐块调制表 3,244,032（四种 `*scale_shift_table` × 48 块）。
+    **下一代把这六个模块全部改名成 `*adaln_single`**，所以按 ltx-2.3 的名字
+    grep 本代的清单是零命中（见 R4）—— 参数量一一对应，名字不对应。
 
     **不含的三类**，它们在同一次发布里但不在 transformer/ 组件内，规模见 generation.*：
     视觉 VAE 1,222,480,241、文本嵌入投影 722,534,400、文本与音频连接器 708,940,800、
@@ -478,6 +481,59 @@ precision:
         这就是 nvfp4 的标准块。两个因子（2 和 16）各自独立算出，不是从一个数推的。
         **所以不要按这份清单读参数量**：按容器数会得到 11,785,706,032，
         少算 4.1B。文件 19,988,416,674 B，按清单算 19,987,202,954 B，差 1,213,720 B（头）
+  quantization:
+    # 这一组值只覆盖 BF16 全量档（`transformer/` 组件）。fp8 与 fp4 两档是定向取数、
+    # 没有落成 shapes.json，所以它们的 in_precision_table 为假，不在这组值里。
+    per_subsystem:
+      attention: BF16
+      dense_ffn: BF16
+      modulation: FP32
+      norm: BF16
+      io_proj: BF16
+      time_embed: BF16
+      audio: MIXED
+    subsystem_method: >-
+      来自完整权重清单（`transformer/` 8 分片 3,510 条目）**逐项穷举、非抽样**：
+      每个条目都带 shape 与 dtype，failed_shards 为空，3,316 条 BF16 + 194 条 F32，
+      两者相加等于条目数，没有第三种 dtype、没有 scale 容器、没有打包容器。
+
+      **194 条 F32 全是 `*scale_shift_table` 调制表**（3,256,320 参数，占 0.017%），
+      而归类按名字走，于是它们落进三个桶：modulation 49 条
+      （`scale_shift_table` 48 + 顶层 1，这一桶 **100% F32**，所以报 FP32）、
+      audio 97 条（`audio_scale_shift_table` 48 +
+      `audio_a2v_cross_attn_scale_shift_table` 48 + 顶层 1）、
+      attention 48 条（`video_a2v_cross_attn_scale_shift_table` ——
+      名字里有 `attn`，而归类正则的 attention 条排在 modulation 条之前）。
+
+      **attention 报 BF16 而不是 MIXED**：这一桶里那 48 条 F32 不是注意力权重，
+      是被名字捞错的调制表（983,040 / 6,564,581,376 = 0.015%）；
+      视频自注意力与交叉注意力各 3,222,011,904、逐条都是 BF16。
+      标 MIXED 会说成「注意力有两种精度」，那是错的。
+      **audio 报 MIXED 是实话**：那一桶按「流」分，音频支路自己的 97 张调制表
+      （1,085,440）本来就归它，所以它确实同时装着 BF16 与 F32 两类自己的权重。
+
+      **audio 这一桶装的是整条音频支路，不是某一种算子**，看 dense_ffn 那一行之前要知道：
+      audio_ffn 1,611,104,256（192 条 `audio_ff.net.*`）、
+      a2v 交叉注意力 1,208,451,072、v2a 交叉注意力 1,208,352,768、
+      音频自注意力 805,699,584、音频交叉注意力 805,699,584、
+      AdaLN 与时间步嵌入 60,327,936、`audio_caption_projection` 12,062,720、
+      调制表 1,085,440、norm 786,432、`audio_proj_in`/`audio_proj_out` 526,464。
+      所以 **`dense_ffn` 那一行的 6,443,433,984 只是视频支路的 FFN**，
+      整模型的 FFN 是 8,054,538,240；`attention` 那一行同样只有视频两套。
+      按功能的分桶在 params.breakdown 里，那一份逐项核对过、合计等于 params.total。
+
+      **`time_embed` 这一行不能跨代比。** 它的 118,521,856 里有 100,687,872 是
+      全局 AdaLN 的输出投影（`time_embed.linear`，weight [24576, 4096] = 6 行 × 4096
+      加 bias），只有 17,833,984 是真正的时间步嵌入 MLP（`time_embed.emb.*`）；
+      下一代把同一个模块改名成
+      `adaln_single`，于是这一亿参数在 ltx-2.3 落进 modulation、它的 time_embed 为空。
+      可比的是 params.breakdown 的 adaln_modulation（301,680,640 → 430,600,192）。
+
+      未列出的 12 个桶（expert / shared_expert / compressor / indexer / retrieval /
+      router / embed / lm_head / residual / draft / vision / other）在这份清单里
+      **一条张量都没有**，是穷举后的「不适用」而不是没测：DiT 稠密无 MoE 与路由、
+      无 KV 压缩与稀疏索引、文本从 cross-attn 进来所以无输入词表与输出头、
+      无残差系数张量、无 MTP、无视觉塔
   inference_default: BF16
 
 bottlenecks:
@@ -570,6 +626,10 @@ evidence:
   generation.checkpoint_variants: official
   precision: official
   precision.weights_release_scope: derived
+  # 逐子系统精度是从 transformer/ 的 8 个 safetensors 头实测的，不是厂商声明值。
+  # 不显式写这一条，它会落进上面 precision: official 的前缀继承里，
+  # 于是不出现在 validate.py --list-judgements，绕过 Gate C 的人工复核
+  precision.quantization: derived
   bottlenecks: judgement
   infra_signals: judgement
   notes: judgement
@@ -584,8 +644,9 @@ reviewed:
 
     结构字段三路交叉：48 层与 32×128 在 transformer/config.json、
     `LTXModelConfigurator` 的默认值、以及清单里 transformer_blocks.0–47
-    三处一致；patch_size 1 / patch_size_t 1 与清单里 `patchify_proj.weight`
-    [4096, 128]（128 = latent 通道，没有 patch 展开）一致；
+    三处一致；patch_size 1 / patch_size_t 1 与清单里 `proj_in.weight`
+    [4096, 128]（128 = latent 通道，没有 patch 展开；下一代同一个张量叫
+    `patchify_proj.weight`）一致；
     VAE 的 32/8 在 vae/config.json 的两个 ratio、transformer config 的
     vae_scale_factors [8,32,32]、以及块表的 2^3 × patch 4 三处一致；
     latent_channels 128 由 `encoder.conv_out` [129,…] 与 `decoder.conv_in`
@@ -658,6 +719,33 @@ review:
     changed_to: >-
       hidden_layer_taken 留空（schema 的整数装不下「全部层」），口径写进 note。
       聚合投影的 722,534,400 参数单列在 counting_note 的「不含的三类」里
+  - id: R4
+    field: params.counting_note
+    severity: imprecise
+    claim: >-
+      counting_note 里 adaln_modulation 的六个模块叫 adaln_single /
+      av_ca_video_scale_shift / av_ca_a2v_gate / audio_adaln_single /
+      av_ca_audio_scale_shift / av_ca_v2a_gate；reviewed.method 里
+      patch 投影叫 `patchify_proj.weight`
+    finding: >-
+      **七个名字全是下一代（ltx-2.3）的写法，在本代清单里逐个零命中。**
+      六个 adaLN 模块的参数量一个不差（118,521,856 / 84,959,232 / 34,615,296 /
+      29,900,800 / 21,508,096 / 8,919,040，合 298,424,320，加顶层两张表 12,288
+      与逐块调制表 3,244,032 = 301,680,640，等于 breakdown 里那一项），
+      所以这不是算错，是**名字取自另一份清单**。本代的真名是 `time_embed` /
+      `av_cross_attn_video_scale_shift` / `av_cross_attn_video_a2v_gate` /
+      `audio_time_embed` / `av_cross_attn_audio_scale_shift` /
+      `av_cross_attn_audio_v2a_gate`，patch 投影是 `proj_in.weight`。
+      照记录去 grep 清单复核会得到零命中，而「每个数字都能追到源」要求的正是
+      grep 得到 —— 数对而路标指错，复核的人只会以为自己取错了数
+    resolution: corrected
+    changed_to: >-
+      counting_note 的六个模块名与 reviewed.method 的 `proj_in.weight` 都改成
+      本代写法，并在两处写明下一代改成什么名字。
+      **而 `time_embed` 这个真名本身是个陷阱**：这个模块 118,521,856 里
+      100,687,872 是 AdaLN 的输出投影、只有 17,833,984 是时间步 MLP，
+      所以它在逐子系统表上落进 time_embed 桶而不是 modulation ——
+      这件事写在 precision.quantization.subsystem_method 里
 
 notes: >-
   **这个仓为什么取数会被拒绝，以及为什么拒绝是对的。**
@@ -691,6 +779,24 @@ open_questions:
     取单文件包时不会这样（名字带 `model.diffusion_model.` 前缀，更长、优先匹配到 dit）。
     真正的文本编码器是 Gemma-3-12B 48.75 GB，见 generation.text_encoders。
     这是 components.json 的一个前缀缺口，已上报；本记录不改共享文件
+  - >-
+    **逐子系统分桶在这一族是按「流」而不是按「功能」分的，而本仓两种口径只能选一种。**
+    `audio` 这一桶收的是整条音频支路（5,714,096,256：注意力 4.03B、FFN 1.61B、
+    AdaLN 与时间步嵌入 0.06B、norm、caption 投影、调制表），于是 `dense_ffn`
+    那一行只剩视频侧的 6,443,433,984，而整模型的 FFN 是 8,054,538,240 ——
+    一个按「对带宽账的分量」排序的表，它的头号桶少了 1,611,104,256，
+    即真值的 20.0%（反过来说真值高 25%）。
+    本仓的 `param_scaling` 轴已经把「流」单列（per_sample / per_video_token /
+    per_text_token），而 components.json 给 audio_vae 写的注里把 `audio`
+    子系统定义成「音频理解编码器」—— 本代的音频张量不是编码器，
+    它们住在和视频支路**完全同一组** `transformer_blocks.0–47`（两边层号集合逐个相同，
+    实测），是块内的并行支路而不是一座塔。按这两条判，子系统该按功能分。
+    但改次序要同时改三条正则（`audio` 不许吃生成侧的流、`dense_ffn` 的
+    `(?:^|\.)ff\.` 配不上 `audio_ff.`、`io_proj` 的 `patch_embed` 配不上
+    `patchify_proj`）并把 `modulation` 提到 `attention` 之前，
+    那是共用基建、要连全仓 57 份一起回归。**已上报，本记录不改共享文件**；
+    在改之前，本记录里按功能的那一份口径在 params.breakdown，
+    逐子系统的那一份口径写在 precision.quantization.subsystem_method
   - >-
     `generation.sampling.cfg.forwards_per_step` 只填得下 1 或 2（schema 枚举），
     而厂商 CLI 的默认档是 4（见 R2）。所以 generation_workload 的端到端 FLOPs
