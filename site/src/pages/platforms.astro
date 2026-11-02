@@ -24,8 +24,11 @@ const statusLabel: Record<string, string> = {
   {
     !BUILD_IS_INTERNAL && (
       <div class="note" style="margin-bottom:16px">
-        这是公开构建，只含公开来源的支持状态。昇腾侧的适配状态、自测性能与算子缺口
-        属内部数据，在叠加 overlay 的内部构建里才会出现。
+        这是公开构建，只含公开来源的支持状态 —— 昇腾侧也在内：上游公开清单
+        （vllm-ascend 的支持模型表、SGLang 的昇腾 NPU 清单）里有定位的条目照录。
+        内部数据是另一回事：自测性能、算子缺口与内部适配进度只在叠加 overlay 的
+        内部构建里出现。<strong>这张表里没有的组合是「未录」，不是「不支持」</strong> ——
+        「查了确认不支持」会写成状态 <code>none</code> 的一行，而不是一行空白。
       </div>
     )
   }

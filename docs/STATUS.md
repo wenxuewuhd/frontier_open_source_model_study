@@ -11,7 +11,9 @@
 记录            57 份     llm 35 + vlm 13 + video-gen 9
 视频线          9 / 12    wan ×3、minimax-h3、ltx ×2、hunyuan-1.5、cogvideox、stepvideo
 新范式条目      5 条      L0 五条已锚文献；3 条有 L1 记录；
-                          **L3 昇腾整列未录**（全仓 0 条昇腾平台条目）
+                          **有 L1 记录的 3 条 L3 已不是未录**（六旗舰补了 12 条
+                          昇腾平台条目，vllm-ascend 与 SGLang 公开清单）；
+                          另 2 条连 L1 都没命中，L3 空着是未录
 逐层产物        6 份      六个旗舰全有
 注意力架构图    5 张      差 minimax-m3 一张
 闸口            七道      全绿（validate 0 错 6 警 / 回归 49 / kv_table /

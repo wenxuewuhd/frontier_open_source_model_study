@@ -299,6 +299,58 @@ precision:
       早先按抽样填（每个子系统 6 个代表张量，读 14 个分片头）。已用完整清单按 lib/subsystems.py（mtp_from=61）按元素数复核
       （I8 按 FP4 ×2 还原、不计 scale）：代表值都不变；indexer 75.3% FP8_E4M3 / 24.7% BF16（indexer.compressor 与 weights_proj 未量化）、
       router 98.6% BF16 / 1.4% I64（tid2eid）、compressor 99.7% BF16、draft 98.2% FP4 / 1.8% FP8
+platforms:
+- engine: vllm-ascend
+  hardware: 昇腾 950DT
+  status: supported
+  precision: MIXED
+  graph_mode: Fullgraph AclGraph
+  caveat: >-
+    清单 Note 原文「Native mixed MXFP8/MXFP4 weights」—— 两种格式混在同一份权重里，
+    所以 `precision` 记 `MIXED` 而不是挑一个。W8A8 / Chunked Prefill / 前缀缓存 /
+    投机解码 / 异步调度 / PP / EP / DP / PD 分离 / Fullgraph AclGraph 这些格都是 ✅，
+    max-model-len 1M。**Tensor Parallel 与 Piecewise AclGraph 两格是空的**：
+    该页图例只定义了 ✅ / 🔵 / 🟡 / 🔴 / ❌ 五种，没有定义空格，
+    所以这两项按未标注读 —— 空格不是 ❌。
+  ref:
+    kind: doc
+    url: https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/user_guide/support_matrix/supported_models.md
+    locator: 'Text-Only Language Models › Generative Models › Core Supported Models ›
+      「950PR&950DT Products」页签表，Model = DeepSeek V4-Pro 那一行'
+    accessed: '2026-11-02'
+  visibility: public
+- engine: vllm-ascend
+  hardware: 昇腾 A2/A3
+  status: supported
+  graph_mode: Fullgraph AclGraph
+  caveat: >-
+    A2/A3 页签这一行 BF16 与 W8A8 **两格都是 ✅**，是两条并存的路径，
+    挑一个填进 `precision` 会把「可选」写成「就是它」，所以这一条不登记精度。
+    TP / 投机解码 / 异步调度 / EP / DP / PD 分离 / Fullgraph AclGraph 为 ✅，
+    max-model-len 1M；Pipeline Parallel 与 Piecewise AclGraph 两格为空（未标注，非不支持）。
+  ref:
+    kind: doc
+    url: https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/user_guide/support_matrix/supported_models.md
+    locator: 'Text-Only Language Models › Generative Models › Core Supported Models ›
+      「A2/A3」页签表，Model = DeepSeek V4-Pro 那一行'
+    accessed: '2026-11-02'
+  visibility: public
+- engine: SGLang
+  hardware: 昇腾 A2/A3
+  status: supported
+  caveat: >-
+    SGLang 的昇腾清单只有「A2 Series Products Supported」「A3 Series Products Supported」
+    两列，两列都是 ✅，没有特性细分列也没有图例 —— 这一条只能说明「收录且两代都标支持」，
+    特性限定上游没给。另外**收录的是量化变体 `Eco-Tech/DeepSeek-V4-Pro-w4a8-mtp`
+    （w4a8 + MTP），不是本记录跟的 `deepseek-ai/DeepSeek-V4-Pro` 原始权重**，
+    所以它证明的是那份变体能跑，不能直接当原始权重的支持状态。
+  ref:
+    kind: doc
+    url: https://docs.sglang.io/docs/hardware-platforms/ascend-npus/ascend_npu_support_models.md
+    locator: 'Supported Models › Large Language Models 表，
+      Models = Eco-Tech/DeepSeek-V4-Pro-w4a8-mtp（Model Family = DeepSeek）那一行'
+    accessed: '2026-11-02'
+  visibility: public
 infra_signals:
 - text: 同代 Flash / Pro 只差规格不差算子。算子表可共用，只换形状参数
   evidence: judgement
@@ -329,6 +381,7 @@ evidence:
   arch.moe.routing: derived
   arch.ffn.type: derived
   precision: official
+  platforms: official
   infra_signals: judgement
   notes: judgement
   open_questions: judgement

@@ -12,8 +12,10 @@
  *   1. 五档的事实来源不是一处，所以「L0 未录而 L1 已证」是正常的，不是矛盾。
  *      不说清楚，读者会把「未录」读成「没有论文」。
  *   2. 空格子按三态渲染（未录 / 确认无），标签取自 data/schema/columns.json。
- *      **「没有平台条目」与「查过了不支持」不是一回事** —— 本仓昇腾侧 0 条条目，
- *      那是未录，不是不支持。
+ *      **「没有平台条目」与「查过了不支持」不是一回事** —— L3 空着的那几格是未录，
+ *      不是不支持。**卡片上的句子按条目数算，不写死** —— 它原先写的是
+ *      「本仓昇腾侧 0 条条目」，六个旗舰补上昇腾条目的那天它就成了假话；
+ *      页面上会过时的句子要么由数据推，要么不写。
  */
 import Base from '../layouts/Base.astro';
 import Evidence from '../components/Evidence.astro';
@@ -67,6 +69,7 @@ const total = all.length;
 const withL1 = all.filter((p) => stateOf(p, 'l1') === 'present').length;
 const inexpressible = all.filter((p) => p.rungs?.criterion === 'inexpressible').length;
 const ascendEntries = all.reduce((n, p) => n + (p.rungs?.l3.entries.length ?? 0), 0);
+const l3Present = all.filter((p) => stateOf(p, 'l3') === 'present').length;
 ---
 
 <Base
@@ -83,7 +86,9 @@ const ascendEntries = all.reduce((n, p) => n + (p.rungs?.l3.entries.length ?? 0)
       <div class="label">昇腾侧平台条目</div>
       <div class="value">{ascendEntries}</div>
       <div class="sub">
-        本仓全部平台条目里昇腾一条都没有，所以 L3 整列是「未录」而不是「不支持」
+        {ascendEntries === 0
+          ? '本仓全部平台条目里昇腾一条都没有，所以 L3 整列是「未录」而不是「不支持」'
+          : `${l3Present} / ${total} 条范式的 L3 已有条目；其余仍空的是「未录」而不是「不支持」`}
       </div>
     </div>
     <div class="card stat">

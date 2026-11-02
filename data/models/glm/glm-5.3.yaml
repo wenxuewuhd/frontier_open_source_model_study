@@ -283,6 +283,41 @@ platforms:
       kind: modelcard
       url: https://huggingface.co/zai-org/GLM-5.3
     visibility: public
+  - engine: vllm-ascend
+    hardware: 昇腾 950DT
+    status: supported
+    graph_mode: Fullgraph AclGraph
+    caveat: >-
+      清单 Note 原文「W8A8C8 MXFP8 / W4A4C8 MXFP4」—— 那是**两套可选配方**，
+      不是一份混精度权重，挑一个填进 `precision` 就成了断言，所以这一条不登记精度。
+      W8A8 / 前缀缓存 / 投机解码 / 异步调度 / TP / PP / EP / DP / PD 分离 /
+      Fullgraph AclGraph 为 ✅，max-model-len 1M。**BF16、Chunked Prefill、
+      Piecewise AclGraph 三格是 🟡**，图例原文「Code has been merged but not yet
+      subjected to system testing」—— 代码已合、未经系统测试，这三项不能当已验证用。
+    ref:
+      kind: doc
+      url: https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/user_guide/support_matrix/supported_models.md
+      locator: 'Text-Only Language Models › Generative Models › Core Supported Models ›
+        「950PR&950DT Products」页签表，Model = GLM-5.3 那一行'
+      accessed: '2026-11-02'
+    visibility: public
+  - engine: vllm-ascend
+    hardware: 昇腾 A2/A3
+    status: supported
+    graph_mode: Piecewise + Fullgraph AclGraph
+    caveat: >-
+      A2/A3 页签这一行 Note 只写「W8A8C8」，而 BF16 也是 ✅ —— 量化与 BF16 两条路并存，
+      故不登记单一 `precision`。该行其余特性格**全部是 ✅**（含 Piecewise 与 Fullgraph
+      AclGraph，这点与 950DT 页签不同，那边这两格里 Piecewise 是 🟡）。
+      max-model-len 分两代写：**135k（A2）/ 1M（A3）** —— 同一条目两种上限，
+      不要合成一个数。
+    ref:
+      kind: doc
+      url: https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/user_guide/support_matrix/supported_models.md
+      locator: 'Text-Only Language Models › Generative Models › Core Supported Models ›
+        「A2/A3」页签表，Model = GLM-5.3 那一行'
+      accessed: '2026-11-02'
+    visibility: public
 
 bottlenecks:
   - dimension: kv-capacity

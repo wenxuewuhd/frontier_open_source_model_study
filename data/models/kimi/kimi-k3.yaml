@@ -471,6 +471,55 @@ platforms:
       kind: modelcard
       url: https://huggingface.co/moonshotai/Kimi-K3
     visibility: public
+  - engine: vllm-ascend
+    hardware: 昇腾 950DT
+    status: supported
+    graph_mode: Fullgraph AclGraph（FULL_DECODE_ONLY）
+    caveat: >-
+      清单 Note 原文「W4A8; DSpark; FULL_DECODE_ONLY; KV Cache Pool」。
+      **W4A8 是权重 4 位 / 激活 8 位的量化方案，不是 `dtype` 枚举里的某一种落盘精度**，
+      所以不往 `precision` 里塞。`FULL_DECODE_ONLY` 说明图模式只覆盖 decode 阶段 ——
+      这是本条最该读出来的限定。前缀缓存 / 投机解码 / TP / EP / DP / PD 分离 /
+      Fullgraph AclGraph 为 ✅，max-model-len 131072；BF16、W8A8、Chunked Prefill、
+      异步调度、Piecewise AclGraph 五格为空（图例未定义空格，按未标注读）。
+    ref:
+      kind: doc
+      url: https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/user_guide/support_matrix/supported_models.md
+      locator: 'Multimodal Language Models › Generative Models › Core Supported Models ›
+        「950PR&950DT Products」页签表，Model = Kimi-K3 那一行'
+      accessed: '2026-11-02'
+    visibility: public
+  - engine: vllm-ascend
+    hardware: 昇腾 A3
+    status: supported
+    graph_mode: Fullgraph AclGraph（FULL_DECODE_ONLY）
+    caveat: >-
+      这一行在「A2/A3」页签下，但它自己的 Supported Hardware 格写的是 **A3**，
+      不是 A2/A3 —— 所以硬件按 A3 录，**A2 侧在这份清单里是未录，不是不支持**。
+      Note 与 950DT 那行相同（W4A8; DSpark; FULL_DECODE_ONLY; KV Cache Pool），
+      max-model-len 131072。注意与下面那条 SGLang 的口径差异：SGLang 的清单里
+      A2、A3 两列都是 ✅ —— 两家清单对 A2 的说法不一致，本仓照各自原文录，不替它们调和。
+    ref:
+      kind: doc
+      url: https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/user_guide/support_matrix/supported_models.md
+      locator: 'Multimodal Language Models › Generative Models › Core Supported Models ›
+        「A2/A3」页签表，Model = Kimi-K3 那一行（Supported Hardware 格 = A3）'
+      accessed: '2026-11-02'
+    visibility: public
+  - engine: SGLang
+    hardware: 昇腾 A2/A3
+    status: supported
+    caveat: >-
+      SGLang 昇腾清单只有 A2 / A3 两列支持标记，两列都是 ✅，无特性细分列、无图例。
+      收录的是量化变体 `sgl-npu/Kimi-K3-W4A8`，不是 `moonshotai/Kimi-K3` 原始权重 ——
+      它证明的是那份 W4A8 变体能跑。A2 的说法与 vllm-ascend 那条（只写 A3）不一致。
+    ref:
+      kind: doc
+      url: https://docs.sglang.io/docs/hardware-platforms/ascend-npus/ascend_npu_support_models.md
+      locator: 'Supported Models › Large Language Models 表，
+        Models = sgl-npu/Kimi-K3-W4A8（Model Family = Kimi）那一行'
+      accessed: '2026-11-02'
+    visibility: public
 
 bottlenecks:
   - dimension: kv-capacity

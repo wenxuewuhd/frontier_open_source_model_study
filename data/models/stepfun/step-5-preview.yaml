@@ -489,6 +489,25 @@ platforms:
       kind: modelcard
       url: https://huggingface.co/stepfun-ai/Step-5-Preview
     visibility: public
+  - engine: vllm-ascend
+    hardware: 昇腾 950DT
+    status: partial
+    graph_mode: Fullgraph AclGraph
+    caveat: >-
+      上游 Support 列是 **🔵 Experimental**，不是 ✅ —— 图例原文「Implemented and
+      basically functional, but still under improvement. May have instability or
+      performance fluctuations」，推荐栏写「production use requires risk assessment」。
+      所以这一条记 `partial` 而不是 `supported`。W8A8 / Chunked Prefill / 前缀缓存 /
+      投机解码 / 异步调度 / TP / PP / EP / DP / Fullgraph AclGraph 为 ✅，
+      max-model-len 1M；PD 分离与 Piecewise AclGraph 两格为空（未标注）。
+      **「A2/A3」页签里没有这一行**，所以 A2/A3 侧是未录。
+    ref:
+      kind: doc
+      url: https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/user_guide/support_matrix/supported_models.md
+      locator: 'Multimodal Language Models › Generative Models › Core Supported Models ›
+        「950PR&950DT Products」页签表，Model = Step-5-Preview 那一行（Support = 🔵）'
+      accessed: '2026-11-02'
+    visibility: public
 
 bottlenecks:
   - dimension: kv-capacity

@@ -468,6 +468,39 @@ platforms:
       kind: modelcard
       url: https://huggingface.co/MiniMaxAI/MiniMax-M3
     visibility: public
+  - engine: vllm-ascend
+    hardware: 昇腾 950DT
+    status: supported
+    precision: MXFP8
+    graph_mode: Fullgraph AclGraph
+    caveat: >-
+      清单 Note 原文「MXFP8; text/image/video」—— 精度由 Note 直接点名，故登记 MXFP8。
+      Chunked Prefill / 前缀缓存 / 投机解码 / 异步调度 / TP / PP / EP / DP / PD 分离 /
+      Fullgraph AclGraph 为 ✅，max-model-len 1M。**Piecewise AclGraph 是 🟡**
+      （代码已合、未经系统测试）；BF16 与 W8A8 两格为空 —— 图例没定义空格，按未标注读。
+    ref:
+      kind: doc
+      url: https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/user_guide/support_matrix/supported_models.md
+      locator: 'Multimodal Language Models › Generative Models › Core Supported Models ›
+        「950PR&950DT Products」页签表，Model = MiniMax-M3 那一行'
+      accessed: '2026-11-02'
+    visibility: public
+  - engine: vllm-ascend
+    hardware: 昇腾 A2/A3
+    status: supported
+    graph_mode: Fullgraph AclGraph
+    caveat: >-
+      A2/A3 页签这一行 Note 原文「Text, image, video, and ViT DP」—— **没有点名精度**，
+      而 BF16 与 W8A8 两格都是 ✅，所以这一条不登记 `precision`（950DT 那条的 MXFP8
+      来自它自己那一行的 Note，不往这一行传）。其余特性格为 ✅，max-model-len 1M；
+      Piecewise AclGraph 是 🟡。
+    ref:
+      kind: doc
+      url: https://github.com/vllm-project/vllm-ascend/blob/main/docs/source/user_guide/support_matrix/supported_models.md
+      locator: 'Multimodal Language Models › Generative Models › Core Supported Models ›
+        「A2/A3」页签表，Model = MiniMax-M3 那一行'
+      accessed: '2026-11-02'
+    visibility: public
 
 bottlenecks:
   - dimension: kv-capacity

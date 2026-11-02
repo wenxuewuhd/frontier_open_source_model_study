@@ -349,6 +349,24 @@ platforms:
       kind: modelcard
       url: https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B
     visibility: public
+  - engine: SGLang
+    hardware: 昇腾 A2/A3
+    status: supported
+    caveat: >-
+      SGLang 昇腾清单收录的是 `Qwen/Qwen3.8-2.4T-A95B` 本身（**不是量化变体**，
+      同族其他条目多半挂在 `Eco-Tech/...-w8a8` 之类的量化仓下），A2、A3 两列都是 ✅。
+      该页只有这两列，没有特性细分列也没有图例，所以除「两代都标支持」之外的限定上游没给。
+      另一侧要说清：**`vllm-ascend` 的支持清单里查不到这一型**（Qwen3.8 只收了
+      Qwen3.8-Flash-Next 与 Qwen3.8-27B）。那页开头写明「Models not listed may be
+      verified independently」，所以那是**未录，不是不支持** —— 本仓因此不给
+      vllm-ascend 写条目，而不是给它写一条 `none`。
+    ref:
+      kind: doc
+      url: https://docs.sglang.io/docs/hardware-platforms/ascend-npus/ascend_npu_support_models.md
+      locator: 'Supported Models › Large Language Models 表，
+        Models = Qwen/Qwen3.8-2.4T-A95B（Model Family = Qwen3.8）那一行'
+      accessed: '2026-11-02'
+    visibility: public
 
 bottlenecks:
   - dimension: kv-capacity

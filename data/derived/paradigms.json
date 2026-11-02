@@ -217,9 +217,48 @@
         "state": "present"
       },
       "l3": {
-        "engines": {},
-        "entries": [],
-        "state": "unsurveyed"
+        "engines": {
+          "SGLang": {
+            "supported": 2
+          },
+          "vllm-ascend": {
+            "partial": 1,
+            "supported": 2
+          }
+        },
+        "entries": [
+          {
+            "engine": "SGLang",
+            "hardware": "昇腾 A2/A3",
+            "model": "kimi-k3",
+            "status": "supported"
+          },
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾 950DT",
+            "model": "kimi-k3",
+            "status": "supported"
+          },
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾 A3",
+            "model": "kimi-k3",
+            "status": "supported"
+          },
+          {
+            "engine": "SGLang",
+            "hardware": "昇腾 A2/A3",
+            "model": "qwen3.8-2.4t-a95b",
+            "status": "supported"
+          },
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾 950DT",
+            "model": "step-5-preview",
+            "status": "partial"
+          }
+        ],
+        "state": "present"
       },
       "l4": {
         "state": "unsurveyed"
@@ -379,9 +418,66 @@
         "state": "present"
       },
       "l3": {
-        "engines": {},
-        "entries": [],
-        "state": "unsurveyed"
+        "engines": {
+          "SGLang": {
+            "supported": 1
+          },
+          "vllm-ascend": {
+            "partial": 1,
+            "supported": 6
+          }
+        },
+        "entries": [
+          {
+            "engine": "SGLang",
+            "hardware": "昇腾 A2/A3",
+            "model": "ds-v4-pro",
+            "status": "supported"
+          },
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾 950DT",
+            "model": "ds-v4-pro",
+            "status": "supported"
+          },
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾 A2/A3",
+            "model": "ds-v4-pro",
+            "status": "supported"
+          },
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾 950DT",
+            "model": "glm-5.3",
+            "status": "supported"
+          },
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾 A2/A3",
+            "model": "glm-5.3",
+            "status": "supported"
+          },
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾 950DT",
+            "model": "minimax-m3",
+            "status": "supported"
+          },
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾 A2/A3",
+            "model": "minimax-m3",
+            "status": "supported"
+          },
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾 950DT",
+            "model": "step-5-preview",
+            "status": "partial"
+          }
+        ],
+        "state": "present"
       },
       "l4": {
         "state": "unsurveyed"
@@ -605,9 +701,60 @@
         "state": "present"
       },
       "l3": {
-        "engines": {},
-        "entries": [],
-        "state": "unsurveyed"
+        "engines": {
+          "SGLang": {
+            "supported": 2
+          },
+          "vllm-ascend": {
+            "partial": 1,
+            "supported": 4
+          }
+        },
+        "entries": [
+          {
+            "engine": "SGLang",
+            "hardware": "昇腾 A2/A3",
+            "model": "ds-v4-pro",
+            "status": "supported"
+          },
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾 950DT",
+            "model": "ds-v4-pro",
+            "status": "supported"
+          },
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾 A2/A3",
+            "model": "ds-v4-pro",
+            "status": "supported"
+          },
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾 950DT",
+            "model": "glm-5.3",
+            "status": "supported"
+          },
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾 A2/A3",
+            "model": "glm-5.3",
+            "status": "supported"
+          },
+          {
+            "engine": "SGLang",
+            "hardware": "昇腾 A2/A3",
+            "model": "qwen3.8-2.4t-a95b",
+            "status": "supported"
+          },
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾 950DT",
+            "model": "step-5-preview",
+            "status": "partial"
+          }
+        ],
+        "state": "present"
       },
       "l4": {
         "state": "unsurveyed"
