@@ -1,0 +1,684 @@
+---
+/**
+ * MoE 细粒度化与 EP 通信专题：跨家族横着比专家怎么变细、以及这些选择在 EP 并行下
+ * 换成多少 all-to-all 字节。
+ *
+ * 和注意力演进页一样，页面不自带任何数字 —— 结构计数来自 data/models 的 `arch.moe`，
+ * 激活参数与通信量来自 derive.py 的产物。新录的记录按 family 自动纳入，不写死 id。
+ *
+ * **这页最要紧的一件事是通信量那个数的口径。** `ep_communication` 的公式里没有 EP
+ * 规模这个因子：它是「top-k 条路全部落在别的设备上」的上界。产物里另有一个 `ep_size`
+ * 字段记着跑 derive 时 `--ep` 传了什么，本仓已提交的产物里它有多种取值，而**同一份记录
+ * 换 `--ep` 重跑，`bytes_per_token` 逐字节相同** —— 所以那个标签不描述它旁边那个数。
+ * 本页把 `ep_size` 连同数字一起显示并写明它不是口径，而不是把它藏起来：
+ * 藏起来的话「ep_size 为 1 的行上有个非零字节数」就成了一个读者无从解释的矛盾。
+ * 这件事记在 docs/STATUS.md 的待办 A3。
+ *
+ * 三套口径不互算倍数（定义见 docs/kv-cache-accounting.md 的同名约定）：
+ *   - 结构计数（专家数 / top-k / 中间维）是无单位的计数，跨代可比
+ *   - 激活参数是**带宽口径**（每 token 真正搬运的线性权重），由权重清单实测
+ *   - 通信字节含一个激活精度因子，而那个因子没有记进产物 —— 本页把它反解出来单列，
+ *     理由见「这页没能回答的」最后一条
+ */
+import Base from '../layouts/Base.astro';
+import Cell from '../components/Cell.astro';
+import Evidence from '../components/Evidence.astro';
+import Prose from '../components/Prose.astro';
+import {
+  allModels, families, roster, familyLine, evidenceFor, url,
+  fmtInt, fmtBytes, fmtCount, TRACKED_FIELDS, type Model,
+} from '../lib/data';
+
+/**
+ * 按 key 取跟踪字段 —— 取不到就**构建失败**，不静默退化。
+ *
+ * 直接 `.find()` 返回 undefined 的话，哪天 columns.json 里这一列改了名，
+ * 这页会安静地少掉一列，而少掉的那一列和「这份记录没填」长得一样。
+ * 锚不住就要说出来，这是本仓坑 #23 的同一条。
+ */
+function field(key: string) {
+  const f = TRACKED_FIELDS.find((x) => x.key === key);
+  if (!f) throw new Error(`moe.astro 引用了不存在的跟踪字段 ${key}（看 data.ts 的 TRACKED_FIELDS）`);
+  return f;
+}
+const F = {
+  experts: field('experts'),
+  shared: field('shared'),
+  inter: field('moe_inter'),
+  denseK: field('dense_k'),
+  hash: field('hash'),
+};
+
+/** 语言模型线的全部记录。生成线另有一套负载账，EP all-to-all 在那条线上不适用 */
+const llmLine = allModels().filter((m) => familyLine(m.family) === 'llm');
+const byDate = (a: Model, b: Model) => (a.released ?? '').localeCompare(b.released ?? '');
+
+const moeOf = (m: Model) => m.arch?.moe;
+const isMoe = (m: Model) => Boolean(moeOf(m)?.routed_experts);
+const moeModels = llmLine.filter(isMoe).slice().sort(byDate);
+const denseModels = llmLine.filter((m) => !isMoe(m)).slice().sort(byDate);
+const genModels = allModels().filter((m) => familyLine(m.family) === 'generation');
+
+/** 通信量产物。只有真的算出了逐层字节的才算有值 —— 稠密与生成线走下面两档「不适用」 */
+const epOf = (m: Model) => {
+  const e = m.derived?.ep_communication;
+  return e && e.status === 'ok' && e.bytes_per_layer ? e : undefined;
+};
+/** 产物自己说这一格为什么是空的。稠密报 0 + why，生成线报 not_applicable + why */
+const epWhy = (m: Model): string | undefined => m.derived?.ep_communication?.why;
+
+const actOf = (m: Model) => {
+  const a = m.derived?.active_params;
+  return a && a.status === 'ok' ? a : undefined;
+};
+const actWhy = (m: Model): string | undefined =>
+  m.derived?.active_params?.status === 'ok' ? undefined : m.derived?.active_params?.why;
+
+/**
+ * 通信量这个乘式的逐因子拆解。
+ *
+ * **一个乘式逐因子验**（CLAUDE.md 的口径那一节）：报出 `bytes_per_token` 之前，
+ * 把每个因子都摆出来。公式里的五个因子里四个在记录或产物上能直接指到，
+ * 第五个 —— 激活精度的每元素字节 —— **没有记进产物**：derive.py 取
+ * `precision.training`，取不到就落到 config 的 dtype、再落到一个默认值，
+ * 而这一步取了哪一档没有写下来。所以这里把它反解出来，并把乘回去的结果
+ * 与产物里的 `bytes_per_token` 对账：对不上就在表上显示出来，不默认它对。
+ */
+function factors(m: Model) {
+  const e = epOf(m);
+  const topK = moeOf(m)?.top_k;
+  const hidden = m.arch?.hidden;
+  if (!e || !topK || !hidden || !e.moe_layers) return undefined;
+  const perElem = e.bytes_per_layer / (2 * topK * hidden);
+  const back = 2 * topK * hidden * perElem * e.moe_layers;
+  return { topK, hidden, perElem, layers: e.moe_layers, reconciles: back === e.bytes_per_token };
+}
+
+/** 本页反解出来的每元素字节一共有几种取值 —— 一种就是一套口径，多于一种就不能并排比 */
+const perElemValues = [
+  ...new Set(moeModels.map((m) => factors(m)?.perElem).filter((x): x is number => Boolean(x))),
+].sort((a, b) => a - b);
+const perElemUniform = perElemValues.length === 1;
+const mismatches = moeModels.filter((m) => factors(m)?.reconciles === false);
+
+/** 已提交产物里 `ep_size` 的取值集合。写死「三种」会在下一次重跑之后变成一句错话 */
+const epLabels = [
+  ...new Set(moeModels.map((m) => epOf(m)?.ep_size).filter((x) => x !== undefined)),
+].sort((a: any, b: any) => a - b);
+
+/** 共享专家的分布。三态里「确认无」是结论（是 MoE 但不设共享专家），不是缺口 */
+const sharedTally = new Map<number, Model[]>();
+for (const m of moeModels) {
+  const n = Number(moeOf(m)?.shared_experts ?? NaN);
+  if (!Number.isFinite(n)) continue;
+  if (!sharedTally.has(n)) sharedTally.set(n, []);
+  sharedTally.get(n)!.push(m);
+}
+const sharedKeys = [...sharedTally.keys()].sort((a, b) => a - b);
+const sharedUnrecorded = moeModels.filter(
+  (m) => !Number.isFinite(Number(moeOf(m)?.shared_experts ?? NaN)),
+);
+
+/** 专家存储布局：清单实测。个别混合布局的记录由 storage_note 承担，见那一节的说明 */
+const storageOf = (m: Model): string | undefined => m.derived?.from_shapes?.expert_storage ?? undefined;
+const storageGroups = new Map<string, Model[]>();
+for (const m of moeModels) {
+  const s = storageOf(m);
+  if (!s) continue;
+  if (!storageGroups.has(s)) storageGroups.set(s, []);
+  storageGroups.get(s)!.push(m);
+}
+const storageUnmeasured = moeModels.filter((m) => !storageOf(m));
+const STORAGE_LABEL: Record<string, string> = {
+  individual: '逐专家独立张量',
+  stacked: '一层堆成一个张量',
+};
+const storageLabel = (s: string) => STORAGE_LABEL[s] ?? s;
+
+/** 分组路由：`expert_groups` 登记的是组数，启没启用只写在「打分 / 选路」的散文里 */
+const groupedModels = moeModels.filter((m) => moeOf(m)?.expert_groups !== undefined);
+
+/** hash 路由层：按 token id 直接映射到专家，这几层不做打分 */
+const hashModels = moeModels.filter((m) => moeOf(m)?.hash_layers?.count);
+
+// 跨族系对照：名册里每个家族的旗舰。名册没给 model_id 时取该家族最新的主线记录 ——
+// 和注意力演进页同一条回退，记录先到、名册没跟上时这一行要显示出来
+const flagships = roster().families.map((f) => {
+  let m = f.model_id ? allModels().find((x) => x.id === f.model_id) : undefined;
+  if (!m) {
+    m = allModels()
+      .filter((x) => x.family === f.family && x.lineage?.track === 'main')
+      .sort((a, b) => (b.released ?? '').localeCompare(a.released ?? ''))[0];
+  }
+  const why = !m ? '待录' : !isMoe(m) ? '稠密，无 MoE' : undefined;
+  return { entry: f, m, why };
+});
+
+// 条形长度的分母。同一张表内缩放，不跨表比较
+const maxExperts = Math.max(0, ...moeModels.map((m) => Number(moeOf(m)?.routed_experts ?? 0)));
+const maxInter = Math.max(0, ...moeModels.map((m) => Number(moeOf(m)?.intermediate ?? 0)));
+const maxComm = Math.max(0, ...moeModels.map((m) => epOf(m)?.bytes_per_token ?? 0));
+
+/** 公式串取自产物本身，不在页面上复述一遍 —— 复述的那份会和 derive.py 分叉 */
+const formulas = [...new Set(moeModels.map((m) => epOf(m)?.formula).filter(Boolean))];
+
+const famLabel = (key: string) => families().find((f) => f.key === key)?.label ?? key;
+---
+
+<Base
+  title="MoE 细粒度化与 EP 通信"
+  lead="专家怎么变细、共享专家有没有、top-k 取多大，以及这三件事在专家并行下换成多少 all-to-all 字节。跨家族横着比，页面不存数字。"
+>
+  <p class="small muted">
+    口径：本页有三套量，<strong>互相之间不算倍数</strong>。
+    <strong>结构计数</strong>（路由专家数、top-k、专家中间维、dense 前缀层）是记录里的无单位计数，跨代跨族可比；
+    <strong>激活参数</strong>是<strong>带宽口径</strong> —— 每 token 真正搬运的线性权重，由
+    <code>derive.py</code> 从权重清单实测，不含只 gather 一行的输入词表，所以和各家公布的「激活参数」不是同一个量；
+    <strong>通信字节</strong>来自 <code>ep_communication</code>，含一个激活精度因子，下面单列。
+    缺值分三态：<span class="absent unsurveyed">未录</span>是调研缺口，
+    <span class="absent not_applicable">不适用</span>与<span class="absent confirmed_absent">确认无</span>是信息。
+    定义见<a href={url('/about/')}>口径说明</a>与仓库的 <code>docs/kv-cache-accounting.md</code>。
+  </p>
+
+  <div class="note">
+    <p style="margin:0 0 8px">
+      <strong>通信量这个数是上界，不是某个 EP 规模下的通信量。</strong>
+      <Evidence tag="derived" />
+      产物里的公式是
+      {formulas.map((f) => <code>{f}</code>)}
+      —— 里面<strong>没有 EP 规模这个因子</strong>。它数的是「top-k 条路全部落在别的设备上」时
+      一个 token 发出去再收回来的字节，所以它是上界：EP 规模与专家放置决定真实值落在
+      0 与它之间，而本仓没有这一档数据。
+    </p>
+    <p style="margin:0 0 8px">
+      产物里另有一个 <code>ep_size</code> 字段，记的是跑 <code>derive.py</code> 时
+      <code>--ep</code> 传了什么。已提交的产物里它的取值是
+      {epLabels.map((v, i) => <>{i ? ' / ' : ''}<code>{v}</code></>)}
+      ——
+      <strong>而同一份记录换 <code>--ep</code> 重跑，<code>bytes_per_token</code> 逐字节相同</strong>
+      <Evidence tag="judgement" />：这个参数只进了产物的标签，没进乘式。
+      所以本页把 <code>ep_size</code> 连同数字一起列出来，同时写明<strong>它不是这个数的口径</strong>。
+      <code>ep_size</code> 为 1 的行上有一个非零字节数，不是算错 —— 那一格记的是输入参数，不是部署规模。
+      产物自带的 note 里写着「EP=1 时为 0」，那句说的是物理，和同一个块里报出的上界不是一个量。
+    </p>
+    <p style="margin:0">
+      因此：<strong>这一列可以跨家族并排比</strong>（同一个公式、同一套上界口径），
+      但<strong>不能读成「EP=N 下的实测通信量」</strong>。
+      <code>--ep</code> 用的是哪个值没有记录在任何地方，这件事是仓库 <code>docs/STATUS.md</code> 的待办 A3；
+      本页的处理是把它当标签显示并声明口径，而不是等那条待办修完。
+    </p>
+  </div>
+
+  <h2>跨族系对照 <Evidence tag="official" /></h2>
+  <p class="small muted">
+    行取自追踪名册（每个家族的最新旗舰）。先比<strong>形状</strong>再比数：专家数和 top-k 不同时，
+    单个通信字节数只说明了一半。
+  </p>
+  <div class="scroll-x">
+    <table class="moe">
+      <thead>
+        <tr>
+          <th>族系旗舰</th><th class="num">路由专家 / top-k</th><th class="num">共享专家</th>
+          <th class="num">专家中间维</th><th class="num">dense 前缀层</th>
+          <th class="num">专家激活 / 专家池</th><th>专家存储</th>
+          <th class="num">all-to-all 上界 字节/token</th>
+        </tr>
+      </thead>
+      <tbody>
+        {flagships.map(({ entry, m, why }) => {
+          if (why || !m) {
+            return (
+              <tr>
+                <td>{m ? <a href={url(`/models/${m.id}/`)}>{entry.flagship}</a> : entry.flagship}</td>
+                <td colspan="7" class="muted"><em>{why}</em></td>
+              </tr>
+            );
+          }
+          const e = epOf(m);
+          const a = actOf(m);
+          const st = storageOf(m);
+          return (
+            <tr>
+              <td><a href={url(`/models/${m.id}/`)}>{m.display_name}</a></td>
+              <td class="num"><Cell field={F.experts} model={m} /></td>
+              <td class="num"><Cell field={F.shared} model={m} /></td>
+              <td class="num"><Cell field={F.inter} model={m} /></td>
+              <td class="num"><Cell field={F.denseK} model={m} /></td>
+              <td class="num">
+                {a ? (
+                  <>
+                    {fmtCount(a.expert_active)} / {fmtCount(a.expert_total)}
+                    <span class="unit">参数</span><Evidence tag="derived" />
+                  </>
+                ) : (
+                  <span class="absent unsurveyed" title={actWhy(m)}>未录</span>
+                )}
+              </td>
+              <td>
+                {st ? (
+                  <>{storageLabel(st)}<Evidence tag="derived" /></>
+                ) : (
+                  <span class="absent unsurveyed" title="权重清单没取到，布局无从实测">未录</span>
+                )}
+              </td>
+              <td class="num">
+                {e ? (
+                  <>
+                    {fmtInt(e.bytes_per_token)}<span class="unit">字节</span><Evidence tag="derived" />
+                    <div class="small muted">ep_size 标签 {e.ep_size}</div>
+                  </>
+                ) : (
+                  <span class="absent not_applicable" title={epWhy(m)}>不适用</span>
+                )}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+
+  <h2>细粒度化走向 <Evidence tag="official" /></h2>
+  <p class="small muted">
+    全部 MoE 记录按发布日期铺开，跨家族混排 —— 这是它和<a href={url('/families/')}>家族页</a>的区别：
+    细粒度化是一条行业曲线，在单个家族里只看得到几个点。
+    「每层路由总中间维」与「每 token 激活中间维」是本页把同一行上两个字段相乘得到的，
+    因子就在左边两列，<strong>这两列是为了让「专家变多变小、而总容量没缩」看得出来</strong>。
+  </p>
+  <div class="scroll-x">
+    <table class="moe">
+      <thead>
+        <tr>
+          <th>记录</th><th>发布</th>
+          <th class="num">路由专家 / top-k</th><th class="num">专家中间维</th>
+          <th class="num">每层路由总中间维</th><th class="num">每 token 激活中间维</th>
+          <th class="num">共享专家</th><th class="num">dense 前缀层</th><th class="num">hash 路由层</th>
+        </tr>
+      </thead>
+      <tbody>
+        {moeModels.map((m) => {
+          const moe = moeOf(m)!;
+          const n = Number(moe.routed_experts);
+          const inter = Number(moe.intermediate);
+          const topK = Number(moe.top_k);
+          const hasProduct = Number.isFinite(n) && Number.isFinite(inter);
+          return (
+            <tr>
+              <td>
+                <a href={url(`/models/${m.id}/`)}>{m.display_name}</a>
+                <div class="small muted"><a href={url(`/families/${m.family}/`)}>{famLabel(m.family)}</a></div>
+              </td>
+              <td class="small muted">{m.released}</td>
+              <td class="num">
+                <Cell field={F.experts} model={m} />
+                <div class="bar" title="路由专家数，按本列最大值缩放">
+                  <span style={`width:${(100 * n) / (maxExperts || 1)}%`} />
+                </div>
+              </td>
+              <td class="num">
+                <Cell field={F.inter} model={m} />
+                <div class="bar" title="单个专家的中间维，按本列最大值缩放">
+                  <span style={`width:${(100 * inter) / (maxInter || 1)}%`} />
+                </div>
+              </td>
+              <td class="num">
+                {hasProduct
+                  ? <>{fmtInt(n * inter)}<Evidence tag="derived" /></>
+                  : <span class="absent unsurveyed" title="两个因子里有一个没录，乘不出来">未录</span>}
+              </td>
+              <td class="num">
+                {hasProduct && Number.isFinite(topK)
+                  ? <>{fmtInt(topK * inter)}<Evidence tag="derived" /></>
+                  : <span class="absent unsurveyed" title="两个因子里有一个没录，乘不出来">未录</span>}
+              </td>
+              <td class="num"><Cell field={F.shared} model={m} /></td>
+              <td class="num"><Cell field={F.denseK} model={m} /></td>
+              <td class="num"><Cell field={F.hash} model={m} /></td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+  <p class="small muted" style="margin-top:8px">
+    条形长度只在本表内按各自那一列缩放，两列之间不可比。
+    「每 token 激活中间维」不含共享专家 —— 共享专家每 token 必算，它那一份容量在下一节单列。
+  </p>
+
+  <h2>共享专家 <Evidence tag="official" /></h2>
+  <p>
+    共享专家对 infra 的意义和路由专家相反：它<strong>每 token 必算、不参与选路、因此也不进 all-to-all</strong>，
+    在 EP 切分下它是一块随 TP 走的稠密 GEMM。所以「设几个共享专家」决定的是
+    有多少 FFN 容量<strong>从通信账里拿掉</strong>。
+    <Evidence tag="judgement" />
+  </p>
+  <dl class="kv">
+    {sharedKeys.map((k) => (
+      <>
+        <dt>{k} 个</dt>
+        <dd class="small">
+          {sharedTally.get(k)!.map((m, i) => (
+            <>{i ? '、' : ''}<a href={url(`/models/${m.id}/`)}>{m.display_name}</a></>
+          ))}
+        </dd>
+      </>
+    ))}
+    <dt>
+      <span class="absent confirmed_absent" title="是 MoE 但记录里没有 shared_experts 这个字段 —— 判据见 data/schema/columns.json">确认无</span>
+    </dt>
+    <dd class="small">
+      {sharedUnrecorded.length
+        ? sharedUnrecorded.map((m, i) => (
+            <>{i ? '、' : ''}<a href={url(`/models/${m.id}/`)}>{m.display_name}</a></>
+          ))
+        : <span class="muted">（当前没有成员，见下）</span>}
+    </dd>
+    <dt><span class="absent not_applicable" title="稠密模型，没有专家可共享">不适用</span></dt>
+    <dd class="small">
+      {denseModels.map((m, i) => (
+        <>{i ? '、' : ''}<a href={url(`/models/${m.id}/`)}>{m.display_name}</a></>
+      ))}
+    </dd>
+  </dl>
+  <p class="small muted">
+    <strong>设 0 个和「字段空着」不是一回事</strong>，所以上面表里那几格显示的是 0，不是「确认无」。
+    这一列的「确认无」判据是<strong>「是 MoE，但记录里根本没有共享专家这个字段」</strong>
+    （定义在 <code>data/schema/columns.json</code>），而当前每一份 MoE 记录都显式填了这个字段，
+    设 0 个的那几份填的就是 0 —— 于是这一档现在是空的。
+    <strong>空着的判据照样列出来</strong>：真出现一份没填这个字段的记录时，它不能和填了 0 的那几份共用一个符号。
+    <Evidence tag="judgement" />
+  </p>
+
+  <h2>EP all-to-all 上界 · 逐因子 <Evidence tag="derived" /></h2>
+  <p class="small muted">
+    一个乘式逐因子验：下面把公式的每个因子单列，再把乘回去的结果与产物里的
+    <code>bytes_per_token</code> 对账。<strong>「每元素字节」这一列是本页反解出来的</strong> ——
+    激活精度是公式里唯一一个<strong>没有记进产物</strong>的因子，不反解就看不见它。
+    最后一列的 <code>ep_size</code> 是输入参数的标签，不是这个数的口径（见页首说明）。
+  </p>
+  <div class="scroll-x">
+    <table class="moe">
+      <thead>
+        <tr>
+          <th>记录</th><th class="num">top-k</th><th class="num">hidden</th>
+          <th class="num">每元素字节</th><th class="num">MoE 层数</th>
+          <th class="num">字节 / 层</th><th class="num">字节 / token</th>
+          <th class="num">逐因子对账</th><th class="num">ep_size 标签</th>
+        </tr>
+      </thead>
+      <tbody>
+        {moeModels.map((m) => {
+          const e = epOf(m);
+          const fa = factors(m);
+          if (!e || !fa) {
+            return (
+              <tr>
+                <td><a href={url(`/models/${m.id}/`)}>{m.display_name}</a></td>
+                <td colspan="8" class="muted">
+                  <span class="absent unsurveyed" title={epWhy(m) ?? '产物里没有可拆的通信量'}>未录</span>
+                </td>
+              </tr>
+            );
+          }
+          return (
+            <tr>
+              <td><a href={url(`/models/${m.id}/`)}>{m.display_name}</a></td>
+              <td class="num">{fa.topK}</td>
+              <td class="num">{fmtInt(fa.hidden)}</td>
+              <td class="num">{fa.perElem}<span class="unit">字节</span><Evidence tag="derived" /></td>
+              <td class="num">{fa.layers}</td>
+              <td class="num">{fmtInt(e.bytes_per_layer)}<span class="unit">字节</span></td>
+              <td class="num">
+                {fmtInt(e.bytes_per_token)}<span class="unit">字节</span>
+                <div class="small muted">{fmtBytes(e.bytes_per_token)}</div>
+                <div class="bar" aria-hidden="true"><span style={`width:${(100 * e.bytes_per_token) / (maxComm || 1)}%`} /></div>
+              </td>
+              <td class="num">
+                {fa.reconciles
+                  ? <span class="ok" title="2 × top-k × hidden × 每元素字节 × MoE 层数 与产物里的 字节/token 相等">对上</span>
+                  : <span class="bad" title="反解的因子乘回去和产物里的 字节/token 不等 —— 公式或因子有一处不是这里写的这样">对不上</span>}
+              </td>
+              <td class="num">{e.ep_size}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+  <p class={mismatches.length ? 'note' : 'small muted'} style="margin-top:8px">
+    {mismatches.length
+      ? `逐因子对账有 ${mismatches.length} 份对不上，上表已标出 —— 这页的因子拆法与 derive.py 的实现分叉了，先修那个再读这一列的数。`
+      : '逐因子对账全部对上：反解的每元素字节乘回去等于产物里的 字节/token，所以这张表拆出的五个因子就是产物实际用的那五个。'}
+    {perElemUniform
+      ? `当前所有 MoE 记录的每元素字节都是同一个值，所以 字节/token 这一列是单一口径、可以并排比。`
+      : `当前出现了多于一种每元素字节，字节/token 这一列因此混着不同精度口径，不要并排比 —— 要比就先把这一列分开。`}
+    <Evidence tag="judgement" />
+  </p>
+
+  <h2>专家存储布局与算子签名 <Evidence tag="derived" /></h2>
+  <p>
+    这一格决定 grouped GEMM 的<strong>算子签名</strong>，以及 EP 切分切的是什么：
+    逐专家独立张量时权重是一个二维张量的列表，EP 按张量分配；一层堆成一个张量时权重是三维的，
+    EP 要按首维切。两种布局在同一个站点上并存，所以算子侧不能只准备一种。
+    <Evidence tag="judgement" />
+  </p>
+  <dl class="kv">
+    {[...storageGroups.keys()].sort().map((s) => (
+      <>
+        <dt>{storageLabel(s)}（<code>{s}</code>）</dt>
+        <dd class="small">
+          {storageGroups.get(s)!.map((m, i) => (
+            <>{i ? '、' : ''}<a href={url(`/models/${m.id}/`)}>{m.display_name}</a></>
+          ))}
+        </dd>
+      </>
+    ))}
+    {storageUnmeasured.length > 0 && (
+      <>
+        <dt><span class="absent unsurveyed" title="没有权重清单，布局无从实测">未录</span></dt>
+        <dd class="small">
+          {storageUnmeasured.map((m, i) => (
+            <>{i ? '、' : ''}<a href={url(`/models/${m.id}/`)}>{m.display_name}</a></>
+          ))}
+        </dd>
+      </>
+    )}
+  </dl>
+  <p class="note">
+    <strong>这一列的判据只给一个值，而有记录是混合布局。</strong>
+    <Evidence tag="judgement" />
+    <code>derive.py</code> 按「清单里出现过逐专家下标就算 <code>individual</code>」判，
+    所以一份「主干堆叠、草稿块逐专家」的记录在这一列显示成 <code>individual</code>，
+    混合这件事只活在记录的 <code>storage_note</code> 散文里。下面那一列就是那段散文，
+    两列并排放是故意的：读者要能看出实测判据和记录原文说的不是同一件事。
+  </p>
+  <div class="scroll-x">
+    <table class="moe prose-col">
+      <thead>
+        <tr><th>记录</th><th>清单实测</th><th>记录里的落盘形态（storage_note）</th></tr>
+      </thead>
+      <tbody>
+        {moeModels.map((m) => (
+          <tr>
+            <td><a href={url(`/models/${m.id}/`)}>{m.display_name}</a></td>
+            <td>
+              {storageOf(m)
+                ? <><code>{storageOf(m)}</code><Evidence tag="derived" /></>
+                : <span class="absent unsurveyed" title="没有权重清单，布局无从实测">未录</span>}
+            </td>
+            <td class="wrap-cell">
+              {moeOf(m)?.storage_note
+                ? <><Prose text={moeOf(m)!.storage_note} /><Evidence tag={evidenceFor('arch.moe.storage_note', m.evidence)} /></>
+                : <span class="absent unsurveyed" title="记录里没写落盘形态">未录</span>}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+
+  <h2>打分、负载均衡与分组 <Evidence tag="official" /></h2>
+  <p class="small muted">
+    这三列是记录里的散文字段，原文照引。<strong>分组路由（<code>expert_groups</code>）是直接冲着
+    EP 通信去的机制</strong> —— 限制一个 token 能跨多少组专家，就是限制它跨多少节点。
+    但本仓把「组数」和「启没启用」分开记了：组数在 <code>expert_groups</code> 字段上，
+    启没启用只写在「打分 / 选路」的散文里（多份记录写明 n_group 为 1、分组路由实际未启用）。
+    所以<strong>这里不把「字段空着」读成「没有分组路由」</strong>：空着就是没登记。
+  </p>
+  <div class="scroll-x">
+    <table class="moe prose-col">
+      <thead>
+        <tr><th>记录</th><th class="num">登记的组数</th><th>打分 / 选路</th><th>负载均衡</th></tr>
+      </thead>
+      <tbody>
+        {moeModels.map((m) => {
+          const moe = moeOf(m)!;
+          return (
+            <tr>
+              <td><a href={url(`/models/${m.id}/`)}>{m.display_name}</a></td>
+              <td class="num">
+                {moe.expert_groups !== undefined
+                  ? moe.expert_groups
+                  : <span class="absent unsurveyed" title="记录的 arch.moe 里没有 expert_groups 字段。启没启用看右边那一列的原文">未登记</span>}
+              </td>
+              <td class="wrap-cell">
+                {moe.routing
+                  ? <><Prose text={moe.routing} /><Evidence tag={evidenceFor('arch.moe.routing', m.evidence)} /></>
+                  : <span class="absent unsurveyed" title="记录里没写打分与选路">未录</span>}
+              </td>
+              <td class="wrap-cell">
+                {moe.balance
+                  ? <><Prose text={moe.balance} /><Evidence tag={evidenceFor('arch.moe.balance', m.evidence)} /></>
+                  : <span class="absent unsurveyed" title="记录里没写负载均衡方式">未录</span>}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+  <p class="small muted" style="margin-top:8px">
+    登记了组数的有
+    {groupedModels.length
+      ? groupedModels.map((m, i) => (
+          <>{i ? '、' : ''}<a href={url(`/models/${m.id}/`)}>{m.display_name}</a></>
+        ))
+      : '（一份也没有）'}
+    ；带 hash 路由层（按 token id 直接映到专家、这几层不做打分）的有
+    {hashModels.length
+      ? hashModels.map((m, i) => (
+          <>{i ? '、' : ''}<a href={url(`/models/${m.id}/`)}>{m.display_name}</a></>
+        ))
+      : '（一份也没有）'}
+    。
+  </p>
+
+  <h2>不适用的两档 <Evidence tag="derived" /></h2>
+  <p class="small muted">
+    这一节在的理由是：<strong>「没有这笔通信」和「没查这笔通信」在页面上必须分得开</strong>。
+    下面两档都是产物自己说出来的「不适用」，不是本页替它们推的。
+  </p>
+  <dl class="kv">
+    <dt>稠密记录</dt>
+    <dd class="small">
+      {denseModels.map((m, i) => (
+        <>{i ? '、' : ''}<a href={url(`/models/${m.id}/`)}>{m.display_name}</a></>
+      ))}
+      {denseModels[0] && <div class="muted">产物给的理由：<Prose text={epWhy(denseModels[0]) ?? ''} /></div>}
+    </dd>
+    <dt>生成线记录</dt>
+    <dd class="small">
+      {genModels.map((m, i) => (
+        <>{i ? '、' : ''}<a href={url(`/models/${m.id}/`)}>{m.display_name}</a></>
+      ))}
+      {genModels[0] && <div class="muted">产物给的理由：<Prose text={epWhy(genModels[0]) ?? ''} /></div>}
+    </dd>
+  </dl>
+
+  <h2>这页没能回答的</h2>
+  <p class="small muted">
+    下面每一条都是本仓确实没有的那一档。<strong>页面上挂着一句「这一档未录」，
+    比一个来源不明的数好。</strong>
+  </p>
+  <ul class="plain small">
+    <li>
+      <strong>某个 EP 规模下的真实 all-to-all 字节</strong> ——
+      上表那一列是「top-k 条路全部跨设备」的上界。真实值还取决于 EP 规模、专家放置、
+      以及 token 在专家上的分布（负载不均会让某几张卡的收发量远高于平均），
+      这三件事本仓一件都没录。所以<strong>这个数只能用来横着比结构，不能用来估时延</strong>。
+      <Evidence tag="judgement" />
+    </li>
+    <li>
+      <strong><code>--ep</code> 用的是哪个值，没有记录在任何地方</strong> ——
+      已提交产物里 <code>ep_size</code> 有多种取值，重跑全靠人记得读上一版。
+      本页的处理是把它当标签显示并声明它不进乘式；<strong>这不是修好了那条待办</strong>，
+      是让它在页面上看得见。修法（把 ep 记进记录或产物的输入段）记在
+      <code>docs/STATUS.md</code> 的待办 A3。
+      <Evidence tag="judgement" />
+    </li>
+    <li>
+      <strong>激活精度那个因子不在产物里</strong> ——
+      <code>derive.py</code> 取记录的训练精度，取不到就落到 config 的 dtype、再落到一个默认值，
+      而这一步取了哪一档没有写下来。所以「每元素字节」那一列是本页从
+      <code>bytes_per_layer</code> 反解的，不是引用。
+      当前全部 MoE 记录的训练精度字段都是空的，这一列的值因此全部来自兜底而不是声明 ——
+      哪天有一份记录开始声明 FP8 训练精度，同一张表里就会出现两种口径，
+      那时 字节/token 这一列不能再并排比。
+      <Evidence tag="judgement" />
+    </li>
+    <li>
+      <strong>把字节折算成时间的那一步</strong> ——
+      需要互联带宽（昇腾侧的 HCCS / 跨机，NVIDIA 侧的 NVLink / IB）。
+      本仓平台条目里<strong>昇腾整列是未录</strong>（不是不支持），
+      所以这一页只到字节为止，不出时延。
+      <Evidence tag="judgement" />
+    </li>
+    <li>
+      <strong>分组路由是否启用，没有字段</strong> ——
+      只有「组数」这一个字段，启没启用写在「打分 / 选路」的散文里。
+      要做成可机械对账的量，得先给它一个字段。
+      <Evidence tag="judgement" />
+    </li>
+    <li>
+      <strong>专家存储布局的混合态，判据只给一个值</strong> ——
+      清单实测这一列按「出现过逐专家下标就算逐专家」判，混合布局会显示成逐专家。
+      混合这件事只活在 <code>storage_note</code> 的散文里，上面两列并排就是为此。
+      <Evidence tag="judgement" />
+    </li>
+  </ul>
+
+  <p class="note" style="margin-top:18px">
+    相邻的两个专题：<a href={url('/attention/')}>注意力演进</a>讲的是缓存账，
+    <a href={url('/precision/')}>精度演进</a>讲的是落盘与量化口径。
+    这一页只讲 FFN 侧的专家结构与它带出来的通信账 —— 三页的数不要互算倍数，它们不是同一套口径。
+  </p>
+</Base>
+
+<style>
+  .moe td { vertical-align: top; }
+  .moe td div + div { margin-top: 2px; }
+  /* 散文列要换行。.scroll-x 默认给所有格子 nowrap（宽表横向排开用的），
+     套在散文上会把一整段压成一行、被表格边界截掉 —— 这个形状本仓栽过一次 */
+  .prose-col td.wrap-cell {
+    white-space: normal;
+    min-width: 28em;
+    max-width: 44em;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    line-height: 1.55;
+  }
+  .bar {
+    height: 4px;
+    width: 72px;
+    margin: 4px 0 0 auto;
+    background: var(--line);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .bar span { display: block; height: 100%; background: var(--accent); }
+  .ok { color: var(--official); font-size: 12px; cursor: help; }
+  .bad { color: var(--judgement); font-weight: 650; font-size: 12px; cursor: help; }
+  dl.kv dt { white-space: nowrap; }
+  dl.kv dd { margin-bottom: 4px; }
+  ul.plain.small li { margin: 7px 0; }
+</style>
