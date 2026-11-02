@@ -1,13 +1,14 @@
 {
  "id": "minimax-h3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-11-02T14:03:00+00:00",
+ "generated_at": "2026-11-02T14:12:43+00:00",
  "inputs": {
   "facts_dir": "facts/minimax-h3",
   "config_present": false,
   "shapes_present": true,
   "model_yaml": "data/models/minimax-video/minimax-h3.yaml",
-  "ep_size": 1
+  "ep_size": 1,
+  "ep_size_source": "cli"
  },
  "gate_b": {
   "config": false,

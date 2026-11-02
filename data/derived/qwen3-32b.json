@@ -1,13 +1,14 @@
 {
  "id": "qwen3-32b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-11-02T14:03:07+00:00",
+ "generated_at": "2026-11-02T14:12:50+00:00",
  "inputs": {
   "facts_dir": "facts/qwen3-32b",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/qwen/qwen3-32b.yaml",
-  "ep_size": 1
+  "ep_size": 1,
+  "ep_size_source": "cli"
  },
  "gate_b": {
   "config": true,

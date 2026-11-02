@@ -1,13 +1,14 @@
 {
  "id": "cogvideox-1.5-5b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-11-02T14:02:14+00:00",
+ "generated_at": "2026-11-02T14:11:58+00:00",
  "inputs": {
   "facts_dir": "facts/cogvideox-1.5-5b",
   "config_present": false,
   "shapes_present": true,
   "model_yaml": "data/models/cogvideo/cogvideox-1.5-5b.yaml",
-  "ep_size": 1
+  "ep_size": 1,
+  "ep_size_source": "cli"
  },
  "gate_b": {
   "config": false,

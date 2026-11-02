@@ -1,13 +1,14 @@
 {
  "id": "wan2.2-t2v-a14b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-11-02T14:03:10+00:00",
+ "generated_at": "2026-11-02T14:12:52+00:00",
  "inputs": {
   "facts_dir": "facts/wan2.2-t2v-a14b",
   "config_present": false,
   "shapes_present": true,
   "model_yaml": "data/models/wan/wan2.2-t2v-a14b.yaml",
-  "ep_size": 1
+  "ep_size": 1,
+  "ep_size_source": "cli"
  },
  "gate_b": {
   "config": false,

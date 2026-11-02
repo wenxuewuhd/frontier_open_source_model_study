@@ -571,7 +571,39 @@ def active_params(shp: dict, t: dict, attn: dict, moe: dict) -> dict:
 
 
 def comm_per_token(t: dict, moe: dict, hidden: int, act_dtype: str, ep: int) -> dict:
-    """EP 部署下每 token 的 all-to-all 字节（dispatch + combine）。"""
+    """每 token 的 dispatch + combine 字节。**两个上界、两套口径，不互算倍数。**
+
+    原先这里只报一个数，而它自带的 note 写着「EP=1 时为 0」—— 那句说的是物理，
+    报出来的数却是「top-k 条路全部离片」的上界，乘式里根本没有 ep 这个因子
+    （ep 只作为 `ep_size` 标签进产物）。于是 26 份已提交产物上同时挂着
+    `ep_size: 1` 与一个非零字节数，两句话不是一个量，而 CLI 那一行又只在
+    `--ep > 1` 时打印 —— 跑工具的人看不见这个矛盾，只有读产物才看得见。
+    这就是 docs/STATUS.md 的 D12。
+
+    **修法不是给乘式乘一个 (ep-1)/ep 折算系数。** 那要假设专家在 rank 上均匀放置、
+    路由均衡，而本仓这两件一件都没录；乘上去会把上界偷换成期望值，
+    而「上界」与「期望值」不是同一个量（CLAUDE.md 的口径一节）。改成报两个：
+
+      bytes_per_token            与 ep 无关：top-k 条路全部离片。**跨家族可比的那一列**，
+                                 量的是细粒度化本身的通信代价，换 `--ep` 重跑逐字节相同
+      ep_remote_bytes_per_token  跟 ep 走：一个 token 最多只能有 min(top_k, ep) 个
+                                 离片目的 rank；ep=1 时整个部署只有一张卡，为 0 ——
+                                 **note 里那句物理现在有一个字段真的对应它**
+
+    两个都是上界，但**不是「同一个量的两种精度」**：前者按专家计数，后者按目的 rank
+    计数。实现不按 rank 去重时（每个被选中的专家各发一份）上界是前者；按 rank 去重时
+    （DeepEP / Megatron 那套 all-to-all，一个 rank 只收一份 hidden）是后者。
+    两个都留着，各自写明判据，不替读者挑一个。
+
+    **min(top_k, ep) 刻意不写成 min(top_k, ep-1)。** 减一要假设 token 所在的那张卡
+    自己也托管专家，于是落在本卡的那一路不过网。注意力与专家分离部署时本卡不托管专家，
+    top-k 条全部过网，减一就不再是上界。两种放置本仓都没录，所以取较松的那个 ——
+    **上界的判据可以松，不能不成立。**
+
+    乘式的每个因子都写进产物（`top_k` / `hidden` / `act_dtype` / `act_bytes`）。
+    原先只报乘积，站点为了「一个乘式逐因子验」不得不从 `bytes_per_layer` 反解激活精度
+    那个因子 —— 反解出来的数没有来源，对不上也只能显示「对不上」，说不出是哪个因子错了。
+    """
     top_k = moe.get("top_k") or t.get("num_experts_per_tok")
     layers = t.get("num_hidden_layers")
     first_dense = moe.get("first_k_dense") or t.get("first_k_dense_replace") or 0
@@ -583,14 +615,41 @@ def comm_per_token(t: dict, moe: dict, hidden: int, act_dtype: str, ep: int) -> 
     b = dtypes.nbytes(act_dtype)
     moe_layers = max(layers - first_dense, 0)
     per_layer = 2 * top_k * hidden * b  # 发出去再收回来
+    # ep <= 1 时离片目的 rank 为 0：整个部署只有一张卡，没有「别的设备」
+    remote = 0 if ep <= 1 else min(top_k, ep)
     return {
-        "status": "ok", "ep_size": ep, "moe_layers": moe_layers,
+        "status": "ok", "moe_layers": moe_layers,
+        # 乘式的因子连同结果一起报，不让下游反解
+        "top_k": top_k, "hidden": hidden,
+        "act_dtype": act_dtype, "act_bytes": b,
+        # 口径一：与 EP 规模无关的上界。
+        # **字段名刻意不叫 bytes_basis。** 那个键是 KV 缓存那根口径轴的全仓保留名
+        # （theoretical_floor / dtype_fallback / …），kv_table.py 的 seen_bases()
+        # 整棵树递归扫它、拿 BASIS_DOC 对表 —— 通信口径借用同一个键，就是它自己
+        # 注释里警告的「两套语义共用一套键」。第一版确实写成了 bytes_basis，
+        # kv_table --check 当场拦住了。
+        "comm_basis": "all_experts_remote",
         "bytes_per_token": per_layer * moe_layers,
         "bytes_per_layer": per_layer,
-        "formula": "2(dispatch+combine) * top_k * hidden * bytes * moe_layers",
-        "note": "EP=1 时为 0；跨机时该量按互联带宽折算成时间，是 decode 尾延迟的主因之一",
+        "formula": "2(dispatch+combine) * top_k * hidden * act_bytes * moe_layers",
+        # 口径二：跟 EP 规模走的上界
+        "ep_size": ep,
+        "remote_dests_bound": remote,
+        "ep_remote_bytes_per_token": 2 * remote * hidden * b * moe_layers,
+        "ep_remote_bytes_per_layer": 2 * remote * hidden * b,
+        "ep_remote_basis": "all_destinations_remote",
+        "ep_remote_formula": "2 * min(top_k, ep) * hidden * act_bytes * moe_layers"
+                             "（ep=1 时为 0）",
+        "semantics": "bytes_per_token 与 ep_size 无关，量的是细粒度化本身的通信代价，"
+                     "跨家族可比；ep_remote_bytes_per_token 跟 ep_size 走，"
+                     "只在同一个 ep_size 下比。两者都是上界而非实测，"
+                     "前者按被选中的专家计数、后者按离片目的 rank 计数 —— "
+                     "不是同一个量的两种精度，混用会同时犯数值和概念错误",
+        "note": "跨机时这两个量都按互联带宽折算成时间，是 decode 尾延迟的主因之一。"
+                "两者都没有扣掉共享专家（常驻本卡、不过网）与冗余专家副本，"
+                "也都没有假设路由均衡 —— 负载不均会让某几张卡的收发量远高于平均，"
+                "那一档本仓没录",
     }
-
 
 # ---------------------------------------------------------------- 生成类负载
 #
@@ -1159,10 +1218,26 @@ def main():
     ap.add_argument("--facts-dir", default="facts")
     ap.add_argument("--model", default=None, help="模型 YAML；给了就用它的注意力类型和精度，并核对声明值")
     ap.add_argument("--out-dir", default="data/derived")
-    ap.add_argument("--ep", type=int, default=1, help="通信量按这个 EP 规模算")
+    # **不给默认值 1。** 改完口径之后 ep 真的进了乘式（见 comm_per_token），
+    # 于是漏传 --ep 不再只是改个标签，而会把 ep_remote_bytes_per_token 静默清零。
+    # 已提交产物里 ep_size 有 1 / 4 / 8 三种取值，而重跑时漏传曾把 minimax-m3 的 4
+    # 写成 1（docs/STATUS.md 记过这次事故）。缺省沿用产物里的原值，
+    # 并把「这个值是哪来的」写进产物，不靠人记得读上一版。
+    ap.add_argument("--ep", type=int, default=None,
+                    help="通信量按这个 EP 规模算；不给就沿用 out-dir 里已有产物的 ep_size，"
+                         "都没有才按 1")
     ap.add_argument("--context-lens", default=None,
                     help="按这些上下文长度给出 KV 容量；默认取 4K/32K 与模型自身上限")
     args = ap.parse_args()
+
+    _prev_path = os.path.join(args.out_dir, f"{args.id}.json")
+    _prev = json.load(open(_prev_path)) if os.path.exists(_prev_path) else {}
+    if args.ep is None:
+        _inherited = ((_prev.get("ep_communication") or {}).get("ep_size")
+                      or (_prev.get("inputs") or {}).get("ep_size"))
+        args.ep, ep_src = (_inherited, "inherited_from_previous_artifact") if _inherited else (1, "default")
+    else:
+        ep_src = "cli"
 
     fd = os.path.join(args.facts_dir, args.id)
     cfg = json.load(open(os.path.join(fd, "cfg.json"))) if os.path.exists(os.path.join(fd, "cfg.json")) else {}
@@ -1337,6 +1412,9 @@ def main():
             "shapes_present": bool(shapes),
             "model_yaml": model_path,
             "ep_size": args.ep,
+            # 「这个 ep 是哪来的」—— cli / inherited_from_previous_artifact / default。
+            # 不记下来的话，产物上的 ep_size 看不出是传进来的还是兜底的
+            "ep_size_source": ep_src,
         },
         # Gate B 还剩几路。**这个事实一直在 inputs 里（config_present / shapes_present），
         # 但埋着、没人渲染，于是「这份只对过一路」只能靠人在 reviewed.method 的散文里写** ——
@@ -1446,8 +1524,15 @@ def main():
                       "   不含文本编码与 VAE decode")
             for n in gw.get("notes") or []:
                 print(f"    ! {n}")
-    if comm.get("status") == "ok" and args.ep > 1:
-        print(f"EP all-to-all    {comm['bytes_per_token']:.0f} B/token  (EP={args.ep})")
+    # **这里原先是 `and args.ep > 1`。** 那个条件把 EP=1 的记录整行藏掉 ——
+    # 跑工具的人既看不到那个非零上界，也看不到它旁边的 ep_size=1，
+    # 于是 D12 那个矛盾只在产物里存在，CLI 上永远不会露面。A3 / D4 同一张脸。
+    if comm.get("status") == "ok" and comm.get("bytes_per_layer"):
+        print(f"EP all-to-all    ≤ {comm['bytes_per_token']:.0f} B/token"
+              f"   与 EP 规模无关的上界（top-k 条全部离片）")
+        print(f"                 ≤ {comm['ep_remote_bytes_per_token']:.0f} B/token"
+              f"   EP={comm['ep_size']}（{ep_src}）下的上界，"
+              f"离片目的 rank ≤ {comm['remote_dests_bound']}")
     if intensity.get("decode_flops_per_byte"):
         print(f"算术强度(decode) {intensity['decode_flops_per_byte']:.2f} FLOP/B")
 

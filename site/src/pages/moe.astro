@@ -6,19 +6,27 @@
  * 和注意力演进页一样，页面不自带任何数字 —— 结构计数来自 data/models 的 `arch.moe`，
  * 激活参数与通信量来自 derive.py 的产物。新录的记录按 family 自动纳入，不写死 id。
  *
- * **这页最要紧的一件事是通信量那个数的口径。** `ep_communication` 的公式里没有 EP
- * 规模这个因子：它是「top-k 条路全部落在别的设备上」的上界。产物里另有一个 `ep_size`
- * 字段记着跑 derive 时 `--ep` 传了什么，本仓已提交的产物里它有多种取值，而**同一份记录
- * 换 `--ep` 重跑，`bytes_per_token` 逐字节相同** —— 所以那个标签不描述它旁边那个数。
- * 本页把 `ep_size` 连同数字一起显示并写明它不是口径，而不是把它藏起来：
- * 藏起来的话「ep_size 为 1 的行上有个非零字节数」就成了一个读者无从解释的矛盾。
- * 这件事记在 docs/STATUS.md 的待办 A3。
+ * **这页最要紧的一件事是通信量那个数的口径。** `ep_communication` 报两个上界，
+ * 两套口径，**不互算倍数**：
+ *   `bytes_per_token`           与 EP 规模无关 —— 乘式里没有 ep 这个因子，它数的是
+ *                               「top-k 条路全部落在别的设备上」。**跨家族可比的是这一列**，
+ *                               换 `--ep` 重跑它逐字节相同
+ *   `ep_remote_bytes_per_token` 跟 `ep_size` 走 —— 一个 token 最多只能有
+ *                               min(top_k, ep) 个离片目的 rank，EP=1 时为 0。
+ *                               **只在同一个 ep_size 下比**，跨行比是范畴错误
+ * 前者按被选中的专家计数，后者按离片目的 rank 计数 —— 不是同一个量的两种精度。
+ *
+ * 这两个字段是 docs/STATUS.md 的 D12 修出来的。在那之前只有一个数，而它自带的 note
+ * 写着「EP=1 时为 0」：26 份已提交产物上同时挂着 `ep_size: 1` 与一个非零字节数，
+ * 两句话不是一个量。本页当时的处理是把 `ep_size` 连同数字列出并声明它不是口径 ——
+ * 那是在页面上绕过，不是修好了；现在产物里有一个字段真的对应那句物理。
  *
  * 三套口径不互算倍数（定义见 docs/kv-cache-accounting.md 的同名约定）：
  *   - 结构计数（专家数 / top-k / 中间维）是无单位的计数，跨代可比
  *   - 激活参数是**带宽口径**（每 token 真正搬运的线性权重），由权重清单实测
- *   - 通信字节含一个激活精度因子，而那个因子没有记进产物 —— 本页把它反解出来单列，
- *     理由见「这页没能回答的」最后一条
+ *   - 通信字节含一个激活精度因子。**那个因子现在记在产物里**（`act_dtype` / `act_bytes`），
+ *     本页引用它，不再从 `bytes_per_layer` 反解 —— 反解出来的数没有来源，
+ *     而且**一定能乘回去**（它就是除出来的），于是那一列的「对账」是自证的
  */
 import Base from '../layouts/Base.astro';
 import Cell from '../components/Cell.astro';
@@ -78,23 +86,40 @@ const actWhy = (m: Model): string | undefined =>
  * 通信量这个乘式的逐因子拆解。
  *
  * **一个乘式逐因子验**（CLAUDE.md 的口径那一节）：报出 `bytes_per_token` 之前，
- * 把每个因子都摆出来。公式里的五个因子里四个在记录或产物上能直接指到，
- * 第五个 —— 激活精度的每元素字节 —— **没有记进产物**：derive.py 取
- * `precision.training`，取不到就落到 config 的 dtype、再落到一个默认值，
- * 而这一步取了哪一档没有写下来。所以这里把它反解出来，并把乘回去的结果
- * 与产物里的 `bytes_per_token` 对账：对不上就在表上显示出来，不默认它对。
+ * 把每个因子都摆出来。**五个因子现在全在产物里** —— `top_k` / `hidden` /
+ * `act_dtype` / `act_bytes` / `moe_layers` 都由 derive.py 写下来，本页引用它们，
+ * 再把乘回去的结果与产物里的乘积对账。
+ *
+ * **原先第五个因子（激活精度的每元素字节）没有记进产物，本页只能从
+ * `bytes_per_layer` 反解。反解有个藏得深的毛病：反解出来的数一定能乘回去** ——
+ * 它就是除出来的，于是那一列的「对账」在因子齐全时是自证的，永远显示「对上」。
+ * 真正值得对的是「产物写下来的因子乘回去，等不等于产物写下来的乘积」。
+ *
+ * `top_k` 与 `hidden` 同时从记录和产物两边取，不一致就在表上报出来：产物里那两个数
+ * 是 derive.py 从记录读的，两边分叉只有一种成因 —— 产物比记录旧。
  */
 function factors(m: Model) {
   const e = epOf(m);
-  const topK = moeOf(m)?.top_k;
-  const hidden = m.arch?.hidden;
-  if (!e || !topK || !hidden || !e.moe_layers) return undefined;
-  const perElem = e.bytes_per_layer / (2 * topK * hidden);
-  const back = 2 * topK * hidden * perElem * e.moe_layers;
-  return { topK, hidden, perElem, layers: e.moe_layers, reconciles: back === e.bytes_per_token };
+  const recTopK = moeOf(m)?.top_k;
+  const recHidden = m.arch?.hidden;
+  if (!e || !e.moe_layers || !e.act_bytes || !e.top_k || !e.hidden) return undefined;
+  const back = 2 * e.top_k * e.hidden * e.act_bytes * e.moe_layers;
+  const backRemote = 2 * e.remote_dests_bound * e.hidden * e.act_bytes * e.moe_layers;
+  return {
+    topK: e.top_k,
+    hidden: e.hidden,
+    perElem: e.act_bytes,
+    actDtype: e.act_dtype,
+    layers: e.moe_layers,
+    reconciles: back === e.bytes_per_token && backRemote === e.ep_remote_bytes_per_token,
+    // 记录与产物对不上的那天，这一列是唯一的信号
+    recordAgrees:
+      (recTopK === undefined || recTopK === e.top_k) &&
+      (recHidden === undefined || recHidden === e.hidden),
+  };
 }
 
-/** 本页反解出来的每元素字节一共有几种取值 —— 一种就是一套口径，多于一种就不能并排比 */
+/** 产物里记的每元素字节一共有几种取值 —— 一种就是一套口径，多于一种就不能并排比 */
 const perElemValues = [
   ...new Set(moeModels.map((m) => factors(m)?.perElem).filter((x): x is number => Boolean(x))),
 ].sort((a, b) => a - b);
@@ -187,25 +212,44 @@ const famLabel = (key: string) => families().find((f) => f.key === key)?.label ?
       产物里的公式是
       {formulas.map((f) => <code>{f}</code>)}
       —— 里面<strong>没有 EP 规模这个因子</strong>。它数的是「top-k 条路全部落在别的设备上」时
-      一个 token 发出去再收回来的字节，所以它是上界：EP 规模与专家放置决定真实值落在
-      0 与它之间，而本仓没有这一档数据。
+      一个 token 发出去再收回来的字节，所以它是上界。<strong>这一列跨家族可比</strong>：
+      同一个公式、同一套口径，换 <code>--ep</code> 重跑逐字节相同。
     </p>
     <p style="margin:0 0 8px">
-      产物里另有一个 <code>ep_size</code> 字段，记的是跑 <code>derive.py</code> 时
-      <code>--ep</code> 传了什么。已提交的产物里它的取值是
-      {epLabels.map((v, i) => <>{i ? ' / ' : ''}<code>{v}</code></>)}
-      ——
-      <strong>而同一份记录换 <code>--ep</code> 重跑，<code>bytes_per_token</code> 逐字节相同</strong>
-      <Evidence tag="judgement" />：这个参数只进了产物的标签，没进乘式。
-      所以本页把 <code>ep_size</code> 连同数字一起列出来，同时写明<strong>它不是这个数的口径</strong>。
-      <code>ep_size</code> 为 1 的行上有一个非零字节数，不是算错 —— 那一格记的是输入参数，不是部署规模。
-      产物自带的 note 里写着「EP=1 时为 0」，那句说的是物理，和同一个块里报出的上界不是一个量。
+      产物里<strong>另有一个跟 EP 规模走的上界</strong>
+      <code>ep_remote_bytes_per_token</code>
+      <Evidence tag="derived" />：一个 token 最多只能有
+      <code>min(top_k, ep)</code> 个离片目的 rank，所以
+      <strong>EP=1 时它是 0</strong> —— 整个部署只有一张卡，没有别的设备可发。
+      已提交产物里 <code>ep_size</code> 的取值是
+      {epLabels.map((v, i) => <>{i ? ' / ' : ''}<code>{v}</code></>)}，
+      这一列<strong>只能在同一个 <code>ep_size</code> 下比</strong>，跨行比是范畴错误。
+    </p>
+    <p style="margin:0 0 8px">
+      <strong>判据刻意取 <code>min(top_k, ep)</code> 而不是 <code>min(top_k, ep-1)</code>。</strong>
+      减一要假设 token 所在的那张卡自己也托管专家，于是落在本卡的那一路不过网；
+      注意力与专家分离部署时本卡不托管专家，top-k 条全部过网，减一就不再是上界。
+      两种放置本仓都没录，所以取较松的那个 —— <strong>上界的判据可以松，不能不成立</strong>。
+      <Evidence tag="judgement" />
+      同理这里<strong>没有</strong>乘一个 <code>(ep-1)/ep</code> 的折算系数：
+      那要假设专家在 rank 上均匀放置、路由均衡，而那两件事本仓一件都没录，
+      乘上去会把上界偷换成期望值 —— 上界与期望值不是同一个量。
+    </p>
+    <p style="margin:0 0 8px">
+      <strong>这两个数不是同一个量的两种精度。</strong>
+      前者按<strong>被选中的专家</strong>计数 —— 实现不按 rank 去重时（每个专家各发一份）
+      上界是它；后者按<strong>离片目的 rank</strong> 计数 —— 按 rank 去重时
+      （DeepEP / Megatron 那套 all-to-all，一个 rank 只收一份 hidden）上界是它。
+      产物把两个都写下来，各自带判据，不替读者挑一个。
     </p>
     <p style="margin:0">
-      因此：<strong>这一列可以跨家族并排比</strong>（同一个公式、同一套上界口径），
-      但<strong>不能读成「EP=N 下的实测通信量」</strong>。
-      <code>--ep</code> 用的是哪个值没有记录在任何地方，这件事是仓库 <code>docs/STATUS.md</code> 的待办 A3；
-      本页的处理是把它当标签显示并声明口径，而不是等那条待办修完。
+      因此：<strong>两列都不能读成「EP=N 下的实测通信量」</strong>，它们都是上界。
+      真实值还取决于专家放置与 token 在专家上的分布，这两件本仓都没录。
+      <code>--ep</code> 从哪儿来现在记在产物的
+      <code>inputs.ep_size_source</code>（<code>cli</code> /
+      <code>inherited_from_previous_artifact</code> / <code>default</code>）——
+      原先漏传 <code>--ep</code> 会把 4 静默写成 1，而那时它只改标签不改数；
+      现在它真的进乘式，所以 <code>derive.py</code> 缺省沿用上一版产物里的值，不吃默认值。
     </p>
   </div>
 
@@ -221,7 +265,7 @@ const famLabel = (key: string) => families().find((f) => f.key === key)?.label ?
           <th>族系旗舰</th><th class="num">路由专家 / top-k</th><th class="num">共享专家</th>
           <th class="num">专家中间维</th><th class="num">dense 前缀层</th>
           <th class="num">专家激活 / 专家池</th><th>专家存储</th>
-          <th class="num">all-to-all 上界 字节/token</th>
+          <th class="num">all-to-all 上界 字节/token<div class="small muted">两套口径</div></th>
         </tr>
       </thead>
       <tbody>
@@ -264,8 +308,11 @@ const famLabel = (key: string) => families().find((f) => f.key === key)?.label ?
               <td class="num">
                 {e ? (
                   <>
-                    {fmtInt(e.bytes_per_token)}<span class="unit">字节</span><Evidence tag="derived" />
-                    <div class="small muted">ep_size 标签 {e.ep_size}</div>
+                    ≤ {fmtInt(e.bytes_per_token)}<span class="unit">字节</span><Evidence tag="derived" />
+                    <div class="small muted">与 EP 规模无关</div>
+                    <div class="small muted">
+                      EP={e.ep_size} 下 ≤ {fmtInt(e.ep_remote_bytes_per_token)} 字节
+                    </div>
                   </>
                 ) : (
                   <span class="absent not_applicable" title={epWhy(m)}>不适用</span>
@@ -391,10 +438,13 @@ const famLabel = (key: string) => families().find((f) => f.key === key)?.label ?
 
   <h2>EP all-to-all 上界 · 逐因子 <Evidence tag="derived" /></h2>
   <p class="small muted">
-    一个乘式逐因子验：下面把公式的每个因子单列，再把乘回去的结果与产物里的
-    <code>bytes_per_token</code> 对账。<strong>「每元素字节」这一列是本页反解出来的</strong> ——
-    激活精度是公式里唯一一个<strong>没有记进产物</strong>的因子，不反解就看不见它。
-    最后一列的 <code>ep_size</code> 是输入参数的标签，不是这个数的口径（见页首说明）。
+    一个乘式逐因子验：下面把公式的每个因子单列，再把乘回去的结果与产物里的两个乘积对账。
+    <strong>五个因子现在全部引用自产物</strong>（<code>top_k</code> / <code>hidden</code> /
+    <code>act_bytes</code> / <code>moe_layers</code>，外加离片目的 rank 上界）。
+    原先「每元素字节」这一列是本页从 <code>bytes_per_layer</code> 反解的 ——
+    <strong>而反解出来的数一定能乘回去</strong>（它就是除出来的），那样的「对账」是自证的。
+    <code>top-k</code> 与 <code>hidden</code> 还同时和 <code>data/models</code> 里的记录比一次：
+    两边分叉只有一种成因，产物比记录旧。
   </p>
   <div class="scroll-x">
     <table class="moe">
@@ -402,8 +452,11 @@ const famLabel = (key: string) => families().find((f) => f.key === key)?.label ?
         <tr>
           <th>记录</th><th class="num">top-k</th><th class="num">hidden</th>
           <th class="num">每元素字节</th><th class="num">MoE 层数</th>
-          <th class="num">字节 / 层</th><th class="num">字节 / token</th>
-          <th class="num">逐因子对账</th><th class="num">ep_size 标签</th>
+          <th class="num">字节 / 层</th>
+          <th class="num">字节 / token<div class="small muted">与 EP 无关</div></th>
+          <th class="num">离片目的 rank<div class="small muted">min(top-k, ep)</div></th>
+          <th class="num">字节 / token<div class="small muted">EP 口径</div></th>
+          <th class="num">逐因子对账</th><th class="num">ep_size</th>
         </tr>
       </thead>
       <tbody>
@@ -414,7 +467,7 @@ const famLabel = (key: string) => families().find((f) => f.key === key)?.label ?
             return (
               <tr>
                 <td><a href={url(`/models/${m.id}/`)}>{m.display_name}</a></td>
-                <td colspan="8" class="muted">
+                <td colspan="10" class="muted">
                   <span class="absent unsurveyed" title={epWhy(m) ?? '产物里没有可拆的通信量'}>未录</span>
                 </td>
               </tr>
@@ -425,7 +478,10 @@ const famLabel = (key: string) => families().find((f) => f.key === key)?.label ?
               <td><a href={url(`/models/${m.id}/`)}>{m.display_name}</a></td>
               <td class="num">{fa.topK}</td>
               <td class="num">{fmtInt(fa.hidden)}</td>
-              <td class="num">{fa.perElem}<span class="unit">字节</span><Evidence tag="derived" /></td>
+              <td class="num">
+                {fa.perElem}<span class="unit">字节</span><Evidence tag="derived" />
+                <div class="small muted">{fa.actDtype}</div>
+              </td>
               <td class="num">{fa.layers}</td>
               <td class="num">{fmtInt(e.bytes_per_layer)}<span class="unit">字节</span></td>
               <td class="num">
@@ -434,9 +490,27 @@ const famLabel = (key: string) => families().find((f) => f.key === key)?.label ?
                 <div class="bar" aria-hidden="true"><span style={`width:${(100 * e.bytes_per_token) / (maxComm || 1)}%`} /></div>
               </td>
               <td class="num">
+                {e.remote_dests_bound}
+                {e.remote_dests_bound === 0 && (
+                  <div class="small muted">EP=1，没有别的设备</div>
+                )}
+              </td>
+              <td class="num">
+                {fmtInt(e.ep_remote_bytes_per_token)}<span class="unit">字节</span>
+                <div class="small muted">{fmtBytes(e.ep_remote_bytes_per_token)}</div>
+                {/* 两条 bar 共用 maxComm，所以长短可以直接比 —— 换成各自的最大值会让
+                    「EP 口径只占上界的一部分」这件事在图上消失 */}
+                <div class="bar" aria-hidden="true"><span style={`width:${(100 * e.ep_remote_bytes_per_token) / (maxComm || 1)}%`} /></div>
+              </td>
+              <td class="num">
                 {fa.reconciles
-                  ? <span class="ok" title="2 × top-k × hidden × 每元素字节 × MoE 层数 与产物里的 字节/token 相等">对上</span>
-                  : <span class="bad" title="反解的因子乘回去和产物里的 字节/token 不等 —— 公式或因子有一处不是这里写的这样">对不上</span>}
+                  ? <span class="ok" title="产物写下来的因子乘回去，两个乘积都相等">对上</span>
+                  : <span class="bad" title="产物里的因子乘回去和产物里的乘积不等 —— 公式或因子有一处不是这里写的这样">对不上</span>}
+                {!fa.recordAgrees && (
+                  <div class="small bad" title="产物里的 top_k / hidden 和 data/models 的记录不一致 —— 产物比记录旧">
+                    与记录不符
+                  </div>
+                )}
               </td>
               <td class="num">{e.ep_size}</td>
             </tr>
@@ -602,25 +676,29 @@ const famLabel = (key: string) => families().find((f) => f.key === key)?.label ?
   </p>
   <ul class="plain small">
     <li>
-      <strong>某个 EP 规模下的真实 all-to-all 字节</strong> ——
-      上表那一列是「top-k 条路全部跨设备」的上界。真实值还取决于 EP 规模、专家放置、
-      以及 token 在专家上的分布（负载不均会让某几张卡的收发量远高于平均），
-      这三件事本仓一件都没录。所以<strong>这个数只能用来横着比结构，不能用来估时延</strong>。
+      <strong>某个 EP 规模下的<em>真实</em> all-to-all 字节</strong> ——
+      上表两列都是上界。EP 规模这一项现在进了乘式（<code>min(top-k, ep)</code>），
+      但另外两件仍然没录：<strong>专家在 rank 上怎么放</strong>（共享专家与冗余副本常驻本卡、
+      不过网，两列都没扣）、以及 <strong>token 在专家上的分布</strong>
+      （负载不均会让某几张卡的收发量远高于平均）。
+      所以<strong>这两个数仍然只能横着比结构，不能用来估时延</strong>。
       <Evidence tag="judgement" />
     </li>
     <li>
-      <strong><code>--ep</code> 用的是哪个值，没有记录在任何地方</strong> ——
-      已提交产物里 <code>ep_size</code> 有多种取值，重跑全靠人记得读上一版。
-      本页的处理是把它当标签显示并声明它不进乘式；<strong>这不是修好了那条待办</strong>，
-      是让它在页面上看得见。修法（把 ep 记进记录或产物的输入段）记在
-      <code>docs/STATUS.md</code> 的待办 A3。
+      <strong><code>ep_size</code> 不在证据链上</strong> ——
+      它是<strong>跑 <code>derive.py</code> 时传了什么</strong>，不是「这份记录对应的部署是几路 EP」。
+      <code>data/models</code> 里没有这个字段，所以它既没有来源也没有证据徽标。
+      产物现在至少记下了它<strong>从哪儿来</strong>（<code>inputs.ep_size_source</code>：
+      <code>cli</code> / <code>inherited_from_previous_artifact</code> / <code>default</code>），
+      重跑也不再吃默认值 —— 但「这个 EP 规模是谁定的、依据是什么」仍然没有记录。
+      要让 EP 口径那一列可引用，得先给记录一个带来源的部署字段。
       <Evidence tag="judgement" />
     </li>
     <li>
-      <strong>激活精度那个因子不在产物里</strong> ——
-      <code>derive.py</code> 取记录的训练精度，取不到就落到 config 的 dtype、再落到一个默认值，
-      而这一步取了哪一档没有写下来。所以「每元素字节」那一列是本页从
-      <code>bytes_per_layer</code> 反解的，不是引用。
+      <strong>激活精度取的是哪一档，产物只记了结果</strong> ——
+      <code>derive.py</code> 取记录的训练精度，取不到就落到 config 的 dtype、再落到一个默认值。
+      <code>act_dtype</code> / <code>act_bytes</code> 现在写进了产物（「每元素字节」那一列
+      因此是<strong>引用</strong>，不再是反解），<strong>但「走的是哪一档」没写</strong>。
       当前全部 MoE 记录的训练精度字段都是空的，这一列的值因此全部来自兜底而不是声明 ——
       哪天有一份记录开始声明 FP8 训练精度，同一张表里就会出现两种口径，
       那时 字节/token 这一列不能再并排比。

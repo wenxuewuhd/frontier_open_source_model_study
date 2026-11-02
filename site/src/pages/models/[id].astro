@@ -851,11 +851,41 @@ const rv = reviewStatus(m);
                     </td>
                   </tr>
                 )}
-                {d?.ep_communication?.bytes_per_token ? (
-                  <tr>
-                    <td>EP all-to-all / token（EP={d.ep_communication.ep_size}）</td>
-                    <td class="num">{fmtBytes(d.ep_communication.bytes_per_token)}</td>
-                  </tr>
+                {/*
+                  **原先这里是一行**：「EP all-to-all / token（EP={ep_size}）」，
+                  配上 bytes_per_token。那个数与 EP 规模无关（乘式里没有 ep），
+                  把它挂在 ep_size 下面显示，读者只能读成「EP=N 时的通信量就是这个」——
+                  而 ep_size 为 1 的 26 份记录上，那一行等于在说「单卡部署要搬 13 MB」。
+                  两个口径现在分两行报，各自带 ≤ 与判据。见 docs/STATUS.md 的 D12。
+
+                  判据用 bytes_per_layer 而不是 bytes_per_token：EP=1 时离片口径
+                  **就该是 0**，而 0 在 JS 里是假值 —— 按 bytes_per_token 做判据会
+                  让这两行在 EP=1 的记录上整块消失，和「产物里没算」长得一样。
+                */}
+                {d?.ep_communication?.bytes_per_layer ? (
+                  <>
+                    <tr>
+                      <td>
+                        EP all-to-all / token
+                        <div class="small muted">
+                          上界，与 EP 规模无关：top-k {d.ep_communication.top_k} 条路全部离片
+                        </div>
+                      </td>
+                      <td class="num">≤ {fmtBytes(d.ep_communication.bytes_per_token)}</td>
+                    </tr>
+                    <tr>
+                      <td>
+                        同上，EP={d.ep_communication.ep_size} 下的上界
+                        <div class="small muted">
+                          {d.ep_communication.remote_dests_bound === 0
+                            ? 'EP=1：整个部署只有一张卡，没有别的设备可发'
+                            : `离片目的 rank ≤ ${d.ep_communication.remote_dests_bound}
+                               = min(top-k ${d.ep_communication.top_k}, EP ${d.ep_communication.ep_size})`}
+                        </div>
+                      </td>
+                      <td class="num">≤ {fmtBytes(d.ep_communication.ep_remote_bytes_per_token)}</td>
+                    </tr>
+                  </>
                 ) : (
                   <tr>
                     <td>EP all-to-all</td>

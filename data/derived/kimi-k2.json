@@ -1,13 +1,14 @@
 {
  "id": "kimi-k2",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-11-02T14:02:47+00:00",
+ "generated_at": "2026-11-02T14:12:30+00:00",
  "inputs": {
   "facts_dir": "facts/kimi-k2",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/kimi/kimi-k2.yaml",
-  "ep_size": 8
+  "ep_size": 8,
+  "ep_size_source": "cli"
  },
  "gate_b": {
   "config": true,
@@ -139,12 +140,23 @@
  },
  "ep_communication": {
   "status": "ok",
-  "ep_size": 8,
   "moe_layers": 60,
+  "top_k": 8,
+  "hidden": 7168,
+  "act_dtype": "BF16",
+  "act_bytes": 2,
+  "comm_basis": "all_experts_remote",
   "bytes_per_token": 13762560,
   "bytes_per_layer": 229376,
-  "formula": "2(dispatch+combine) * top_k * hidden * bytes * moe_layers",
-  "note": "EP=1 时为 0；跨机时该量按互联带宽折算成时间，是 decode 尾延迟的主因之一"
+  "formula": "2(dispatch+combine) * top_k * hidden * act_bytes * moe_layers",
+  "ep_size": 8,
+  "remote_dests_bound": 8,
+  "ep_remote_bytes_per_token": 13762560,
+  "ep_remote_bytes_per_layer": 229376,
+  "ep_remote_basis": "all_destinations_remote",
+  "ep_remote_formula": "2 * min(top_k, ep) * hidden * act_bytes * moe_layers（ep=1 时为 0）",
+  "semantics": "bytes_per_token 与 ep_size 无关，量的是细粒度化本身的通信代价，跨家族可比；ep_remote_bytes_per_token 跟 ep_size 走，只在同一个 ep_size 下比。两者都是上界而非实测，前者按被选中的专家计数、后者按离片目的 rank 计数 —— 不是同一个量的两种精度，混用会同时犯数值和概念错误",
+  "note": "跨机时这两个量都按互联带宽折算成时间，是 decode 尾延迟的主因之一。两者都没有扣掉共享专家（常驻本卡、不过网）与冗余专家副本，也都没有假设路由均衡 —— 负载不均会让某几张卡的收发量远高于平均，那一档本仓没录"
  },
  "reconciliation": [
   {
