@@ -1,13 +1,19 @@
 {
  "id": "minimax-text-01",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T12:08:51+00:00",
+ "generated_at": "2026-11-02T14:03:06+00:00",
  "inputs": {
   "facts_dir": "facts/minimax-text-01",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/minimax/minimax-text-01.yaml",
   "ep_size": 1
+ },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
  },
  "from_shapes": {
   "available": true,

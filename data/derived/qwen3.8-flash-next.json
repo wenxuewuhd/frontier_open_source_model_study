@@ -1,7 +1,7 @@
 {
  "id": "qwen3.8-flash-next",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T09:24:39+00:00",
+ "generated_at": "2026-11-02T14:03:09+00:00",
  "inputs": {
   "facts_dir": "facts/qwen3.8-flash-next",
   "config_present": true,
@@ -9,12 +9,34 @@
   "model_yaml": "data/models/qwen/qwen3.8-flash-next.yaml",
   "ep_size": 1
  },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
+ },
  "from_shapes": {
   "available": true,
   "complete": true,
   "tensor_count": 1658,
   "params_total": 179999981459.0,
   "params_by_subsystem": {
+   "retrieval": 51200245795.0,
+   "expert": 120795955200.0,
+   "router": 62914560.0,
+   "shared_expert": 236052480.0,
+   "residual": 639631360.0,
+   "norm": 1037824.0,
+   "attention": 2684194176.0,
+   "other": 32808960.0,
+   "vision": 448931056.0,
+   "draft": 2607150848.0,
+   "indexer": 19660800.0,
+   "embed": 635699200.0,
+   "lm_head": 635699200.0
+  },
+  "params_total_container": 179999981459.0,
+  "params_container_by_subsystem": {
    "retrieval": 51200245795.0,
    "expert": 120795955200.0,
    "router": 62914560.0,

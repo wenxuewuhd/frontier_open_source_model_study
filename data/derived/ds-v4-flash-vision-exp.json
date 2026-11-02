@@ -1,13 +1,19 @@
 {
  "id": "ds-v4-flash-vision-exp",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T09:24:21+00:00",
+ "generated_at": "2026-11-02T14:02:22+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-flash-vision-exp",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/deepseek/ds-v4-flash-vision-exp.yaml",
   "ep_size": 1
+ },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
  },
  "from_shapes": {
   "available": true,
@@ -27,6 +33,21 @@
    "embed": 529530880.0,
    "lm_head": 529530880.0,
    "draft": 19845851751.0
+  },
+  "params_total_container": 156470452414.0,
+  "params_container_by_subsystem": {
+   "router": 47437824.0,
+   "attention": 4599057088.0,
+   "compressor": 261443584.0,
+   "indexer": 225727488.0,
+   "residual": 33884439.0,
+   "norm": 446080.0,
+   "shared_expert": 1082130432.0,
+   "expert": 138512695296.0,
+   "vision": 466393088.0,
+   "embed": 529530880.0,
+   "lm_head": 529530880.0,
+   "draft": 10182175335.0
   },
   "scale_elements": 9261408000.0,
   "weight_bytes_total": 167811372792.0,

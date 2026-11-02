@@ -1,7 +1,7 @@
 {
  "id": "step-1",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T07:17:42+00:00",
+ "generated_at": "2026-11-02T14:03:09+00:00",
  "inputs": {
   "facts_dir": "facts/step-1",
   "config_present": true,
@@ -9,12 +9,26 @@
   "model_yaml": "data/models/stepfun/step-1.yaml",
   "ep_size": 4
  },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
+ },
  "from_shapes": {
   "available": true,
   "complete": true,
   "tensor_count": 795,
   "params_total": 131946590208.0,
   "params_by_subsystem": {
+   "dense_ffn": 101317607424.0,
+   "norm": 2174976.0,
+   "attention": 28789702656.0,
+   "embed": 918552576.0,
+   "lm_head": 918552576.0
+  },
+  "params_total_container": 131946590208.0,
+  "params_container_by_subsystem": {
    "dense_ffn": 101317607424.0,
    "norm": 2174976.0,
    "attention": 28789702656.0,

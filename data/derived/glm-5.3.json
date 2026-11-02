@@ -1,7 +1,7 @@
 {
  "id": "glm-5.3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T06:59:59+00:00",
+ "generated_at": "2026-11-02T14:02:31+00:00",
  "inputs": {
   "facts_dir": "facts/glm-5.3",
   "config_present": true,
@@ -9,12 +9,31 @@
   "model_yaml": "data/models/glm/glm-5.3.yaml",
   "ep_size": 1
  },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
+ },
  "from_shapes": {
   "available": true,
   "complete": true,
   "tensor_count": 118629,
   "params_total": 753329940480.0,
   "params_by_subsystem": {
+   "expert": 724775731200.0,
+   "router": 117984000.0,
+   "norm": 1169664.0,
+   "shared_expert": 2831155200.0,
+   "attention": 12871532544.0,
+   "indexer": 196804608.0,
+   "lm_head": 951582720.0,
+   "embed": 951582720.0,
+   "dense_ffn": 679477248.0,
+   "draft": 9952920576.0
+  },
+  "params_total_container": 753329940480.0,
+  "params_container_by_subsystem": {
    "expert": 724775731200.0,
    "router": 117984000.0,
    "norm": 1169664.0,

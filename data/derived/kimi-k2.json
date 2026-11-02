@@ -1,7 +1,7 @@
 {
  "id": "kimi-k2",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T05:55:25+00:00",
+ "generated_at": "2026-11-02T14:02:47+00:00",
  "inputs": {
   "facts_dir": "facts/kimi-k2",
   "config_present": true,
@@ -9,12 +9,29 @@
   "model_yaml": "data/models/kimi/kimi-k2.yaml",
   "ep_size": 8
  },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
+ },
  "from_shapes": {
   "available": true,
   "complete": true,
   "tensor_count": 139644,
   "params_total": 1026408235864.0,
   "params_by_subsystem": {
+   "embed": 1174405120.0,
+   "norm": 1006592.0,
+   "attention": 6168448344.0,
+   "dense_ffn": 396361728.0,
+   "router": 165173760.0,
+   "expert": 1014686023680.0,
+   "shared_expert": 2642411520.0,
+   "lm_head": 1174405120.0
+  },
+  "params_total_container": 1026408235864.0,
+  "params_container_by_subsystem": {
    "embed": 1174405120.0,
    "norm": 1006592.0,
    "attention": 6168448344.0,

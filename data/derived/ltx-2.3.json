@@ -1,7 +1,7 @@
 {
  "id": "ltx-2.3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-31T04:01:09+00:00",
+ "generated_at": "2026-11-02T14:03:00+00:00",
  "inputs": {
   "facts_dir": "facts/ltx-2.3",
   "config_present": false,

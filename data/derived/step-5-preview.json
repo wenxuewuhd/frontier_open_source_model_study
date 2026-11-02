@@ -1,7 +1,7 @@
 {
  "id": "step-5-preview",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T09:24:39+00:00",
+ "generated_at": "2026-11-02T14:03:09+00:00",
  "inputs": {
   "facts_dir": "facts/step-5-preview",
   "config_present": true,
@@ -9,12 +9,32 @@
   "model_yaml": "data/models/stepfun/step-5-preview.yaml",
   "ep_size": 4
  },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
+ },
  "from_shapes": {
   "available": true,
   "complete": true,
   "tensor_count": 2704,
   "params_total": 602972927296.0,
   "params_by_subsystem": {
+   "norm": 810752.0,
+   "router": 126908672.0,
+   "indexer": 435617792.0,
+   "attention": 9863955904.0,
+   "shared_expert": 1660944384.0,
+   "expert": 584652423168.0,
+   "embed": 527958016.0,
+   "dense_ffn": 679477248.0,
+   "draft": 2515858560.0,
+   "lm_head": 527958016.0,
+   "vision": 1981014784.0
+  },
+  "params_total_container": 602972927296.0,
+  "params_container_by_subsystem": {
    "norm": 810752.0,
    "router": 126908672.0,
    "indexer": 435617792.0,

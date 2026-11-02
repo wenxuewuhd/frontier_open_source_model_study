@@ -1,7 +1,7 @@
 {
  "id": "kimi-moonlight-16b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T05:55:24+00:00",
+ "generated_at": "2026-11-02T14:03:00+00:00",
  "inputs": {
   "facts_dir": "facts/kimi-moonlight-16b",
   "config_present": true,
@@ -9,12 +9,29 @@
   "model_yaml": "data/models/kimi/kimi-moonlight-16b.yaml",
   "ep_size": 8
  },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
+ },
  "from_shapes": {
   "available": true,
   "complete": true,
   "tensor_count": 5344,
   "params_total": 15960111936.0,
   "params_by_subsystem": {
+   "norm": 126464.0,
+   "expert": 14394851328.0,
+   "router": 3409536.0,
+   "shared_expert": 449839104.0,
+   "attention": 371590848.0,
+   "embed": 335544320.0,
+   "dense_ffn": 69206016.0,
+   "lm_head": 335544320.0
+  },
+  "params_total_container": 15960111936.0,
+  "params_container_by_subsystem": {
    "norm": 126464.0,
    "expert": 14394851328.0,
    "router": 3409536.0,

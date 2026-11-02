@@ -1,7 +1,7 @@
 {
  "id": "kimi-linear-48b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T05:55:27+00:00",
+ "generated_at": "2026-11-02T14:03:00+00:00",
  "inputs": {
   "facts_dir": "facts/kimi-linear-48b",
   "config_present": true,
@@ -9,12 +9,29 @@
   "model_yaml": "data/models/kimi/kimi-linear-48b.yaml",
   "ep_size": 8
  },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
+ },
  "from_shapes": {
   "available": true,
   "complete": true,
   "tensor_count": 20493,
   "params_total": 49122681728.0,
   "params_by_subsystem": {
+   "attention": 994083456.0,
+   "expert": 47110422528.0,
+   "router": 15342080.0,
+   "shared_expert": 184025088.0,
+   "norm": 132864.0,
+   "embed": 377487360.0,
+   "dense_ffn": 63700992.0,
+   "lm_head": 377487360.0
+  },
+  "params_total_container": 49122681728.0,
+  "params_container_by_subsystem": {
    "attention": 994083456.0,
    "expert": 47110422528.0,
    "router": 15342080.0,

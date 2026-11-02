@@ -1,7 +1,7 @@
 {
  "id": "qwen3-next-80b-a3b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T07:08:41+00:00",
+ "generated_at": "2026-11-02T14:03:08+00:00",
  "inputs": {
   "facts_dir": "facts/qwen3-next-80b-a3b",
   "config_present": true,
@@ -9,12 +9,29 @@
   "model_yaml": "data/models/qwen/qwen3-next-80b-a3b.yaml",
   "ep_size": 1
  },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
+ },
  "from_shapes": {
   "available": true,
   "complete": true,
   "tensor_count": 75944,
   "params_total": 81324862720.0,
   "params_by_subsystem": {
+   "embed": 311164928.0,
+   "norm": 209408.0,
+   "attention": 1541015808.0,
+   "expert": 77309411328.0,
+   "router": 50331648.0,
+   "shared_expert": 151093248.0,
+   "lm_head": 311164928.0,
+   "draft": 1650471424.0
+  },
+  "params_total_container": 81324862720.0,
+  "params_container_by_subsystem": {
    "embed": 311164928.0,
    "norm": 209408.0,
    "attention": 1541015808.0,

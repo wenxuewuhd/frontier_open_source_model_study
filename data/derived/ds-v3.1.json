@@ -1,13 +1,20 @@
 {
  "id": "ds-v3.1",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-29T16:01:52+00:00",
+ "generated_at": "2026-11-02T14:02:16+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v3.1",
   "config_present": true,
   "shapes_present": false,
   "model_yaml": "data/models/deepseek/ds-v3.1.yaml",
   "ep_size": 1
+ },
+ "gate_b": {
+  "config": true,
+  "manifest": false,
+  "manifest_incomplete": false,
+  "paths": 1,
+  "why": "仓里零 safetensors（权重是 .pt / .pth 这类 pickle），读头拿不到清单。参数量与权重存储只能取厂商声明，**不是本仓实测**"
  },
  "from_shapes": {
   "available": false

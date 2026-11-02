@@ -1,13 +1,19 @@
 {
  "id": "ds-v4-pro",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T08:47:44+00:00",
+ "generated_at": "2026-11-02T14:02:25+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v4-pro",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/deepseek/ds-v4-pro.yaml",
   "ep_size": 1
+ },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
  },
  "from_shapes": {
   "available": true,
@@ -26,6 +32,20 @@
    "indexer": 501381120.0,
    "lm_head": 926679040.0,
    "draft": 25840145979.0
+  },
+  "params_total_container": 812458006430.0,
+  "params_container_by_subsystem": {
+   "embed": 926679040.0,
+   "attention": 18293464704.0,
+   "compressor": 670097408.0,
+   "router": 170252544.0,
+   "residual": 84069603.0,
+   "norm": 1041664.0,
+   "shared_expert": 4029677568.0,
+   "expert": 773698093056.0,
+   "indexer": 501381120.0,
+   "lm_head": 926679040.0,
+   "draft": 13156570683.0
   },
   "scale_elements": 49150268416.0,
   "weight_bytes_total": 864704792696.0,

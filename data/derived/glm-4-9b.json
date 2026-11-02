@@ -1,7 +1,7 @@
 {
  "id": "glm-4-9b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T08:49:30+00:00",
+ "generated_at": "2026-11-02T14:02:25+00:00",
  "inputs": {
   "facts_dir": "facts/glm-4-9b",
   "config_present": true,
@@ -9,12 +9,27 @@
   "model_yaml": "data/models/glm/glm-4-9b.yaml",
   "ep_size": 1
  },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
+ },
  "from_shapes": {
   "available": true,
   "complete": true,
   "tensor_count": 284,
   "params_total": 9399951392.0,
   "params_by_subsystem": {
+   "embed": 620756992.0,
+   "norm": 331776.0,
+   "dense_ffn": 6731857920.0,
+   "attention": 1426247680.0,
+   "other": 32.0,
+   "lm_head": 620756992.0
+  },
+  "params_total_container": 9399951392.0,
+  "params_container_by_subsystem": {
    "embed": 620756992.0,
    "norm": 331776.0,
    "dense_ffn": 6731857920.0,

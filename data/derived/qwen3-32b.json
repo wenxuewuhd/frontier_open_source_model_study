@@ -1,7 +1,7 @@
 {
  "id": "qwen3-32b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T07:08:40+00:00",
+ "generated_at": "2026-11-02T14:03:07+00:00",
  "inputs": {
   "facts_dir": "facts/qwen3-32b",
   "config_present": true,
@@ -9,12 +9,26 @@
   "model_yaml": "data/models/qwen/qwen3-32b.yaml",
   "ep_size": 1
  },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
+ },
  "from_shapes": {
   "available": true,
   "complete": true,
   "tensor_count": 707,
   "params_total": 32762123264.0,
   "params_by_subsystem": {
+   "norm": 676864.0,
+   "dense_ffn": 25165824000.0,
+   "attention": 6039797760.0,
+   "embed": 777912320.0,
+   "lm_head": 777912320.0
+  },
+  "params_total_container": 32762123264.0,
+  "params_container_by_subsystem": {
    "norm": 676864.0,
    "dense_ffn": 25165824000.0,
    "attention": 6039797760.0,

@@ -1,7 +1,7 @@
 {
  "id": "wan2.2-ti2v-5b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-31T02:54:08+00:00",
+ "generated_at": "2026-11-02T14:03:10+00:00",
  "inputs": {
   "facts_dir": "facts/wan2.2-ti2v-5b",
   "config_present": true,

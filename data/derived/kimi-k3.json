@@ -1,13 +1,19 @@
 {
  "id": "kimi-k3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T09:24:33+00:00",
+ "generated_at": "2026-11-02T14:02:59+00:00",
  "inputs": {
   "facts_dir": "facts/kimi-k3",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/kimi/kimi-k3.yaml",
   "ep_size": 4
+ },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
  },
  "from_shapes": {
   "available": true,
@@ -22,6 +28,19 @@
    "router": 590955008.0,
    "shared_expert": 12155092992.0,
    "expert": 2722740830208.0,
+   "lm_head": 1174405120.0,
+   "embed": 1174405120.0,
+   "vision": 447358976.0
+  },
+  "params_total_container": 1418561422080.0,
+  "params_container_by_subsystem": {
+   "attention": 36190737024.0,
+   "norm": 3068544.0,
+   "dense_ffn": 5453643776.0,
+   "residual": 1340416.0,
+   "router": 590955008.0,
+   "shared_expert": 12155092992.0,
+   "expert": 1361370415104.0,
    "lm_head": 1174405120.0,
    "embed": 1174405120.0,
    "vision": 447358976.0

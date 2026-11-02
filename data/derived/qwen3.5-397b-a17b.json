@@ -1,7 +1,7 @@
 {
  "id": "qwen3.5-397b-a17b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T09:24:39+00:00",
+ "generated_at": "2026-11-02T14:03:09+00:00",
  "inputs": {
   "facts_dir": "facts/qwen3.5-397b-a17b",
   "config_present": true,
@@ -9,12 +9,30 @@
   "model_yaml": "data/models/qwen/qwen3.5-397b-a17b.yaml",
   "ep_size": 1
  },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
+ },
  "from_shapes": {
   "available": true,
   "complete": true,
   "tensor_count": 2924,
   "params_total": 403397928944.0,
   "params_by_subsystem": {
+   "expert": 386547056640.0,
+   "lm_head": 1017118720.0,
+   "embed": 1017118720.0,
+   "attention": 6883497600.0,
+   "draft": 6595568128.0,
+   "shared_expert": 755220480.0,
+   "vision": 456010480.0,
+   "norm": 509056.0,
+   "router": 125829120.0
+  },
+  "params_total_container": 403397928944.0,
+  "params_container_by_subsystem": {
    "expert": 386547056640.0,
    "lm_head": 1017118720.0,
    "embed": 1017118720.0,

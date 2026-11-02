@@ -1,7 +1,7 @@
 {
  "id": "ds-v3",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T01:44:17+00:00",
+ "generated_at": "2026-11-02T14:02:20+00:00",
  "inputs": {
   "facts_dir": "facts/ds-v3",
   "config_present": true,
@@ -9,12 +9,30 @@
   "model_yaml": "data/models/deepseek/ds-v3.yaml",
   "ep_size": 1
  },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
+ },
  "from_shapes": {
   "available": true,
   "complete": true,
   "tensor_count": 91991,
   "params_total": 684489845504.0,
   "params_by_subsystem": {
+   "expert": 653908770816.0,
+   "embed": 926679040.0,
+   "attention": 11413422080.0,
+   "norm": 1006592.0,
+   "dense_ffn": 1189085184.0,
+   "router": 106445312.0,
+   "shared_expert": 2554331136.0,
+   "lm_head": 926679040.0,
+   "draft": 13463426304.0
+  },
+  "params_total_container": 684489845504.0,
+  "params_container_by_subsystem": {
    "expert": 653908770816.0,
    "embed": 926679040.0,
    "attention": 11413422080.0,

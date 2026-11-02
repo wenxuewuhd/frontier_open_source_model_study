@@ -1,7 +1,7 @@
 {
  "id": "qwen2.5-14b-1m",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T07:22:38+00:00",
+ "generated_at": "2026-11-02T14:03:06+00:00",
  "inputs": {
   "facts_dir": "facts/qwen2.5-14b-1m",
   "config_present": true,
@@ -9,12 +9,26 @@
   "model_yaml": "data/models/qwen/qwen2.5-14b-1m.yaml",
   "ep_size": 1
  },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
+ },
  "from_shapes": {
   "available": true,
   "complete": true,
   "tensor_count": 579,
   "params_total": 14770033664.0,
   "params_by_subsystem": {
+   "dense_ffn": 10192158720.0,
+   "norm": 496640.0,
+   "attention": 3020242944.0,
+   "embed": 778567680.0,
+   "lm_head": 778567680.0
+  },
+  "params_total_container": 14770033664.0,
+  "params_container_by_subsystem": {
    "dense_ffn": 10192158720.0,
    "norm": 496640.0,
    "attention": 3020242944.0,

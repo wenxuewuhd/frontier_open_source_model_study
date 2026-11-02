@@ -1,7 +1,7 @@
 {
  "id": "qwen3-235b-a22b",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T07:08:41+00:00",
+ "generated_at": "2026-11-02T14:03:07+00:00",
  "inputs": {
   "facts_dir": "facts/qwen3-235b-a22b",
   "config_present": true,
@@ -9,12 +9,27 @@
   "model_yaml": "data/models/qwen/qwen3-235b-a22b.yaml",
   "ep_size": 1
  },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
+ },
  "from_shapes": {
   "available": true,
   "complete": true,
   "tensor_count": 36945,
   "params_total": 235093634560.0,
   "params_by_subsystem": {
+   "norm": 798208.0,
+   "expert": 227096395776.0,
+   "router": 49283072.0,
+   "attention": 6702497792.0,
+   "embed": 622329856.0,
+   "lm_head": 622329856.0
+  },
+  "params_total_container": 235093634560.0,
+  "params_container_by_subsystem": {
    "norm": 798208.0,
    "expert": 227096395776.0,
    "router": 49283072.0,

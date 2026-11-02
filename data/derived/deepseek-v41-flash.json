@@ -1,13 +1,19 @@
 {
  "id": "deepseek-v41-flash",
  "generated_by": "scripts/derive.py",
- "generated_at": "2026-10-30T10:03:33+00:00",
+ "generated_at": "2026-11-02T14:02:16+00:00",
  "inputs": {
   "facts_dir": "facts/deepseek-v41-flash",
   "config_present": true,
   "shapes_present": true,
   "model_yaml": "data/models/deepseek/deepseek-v41-flash.yaml",
   "ep_size": 1
+ },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
  },
  "from_shapes": {
   "available": true,
@@ -27,6 +33,22 @@
    "indexer": 43515904.0,
    "lm_head": 661913600.0,
    "draft": 14225362530.0,
+   "retrieval": 196928504320.0
+  },
+  "params_total_container": 484619644114.0,
+  "params_container_by_subsystem": {
+   "vision": 485268480.0,
+   "embed": 661913600.0,
+   "attention": 5064624640.0,
+   "router": 78673920.0,
+   "residual": 39323760.0,
+   "norm": 488960.0,
+   "shared_expert": 1415577600.0,
+   "expert": 271790899200.0,
+   "compressor": 18350080.0,
+   "indexer": 43515904.0,
+   "lm_head": 661913600.0,
+   "draft": 7430590050.0,
    "retrieval": 196928504320.0
   },
   "scale_elements": 23563015184.0,
@@ -143,7 +165,7 @@
       "dtype": "FP8_E4M3",
       "block": 32,
       "scale_dtype": "FP8_E8M0",
-      "note": "**落盘格式未公布，这一格是 QAT 网格而非存储宽度。** 技术报告只讲全局 KV 与 indexer， 滑窗的唯一依据是参考实现 _window_kv 的 act_quant(kv, fp8_block_size=32, scale_fmt=ue8m0, scale_dtype=float8_e8m0fnu, inplace=True) —— 而 inplace 伪量化只说明值被舍到 FP8 网格， 不说明存成多宽（见核查 R38）。按这个网格折算是每位置 512 + 16 = 528 B"
+      "note": "**精度是厂商公布的，块与 scale 不是。** 报告 §2.4.4 末段明说 \"We retain FP8 for the SWA KV cache due to its sensitivity to quantization\"，所以 8 bit 这一半有一手来源； 但报告没给 E4M3 / E5M2、没给块大小、也没给 scale 格式。那三件的唯一依据是参考实现 _window_kv 的 act_quant(kv, fp8_block_size=32, scale_fmt=ue8m0, scale_dtype=float8_e8m0fnu, inplace=True) —— 而 inplace 伪量化只说明值被舍到 FP8 网格， 不说明存成多宽（见核查 R38 / R42）。按这个网格折算是每位置 512 + 16 = 528 B"
      },
      "note": "滑窗局部 KV，每序列固定，不随上下文增长"
     }
