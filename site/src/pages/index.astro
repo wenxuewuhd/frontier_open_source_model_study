@@ -17,6 +17,11 @@ const byHorizon = HORIZON_ORDER.map((h) => ({
   label: HORIZON_LABEL[h],
   items: signals.filter((s) => s.horizon === h),
 }));
+// 有页面的 id 只有这一个来源：models/[id].astro 的 getStaticPaths 也是 allModels()。
+// 名册里的 model_id 是「这条记录将来的 id」，不是「已经录了」—— 按它发链接，
+// 每个选中但未录的候选都会变成一条死链（sana-video / hunyuanvideo-13b / magi-2-preview
+// 都这么死过）。按这个集合发，链接在不在就和页面在不在同源，分叉不了。
+const hasPage = new Set(models.map((m) => m.id));
 const allEntries = lines.flatMap((g) => g.entries);
 // 「已录」按旗舰算。ltx 的旗舰仓 gated 而两份 members 已录 ——
 // 按家族算是 12、按旗舰算是 11，所以句子里要写明按哪个。
@@ -62,7 +67,7 @@ const recorded = allEntries.filter((f) => f.status === 'recorded').length;
                     )}
                   </td>
                   <td>
-                    {e.model_id ? (
+                    {e.model_id && hasPage.has(e.model_id) ? (
                       <a href={url(`/models/${e.model_id}/`)}>{e.flagship ?? e.model_id}</a>
                     ) : (
                       <span class="muted">{e.flagship ?? e.model_id}</span>
