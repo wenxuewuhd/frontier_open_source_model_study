@@ -125,6 +125,10 @@ const perElemValues = [
 ].sort((a, b) => a - b);
 const perElemUniform = perElemValues.length === 1;
 const mismatches = moeModels.filter((m) => factors(m)?.reconciles === false);
+/** 产物与 data/models 对不上的那几份。**它和上面那个是两件事**：乘式自洽
+ *  （因子乘回去等于乘积）不代表因子取自当前记录 —— 产物比记录旧时正是这个形状。
+ *  不单独计数的后果是汇总句会在表里亮着「与记录不符」的时候宣布「全部对上」。 */
+const disagrees = moeModels.filter((m) => factors(m)?.recordAgrees === false);
 
 /** 已提交产物里 `ep_size` 的取值集合。写死「三种」会在下一次重跑之后变成一句错话 */
 const epLabels = [
@@ -519,10 +523,13 @@ const famLabel = (key: string) => families().find((f) => f.key === key)?.label ?
       </tbody>
     </table>
   </div>
-  <p class={mismatches.length ? 'note' : 'small muted'} style="margin-top:8px">
+  <p class={mismatches.length || disagrees.length ? 'note' : 'small muted'} style="margin-top:8px">
     {mismatches.length
       ? `逐因子对账有 ${mismatches.length} 份对不上，上表已标出 —— 这页的因子拆法与 derive.py 的实现分叉了，先修那个再读这一列的数。`
-      : '逐因子对账全部对上：反解的每元素字节乘回去等于产物里的 字节/token，所以这张表拆出的五个因子就是产物实际用的那五个。'}
+      : '逐因子对账全部对上：这张表列出的因子乘回去，同时等于产物里的两个字节/token（与 EP 规模无关的那个、EP 口径那个）。因子取自产物本身，不是从乘积反解的 —— 所以这一列判得不成立的那天真的会红。'}
+    {disagrees.length > 0 && (
+      `另有 ${disagrees.length} 份的 top-k 或 hidden 与 data/models 的记录不一致，上表逐行标了「与记录不符」—— 乘式自洽但因子不是当前记录的，重跑 derive.py 再读。`
+    )}
     {perElemUniform
       ? `当前所有 MoE 记录的每元素字节都是同一个值，所以 字节/token 这一列是单一口径、可以并排比。`
       : `当前出现了多于一种每元素字节，字节/token 这一列因此混着不同精度口径，不要并排比 —— 要比就先把这一列分开。`}
