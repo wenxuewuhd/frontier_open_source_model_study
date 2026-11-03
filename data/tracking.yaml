@@ -191,11 +191,21 @@ video_families:
     hf_repo: sand-ai/MAGI-2-preview
     released: 2026-08-03
     model_id: magi-2-preview
-    status: planned
+    status: recorded
     wave: 1
-    note: 唯一的 token 级 MoE 视频 DiT（114B 总参 / 每 token 激活 6B，36 层各 3072 专家）；
-          带 attention sink、逐头输出门、mHC 残差（×4）；视频 VAE 直接用 Wan2.2_VAE.pth，
-          音频 VAE 用 stable-audio-open-1.0，另带一个蒸馏的 turbo 解码器。
+    note: 唯一的 token 级 MoE 视频 DiT（实测 113,934,953,536 总参 / 每 token 激活
+          6,010,356,736）。**40 层里中间 36 层是 MoE、两头各 2 层稠密**；
+          每层把 hidden 3072 切成 12 个 256 维潜头，**每头一个 router、
+          一池 256 个专家、选 top-6**，即每层 12×256=3072 个专家单元、
+          每 token 命中 72 个。原先这条 note 写「36 层各 3072 专家」——
+          层数是 MoE 层数不是总层数，而 3072 是单元总数：
+          博客 §2.2 自己挡回了那个读法（「These are not 3,072 full-width
+          experts」），每个单元只吃 256 维子空间，**不能和整宽专家数并排比**。
+          带 attention sink（1 个 ×24 头）、逐头输出门、mHC 残差（×4）；
+          视频 VAE 与 wan2.2-ti2v-5b 的 Wan2.2_VAE.pth 逐字节相同，
+          文本编码器与本仓 qwen3.5-27b 的清单逐字节相同，
+          音频 VAE 在 stable-audio-open-1.0 里（整文件只有 12.9% 是 VAE），
+          另带一个蒸馏的 turbo 解码器。
           采用度低（HF 下载量 0、likes 122），入选理由是结构不是影响力
 
   - family: sana-video

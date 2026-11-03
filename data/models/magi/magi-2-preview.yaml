@@ -1,0 +1,1098 @@
+id: magi-2-preview
+family: magi
+kind: video-gen
+display_name: MAGI-2 Preview
+released: '2026-08-03'
+license: apache-2.0
+visibility: public
+
+# 视频线第十份记录，口径沿用 wan2.2-ti2v-5b 定下的三条：
+# params.total 只算 DiT；没有 KV cache 这笔账。**第三条在这里破了一半** ——
+# 「不建 arch 块」对一个 token 级 MoE 的 DiT 不成立：schema 的
+# generation.expert_switching 自己写明「真 token 级路由的生成类模型（MAGI-2）用
+# arch.moe，并把 routing_axis 标成 token」。所以本记录建 arch，但**只建 moe /
+# ffn / residual 三支**，层数与宽度仍然只在 generation.backbone 里，
+# 免得家族页把 DiT 的层和自回归主干的层放进同一列比。
+#
+# 这一份的取数形状与别的生成记录都不同，三件事要先说清：
+#
+# 1. **HF 仓里没有 DiT 的 config，但厂商参考实现里有一份完整的。**
+#    89 个文件里只有 4 份 config（text_encoder、stable-audio 的 model_config、
+#    turbo_vae 的 json）加 3 份 index.json，**preview 与 refiner 两个 DiT 一份都没有**。
+#    ltx-2.3 那条「config 藏在 safetensors 的 `__metadata__` 里」的路也**专门查过了**：
+#    preview 首片根本没有 `__metadata__`、refiner 只有 `{"format": "pt"}`。
+#    所以 `facts/magi-2-preview/cfg.json` 是 `{}`，`derive.py` 的 gate_b 报 paths=1。
+#    **但结构侧并不是只剩一路** —— GitHub 上的 `configs/magi2_preview.json`
+#    是一份逐字段齐全的 arch config（num_layers / hidden_size / moe_config / mhc_config /
+#    attn_sinks …），它是来源优先级第三档的厂商参考实现。
+#    `gate_b.why` 那句「顶层与组件目录都没有」对本仓的 facts/ 成立，
+#    **对「这个模型有没有公开 config」不成立**，不要照它读。
+#    逐项对读的结果见 reviewed.method —— 清单与那份 config 在 14 个字段上逐字相同。
+#
+# 2. **参数量是实测的，不是厂商声明。** 56 片 safetensors 逐片读头，1,371 个张量，
+#    113,934,953,536 参数 / 228,107,858,176 B，**与 `preview/model.safetensors.index.json`
+#    的 `total_size` 逐字节相同（差 0）**。所以 CLAUDE.md 那条「只剩一路就标 official
+#    并写明未实测」在这一份上**不适用**：清单这一路是齐的，标 derived。
+#    repoinfo.json 里没有 HF 自己的 safetensors tally（`safetensors: null`，
+#    多模型同名张量冲突的仓常如此），所以外部锚换成了厂商自己发布的 index.json。
+#
+# 3. **仓里是两个不同的 DiT，params.total 只取 preview。** preview 40 层 / hidden 3072 /
+#    token 级 MoE；refiner 30 层 / hidden 4096 / 全稠密 / 无 mHC 无 attention sink。
+#    厂商的「114B」说的是 preview（实测 113.93B 对得上），所以取它；
+#    refiner 另算 6,720,075,280，进 generation.pipeline_stages 与 checkpoint_variants。
+#    **两者相加 120.66B 不是任何厂商公布值**，不要把它当「这个模型多大」。
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/sand-ai/MAGI-2-preview
+    locator: README.md §MAGI-2 Preview / §Checkpoints 的目录表 / §Running inference @ 2dea51b64db4
+    accessed: '2026-11-03'
+    note: >-
+      官方口径来源，**但结构数字只给了两个**：「114B-parameter unified audio-video
+      generation model that activates just 6B parameters per token」。
+      **层数、专家数、top-k、hidden 一个都没有** —— 这四个全部来自技术博客与参考实现。
+      卡上能用的其余事实：两阶段流水（`magi2_preview` 低分辨率去噪、`magi2_refiner`
+      升到 1080p）、**10 秒是唯一支持的时长**、8 张 NVIDIA Hopper、
+      preview 出 512×896 而 refiner 到 1088×1920、「The VAE stride constrains every
+      generated dimension to a multiple of 16, so the tier generates 1088 wide
+      rather than 1080」、turbo 解码器是「a temporal sliding window that runs on
+      one rank per video」、`MAGI2_DETERMINISTIC=1` 让「the MoE scatter and the
+      attention kernels bit-exact at some cost in speed」。
+      §Checkpoints 的目录表给了六个子系统的体量与出处，是 params.excludes
+      与 generation.* 各块的依据。
+      **那张表是目录体量，不是权重规模** —— 见 generation.audio.note 里
+      stable-audio 那一条（5 GB 的目录里只有 12.9% 是音频 VAE）。
+  - kind: paper
+    url: https://sand.ai/blog/magi-2-preview
+    locator: §2.2 Ultra-Fine-Grained MoE 的配置表与正文、§2.1、§3.1–3.3 @ 2026-08-05
+    accessed: '2026-11-03'
+    note: >-
+      **技术博客，卡里称它为技术报告，本仓来源优先级最高的一档。**
+      §2.2 的配置表是全部结构数字的来源，逐行是：
+      Backbone「40 Transformer layers」；Sparse core「The middle 36 layers use
+      Multi-Head MoE; the four boundary layers remain dense」；Model width「3,072」；
+      Routed representation「12 heads × 256 dimensions」；Expert pool
+      「**256 experts per head**」；Active experts「**Top-6 per head**」；
+      Expert FFN「256 → 1,280 → 256, fused SwiGLU7」。
+      §2.2 正文还给了那个关键的口径句：「Each sparse layer therefore contains
+      12×256 = 3,072 head-local expert units, of which 12×6 = 72 are activated for
+      each token」，紧接着**自己把 3,072 这个数挡回去**：
+      「**These are not 3,072 full-width experts.** Each expert unit operates on
+      only one 256-dimensional subspace.」—— 见 arch.moe.storage_note。
+      §2.1 给了 Head Parallel 的通信项 `C ∝ N·M·H_head = N·H`，
+      并明说「Cross-device communication does not grow with Top-k for each head」。
+      §3.2：「Routing scores are computed in FP32 for numerical stability, while
+      expert weights and the main computation use BF16」，
+      负载均衡用 aux-loss-free expert bias 且「applies it independently to each
+      routing head」。§3.3 只把 mHC 与 attention sink 当作优化器参数族点名
+      （「Adapters, mHC, attention sinks, and gating-related parameters use
+      Adam-style updates」）—— **机制本身博客一个字没描述**，那几项靠清单与实现。
+      §3.3 还点名 Kimi K3 的 Per-Head Muon 作对照。
+      **博客没有任何基准、时延、显存或采样步数**，performance 因此整块为空。
+  - kind: modelcard
+    url: https://huggingface.co/sand-ai/MAGI-2-preview
+    locator: preview/ 56 个 model-*-of-00056.safetensors 的头 + preview/model.safetensors.index.json @ 2dea51b64db4
+    accessed: '2026-11-03'
+    note: >-
+      权重清单逐片读头取全：**56 分片 1,371 个张量，无读失败分片**。
+      113,934,953,536 参数、228,107,858,176 B（BF16 452 条 / FP32 919 条，
+      无 scale 容器、无打包容器，numel 即参数数）。
+      两处对账：与 `index.json` 的 `total_size` **逐字节相同**；
+      与 56 个文件的 HTTP 大小合计 228,108,119,474 B 差 261,298 B，
+      正是 56 个 safetensors 头。
+      **取数必须 `--include 'preview/*'`**：不收窄范围时 preview 与 refiner
+      的 168 个同名张量形状冲突，`fetch_hf.py` 会拒绝合并并报出来 ——
+      拦住它的是冲突检测，不是人记得分开取。
+  - kind: repo
+    url: https://github.com/SandAI-org/MAGI-2-preview/blob/main/configs/magi2_preview.json
+    locator: engine_config / arch_config / evaluation_config 全量字段 @ f68a0f9bbccb
+    accessed: '2026-11-03'
+    note: >-
+      厂商参考实现（第三档来源），**事实上就是 HF 仓里缺的那份 DiT config**。
+      与权重清单逐项对上的 14 项见 reviewed.method，其中最该记的三项：
+      `mm_layers: [0, 1, 38, 39]` 与清单里 3 倍宽的那四层**逐个对上**；
+      `moe_layers: [2 … 37]` 与有 `moe_mlp.*` 的 36 层**逐个对上**；
+      `mhc_config.num_stream: 4` 与 `mhc_norm` 的 12288 = 4 × 3072 对上。
+      另给出清单里读不出来的运行配置：`cp_size: 8` / `ep_size: 8` /
+      `cp_strategy: cp_ulysses`（即 8 卡同时跑 EP 8 与 Ulysses 序列并行 8）、
+      `num_inference_steps: 100`、`video_txt_guidance_scale: 5.0`、
+      `audio_txt_guidance_scale: 7.0`、`shift: 7.0`、`score_func: sigmoid`、
+      `route_norm: true`、`route_scale: 4.9`、`use_turbo_vae: true`。
+      **`intermediate_factor: 4` 要按 SwiGLU 的 2/3 折**：3072 × 4 × 2/3 = 8192，
+      与清单里 `up_gate_proj` 每模态 16384 = 2 × 8192 对上 —— 照字面读成 12288 会错。
+  - kind: repo
+    url: https://github.com/SandAI-org/MAGI-2-preview/blob/main/inference/pipeline/inference_engine.py
+    locator: _resolve_lengths()（第 230–235 行）与 prepare 段的 latent 网格计算 @ f68a0f9bbccb
+    accessed: '2026-11-03'
+    note: >-
+      **buckets 那几个数的一手依据，而且它改掉了照 config 字面读会得到的答案。**
+      `_resolve_lengths()` 三行：
+      `video_frame_length = int(round(seconds * self.fps * 2))`、
+      `video_latent_length = (video_frame_length - 1) // self.vae_stride[0] + 1`、
+      `audio_latent_length = int(round(seconds * audio_latent_fps))`。
+      **那个 `* 2` 是关键**：config 里 `evaluation_config.fps` 是 **12.5**，
+      但帧数按 `fps × 2` 算，所以 10 秒是 **250 帧 / 25 fps**，
+      不是照字面读的 125 帧 —— 与 `data_proxy_config.video_fps: 25.0` 一致。
+      **照 config 的 `fps` 字面读会把帧数、latent token 数全部减半，
+      而注意力是 O(n²)，单步注意力 FLOPs 会低 4 倍。**
+      latent 时间维按 preview 的 `vae_stride[0] = 8` 算：(250−1)//8+1 = **32**；
+      空间按 `512 // 16 = 32`、`896 // 16 = 56`。
+      音频 `audio_latent_fps: 25.0` × 10 s = **250**。
+      entry.py 的档位表只有两档（`540p` = 896×512 仅 preview、
+      `1080p` = 896×512 再 refiner 到 1920×1088），`--seconds` 默认 10.0
+      且帮助文本写「10s is the only duration the model supports」。
+  - kind: repo
+    url: https://github.com/SandAI-org/MAGI-2-preview/blob/main/inference/pipeline/sampler.py
+    locator: ModelInput 构造段（第 160–200 行）@ f68a0f9bbccb
+    accessed: '2026-11-03'
+    note: >-
+      CFG 口径的一手依据：`batch_cfg = 2`，
+      `x_t=torch.cat([latent, latent], dim=0)` 与
+      `txt_feat=torch.cat([txt_feat, null_txt_feat], dim=0)` ——
+      条件与无条件**拼成 batch 2 走一次调用**。
+      所以 `forwards_per_step: 2` 说的是「序列被过了两遍」（FLOPs 口径），
+      **不是两次 kernel 调用** —— 与 wan2.2-t2v-a14b 那种各调一次主干的真 CFG
+      算力相同、时延形态不同，见 generation.sampling.cfg.note。
+      同段还给出噪声水平的进入方式：`per_token_video_t` 把时间步
+      `expand(batch_cfg, 1, video_t, video_h, video_w)` 成**逐 token** 的值，
+      这是 param_scaling.per_sample 为 0 的依据之一。
+  - kind: repo
+    url: https://github.com/SandAI-org/MAGI-2-preview/blob/main/inference/model/magi2_preview.py
+    locator: PreAdapter / PostAdapter / MHCHandler / _sinkhorn_knopp_affine @ f68a0f9bbccb
+    accessed: '2026-11-03'
+    note: >-
+      mHC 机制与「没有 AdaLN」这两件事的依据。
+      `PreAdapter.__init__` 里 `adapter_dim = hidden_size * virtual_width_factor`，
+      preview 的入口投影出口是 12288 = 3072 × 4，与 mHC 的 4 条流对上。
+      `MHCHandler.__init__` 的默认值：`num_sk_iters = 20`、`sk_eps = 1e-12`、
+      `matmul_scale = 1/sqrt(n_stream × hidden_size)`；残差混合经
+      `_sinkhorn_knopp_affine`（Sinkhorn-Knopp 双随机化），h_post 走 `sigmoid_scale=2.0`。
+      **`num_sk_iters` 与 `sk_eps` 只在代码默认值里、不在发布的 config 里**，
+      所以这两个数随上游代码变动而衰减，标 judgement（skill 规则 12）。
+      **全文 grep `timestep` / `adaln` / `modulation` / `t_embedder` 零命中**，
+      清单里也没有任何时间步嵌入或调制张量 —— 见 generation.backbone.param_scaling。
+  - kind: repo
+    url: https://huggingface.co/sand-ai/MAGI-2-preview/blob/main/turbo_vae/TurboV3-Wan22-TinyShallow_7_7.json
+    locator: 全量字段 @ 2dea51b64db4
+    accessed: '2026-11-03'
+    note: >-
+      turbo 解码器的配置，也是**视频 VAE 身份的第二个支点**：
+      `latent_channels: 48`、`spatial_compression_ratio: 16`、
+      `temporal_compression_ratio: 4` 与 wan2.2-ti2v-5b 那份记录的
+      48 / 16 / 4 逐项相同。`_class_name: AutoencoderKLTurboVAED`，
+      `decoder_causal: false`，滑窗 `first_chunk_size: 7` / `step_size: 7`
+      （文件名里那个 `_7_7` 就是这两个数）。**只有解码器**，没有编码器。
+
+hf:
+  repo: sand-ai/MAGI-2-preview
+  sha: 2dea51b64db47ee5b4402d36fd90829a0c58913b
+  last_modified: '2026-08-05T09:15:12.000Z'
+  pipeline_tag: image-text-to-video
+  gated: false
+
+lineage:
+  track: main
+  # magi family 的第一份记录。前代 MAGI-1（autoregressive chunked denoising）没录 ——
+  # 博客 §1 明说 Magi-2 **没有沿用** MAGI-1 的自回归分块
+  # （「We did not directly carry over Magi-1's autoregressive chunking」），
+  # 而是换到 MagiHuman 的单流设计。所以这两代之间不是同一根演进轴，
+  # predecessor 暂缺；真要补差分，前代要先有记录。
+
+params:
+  total: 113934953536
+  # **每 token 激活。** 逐因子来源见 counting_note —— 这不是厂商声明的 6B 直接抄进来，
+  # 是用清单的形状加博客 §2.2 的 top-6/头独立算出来的，两边差 0.17%。
+  # 生成类没有 decode/prefill 之分（每步对全部 latent token 做一次前向），
+  # 两个字段填同一个值，`derive.py` 对生成类的 active_params 另报 not_applicable。
+  active_decode: 6010356736
+  active_prefill: 6010356736
+  # **`excludes` 故意不填。** 那个字段的语义是「清单里有、声明值里扣掉了」，
+  # 而本记录的取数用了 `--include 'preview/*'`，另外五样的张量**根本不在清单里**，
+  # 扣除项会是 0 —— 填上去 `derive.py` 会印出「含在内的实测总量为 113.9B」，
+  # 和不含的那个数一模一样，读起来像「扣过了而且没差别」。
+  # 那五样的规模在 counting_note 里逐项写明，各自另有字段（generation.* 与
+  # checkpoint_variants）承载。
+  breakdown:
+    routed_experts: 108716359680
+    attention_sparse_layers: 1361729376
+    shared_expert_modality: 1274019840
+    dense_ffn_boundary_layers: 905969664
+    split_merge: 679477248
+    attention_boundary_layers: 453909600
+    shared_expert: 424673280
+    pre_adapter: 64327696
+    router: 28532736
+    mhc_sparse_layers: 21677976
+    mhc_boundary_layers: 2506968
+    post_adapter: 1400832
+    mlp_norm: 368640
+  counting_note: >-
+    **只含 preview 阶段的 DiT**，按完整权重清单（56 分片 1,371 条目）逐项统计。
+    无 scale 容器、无打包容器，numel 即参数数。字节两处对账见 sources 第三条。
+    十三个桶相加逐位等于 `params.total`。
+
+    **`excludes` 里那五样的规模与出处**（卡 §Checkpoints 的目录表 + 实测）：
+    `text_encoder` 55,586,054,896 B 目录 / **27,781,427,952 参数、1,199 张量**，
+    就是本仓已录的 `qwen3.5-27b` —— 不是「同名」而是**同一份权重**：
+    那份记录的 `weight_bytes_total` 55,562,872,800 与 `tensor_count` 1,199
+    与这个仓 `text_encoder/model.safetensors.index.json` 的 `total_size` 与条目数
+    **两个数都逐字节相同**（见 generation.text_encoders）；
+    `refiner` 6,720,075,280 参数 / 13,484,611,648 B（同样与它自己的 index 差 0）；
+    `vae` 是 Wan2.2-TI2V-5B 的 `Wan2.2_VAE.pth` 2,818,839,170 B ——
+    **与 wan2.2-ti2v-5b 记录里写的那个字节数逐字节相同**，同一个文件；
+    `audio_vae` 在 `stable-audio-open-1.0/model.safetensors` 里，
+    整文件 1,213,448,210 参数，**其中只有 `pretransform.*` 的 156,112,514（12.9%）
+    是音频 VAE**；`turbo_decoder` 是 `.ckpt`（pickle），读不了清单，
+    目录 1,870,399,641 B。
+
+    **所以「114B」说的是 preview 一个阶段**，不是一次 1080p 推理要碰的全部权重。
+    六样按目录体量相加 306,721,986,476 B（285.66 GiB，89 个文件），
+    卡上写的「roughly 307 GB」对得上。
+
+    **分桶口径**：`routed_experts` 是 36 个稀疏层的 `moe_mlp.W_{gate,up,down}`，
+    每层 3,072 × 983,040 = 3,019,898,880（983,040 = 256×1280 ×2 + 1280×256）；
+    `split_merge` 是稀疏层的 `mlp.{split,merge}_linear`（各 [3072,3072]），
+    它们是 MoE 的入口/出口投影、**不是稠密 FFN**，所以单列
+    （`derive.py` 的子系统归类把它们算进 `dense_ffn`，那一桶 2.95 GiB
+    里 679,477,248 参数是这个，剩下的才是四个边界层的真稠密 FFN）；
+    `attention_*` 与 `mhc_*` 按「边界 4 层 / 稀疏 36 层」分开记，
+    因为边界层的同名张量宽 3 倍（逐模态各一套，见 generation.backbone.note）；
+    `shared_expert` 与 `shared_expert_modality` 分开记的理由同上 ——
+    后者存 3 套、每 token 只过 1 套。
+
+    **每 token 激活 6,010,356,736 的逐因子**（每个因子都写来源）：
+    路由专家 72 × 983,040 × 36 层 = 2,548,039,680
+    （72 = 12 头 × top-6，**来自博客 §2.2 与 config 的 `top_k: 6` / `num_heads: 12`**；
+    983,040 与 36 来自清单）；
+    其余 3,462,317,056 是非路由部分，其中**逐模态的那些按 1/3 计**
+    （一个 token 只属于一种模态，所以边界 4 层、`shared_expert_modality`
+    与 `mlp.pre_norm` 都只过自己那一套）。
+    **那个 1/3 不是假设而是被厂商的数反过来证实的**：按 1/3 算得 6.010e9、
+    与卡上「approximately 6B」差 0.17%；**不作模态划分则得 7.767e9，高 29.4%**。
+    换一种适配器口径（只算视频 token 要走的那三条）得 5.946e9，
+    与 6B 差 −0.9% —— 结论对这个选择不敏感，两种都落在「约 6B」上。
+
+arch:
+  # **只建 moe / ffn / residual 三支。** 层数、宽度、头数在 generation.backbone，
+  # 理由见文件头的注释。`arch.attention` 也不建 —— 扩散模型没有 KV cache 这笔账，
+  # 而 arch.attention 的字段大半是为缓存账准备的。
+  # attention sink 与逐头输出门因此记在 generation.backbone.note 里。
+  ffn:
+    type: moe
+    intermediate: 8192
+    layer_pattern: >-
+      **40 层里第 0、1、38、39 层稠密，中间第 2–37 层共 36 层是 MoE。**
+      两头各 2 层而不是只有开头几层，所以 **`arch.moe.first_k_dense` 故意不填** ——
+      那个字段只能表达「前 k 层稠密」，填 2 会把尾部那两层说没了。
+      层集合两路独立确认：清单里 `moe_mlp.*` 恰好出现在第 2–37 层；
+      `configs/magi2_preview.json` 的 `moe_layers` 列出的就是 [2 … 37]，
+      `mm_layers` 列出的就是 [0, 1, 38, 39]。
+      稠密层的 intermediate 8192 = 3072 × 4 × 2/3（config `intermediate_factor: 4`
+      按 SwiGLU 折），与清单里每模态 `up_gate_proj` 16384 = 2 × 8192 对上。
+  moe:
+    # **这两个数是「每个路由头」的口径，不是每层的总数。** 见 storage_note ——
+    # 跨家族比专家数时用的就是这一档（一个 router 在多大的池子里选 top-k）。
+    routed_experts: 256
+    top_k: 6
+    intermediate: 1280
+    shared_experts: 2
+    routing_axis: token
+    routing: >-
+      **Multi-Head LatentMoE**（博客 §2.1–2.2 的厂商名，整套架构与执行系统叫 MagiMoE）。
+      hidden 3072 先经 `split_linear` [3072,3072] 投影，再切成
+      **12 个 256 维潜头**；每个潜头有**自己的 router 和自己的 256 专家池**，
+      各选 top-6；12 路输出拼起来经 `merge_linear` [3072,3072] 回到 3072。
+      所以一个 token 在一层里激活 12 × 6 = **72** 个专家单元。
+      router 打分 `score_func: sigmoid`、`route_norm: true`、`route_scale: 4.9`
+      （config）；打分用 FP32、专家用 BF16（博客 §3.2，与清单对上：
+      `moe_mlp.gate` 与 `router.*` 是 FP32，`W_{gate,up,down}` 是 BF16）。
+      **「每头独立 router」这件事在清单里有证人**：`router.expert_bias` 是 [3072]
+      而不是 [256]，即 12 × 256 个单元各有一条偏置。
+    balance: >-
+      aux-loss-free expert bias（博客 §3.2 引 [7]，即 DeepSeek 那条路线），
+      **逐路由头独立施加**（「applies it independently to each routing head」），
+      专家负载统计在另一条 CUDA stream 上异步聚合。
+      清单里对应 `moe_mlp.router.expert_bias` 与 `expert_bias_ema`，各 [3072] FP32 ——
+      带 ema 这一路是本仓第一次见到（已录的 aux-loss-free 记录只有 bias 本身）。
+    storage_note: >-
+      **堆叠存储，而且首维是 head × expert 压平的 3,072，不是 256。**
+      每层三个三维张量：`W_gate` [3072, 256, 1280]、`W_up` [3072, 256, 1280]、
+      `W_down` [3072, 1280, 256]，BF16；grouped GEMM 吃三维权重。
+      博客 §3.3 把这个布局说明白了：MagiMuon「expert up, gate, and down projections
+      flatten head and expert into the batch dimension」。
+
+      **所以 `derive.py` 产物里的 `experts_seen: 3072` 要按这个口径读** ——
+      它数的是首维，即 12 头 × 256 专家的乘积，不是「3072 个专家」。
+      `data/tracking.yaml` 原先那条 note 写的「36 层各 3072 专家」也是这个数，
+      **但它漏掉了口径**：博客 §2.2 自己把这个读法挡回去了 ——
+      「These are not 3,072 full-width experts. Each expert unit operates on only
+      one 256-dimensional subspace.」每个单元只吃 256 维子空间、
+      参数 983,040，而本仓已录的路由专家都是整宽 hidden 进出的。
+      **把 3,072 拿去和 kimi-k3 的 896 比是范畴错误**，不是「大了 3.4 倍」：
+      前者是 12 个池子的单元总数、每个单元宽 256，后者是一个池子的专家数、
+      每个专家宽 7168 进出。要横着比就比 `routed_experts: 256`（每头池子大小）
+      与 `top_k: 6`，那两个数和别家是同一个问法。
+  residual:
+    type: >-
+      **mHC**（厂商在博客 §3.3 用这个缩写，但**全文没有展开它、也没有描述机制**，
+      只把它当优化器参数族点名）。权重里的名字是 `mhc_*`，机制与本仓
+      DeepSeek V4 一代的 mHC、Qwen3.8-Flash-Next 的 `*_hyper_connection.*`
+      是同类 —— 残差展开成多条流、经双随机矩阵混合后写回。
+    multiplier: 4
+    sinkhorn_iters: 20
+    eps: 1.0e-12
+    coef_proj: >-
+      每层 15 个张量全 FP32：`mhc_phi_fused_attn` 与 `mhc_phi_fused_mlp`
+      各 [12288, 24]、六个 `mhc_alpha_*` 各 [1]、
+      四个 `mhc_bias_{pre,post}_*` 各 [4]、两个 `mhc_bias_res_*` 各 [4,4]、
+      `mhc_norm` [12288]（边界层 [36864] = 3 × 12288）。
+      40 层合计 24,184,944 参数（占 0.02%）。
+    note: >-
+      残差流宽度 = 4 × hidden 3072 = **12288**，三路独立确认：
+      `mhc_norm` 是 [12288]；`pre_adapter.*_embedder` 的出口与
+      `post_adapter.final_norm_*` 都是 12288（代码里
+      `adapter_dim = hidden_size * virtual_width_factor`）；
+      config 的 `mhc_config.num_stream: 4`。`mhc_bias_res_*` 的 [4,4]
+      就是那 4 条流之间的混合矩阵。
+
+      **与 DeepSeek V4.1-Flash 的同机制并排看，两个数相同、一个不同**
+      （作用域限这两代，不是律）：multiplier 都是 4、Sinkhorn 迭代都是 20；
+      系数投影的内秩也都是 **24**（DeepSeek 的 `hc_*_fn` 是 [24, 20480]
+      = 24 × 4 × 5120，这边的 `mhc_phi_fused_*` 是 [12288, 24] = 4 × 3072 × 24，
+      转置关系）。不同的是 eps：那边 1e-6，这边 1e-12。
+      **迭代数与 eps 来自参考实现的默认值（`MHCHandler.__init__`），
+      不在发布的 config 里**，所以标 judgement —— 上游改默认值它就过期。
+
+      代价与 DeepSeek 那份的结论同向：参数可以忽略（0.02%），
+      影响在**激活显存**（每 token 残差流元素是 hidden 的 4 倍）与
+      **逐层的 FP32 串行归一化**（每层两次 20 轮 Sinkhorn）。
+      **这是激活侧的字节，不进缓存账**（扩散模型没有那笔账）。
+
+generation:
+  backbone:
+    stream_design: single
+    layers: 40
+    double_blocks: 0
+    single_blocks: 40
+    hidden: 3072
+    heads: 24
+    head_dim: 128
+    ffn: 8192
+    text_conditioning: in_sequence
+    patch_size: [1, 1, 1]
+    position: >-
+      3D RoPE，`pre_adapter.rope` 是不可学的 `ElementWiseFourierEmbed`
+      （`learnable=False`，清单里只有 `rope.bands` [16]）。
+      config: `spatial_rope_interpolation: extra`、`time_pos_fps: 3.125`
+      （= 25 fps / preview 的 vae_stride 8）。
+    param_scaling:
+      # **per_sample 是 0，这不是没填。** 见下面的 note。
+      per_video_token: 6010356736
+      per_sample: 0
+      note: >-
+        **这一份没有 AdaLN 调制，一个张量都没有。** 本仓已录的生成记录里
+        per_sample 那一项通常是大头（hunyuanvideo-1.5 占主干 32.71%、
+        cogvideox 的 `norm*.linear` 占 14.26%），这里是 **0**，两路确认：
+        清单里没有任何时间步嵌入或调制张量
+        （`timestep` / `t_embedder` / `adaln` / `modulation` 四个词在 1,371 个
+        张量名里零命中），参考实现全文 grep 这四个词也零命中；
+        噪声水平是**逐 token** 进去的 —— sampler.py 把时间步
+        `expand(batch_cfg, 1, video_t, video_h, video_w)` 成 `per_token_video_t`。
+
+        **后果是本仓那条「线性 FLOPs 是上界」的告警在这一份上不成立**：
+        没有逐样本参数，`2 × 每token参数 × token数` 就是等号。
+        所以这里显式填 `per_sample: 0` 把那条告警关掉，而不是留空。
+
+        **`per_text_token` 故意留空。** 单流架构里文本、视频、音频过的是同一套权重
+        （边界 4 层各有逐模态副本，但三套同形同大），每 token 的参数量三种模态相同，
+        而 `derive.py` 的乘式里 `seq` 已经含了文本 token ——
+        再填 `per_text_token` 会把文本那一段算两遍。
+    note: >-
+      **单流**：文本、视频、音频拼成一条 token 序列，只用 self-attention，
+      没有交叉注意力、没有双流块（博客 §1，承自 MagiHuman）。
+      所以注意力序列长度是三者之和，O(n²) 里进的是这个和。
+
+      **40 层分两种，边界 4 层的同名张量宽 3 倍**：config 的 `mm_layers`
+      = [0, 1, 38, 39]，那四层的 `linear_qkv` 是 [27648, 3072]（= 3 × 9216）、
+      `linear_proj` [9216, 3072]、`linear_g` [72, 3072]、`q_norm` [384]
+      —— 即**视频/音频/文本各一套权重**；中间 36 层共用一套。
+      `mlp.pre_norm` 是个例外：**全部 40 层都是 [9216]**，即归一化始终逐模态。
+
+      **注意力是 MHA 不是 GQA**：`linear_qkv` [9216, 3072] 切成 q/k/v 各 3072，
+      3072 / 128 = 24 个头，k 与 v 同宽，config `num_query_groups: 24` 与头数相等。
+      （refiner 相反，是 32 头 / 8 组的 GQA，见 pipeline_stages。）
+
+      **attention sink**：清单里 `attention.sinks` [1, 24] FP32，逐层一个；
+      config `attn_sinks: {enable: true, sink_token_num: 1}` ——
+      **1 个 sink token × 24 个头**，形状与 config 两路对上。
+      边界层是 [1, 24] 同形（不随模态翻 3 倍）。
+
+      **逐头输出门**：`attention.linear_g` [24, 3072]，出口宽度 24 = 头数，
+      即**每个头一个标量门**（边界层 [72, 3072] = 3 × 24）。
+      config 只说 `attn_gating: {enable: true}`、博客 §3.3 只说
+      「gating-related parameters」—— **「逐头」这半句是形状结论**
+      （出口 24 恰等于头数），**不是厂商说法**。
+
+      **每层 FFN 侧共三条支路**（36 个稀疏层）：路由 MoE
+      3,019,898,880、一个模态共享的 `shared_expert`（3072→1280→3072）
+      11,796,480、一个逐模态的 `modality_specific_shared_expert`（同形 ×3）
+      35,389,440。三者之和 3,067,084,800，**占一个稀疏层全部参数
+      （3,125,188,942）的 98.14%**；只看 FFN 侧（再加 split/merge 与 router）
+      则占 99.36%。一个稀疏层里注意力只有 37,825,816，是 1.21%。
+  vae:
+    spatial_compression: 16
+    temporal_compression: 4
+    latent_channels: 48
+    causal: true
+    decoder_arch: conv3d
+    name: Wan2.2-VAE
+    ref_model_id: wan2.2-ti2v-5b
+    turbo_decoder:
+      name: TurboV3-Wan22-TinyShallow_7_7（AutoencoderKLTurboVAED）
+      note: >-
+        **蒸馏出来的「只有解码器」的 VAE**，默认就用它（config
+        `use_turbo_vae: true`）。权重是 `.ckpt`（pickle），读不了清单，
+        所以 `params` 留空而不是估一个 —— 目录 1,870,399,641 B。
+        json 里的压缩率与通道数（16 / 4 / 48）与主 VAE 逐项相同，
+        即它替换的只是解码这一步。
+        `decoder_causal: false`，按 `first_chunk_size: 7` / `step_size: 7`
+        的**时间滑窗**解码，卡上说它「runs on one rank per video」——
+        即解码这一步不走序列并行，是 8 卡里的 1 卡在干。
+        **VAE decode 可以单独蒸馏加速，这是本仓别处没有的一根轴。**
+    note: >-
+      **复用 Wan2.2-TI2V-5B 的 `Wan2.2_VAE.pth`，不是「同一种 VAE」而是同一个文件**：
+      这个仓 `vae/` 目录 2,818,839,170 B，与 wan2.2-ti2v-5b 记录里记的那个
+      `.pth` 字节数**逐字节相同**。`ref_model_id` 指过去，
+      上面四个数**不是从那边抄的** —— 16 / 4 / 48 三项由 turbo_vae 的 json
+      独立给出（`spatial_compression_ratio` / `temporal_compression_ratio` /
+      `latent_channels`），48 还有第三个证人：DiT 的
+      `pre_adapter.video_embedder.weight` 入口宽度就是 48。
+      `causal: true` 沿用那份记录的判断，本次没有独立复核（`.pth` 读不了）。
+
+      **preview 阶段的 latent 时间步长是 8 而不是 4。** config 的
+      `vae_stride: [8, 16, 16]`，而 VAE 本身是 4 ——
+      refiner 那边 `magi2_refiner_vae_stride` 才是 [4, 16, 16]。
+      即 preview 在 VAE 原生时间分辨率的**一半**上去噪，refiner 再补回来。
+      **这两个数不是一个量**：`vae.temporal_compression` 是 VAE 的块内卷积比，
+      8 是 preview 这个阶段的 latent 步长。所以 buckets 直接声明
+      `latent_frames: 32` 而不让 `derive.py` 套 (F−1)/t+1 的公式 ——
+      套出来会得到 63（refiner 的数），把 preview 的 token 数算高一倍。
+  audio:
+    in_channels: 64
+    vae: stable-audio-open-1.0 的 autoencoder（oobleck 编解码 + VAE bottleneck）
+    vae_params: 156112514
+    vae_hf_repo: stabilityai/stable-audio-open-1.0
+    sample_rate_in: 44100
+    sample_rate_out: 44100
+    latent_hz: 25.0
+    channels: 2
+    note: >-
+      **卡上写「stable-audio-open-1.0 | 5 GB | Audio VAE」，但那 5 GB 里只有
+      12.9% 是 VAE。** 实测 `stable-audio-open-1.0/model.safetensors` 745 个张量
+      / 1,213,448,210 参数（全 FP32），按顶层前缀分：
+      `pretransform.*` **156,112,514（12.9%，这才是音频 VAE）**、
+      `model.*` 1,056,939,152（87.1%，上游那个文生音 diffusion 主干）、
+      `conditioner.*` 396,544。
+      **MAGI-2 自己产音频 latent**（DiT 有 `audio_embedder` 与
+      `final_linear_audio`，64 通道），所以上游那个 87% 的主干**用不上** ——
+      这半句是推论（卡只说「decodes the generated audio latents`」，
+      没说只加载 pretransform），标 judgement，留了 open question。
+      `vae_params` 填的是 pretransform 那 156M，不是整文件。
+
+      latent 口径：`model_config.json` 的 `downsampling_ratio: 2048`、
+      `sample_rate: 44100` → 44100 / 2048 = 21.53 Hz，
+      **但 DiT 侧按 25.0 Hz 排 token**（config `audio_latent_fps: 25.0`，
+      10 秒 = 250 个音频 token，与 `_resolve_lengths` 的
+      `round(seconds * audio_latent_fps)` 一致）。两个数不一致、
+      口径未对齐，已开 open question —— `latent_hz` 填的是 DiT 侧那个，
+      因为进序列长度的是它。
+      `latent_dim`：编码器出 128（mean+logvar）、解码器吃 64，所以 latent 是 64 通道，
+      与 DiT 的 `audio_in_channels: 64` 对上。
+  text_encoders:
+    - role: primary
+      name: Qwen3.5-27B
+      hf_repo: Qwen/Qwen3.5-27B
+      params: 27781427952
+      hidden: 5120
+      shipped_with_weights: true
+      gated: false
+      release_dtype: BF16
+      substitutable: false
+      ref_model_id: qwen3.5-27b
+      note: >-
+        **就是本仓已录的 `qwen3.5-27b`，而且是同一份权重，不只是同名。**
+        两个数逐字节相同：这个仓 `text_encoder/model.safetensors.index.json`
+        的 `total_size` **55,562,872,800** 与条目数 **1,199**，
+        等于那份记录 derived 产物里的 `weight_bytes_total` 与 `tensor_count`。
+        `hidden: 5120` 另有第三个证人 —— DiT 的
+        `pre_adapter.text_embedder.weight` 入口宽度是 5120。
+        `ref_model_id` 指过去，上面的数**不是从那边抄的**。
+        config 实测 `model_type: qwen3_5`、
+        `architectures: [Qwen3_5ForConditionalGeneration]`，
+        带 `vision_config`（depth 27 / hidden 1152）与 image/video token id ——
+        **是个 VL 模型**，但 MAGI 只用它的文本侧（config `txt_encoder_type: qwen35`）。
+        **取第几层的 hidden state 没有说法**：卡与博客都没提，
+        参考实现里也没找到层号，所以 `hidden_layer_taken` 留空（对比 h3 明说第 50 层）。
+        56 GB 全量随仓发布，**比 preview DiT 的激活参数（6.01B）大 4.6 倍**，
+        而它只在 prefill 跑一次 —— 四个 offload 开关里有一个是专门给它的。
+  sampling:
+    steps: 100
+    cfg:
+      scale: 5.0
+      distilled: false
+      embedded: false
+      forwards_per_step: 2
+      note: >-
+        **`forwards_per_step: 2` 是 FLOPs 口径，不是调用次数。**
+        sampler.py 把条件与无条件拼成 batch 2 走**一次**调用
+        （`torch.cat([latent, latent])` + `cat([txt_feat, null_txt_feat])`），
+        序列被过了两遍、算力是两遍，但 kernel 调用是一次 ——
+        与 wan2.2-t2v-a14b 那种 `noise_pred_cond` / `noise_pred_uncond`
+        各调一次主干算力相同、时延形态不同。
+        **视频与音频的引导强度是两个值**：`video_txt_guidance_scale: 5.0`、
+        `audio_txt_guidance_scale: 7.0`，`scale` 填的是视频那个。
+        config 里几条 CFG 变体默认全关（`use_cfg_trick: false`、
+        `use_dynamic_cfg: false`、`use_skimmed_cfg_linear: false`、
+        `cfg_rescale: 0.0`），`use_negative_prompt: true`、
+        `use_ref_for_uncond: true`（I2V 的无条件分支仍看参考图）。
+    scheduler: flow matching
+    shift: 7.0
+    note: >-
+      100 步说的是 **preview 阶段**（config `num_inference_steps: 100`）；
+      refiner 只 5 步（`magi2_refiner_num_inference_steps: 5`），
+      引导强度也另有一套（2.0 / 5.0），见 pipeline_stages。
+      **卡与博客都没给步数**，这两个数只在参考实现的 config 里。
+  pipeline_stages:
+    - name: preview
+      model: magi2_preview（本记录的 params.total）
+      steps: 100
+      cfg_scale: 5.0
+      forwards_per_step: 2
+      out_width: 896
+      out_height: 512
+      out_frames: 250
+      resolution: 896×512
+      open_source: true
+      note: >-
+        低分辨率去噪阶段，**也是那个 114B / 40 层 / token 级 MoE 的主干**。
+        `540p` 档只跑这一阶段。
+    - name: refiner
+      model: magi2_refiner（6,720,075,280 参数 / 13,484,611,648 B 实测）
+      steps: 5
+      cfg_scale: 2.0
+      forwards_per_step: 2
+      out_width: 1920
+      out_height: 1088
+      out_frames: 250
+      resolution: 1920×1088
+      open_source: true
+      note: >-
+        **结构上是另一个模型，不是同一个主干的另一档**：30 层 / hidden 4096 /
+        **全稠密（一个 `moe_mlp` 都没有）**、**没有 mHC**、
+        **没有 attention sink**，注意力是 32 头 / 8 组的 **GQA**
+        （`linear_qkv` [6144, 4096] = 4096 + 1024 + 1024），FFN intermediate 10920。
+        边界 4 层同样逐模态 3 倍宽（`mm_layers: [0, 1, 28, 29]`）。
+        它保留的只有逐头输出门（`linear_g` [32, 4096]）与 QK-norm。
+        **30 层全部走窗口注意力**（config `local_attn_layers` 列出 0–29，
+        `attn_config.mode: "window"`、`win_size: 384`、block 半径 t/h/w 各 2）——
+        这是它能吃下 1088×1920 的原因：latent 网格 68 × 120、
+        时间步长 4 → (250−1)//4+1 = 63 帧，**约 514,080 个视频 token**，
+        是 preview 那条序列（57,344）的 9.0 倍。满注意力在这个长度上不可行。
+        两个阶段的 latent 时间步长不同（8 对 4），所以 refiner 同时做时间与空间超分。
+  buckets:
+    - width: 896
+      height: 512
+      frames: 250
+      fps: 25
+      duration_s: 10
+      latent_frames: 32
+      default: true
+      note: >-
+        **preview 阶段的档，对应 `params.total` 那个主干。**
+        10 秒是唯一支持的时长（卡 + entry.py 的 `--seconds` 帮助文本）。
+        `frames: 250` 与 `fps: 25` 的来历见 sources 里 inference_engine.py 那条 ——
+        **config 里的 `fps` 是 12.5，但代码按 `fps × 2` 算帧数**，
+        照字面读会减半。250 / 10 = 25，与 `data_proxy_config.video_fps: 25.0` 一致。
+        `latent_frames: 32` 直接声明（= (250−1)//8+1，preview 的 vae_stride 8），
+        不让公式按 VAE 的 4 去套 —— 理由见 generation.vae.note。
+        于是视频 token = 32 × (512/16) × (896/16) = 32 × 32 × 56 = **57,344**，
+        加音频 250，三轴都整除。
+        **`text_tokens` 留空**：文本长度随 prompt 变，卡与参考实现里都没有上限
+        （而且卡要求先用提示增强 LLM 生成结构化 JSON 描述，那种描述很长），
+        不替它猜一个数 —— `derive.py` 会因此把序列长度标成下界。
+  constraints:
+    width_divisor: 16
+    height_divisor: 16
+    frame_formula: frames = round(seconds × 12.5 × 2)，seconds 只支持 10 → 250 帧
+    note: >-
+      16 的整除来自 VAE 的空间 stride，卡上明说了后果：
+      1080p 这一档「the tier generates 1088 wide rather than 1080」，
+      要真 1080×1920 得靠 `--output-width/--output-height` 事后缩放。
+      **所以「1080p」是交付档位的名字，不是生成出来的形状。**
+  checkpoint_variants:
+    - name: preview
+      role: 低分辨率去噪主干（本记录的 params.total）
+      bytes: 228108119474
+      resident: false
+      note: >-
+        56 分片 + index。默认 `MAGI2_PREVIEW_OFFLOAD_MODE=roundtrip` ——
+        **不常驻**，卡给的理由是「at 1080p neither fits on an 80GB card next to
+        the other's activations」。228 GB 的权重在 8 卡上按 EP 8 切分。
+    - name: refiner
+      role: 超分阶段主干
+      bytes: 13484666420
+      resident: false
+      note: 3 分片 + index，同样默认 roundtrip 进出。
+    - name: text_encoder
+      role: 文本编码器（Qwen3.5-27B）
+      bytes: 55586054896
+      resident: false
+      note: 只在 prefill 跑一次，`MAGI2_TEXT_ENC_OFFLOAD_MODE` 单独管它。
+    - name: stable-audio-open-1.0
+      role: 音频 VAE（整文件，其中 12.9% 是 VAE）
+      bytes: 4853893255
+      resident: false
+    - name: vae
+      role: 视频 VAE（Wan2.2_VAE.pth）
+      bytes: 2818839170
+      resident: false
+      note: 与 wan2.2-ti2v-5b 的那个 `.pth` 逐字节相同。
+    - name: turbo_vae
+      role: 蒸馏解码器（默认解码路径）
+      bytes: 1870399641
+      resident: false
+      note: >-
+        `.ckpt`（pickle）。**六样相加 306,721,986,476 B / 89 个文件**，
+        与卡上「roughly 307 GB」对上。一次 1080p 推理六样全要。
+
+precision:
+  training: BF16
+  weights_release:
+    - BF16
+    - FP32
+  weights_release_scope:
+    BF16:
+      manifest_taken: true
+      in_precision_table: true
+      repo: sand-ai/MAGI-2-preview
+      note: >-
+        主体精度。preview 的 1,371 个张量里 **BF16 452 条、占字节 99.79%**
+        （212.00 GiB）：路由专家的 `W_{gate,up,down}`、注意力四个投影、
+        两个共享专家、split/merge 投影，即所有大矩阵。
+        与博客 §3.2「expert weights and the main computation use BF16」一致。
+    FP32:
+      manifest_taken: true
+      in_precision_table: true
+      repo: sand-ai/MAGI-2-preview
+      note: >-
+        **条数更多（919 条）但只占 453.86 MiB（0.21%）** —— 全是小张量：
+        全部 norm、`attention.sinks`、15 个 `mhc_*` 系数、
+        router 的打分矩阵与两条偏置、pre/post 适配器的投影。
+        博客 §3.2 只点了其中一类（「Routing scores are computed in FP32 for
+        numerical stability」），**mHC 系数与 attention sink 也是 FP32 这件事
+        来自清单**，博客 §3.3 只说它们用 Adam 更新、没说精度。
+        无 scale 容器、无打包容器，所以这两种就是全部形态。
+  # **`kv_cache` 不填。** 扩散模型每步对全部 latent token 重算，
+  # 跨步不复用任何东西 —— 这不是「未录」，是结构上没有这笔账。
+  # 枚举里也没有 none 这个值，填 none 会让它看起来像一种精度。
+  quantization:
+    method: none
+    subsystem_method: >-
+      逐子系统精度直接从 56 片的清单读（`derive.py` 的
+      `weight_dtype_containers`），不另跑 `fetch_dtypes.py` 抽样 ——
+      清单已经是全量，抽样只会得到更弱的覆盖面。
+
+      **本记录逼出了 `scripts/lib/subsystems.py` 的三处归类缺口**，
+      都属 CLAUDE.md 说的「桶空而功能存在时去看归类次序」，不是填表问题：
+      (1) `moe_mlp.W_{gate,up,down}` 既不含 `experts`、分隔符也不是 `.moe.`，
+      于是 **108,716,359,680（95.42%）落进 `dense_ffn`** ——
+      一个 token 级 MoE 在页面上会显示成稠密 FFN，`experts_seen` 归零，
+      交叉核对那行印出「dense 模型，无 MoE」；
+      (2) `mhc_*` 认不出来（`\bhc_` 配不上 `mhc_`，m 挡住了词界），
+      `mhc_*_attn` 被 attn 领走、`mhc_*_mlp` 被 mlp 领走，
+      **两个桶各混进一批 FP32 系数**，`dense_ffn` 的 dtype 因此是 BF16+FP32 混合；
+      (3) 这一份的注意力块叫**裸的 `attention.`**，而
+      「attn 不是 attention 的子串」—— 词条里只有 `self_attention`，
+      于是 **1,815,479,232 参数连同 `attention.sinks` 整块落进 `other`**，
+      而 `other` 在 active_params 的常驻名单里。
+      三处都已修，全仓 88 个事实目录实跑：**除本模型的两个目录外只有
+      `ltx-2.5` 变了 263,424 参数**（`attention_pooler.to_{q,k,v,out}`
+      从 other 归到 attention，是修正；那一份还没有记录），
+      **64 份已提交 derived 产物重算后逐字节不变**（只有 `inputs.ep_size_source`
+      这个与归类无关的来源标签变了）。
+
+      **还有第四处没有改，理由写在这里以免被当成漏看**：子系统表上会出现一行
+      `audio` **798,720** 参数 / 3.05 MiB，那是
+      `pre_adapter.audio_embedder` 的 weight 与 bias 两条 —— `audio` 规则的
+      `audio_embed` 命中了它们。**这个模型没有音频塔**，音频 token 走的是同一个主干，
+      所以那一行看起来像「有个音频编码器」。
+      而同一组模态 I/O 投影的其余几条（`video_embedder` / `text_embedder`
+      与 `post_adapter.final_linear_{video,audio}`）都落在 `other`
+      —— 注意 `final_linear_audio` **不**命中这个词条（它要的是 `audio_embed`），
+      所以连「音频那一侧」内部都不一致：**入口进了 audio 桶、出口留在 other**。
+      没有跟着改的原因是 `audio_embed` 这个词条**同时命中 ltx-2.3 的 129 条与
+      ltx-2 的 29 条**，而那两份是已提交记录、且它们的音频支路分桶
+      是单独一轮定下来的（见该规则自己的注释）。
+      为 0.0007% 的参数去动两份已提交记录依赖的词条，代价与收益不成比例 ——
+      **收尾条件**：哪天 `io_proj` 收下这组 `*_embedder` 适配器投影，
+      这一行与 `other` 里那三条应当一起进 `io_proj`，届时删掉本段。
+      判据是一条命令：
+      `.venv/bin/python -c "import sys;sys.path.insert(0,'scripts');from lib import subsystems as s;print(s.classify('pre_adapter.audio_embedder.weight'))"`
+      印出 `io_proj` 就该收尾。
+
+platforms:
+  - engine: 厂商参考实现（inference/ + MagiAttention + MagiCompiler）
+    hardware: NVIDIA Hopper ×8
+    precision: BF16
+    parallel: EP 8 × CP 8（Ulysses）
+    status: supported
+    graph_mode: eager
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/sand-ai/MAGI-2-preview
+      locator: README.md §Requirements @ 2dea51b64db4
+    caveat: >-
+      **8 张 Hopper 是硬要求，卡上写成 requirement 而不是建议**
+      （「NVIDIA Hopper GPUs, 8 of them」）。config 的
+      `cp_size: 8` / `ep_size: 8` / `cp_strategy: cp_ulysses` ——
+      **同一组 8 卡同时承担 EP 8 与序列并行 8**。
+      没有 vLLM / SGLang 支持（两边公开清单里查不到这个模型），
+      所以引擎那一档整个是空的，不是「未录」。
+
+bottlenecks:
+  - dimension: host-io
+    finding: >-
+      **一次 1080p 推理要六样权重共 306.7 GB，而两个主干都放不下、只能进出搬。**
+      卡给的理由很直接：preview 与 refiner 默认都是 `roundtrip`，
+      因为「at 1080p neither fits on an 80GB card next to the other's activations」。
+      8 × 80 GB = 640 GB 看着够装 306.7 GB，但激活是另一笔 ——
+      残差流被 mHC 加宽到 4 × hidden，refiner 那条序列有 51.4 万个 token。
+    quantified: >-
+      preview 228.11 GB + text_encoder 55.59 GB + refiner 13.48 GB
+      + 音频 VAE 4.85 GB + 视频 VAE 2.82 GB + turbo 解码器 1.87 GB
+      = 306.72 GB（285.66 GiB）。四个 offload 开关各管一样。
+    fix: 分阶段换入换出；文本编码器只在 prefill 用一次，可最早搬走
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/sand-ai/MAGI-2-preview
+      locator: README.md §Checkpoints 的目录表 / §Running inference 的 offload 段 @ 2dea51b64db4
+  - dimension: weight-bandwidth
+    finding: >-
+      **路由专家占了 95.42% 的参数，却只有 2.34% 参与每个 token** ——
+      激活 6.01B 里路由专家 2.55B，剩下 3.46B 是必过的非路由部分。
+      换句话说**稀疏只省到了一半以下**：按参数量看这是个 114B 模型，
+      按每 token 带宽看它是 6B，而那 6B 里**非路由的 3.46B 才是大头**
+      （57.6%），其中注意力 1.36B、split/merge 投影 0.68B、
+      两个共享专家各 0.42B。
+    quantified: >-
+      路由 2,548,039,680 / 6,010,356,736 = 42.4%；
+      非路由 3,462,317,056 = 57.6%。专家池利用率 72 / 3072 = 2.34%。
+    fix: >-
+      优化预算按激活参数分，不按总参数分 —— 后者会把 95% 的预算
+      放在只贡献 42% 带宽的那一块上
+    ref:
+      kind: repo
+      url: https://github.com/SandAI-org/MAGI-2-preview/blob/main/configs/magi2_preview.json
+      locator: arch_config.moe_config 全量字段 @ f68a0f9bbccb
+  - dimension: operator-gap
+    finding: >-
+      **每个稀疏层有 3,072 个专家单元，每个只做 256→1280→256**，
+      博客 §3.2 自己说这是主要工程难点：
+      「Each unit receives fewer tokens, and its GEMM shapes are smaller and more
+      irregular. Sorting, kernel launches, and intermediate tensor reads and
+      writes can therefore become dominant costs.」
+      所以 MagiMoE 把「路由 + top-k → 紧凑专家排布 → 融合 grouped expert FFN
+      → 按路由权重合并」整条路径融在一起，而不是只换一个 grouped GEMM kernel。
+    quantified: >-
+      单个专家单元 983,040 参数；一个 token 在一层里命中 72 个这样的单元，
+      每个只拿到 token 的 1/12（256 / 3072）。
+      40 层里 36 层如此，每步要对 57,344 + 250 个 token 做这件事。
+    fix: 融合 routing/gather/grouped-GEMM/merge；up 与 gate 投影融进 SwiGLU
+    ref:
+      kind: paper
+      url: https://sand.ai/blog/magi-2-preview
+      locator: '§3.2 MagiMoE: Efficient Execution of Fine-Grained Experts @ 2026-08-05'
+  - dimension: ep-comm
+    finding: >-
+      **这个 MoE 的通信不随 top-k 增长，和语言模型线的 EP all-to-all 不是一个量。**
+      博客 §2.1：标准 token-choice 的主导项是 `C ∝ N·k·H`，
+      而 Head Parallel 传的是按潜头切的原表示，`C ∝ N·M·H_head = N·H` ——
+      「Cross-device communication does not grow with Top-k for each head」。
+      更要紧的是**收发形状可以静态定下来**（按潜头划分），缓冲区能预分配，
+      动态性被关在每个 head owner 内部。
+    quantified: >-
+      所以本仓 `/moe/` 页那个 `2 × top_k × hidden × act_bytes × moe_layers`
+      的乘式**在这一份上不成立** —— 乘式里的 `top_k` 因子在 Head Parallel 下
+      根本不出现。`derive.py` 对生成类记录的 `ep_communication` 报
+      not_applicable，理由写的是「生成类不做 EP all-to-all，
+      对应的通信是序列并行(Ulysses)的 all-to-all」：
+      **结论对，但理由只说对了一半** —— 这一份确实有 EP（config `ep_size: 8`），
+      只是它的 EP 通信不按那个乘式走。
+    fix: >-
+      要给这一份报一个通信数，得按 `N·M·H_head` 另立一个口径，
+      并把节点内（NVLink 上 ZeRO/FSDP 取还专家权重）与节点间
+      （IB 上定形的潜头切片）分开记 —— 博客 §3.1 是两层网络两种流量。
+      本次没有报任何数字，因为那是另一套口径，不是现有乘式换个参数
+    ref:
+      kind: paper
+      url: https://sand.ai/blog/magi-2-preview
+      locator: §2.1 Multi-Head LatentMoE 与 §3.1 Hierarchical Head Parallel @ 2026-08-05
+
+infra_signals:
+  - text: >-
+      **「专家变细」这条线上出现了一个新的细法：不是把专家做窄，而是把 token 切开。**
+      本仓已录的细粒度化都是在整宽 hidden 上增加专家数、缩小单专家
+      intermediate；MAGI-2 先把 hidden 3072 切成 12 个 256 维子空间，
+      每个子空间自己一套 router 和 256 个专家。
+      于是「专家数」这个指标**分叉成两个口径**：每头池子 256，
+      每层单元总数 3,072。跨家族比的时候必须说清是哪一个 ——
+      拿 3,072 去和整宽专家数比是范畴错误。
+    evidence: official
+    horizon: now
+    axis: moe
+  - text: >-
+      **Head Parallel 把 MoE 的通信从「随路由结果变」改成「按结构定形」**，
+      这是 infra 侧最该注意的一条：收发形状由潜头划分静态决定，
+      缓冲区预分配，动态性只留在每个 head owner 内部。
+      代价是节点内要为专家权重做 ZeRO/FSDP 式的取还。
+      长序列（视频 latent 动辄几万到几十万 token）正是让动态 all-to-all
+      的抖动变成一阶成本的场景，所以这个取舍在视频上比在语言上更划算。
+    evidence: official
+    horizon: now
+    axis: parallel
+  - text: >-
+      **生成类主干里「逐样本参数」这一项可以是 0。** 本仓已录的生成记录
+      都有相当比例的 AdaLN 调制（hunyuanvideo-1.5 占 32.71%），
+      它吃条件向量、每次前向只过一遍，所以按「每参数过每 token」算会高估线性项。
+      这一份一个调制张量都没有，噪声水平逐 token 送进去 ——
+      于是那条「线性 FLOPs 是上界」的告警在它身上不适用，等号成立。
+      **立这类告警时要能分清「没填」和「真的是 0」。**
+    evidence: derived
+    horizon: now
+    axis: generation
+  - text: >-
+      **VAE 解码被单独蒸馏成一个「只有解码器」的模型**，还是默认路径
+      （`use_turbo_vae: true`），按时间滑窗跑、且只占 8 卡里的 1 卡。
+      即生成类的显存与时延账里，解码这一步是可以独立换掉的一环，
+      不必跟着主 VAE 的形态走。
+    evidence: official
+    horizon: now
+    axis: vae
+  - text: >-
+      **厂商给了一个「可复现」开关，而且说清了代价**：
+      `MAGI2_DETERMINISTIC=1` 让 MoE 的 scatter 与注意力 kernel 逐位可复现，
+      「at some cost in speed」。MoE 的 scatter 不确定是常见的复现障碍
+      （归约顺序随路由结果变），厂商把它做成开关而不是留给用户猜，
+      对做基准对照的人是实际可用的一条。
+    evidence: official
+    horizon: now
+    axis: reproducibility
+
+evidence:
+  id: official
+  family: official
+  kind: judgement
+  display_name: official
+  released: official
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  params.active_decode: derived
+  params.active_prefill: derived
+  arch: official
+  arch.ffn.layer_pattern: derived
+  # **这三条是从 `arch: official` 的前缀继承里挑出来的**（CLAUDE.md 点名的那个坑：
+  # 实测自权重的字段落在 official 前缀下会显示成厂商口径）。
+  # intermediate 8192 厂商没有直接给，是 config 的 intermediate_factor 按 SwiGLU
+  # 折 2/3 加清单两路算出来的；shared_experts 的「2」厂商从没说过
+  # （博客 §2.2 的表里根本没有共享专家这一行），是按清单里两条支路数的；
+  # balance 的主干说法出自博客 §3.2，但「带 expert_bias_ema」这半句只有清单作证。
+  arch.ffn.intermediate: derived
+  arch.moe.shared_experts: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.residual.type: judgement
+  arch.residual.multiplier: official
+  arch.residual.sinkhorn_iters: judgement
+  arch.residual.eps: judgement
+  arch.residual.coef_proj: derived
+  arch.residual.note: judgement
+  generation: official
+  generation.backbone.note: derived
+  generation.backbone.position: official
+  generation.backbone.param_scaling: derived
+  generation.vae: official
+  # `causal` 是**沿用 wan2.2-ti2v-5b 那份记录的判断，本次没有独立复核** ——
+  # `.pth` 读不了清单，这个仓里也没有 VAE 的 config。
+  # 落在 official 前缀下会显示成厂商说法，而厂商在这个仓里没说过。
+  generation.vae.causal: judgement
+  generation.vae.note: derived
+  generation.vae.turbo_decoder.note: official
+  generation.audio: official
+  generation.audio.vae_params: derived
+  generation.audio.note: judgement
+  generation.text_encoders: derived
+  generation.sampling: official
+  generation.sampling.cfg.forwards_per_step: derived
+  generation.sampling.cfg.note: derived
+  # **整条列表只有一个归属点**（`leaf_paths` 不展开下标），而这一块是混的：
+  # steps / cfg_scale / 出口分辨率出自厂商 config 与模型卡，
+  # 而两条 note 里的 refiner 参数量 6,720,075,280 与「约 514,080 个视频 token」
+  # 是本仓实测与推算。混在一个归属点上只能取**弱的那一档** ——
+  # 把 steps 标成「推」比把自己算的数标成「官」安全。
+  generation.pipeline_stages: derived
+  generation.buckets: derived
+  generation.constraints: official
+  generation.constraints.note: official
+  generation.checkpoint_variants: derived
+  precision: derived
+  precision.training: official
+  platforms: official
+  bottlenecks: derived
+  infra_signals: judgement
+  notes: derived
+  open_questions: judgement
+
+reviewed:
+  date: '2026-11-03'
+  method: >-
+    **Gate B 在 `derive.py` 眼里只剩清单一路**（`facts/magi-2-preview/cfg.json`
+    是 `{}`，仓里 89 个文件没有 DiT 的 config），**但结构侧实际有三路**：
+    权重清单 × 技术博客 §2.2 的配置表 × 厂商参考实现的 `configs/magi2_preview.json`。
+    ltx-2.3 那条「config 藏在 `__metadata__` 里」的可能性专门查过并排除了
+    （preview 首片无 `__metadata__`，refiner 只有 `{"format": "pt"}`）。
+
+    **三路逐项对读，14 项逐字相同**：
+    num_layers 40 对清单 `block.layers.0–39` 对博客「40 Transformer layers」；
+    hidden_size 3072 对 `linear_qkv` 的 [9216, **3072**] 对博客「Model width 3,072」；
+    head_dim 128 对 `q_norm` [128]；num_query_groups 24 对 k 的宽度 3072 / 128；
+    `mm_layers: [0,1,38,39]` 对清单里 3 倍宽的那四层；
+    `moe_layers: [2…37]` 对有 `moe_mlp.*` 的 36 层对博客「middle 36 layers」；
+    `moe_config.num_heads: 12` 与 `num_experts: 256` 对博客「12 heads × 256
+    dimensions」「256 experts per head」，乘积 3072 对 `router.expert_bias` 的 [3072]；
+    `top_k: 6` 对博客「Top-6 per head」（**权重侧无证人，见下**）；
+    `expert_intermediate_size: 1280` 对 `W_gate` 的 [3072, 256, **1280**]
+    对博客「256 → 1,280 → 256」；
+    `mhc_config.num_stream: 4` 对 `mhc_norm` [12288] = 4 × 3072；
+    `attn_sinks.sink_token_num: 1` 对 `attention.sinks` [**1**, 24]；
+    `video_in_channels: 48` 对 `video_embedder` [12288, **48**]；
+    `audio_in_channels: 64` 对 `audio_embedder` [12288, **64**]；
+    `text_in_channels: 5120` 对 `text_embedder` [12288, **5120**]。
+    **一处要换算才对上**：`intermediate_factor: 4` 按 SwiGLU 折 2/3 得 8192，
+    对 `up_gate_proj` 每模态 16384 = 2 × 8192。
+
+    **参数量两路对账**：清单读头 113,934,953,536 参数 /
+    228,107,858,176 B，与 `preview/model.safetensors.index.json` 的
+    `total_size` **差 0**；与 56 个文件 HTTP 大小合计差 261,298 B（= 56 个头）。
+    与卡的「114B」差 0.06%。repoinfo.json 无 HF tally（`safetensors: null`），
+    外部锚由厂商的 index.json 承担。
+
+    **每 token 激活 6,010,356,736 是算出来的，不是抄的**，逐因子见
+    params.counting_note；与卡的「approximately 6B」差 0.17%，
+    而不作模态划分会差 +29.4% —— 那个差额反过来证实了逐模态 1/3 的读法。
+
+    **top-k 在落盘形状里没有证人**，这一点写在这里以免被当成已实测：
+    它是运行时路由参数，权重里只能看到专家池的大小（首维 3072）
+    和每个单元的形状，看不出一次选几个。6 这个数来自博客 §2.2 的配置表
+    与参考实现的 config 两处一致，**但两者都不是权重**。
+    所以 `top_k` 与 `routed_experts` 的证据强度不同：后者有清单作证
+    （`expert_bias` 的 [3072] = 12 × 256），前者只有文档与代码。
+
+    **从实现读的、强度随上游衰减的有三项**（skill 规则 12 要求写明）：
+    mHC 的 `sinkhorn_iters: 20` 与 `eps: 1e-12`（只在 `MHCHandler.__init__`
+    的默认值里，不在发布的 config 里）、`forwards_per_step: 2`
+    （读 sampler.py 的 batch 拼接）、以及 buckets 的 `frames: 250`
+    （读 `_resolve_lengths()` 里那个 `* 2`；**照 config 的 `fps: 12.5`
+    字面读会得到 125，低一半**）。
+
+    **「逐头输出门」这句话里两半证据强度不同**：`attention.linear_g`
+    出口宽度 24 恰等于头数，这是形状结论；而 config 只说
+    `attn_gating: {enable: true}`、博客只说「gating-related parameters」——
+    **厂商从没说过「逐头」**。同理 mHC 的 4 条流是形状 + config 两路确认的，
+    但「mHC」这个缩写厂商没有展开，机制描述博客一个字也没有。
+  scope:
+    - official
+    - derived
+    - judgement
+
+notes: >-
+  **这一份在本仓的位置：它是唯一一个 token 级 MoE 的视频 DiT，
+  而它把「专家变细」做成了一件和语言模型线不同的事。**
+
+  已录的细粒度化都在整宽 hidden 上做：专家数往上加、单专家 intermediate 往下压，
+  一个 token 整条表示送给 top-k 个专家。MAGI-2 多了一刀 ——
+  **先把表示切成 12 个 256 维子空间，每个子空间独立路由**。
+  于是同一个 token 的不同表示子空间可以组合出不同的专家集合
+  （博客 §2.2：「different representation subspaces of the same token can form
+  different expert combinations」），而不是整体二选一。
+
+  **这件事在指标上的后果是「专家数」分叉成两个口径**，
+  必须说清是哪一个：每头池子 **256**（和别家同问法：一个 router 在多大池子里选）、
+  每层单元总数 **3,072**（12 × 256）。本仓 `arch.moe.routed_experts` 填的是前者。
+  后者会出现在 `derive.py` 产物的 `experts_seen` 里（堆叠张量的首维），
+  那是 head × expert 压平的结果。
+  **把 3,072 拿去和 kimi-k3 的 896 并排，是把两个口径当成一个轴**：
+  那 896 个专家每个吃整宽 hidden，这 3,072 个单元每个只吃 1/12。
+
+  三件结构上值得单独记的事：
+
+  1. **没有 AdaLN。** 生成类主干里这一项通常是大头，这里是 0 ——
+     噪声水平逐 token 送进去，不走逐样本调制。见
+     generation.backbone.param_scaling。
+  2. **两个阶段是两个不同架构的模型**，不是同一主干的两档：preview 稀疏 + mHC
+     + attention sink + 满注意力 MHA；refiner 稠密 + 无 mHC + 无 sink
+     + 全层窗口注意力 + GQA。**后者的序列长 9 倍**，所以它不能不稀疏注意力。
+  3. **四个子系统是别人的权重，而且两个能做到字节级确认**：
+     文本编码器与本仓 `qwen3.5-27b` 的清单两个数逐字节相同、
+     视频 VAE 与 `wan2.2-ti2v-5b` 记的 `.pth` 字节数逐字节相同。
+     **这比「卡上说用的是同一个」强一档** —— 后者只是声明。
+
+  最后一件与数字无关但影响解读的：**采用度为 0**（HF downloads 0、likes 122，
+  2026-11-03 实测）。入选理由是结构不是影响力，
+  而「没有引擎支持、没有第三方复现、厂商自己也只给参考实现」这三件事
+  合起来说明**这一份的每个数字都只有厂商一个来源**，
+  本仓能做的最多是让清单与文档互相对账 —— 已经做到了十四项，
+  但那十四项全部落在同一家的两份材料加一份权重上。
+
+open_questions:
+  - >-
+      **top-k 在权重里没有证人，只有文档与代码两处一致。** 博客 §2.2 的配置表写
+      「Top-6 per head」，参考实现 config 写 `top_k: 6`，两处都不是落盘事实。
+      要钉死得读 kernel 或实测一次前向的专家命中数 —— 那是独立一轮的事。
+      它也是「每 token 激活 6B」这个乘式里唯一没有权重作证的因子。
+  - >-
+      **音频 VAE 到底加载哪一部分没有确认。** `stable-audio-open-1.0/model.safetensors`
+      里 87.1%（1,056,939,152 参数）是上游的文生音 diffusion 主干，
+      MAGI-2 自己产音频 latent，按说用不上它 —— 但卡只说这个目录是
+      「Audio VAE, decodes the generated audio latents」，没说只加载
+      `pretransform.*`。要确认得读 `sa_audio_vae.py` 的加载路径。
+      **如果确认只用 pretransform，那 4.85 GB 里有 4.2 GB 是不必下载也不必驻留的**，
+      对部署的显存与下载账都是实数。
+  - >-
+      **音频 latent 的两个频率对不上。** stable-audio 的
+      `model_config.json` 给 `downsampling_ratio: 2048` / `sample_rate: 44100`
+      → 21.53 Hz，而 DiT 侧按 `audio_latent_fps: 25.0` 排 token（10 秒 250 个）。
+      两个数差 16%，口径没对齐：可能是重采样、可能是 25 Hz 只是排 token 的网格
+      而与 VAE 的真实 latent 率不同。`latent_hz` 现在填的是 DiT 侧那个
+      （进序列长度的是它），但这个不一致没解释。
+  - >-
+      **「mHC」厂商没有展开，机制描述一个字也没有。** 博客 §3.3 只把它当优化器
+      参数族点名。本记录的机制描述全部来自清单形状与参考实现
+      （4 条流、4×4 混合、Sinkhorn-Knopp 20 轮）。
+      与 DeepSeek V4 一代的 mHC、Qwen3.8-Flash-Next 的 Gated Residual
+      是不是同一篇论文的实现，没有文献支点。
+  - >-
+      **文本编码器取第几层的 hidden state 不知道。** 卡与博客都没提，
+      参考实现里也没找到层号。这件事影响实际要跑的层数 ——
+      h3 那份明说取第 50 层（共 64 层），后 14 层可以不跑。
+      这里 27B 的编码器如果也只用到中间某层，prefill 的账会小一截。
+  - >-
+      **没有任何性能、时延或显存实测数字。** 卡与博客都不给基准，
+      也没有第三方复现（HF 下载量 0）。`performance` 因此整块为空 ——
+      **这是「没有来源」不是「未录」**。卡只给了一条定性约束：
+      8 张 Hopper，且 1080p 下两个主干不能同时驻留 80 GB 卡。
+  - >-
+      **`ep_size: 8` 与 `cp_size: 8` 是参考实现的配置，不是部署依据。**
+      它说明厂商自己怎么跑，但「为什么是 8」「换成 4 或 16 行不行」
+      没有说法。本仓 `ep_size` 一向不在证据链上，这里同理。

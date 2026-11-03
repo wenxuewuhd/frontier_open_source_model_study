@@ -45,7 +45,16 @@ SUBSYSTEM = [
     ("draft", re.compile(r"mtp|draft|dspark|eagle|eh_proj|enorm|hnorm|shared_head", re.I)),
     # \.moe\.(gate|up|down)_proj 是 Step-5 的 3 维堆叠专家 [352, …]，名字里没有 experts ——
     # 不认它就落进 dense_ffn，激活参数会把全部专家算成常驻
-    ("expert", re.compile(r"\.experts?\.\d+\.|\bexperts\.|\.moe\.(gate|up|down)_proj\b", re.I)),
+    #
+    # `moe_mlp\.W_(gate|up|down)` 是 MAGI-2 的同类布局，但三处都差一点认不出来：
+    # 名字里没有 `experts`、分隔符是 `moe_mlp` 而不是 `.moe.`、投影叫 `W_gate` 而不是
+    # `gate_proj`。于是 **108,716,359,680 个参数（这份记录总量的 95.42%）整块落进
+    # dense_ffn** —— 不是少一个桶，而是一个 token 级 MoE 在页面上显示成稠密 FFN，
+    # 并让 `experts_seen` 归零、交叉核对那行印出「dense 模型，无 MoE」。
+    # `W_gate` 配不上 router 的 `\bgate\b`（左边是下划线、词界不成立），
+    # 所以它此前既不是专家也不是路由，只是一个带 `mlp` 的名字。
+    ("expert", re.compile(r"\.experts?\.\d+\.|\bexperts\.|\.moe\.(gate|up|down)_proj\b"
+                          r"|\.moe_mlp\.W_(?:gate|up|down)\b", re.I)),
     # Step-5 写成 share_expert（单数、无 d）
     ("shared_expert", re.compile(r"shared?_expert", re.I)),
     ("router", re.compile(r"\bgate\b|router|e_score|expert_bias", re.I)),
@@ -65,8 +74,17 @@ SUBSYSTEM = [
     # hyper_connection(?!.*norm)：排除 *_hyper_connection.hc_norm.weight（Flash-Next 97 个）。
     # 本条排在 norm 之前，不加这个否定前瞻就会把 hc_norm 从 norm 抢走，
     # 违反「带 norm 的就是归一化，没有例外」那条规矩
+    # `\bmhc_(?!norm)` 是 MAGI-2 对同一机制的第三套命名（mhc_alpha_* / mhc_bias_* /
+    # mhc_phi_fused_*，逐层 15 个张量、全 FP32）。`^hc_` 与 `\bhc_` 都认不出它 ——
+    # `mhc_` 里 `hc_` 左边是字母 m，词界不成立。不认的后果正是这一条存在的理由：
+    # `mhc_*_attn` 被 attn 领走、`mhc_*_mlp` 被 mlp 领走，**两个桶各混进一批 FP32 系数**，
+    # 而 MAGI-2 的注意力与专家主体是 BF16 —— 精度表上那两格会从 BF16 变成混合。
+    # 否定前瞻只为放掉 `mhc_norm.weight`（逐层 1 个）：本条排在 norm 之前，
+    # 不排除就违反「带 norm 的就是归一化，没有例外」，和同条里
+    # `hyper_connection(?!.*norm)` 放掉 Flash-Next 的 hc_norm 是同一个理由。
     ("residual", re.compile(
-        r"\bhc_[a-z]+_(base|fn|scale)\b|^hc_|residual|_res_proj\b|hyper_connection(?!.*norm)",
+        r"\bhc_[a-z]+_(base|fn|scale)\b|^hc_|residual|_res_proj\b|hyper_connection(?!.*norm)"
+        r"|\bmhc_(?!norm)",
         re.I)),
     # **modulation 在这张表里出现两次，这不是笔误。**
     # CogVideoX 把 AdaLN 调制实现成 `transformer_blocks.N.norm1.linear` ——
@@ -207,8 +225,16 @@ SUBSYSTEM = [
     # （a-t-t-n vs a-t-t-e-n-t-i-o-n），所以上面那串一个都不命中，1,426,247,680 落进 other。
     # self_attention.dense 靠 self_attention 命中就够，不要为它加 \bdense\b ——
     # 那会把 mlp.dense_4h_to_h 从 dense_ffn 抢走（本条排在 dense_ffn 之前）
+    # **`(?:^|[._])attention[._]` 补的是同一个坑的第二次。** 上面那句「attn 不是
+    # attention 的子串」挡住了 chatglm，靠的是词条里另有 `self_attention`；
+    # MAGI-2 的块就叫裸的 `attention.`（`block.layers.N.attention.linear_qkv`），
+    # 这一串**一个都不命中** —— 1,815,638,976 个参数连同 `attention.sinks`
+    # 整块落进 other，而 other 在 active_params 的常驻名单里。
+    # 写成带分隔符的形式而不是 `\battention\b`：下划线是 word char，
+    # 词界在 `self_attention_res_proj` 那种名字上不成立，而那一条已被 residual 领走，
+    # 顺序不能靠巧合。全仓 88 个事实目录实测：除 magi-2-preview 外受影响 0。
     ("attention", re.compile(
-        r"attn|self_attention|query_key_value|\bwq|\bwk|\bwv|\bwo\b"
+        r"attn|self_attention|query_key_value|(?:^|[._])attention[._]|\bwq|\bwk|\bwv|\bwo\b"
     # **`o_proj` 要补左边界**：这三个字符就在 audi`o_proj`_in 里面（v2-ltx 试跑撞出来的）。
     # 现在被排在前面的 audio 挡着看不见，audio 一收紧，h3 的 4 条 I/O 投影就落进注意力。
     # 收紧代价实测为 0：全仓 o_proj 合法命中 3,130 条前面全是行首 / `.` / `_`，

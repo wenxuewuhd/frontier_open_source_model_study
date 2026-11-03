@@ -329,7 +329,12 @@ const rv = reviewStatus(m);
         evidence={ev}
         rows={[
           { label: '形态', value: m.arch?.ffn?.type ?? (moe.routed_experts ? 'moe' : undefined), path: 'arch.ffn.type' },
-          { label: '中间维', value: m.arch?.ffn?.intermediate, path: 'arch.ffn', mono: true },
+          // path 必须是叶子路径 `arch.ffn.intermediate`，不是 `arch.ffn` ——
+          // 这一行原先只到 `arch.ffn`，于是记录把 intermediate 单独标成 derived 时
+          // 徽标仍按 `arch.ffn`（或继承的 `arch`）显示：**值是推导的、徽标写「官」**。
+          // 同块其余七行都用叶子路径，只有这一行短一截。
+          // 前缀继承照旧：没单独标 intermediate 的记录仍回落到 arch.ffn，徽标不变。
+          { label: '中间维', value: m.arch?.ffn?.intermediate, path: 'arch.ffn.intermediate', mono: true },
           { label: '路由专家', value: moe.routed_experts, path: 'arch.moe.routed_experts', mono: true },
           { label: '共享专家', value: moe.shared_experts, path: 'arch.moe.shared_experts', mono: true },
           { label: 'top_k', value: moe.top_k, path: 'arch.moe.top_k', mono: true },
