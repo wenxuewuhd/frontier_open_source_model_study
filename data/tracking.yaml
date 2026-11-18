@@ -33,6 +33,25 @@ families:
     model_id: glm-5.3
     status: recorded
     note: model_type 为 glm_moe_dsa，MLA + DSA 稀疏
+    members:
+      - model_id: glm-5.3-flash
+        hf_repo: zai-org/GLM-5.3-Flash
+        released: 2026-10-15
+        status: recorded
+        note: >-
+          **不是 GLM-5.3 的较小档位，是另起的原生多模态线**，所以不走 policy 里
+          「较小档位仅在有结构对照价值时收录」那一条。判据两侧都有：卡正文 Introduction
+          第 1、2 段「the first natively multimodal model in the GLM-5 series」
+          「starts from a newly trained base model」；清单实测排 scale 后与 GLM-5.3 的
+          张量名集合**交集只有 lm_head.weight 一条**（本份 38,770 条、GLM-5.3 59,585 条），
+          model_type 是 glm5_next 而非 glm_moe_dsa。所以记录故意没填 lineage.predecessor
+          —— 填了会在家族页串出一条「78→45 层」的假演进链。
+          一次撑出四根本仓没有过的轴：NoPE MLA（qk_rope_head_dim 为 0）、index K 池化、
+          mHC 出现在 DeepSeek 以外、线性与稀疏混合在同一份权重里。
+          热度也不像档位：2026-11-18 同一时刻取的 HF 近 30 天下载量 6,386,210
+          对旗舰 1,720,630，3.71 倍（两仓发布只差一天，30 天窗口可比）。
+          **这两个数必须同一时刻取** —— facts 下两份 repoinfo 差了 20 天，
+          照它们算会得 2.67 倍
 
   - family: minimax
     flagship: MiniMax-M3

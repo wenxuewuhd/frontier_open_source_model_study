@@ -63,7 +63,14 @@ const recorded = allEntries.filter((f) => f.status === 'recorded').length;
                     {i === 0 ? (
                       FAMILY_LABEL[f.family] ?? f.family
                     ) : (
-                      <span class="muted small">　└ 同族档位</span>
+                      /* 不写「同族档位」。members 下装的从来不只是档位：ltx-2 / ltx-2.3 /
+                         wan2.1 / hunyuanvideo-13b 是上一代，glm-5.3-flash 是另起的
+                         原生多模态线（记录故意没填 predecessor）。「档位」是这一格
+                         自己的断言，而名册里**没有任何字段区分这几类** ——
+                         标签断言得比数据多，就会在长出新实例的那天变成假话。
+                         退到只说结构保证的那件事：同一个 family 条目下的另一份记录。
+                         要让页面说得更细，得先在名册里长出这个区分，那是另一件事。 */
+                      <span class="muted small">　└ 同族另录</span>
                     )}
                   </td>
                   <td>
