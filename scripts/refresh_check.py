@@ -33,6 +33,14 @@ sha 没变就到此为止（一次 API 请求）；变了再取新 sha 下的 in
 那几档（MiniMax 三份就是这么长期假阳的）。`sha_equal()` 按较短的一方取前缀比，
 并且长度不等时一律把这件事写进 why —— 下一份短 sha 不会再静默。
 
+**远端清单的范围要与基线对齐**：一个仓可以有多份 `.safetensors.index.json`
+（MiniMax-H3 有 8 份：两套任务 checkpoint 各带 text_encoder 与 transformer，
+顶层另有 transformer / transformer_ref / vae）。初版取「第一份」，于是把 DiT 的基线
+与 `FL2VA/text_encoder/` 的清单对比 —— **交集为 0，稳定报 names-changed**，
+而那次上游只改了 README 的 11 个字节。现在按 `fetched.json` 的 `include_globs`
+过滤并取并集；过滤到零份时返回 None 走 no-baseline，**不返回空集合** ——
+空集合会被读成「远端一个张量都没有」。详见 `remote_names` 的 docstring。
+
 **本地名字清单的来源**：`names.json` 优先，没有时才用 `shapes.json` 的键。
 零差异版本是 `--names-only` 取的，它的 `shapes.json` 是空字典 —— 拿空的 shapes 去比，
 会把「本地没有清单」读成「本地一个张量都没有」，于是报出整套张量都是新增的。
@@ -60,6 +68,7 @@ sha 没变就到此为止（一次 API 请求）；变了再取新 sha 下的 in
 退出码：0 无变化或只有 sidecar-only；1 有记录需要处理（换了权重 / 结构 / config，或取数失败）
 """
 import argparse
+import fnmatch
 import glob
 import json
 import os
@@ -125,12 +134,54 @@ def local_names(fdir: str):
     return None, "names.json 不存在、shapes.json 为空"
 
 
-def remote_names(repo: str, rev: str, files: list):
-    idx = next((f for f in files if f.endswith(".safetensors.index.json")), None)
-    if not idx:
-        return None
-    doc = json.loads(_get(RESOLVE.format(repo=repo, rev=rev, path=idx), _token_header()))
-    return set(doc.get("weight_map") or {})
+def _in_scope(path: str, globs) -> bool:
+    """这份 index.json 在基线的取数范围里吗。
+
+    `include_globs` 是 `fetch_hf.py --include` 原样记下的（如 `transformer/*`），
+    匹配的是分片路径。`fnmatch` 的 `*` 跨 `/` 也匹配，所以 `transformer/*`
+    命中 `transformer/diffusion_pytorch_model.safetensors.index.json`，
+    而**不会**命中 `transformer_ref/...`（前缀 `transformer/` 是字面的）。
+    另收一种写法：只写目录名不带斜杠（`transformer`）。
+    """
+    for g in globs:
+        if fnmatch.fnmatch(path, g) or path.startswith(g.rstrip("/*") + "/"):
+            return True
+    return False
+
+
+def remote_names(repo: str, rev: str, files: list, include_globs=None):
+    """新 sha 下的张量名集合，外加用了哪几份清单。口径要与基线的取数范围对齐。
+
+    **初版取「文件列表里第一份 index.json」，一个仓有多份时就比错了对象。**
+    MiniMax-H3 长期假阳在这里：仓里 8 份 index.json，第一份是
+    `FL2VA/text_encoder/`（1,058 个键），而基线是 `include_globs: ['transformer/*']`
+    取的 DiT（638 个键）—— **两个集合交集为 0**，于是不论上游动不动都稳定报
+    `names-changed`（措辞是「结构变了，要重新取数、重走审计」）。
+    实查那次上游只把 README 的 YAML 头重排并加了 `language:`，**净 +11 字节**，
+    309 个条目逐项同名同大小。坑 #2「用名字当锚，锚到别处同名词」的又一例。
+
+    MiniMax-M3.1-Flash 是同一个函数的另一个形状：两份 index.json
+    （`dspark/` 97 个键、根 89,632 个键）**各覆盖基线的一部分**，
+    97 + 89,632 = 89,729 正是基线 `shapes.json` 的键数 —— 取任何单独一份，
+    都会把另一份的张量报成「被删了」。所以要的是**并集**，不是某一份。
+
+    **过滤到空要返回 None，不能返回空集合。** 空集合会被调用方读成
+    「远端一个张量都没有」，于是报出整套张量全被删 —— CLAUDE.md
+    「空输出至少有三种成因」的原话形状。返回 None 就走 no-baseline 那一路明说比不了。
+    """
+    idxs = [f for f in files if f.endswith(".safetensors.index.json")]
+    if include_globs:
+        scoped = [f for f in idxs if _in_scope(f, include_globs)]
+        if not scoped:
+            return None, []
+        idxs = scoped
+    if not idxs:
+        return None, []
+    names = set()
+    for f in sorted(idxs):
+        doc = json.loads(_get(RESOLVE.format(repo=repo, rev=rev, path=f), _token_header()))
+        names |= set(doc.get("weight_map") or {})
+    return (names or None), sorted(idxs)
 
 
 def config_diff(old: dict, new: dict) -> list:
@@ -199,7 +250,8 @@ def check(mid: str, repo: str, facts: str = FACTS) -> dict:
     r["last_modified"] = info.get("lastModified")
     files = [s["rfilename"] for s in info.get("siblings", [])]
     try:
-        new_names = remote_names(repo, sha, files)
+        # 基线取数范围（fetch_hf.py --include 原样记下的）跟着一起传 —— 两侧同口径
+        new_names, used_idx = remote_names(repo, sha, files, fetched.get("include_globs"))
         new_cfg = (json.loads(_get(RESOLVE.format(repo=repo, rev=sha, path="config.json"),
                                    _token_header()))
                    if "config.json" in files else {})
@@ -209,9 +261,17 @@ def check(mid: str, repo: str, facts: str = FACTS) -> dict:
     r["config_changed"] = config_diff(_read(os.path.join(fdir, "cfg.json")) or {}, new_cfg)
     old_names, src = local_names(fdir)
     if old_names is None or new_names is None:
-        why = src if old_names is None else "新 sha 下没有 safetensors index"
+        if old_names is not None:
+            why = ("新 sha 下没有落在基线取数范围里的 safetensors index"
+                   f"（include_globs={fetched.get('include_globs')}）"
+                   if fetched.get("include_globs") else "新 sha 下没有 safetensors index")
+        else:
+            why = src
         return {**r, "status": "no-baseline", "why": f"sha 变了，但没法比张量名：{why}"}
     r["names_source"] = src
+    # 用了远端哪几份清单要能看见 —— 比错对象那次之所以长期没人发现，就是因为输出里
+    # 只有「names-changed」和一长串名字，没有「这串名字是从哪份 index.json 读的」
+    r["remote_index"] = used_idx
     added, removed = sorted(new_names - old_names), sorted(old_names - new_names)
     if added or removed:
         return {**r, "status": "names-changed", "added": added, "removed": removed}

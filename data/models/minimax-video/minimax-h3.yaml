@@ -95,6 +95,10 @@ sources:
 
 hf:
   repo: MiniMaxAI/MiniMax-H3
+  # **这里钉的是取数时的 commit，不是上游当前 head** —— schema 写明它的用途是
+  # 「保证 shapes/config 可复现」。上游 11-09 已前进到 0919fb68，而本记录所有
+  # 实测数都出自 42ed227e，所以这个字段不跟着动；那次变化是什么、为什么不必
+  # 重取，见 R7。
   sha: 42ed227ee7df40d41602854ae760620d6eb651fe
   last_modified: '2026-08-13T01:46:29.000Z'
   pipeline_tag: image-text-to-video
@@ -779,6 +783,37 @@ review:
       **后果是端到端 FLOPs 在这份记录里算不出来**，`derive.py` 会明说缺这一项
     resolution: open
     changed_to: 留空并在 sampling.note 与 open_questions 写明是哪一种空
+  - id: R7
+    field: hf.sha
+    severity: stale
+    claim: >-
+      记录钉 42ed227e（取数于 10-30），而 HF 当前 head 是 0919fb68 ——
+      巡检报的是「记录的 sha 过期了」
+    finding: >-
+      **sha 过期，但权重没变 —— 这两件事要分开说。**
+      逐项比两个 rev 的文件树：**309 个条目两侧同名同大小，只有 README.md
+      38,406 → 38,417 字节**（净 +11）。实读那次 diff：YAML 头的 tags 列表
+      少了两格缩进，另加了一个 `language:` 块（sv/en/fr/de/es/nl）。
+      权重侧零变化，所以 facts/ 的取数快照不重取、记录里实测自权重的数全部照旧。
+
+      **顺带挖出 refresh_check 的一个假阳**：它此前稳定把这一份报成
+      `names-changed`（措辞是「结构变了，要重新取数、重走审计」）。
+      根因是 `remote_names()` 取「文件列表里第一份 index.json」，而这个仓有 8 份 ——
+      第一份是 `FL2VA/text_encoder/`（1,058 个键），基线却是
+      `include_globs: ['transformer/*']` 取的 DiT（638 个键），**两个集合交集为 0**。
+      于是不论上游动不动都红，而真相是 11 个字节的 README。
+      已改成按基线的取数范围过滤、取所有命中清单的并集（同一个函数在
+      minimax-m3.1-flash 上是另一个形状：两份清单各覆盖基线的一部分，
+      97 + 89,632 = 89,729 正是基线键数）。改后两份都落到 `sidecar-only`，
+      tally 两侧相同（本份 33,122,992,896）
+    resolution: corrected
+    changed_to: >-
+      **hf.sha 不动。** schema 把它定义成「取数时的 commit，保证 shapes/config
+      可复现」—— 推到一个没取过数的 rev 会让这个字段说一件它不知道的事，
+      而可复现是它唯一的用途。所以改的是两处：hf 块上方写明它钉的是取数 rev
+      而非上游 head（并指向本条），以及 scripts/refresh_check.py 的 remote_names
+      按基线取数范围取并集。要让 sha 前进，得先重取 facts/ —— 而本条的判据正说明
+      这次不必
 
 notes: >-
   **字节对账。** 四个组件的实测 numel × 每元素字节与各自 index.json 的
