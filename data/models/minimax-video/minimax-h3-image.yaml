@@ -1,0 +1,1051 @@
+id: minimax-h3-image
+family: minimax-video
+kind: image-gen
+display_name: MiniMax-H3-Image
+released: '2026-11-10'
+license: other
+license_restriction: >-
+  MiniMax-H3-Image Community License Agreement（与 H3 的那份不是同一个文件：
+  18,208 B vs 17,604 B，git blob oid 不同）。卡写明 §IV 的单独书面授权走
+  platform.minimax.io/console/license 申请。可选的 H3-Image-PE 也归在这同一份许可下
+visibility: public
+
+# **本家族第二份记录，也是本仓第一份 `kind: image-gen`。**
+#
+# 归类口径（2026-11-18 由用户定）：**记进现有 `minimax-video` 家族，不新开 family、
+# 不把生成线按模态拆成两张名册。** 理由是这一份不是一条新产品线的开端 ——
+# 它是 H3 这一个系统的图像档：transformer 的 632 条共有张量与已录 minimax-h3
+# **逐条同形同 dtype、零差异**，文本编码器与 tokenizer / processor 共 34 个文件
+# 与 H3 仓**逐位相同**。真正该触发「拆线」的是录第一个与视频无关的图像家族
+# （Flux / Qwen-Image / SD 这类），那时 `video_families` 这个键名与
+# `video_policy` 的措辞要一起改，见 open_questions。
+#
+# 取数口径沿用 minimax-h3：params.total 只算 DiT 主干、不建 arch 块、没有 KV 这笔账。
+# **但「哪套布局算主干」这件事本仓要翻过来读**：H3 的顶层 `transformer/` 是
+# diffusers 命名（638 条 `transformer_blocks.N.*`），而这个仓的顶层 `transformer/`
+# 是**原生命名**（531 条 `blocks.N.*`、qkv 融合），diffusers 那套在
+# `transformer_diffusers/`（644 条）。照后缀 glob 会把 DiT 与 VAE 各算两遍，
+# 两套的张量名**交集只有 1 个**（`token_refiner.final_norm.weight`），
+# 所以连形状冲突都报不出来。本记录取 **diffusers 布局**，理由见 counting_note。
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/MiniMaxAI/MiniMax-H3-Image
+    locator: README.md §Introduction / §Model Architecture / §Model Zoo @ 8ced60068623
+    accessed: '2026-11-18'
+    note: >-
+      官方口径来源。卡上直接给出的：生成与编辑**统一在一个 checkpoint**
+      （t2i + image editing，支持至多 16 张参考图）；直出约 16 MP、
+      4096×4096(1:1) 到 6272×2688(21:9)、**不走 upscaler**；
+      发布权重**蒸馏到 6 步（6 NFE）且无 CFG**；
+      DiT 是「the H3 architecture without the audio layers」、
+      33.1B 稠密单流、50 层 / hidden 5376 / 56 头 / FFN 14336 / 3D MM-RoPE，
+      原话 **"the same as the H3-Omni-Transformer"**；
+      文本编码器是「the full Qwen3-VL text encoder of MiniMax-H3, **unchanged**」、
+      仍取**第 50 层** hidden state；图像 VAE 是「a CNN encoder and a 2D ViT
+      decoder (24 layers)」、16× 空间下采样 / 24 latent 通道，
+      **"each transformer token covers 32x32 pixels"**；
+      权重 BF16，而「the embedding, timestep and output layers are FP32」
+  - kind: modelcard
+    url: https://huggingface.co/MiniMaxAI/MiniMax-H3-Image
+    locator: README.md §Quick Start 的 Download 表与目录树、§Request parameters、§Sizes @ 8ced60068623
+    accessed: '2026-11-18'
+    note: >-
+      部署口径：`transformer/` 66.28 GB、`pdd_fused_heads.safetensors` + `pdd_config.json`
+      12 MB（原话 **"the per-step output heads that replace the transformer's
+      output layer, and the sampling schedule"**）、`vae/` 2.34 GB FP32、
+      `tokenizer/` + `processor/` 23 MB「identical to MiniMax-H3」、
+      文本编码器 66.7 GB 标注为 **"Not in this repository"**。
+      **最后那一句与当前文件树冲突，但它不是写错了，是过期了** —— 见 review R1。
+      请求参数侧：`num_inference_steps` 只接受省略或 **6**（其它值 HTTP 400）、
+      `guidance_scale` 只接受省略或 **1**、`negative_prompt` 直接拒收、
+      prompt 截断到 4096 token、`min_generation_area` 默认 4,194,304（2048×2048）
+  - kind: repo
+    url: https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/main/transformer/config.json
+    locator: transformer/config.json 与 transformer_diffusers/config.json 全量字段 @ 8ced60068623
+    accessed: '2026-11-18'
+    note: >-
+      两份 config 互相印证且与已录 H3 逐项相同：`hidden_size` 5376 / `num_layers` 50 /
+      `num_attention_heads` 56 / `attention_head_dim` 128 / `ffn_hidden_size` 14336 /
+      `latents_dim` 24 / `patch_size` [1,2,2] / `text_dim` 5120 /
+      `time_embed_dim` 2688 / `adaln_out_features` **96768** /
+      `final_adaln_out_features` 10752 / `timestep_input_dim` 256。
+      两处只有这一份有：原生那份的 **`audio_enabled: false`**（H3 的同名键为 true）、
+      diffusers 那份的 **`num_pdd_heads: 6`** —— 即「6 个」是 config 明写的，
+      不是从张量名数出来的
+  - kind: repo
+    url: https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/main/pdd_config.json
+    locator: pdd_config.json 与 modular_model_index.json 的 sample_sigmas @ 8ced60068623
+    accessed: '2026-11-18'
+    note: >-
+      采样调度是**钉死的常数表**，两处逐值相同：`num_inference_steps: 6` 与 7 个
+      sigma [1.0, 0.9675236940383911, 0.8875485062599182, 0.75, 0.5327739119529724,
+      0.23200887441635132, 0.0]。`scheduler/scheduler_config.json` 给出
+      `MiniMaxH3Scheduler` / `euler_update_form: velocity` /
+      `shift_provided_sigmas: false` —— **没有 shift**，sigma 直接用表里的值
+  - kind: repo
+    url: https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/main/model_index.json
+    locator: model_index.json 与 modular_model_index.json 的 text_encoder 条目 @ 8ced60068623
+    accessed: '2026-11-18'
+    note: >-
+      **两条装载路径指向不同的仓，这解释了为什么卡与文件树都没错**（R1）：
+      `model_index.json`（`MiniMaxH3ImagePipeline`，原生布局）的 text_encoder 写
+      `pretrained_model_name_or_path: MiniMaxAI/MiniMax-H3` + `subfolder: text_encoder`，
+      即从 **H3 仓**取；而 `modular_model_index.json`
+      （`MiniMaxH3ImageModularPipeline`，diffusers 布局）把**每个**组件都写成
+      `MiniMaxAI/MiniMax-H3-Image` + 各自的 subfolder，text_encoder 指**本仓**。
+      前者还带 `_minimax_h3.partition: image` 与 `tasks: ["t2i", "edit"]`，
+      与 H3 的 `fl2va` / `ref2va` 两个分区同构
+  - kind: repo
+    url: https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/tree/main
+    locator: HF tree API（recursive + expand，三页游标）100 个文件的 size 与 LFS/git oid @ 8ced60068623
+    accessed: '2026-11-18'
+    note: >-
+      权重清单与跨仓比对的一手来源，**没有下权重**：逐分片 Range 读 safetensors 头，
+      跨仓同一性按 oid 判（LFS 文件按 LFS sha256、文本文件按 git blob sha1）。
+      按组件分开统计：`transformer_diffusers/` 12 分片 644 张量、
+      `transformer/` 12 分片 531 张量、`vae/` 单文件 416 张量、
+      `vae_diffusers/` 单文件 511 张量、`pdd_fused_heads.safetensors` **2** 张量、
+      `text_encoder/` 14 分片。全仓 100 个文件合计 204,016,543,520 B（190.005 GiB）
+  - kind: repo
+    url: https://huggingface.co/api/models/MiniMaxAI/MiniMax-H3-Image/commits/main
+    locator: commits/main 全部 11 条，以及 7b6142f879 / 492fd8c4ec 两个修订的文件树 @ 2026-11-18
+    accessed: '2026-11-18'
+    note: >-
+      提交史是 R1 与 `released` 这两条判断的依据：首个提交 **7b6142f879
+      (2026-11-10T14:50:23Z)** 就带全部原生权重（transformer 12 分片 + vae + pdd heads，
+      模型文件合计 68,651,473,216 B = 卡上 Model Zoo 的 **68.65 GB**，逐字对上）；
+      同日 **492fd8c4ec (16:21:40Z)**「Add diffusers format weights (#2)」一次加进
+      `text_encoder/` + `transformer_diffusers/` + `vae_diffusers/` + `scheduler/`
+      + `modular_model_index.json`。之后 README 又被改过两次（#8 / #18），
+      「Not in this repository」那一行一直没动
+
+hf:
+  repo: MiniMaxAI/MiniMax-H3-Image
+  sha: 8ced60068623def5b74b4d10558117cb61d6482d
+  last_modified: '2026-11-16T10:00:08.000Z'
+  pipeline_tag: text-to-image
+  gated: false
+
+lineage:
+  track: side
+  predecessor: minimax-h3
+  # **不是「较小档位」那种 side，是同一主干的另一个模态档。**
+  # H3 仍是本家族旗舰（视频 + 音频），这一份是它的图像微调：
+  # HF 标签 `base_model:finetune:MiniMaxAI/MiniMax-H3`，卡说「from the MiniMax H3 family」。
+  # 和语言模型线的 minimax family（MiniMax-M3）仍然毫无关系 —— 文本编码器用的是
+  # Qwen3-VL 而不是自家 M 系列，两条线连组件都没共用。
+  changed_from_predecessor:
+    - axis: modality
+      text: >-
+        音频整条支路撤掉：原生 config 的 `audio_enabled` 由 true 变 **false**，
+        清单侧 **4 条音频进出口投影消失**（`audio_proj_in` / `audio_proj_out`
+        的 weight 与 bias，共 349,472 参数），音频 VAE（H3 那份 151,326,585 参数 /
+        605,306,340 B）不再随仓发布。视觉 VAE 从 f16t4d24 的视频 VAE
+        （2,603,868,984 参数 / 10,415,475,936 B）换成图像 VAE
+        （584,228,408 / 2,336,913,632 B，**1/4.46 的参数**）
+      benefit: >-
+        一次部署的常驻权重从 134.13 GiB 降到 126.05 GiB，少掉的两块（音频 VAE 与
+        大 VAE 的解码器）都在 DiT 之外。**而 DiT 本体一个字节没省** ——
+        626 条 BF16 张量的字节数两份**完全相等**（66,211,541,504 B）
+    - axis: decoding
+      text: >-
+        单个输出投影换成**按去噪步展开的 6 个输出头**：diffusers 布局里
+        H3 的 `proj_out.{weight,bias}` 不见了，换成 `pdd_proj_out.{0..5}.{weight,bias}`
+        12 条；原生布局里 `final_layer.video_out` 仍在，6 个头另装在根目录的
+        `pdd_fused_heads.safetensors` 里、堆成 **2 条**张量
+        （`video_out.weight [6, 96, 5376]` / `video_out.bias [6, 96]`）。
+        步数由 6 个 sigma 区间钉死，`num_inference_steps` 只接受 6
+      benefit: >-
+        6 步、每步一次前向（无 CFG）—— H3 那份 CFG 已蒸馏但**步数未知**，
+        所以这是本家族第一份端到端 FLOPs 算得出来的记录。
+        代价是输出层不再是一套权重：**6 个头常驻，每步只用其中一个**
+    - axis: precision
+      text: >-
+        F32 张量从 12 条变 18 条：H3 的 12 条是时间步嵌入 4 条 + 视频/音频进出口 8 条；
+        这一份是时间步嵌入 4 条 + 图像入口 `proj_in` 2 条 + **6 个输出头 12 条**，
+        合计 77,814,528 B（H3 68,888,576 B）。卡把这件事说成
+        「the embedding, timestep and output layers are FP32」，与清单逐项对上
+      benefit: >-
+        输出头单独保持 F32 是**按步展开之后才有的新面**：H3 只有一个 F32 出口
+        （516,192 参数），这一份有六个
+    - axis: scale
+      text: >-
+        主干参数 33,122,992,896 → **33,125,224,384**（+2,231,488）。
+        逐因子：+6 个输出头 3,097,152 − 原 `proj_out` 516,192
+        − `audio_proj_in` 177,408 − `audio_proj_out` 172,064 = +2,231,488
+      benefit: >-
+        规模上这不是一次扩容（+0.0067%），而是一次**出入口换装**。
+        六个子系统桶里有五个与 H3 **逐位相等**，只有 `io_proj` 变了
+        （28,917,632 → 31,149,120）
+
+params:
+  total: 33125224384
+  # 稠密单流，没有 MoE 路由、没有跨步复用，每步对全部 token 过全部权重。
+  # 但**有一处例外，是 H3 那份没有的**：6 个输出头每步只用一个，
+  # 所以严格说激活参数比总量少 5 个头（2,580,960）。
+  # 这里仍按总量填，差 0.0078%，理由与量化见 counting_note。
+  active_decode: 33125224384
+  active_prefill: 33125224384
+  breakdown:
+    adaln_modulation: 13055204736
+    ffn: 11560550400
+    self_attention: 7707046400
+    token_refiner: 770730752
+    text_proj: 27530496
+    pdd_heads: 3097152
+    norm: 542976
+    patch_embed_image: 521472
+  counting_note: >-
+    **只含 DiT 主干，取 diffusers 布局 `transformer_diffusers/`**（12 分片 644 张量），
+    逐项统计：BF16 626 条 + F32 18 条，无 scale 容器、无打包容器，numel 即参数数；
+    33,125,224,384 × 加权字节 = **66,289,356,032 B**，与该目录 index.json 的
+    `total_size` 逐字相同。
+
+    **这个仓有两套并列布局，按后缀 glob 会把 DiT 与 VAE 各算两遍。**
+    原生 checkpoint 在顶层 `transformer/`（531 条 `blocks.N.*`，qkv 融合、mlp 叫
+    `fc1/fc2`）与 `vae/`（416 条）；diffusers 导出在 `transformer_diffusers/`
+    （644 条 `transformer_blocks.N.*`，qkv 拆成 to_q/to_k/to_v）与
+    `vae_diffusers/`（511 条）。两套 DiT 的**张量名集合交集只有 1 个**
+    （`token_refiner.final_norm.weight`），所以合并时**连形状冲突都报不出来** ——
+    `fetch_hf.py` 见到 index.json 就取全部 safetensors，这正是 `collect_shapes`
+    在 M3.1-Flash 的 `dspark/` 上踩过的形状。取数用
+    `--include 'transformer_diffusers/*'` 把范围收到一个组件上。
+
+    **为什么取 diffusers 而不是原生**：已录的 minimax-h3 量的是它的顶层
+    `transformer/`，而那一套是 diffusers 命名 —— 只有在同一套命名下，
+    「632 条共有张量逐条同形同 dtype、零差异」这个比对才做得出来。
+    注意**两份记录的目录名正好相反**：H3 的顶层是 diffusers、原生在 `FL2VA/`；
+    这一份的顶层是原生、diffusers 在 `_diffusers` 后缀下。
+
+    **两套布局的差额逐因子对平，到字节**：
+    原生 33,122,643,440 参数 / 66,279,032,256 B（= 其 index.json 的 total_size），
+    加上 `pdd_fused_heads.safetensors` 的 3,097,152 / 12,388,608 B，
+    减去原生里那条**被输出头取代的** `final_layer.video_out` 516,192 / 2,064,768 B，
+    再减去 diffusers 不带的 `rope.inv_freq` 16 / 64 B，
+    得 **33,125,224,384 / 66,289,356,032 B** —— 与 diffusers 布局逐位相同。
+    **所以「两套不是两个模型」这件事这一份有四个因子的对账，不只是字节数相近。**
+
+    **三块不在这个数里**（口径与 minimax-h3 一致）：
+    文本编码器 Qwen3-VL-32B 33,357,390,064 参数 / 66,714,780,128 B
+    （**与 H3 仓逐位相同的同一份权重**，见 generation.text_encoders）、
+    图像 VAE 584,228,408 / 2,336,913,632 B（全 F32）。
+    一次 t2i 推理三块都要在，合计 **67,066,842,856 参数 /
+    135,341,049,792 B（126.05 GiB）**。H3 那份是四块 69,235,578,529 /
+    144,015,992,484 B（134.13 GiB）—— 差的是音频 VAE 与大 VAE 的解码器。
+
+    **6 个输出头与「激活参数」**：每个头 516,192 参数（[96, 5376] + [96]），
+    每个去噪步只用其中一个，所以单步真正过数据的是
+    33,125,224,384 − 5 × 516,192 = **33,122,643,424**。
+    `params.active_*` 仍填总量，差 2,580,960（0.0078%）；
+    `param_scaling.per_video_token` 同样把 6 个头全算进去，
+    于是单步线性 FLOPs 高 2 × 2,580,960 × token 数 —— 默认档 16,384 token 下是
+    8.457e10，占单步线性项的 **0.0128%**。**量级可忽略，口径要说明**：
+    六个头是常驻权重（驻留账对），但不是每步都算（算力账偏高这一点点）。
+
+    分桶口径（`breakdown` 按**部件**，沿用 H3 那份的切法以便逐项对照）：
+    `adaln_modulation` 含逐层 `adaln_proj.linear`（[96768, 2688]，96768 = 18 × 5376）、
+    `norm_out.linear`（[10752, 2688]）与 `time_embedder`；
+    `self_attention` 含 q/k/v 三个 [7168, 5376]、o [5376, 7168] 与 [128] 的 QK-norm；
+    `ffn` 含 [28672, 5376] 的 gate+up 融合与 [5376, 14336] 的 down；
+    `token_refiner` 是入口那 2 层 refiner 的全部权重；
+    `pdd_heads` 是 6 个按步展开的输出头；
+    `patch_embed_image` 只有入口 `proj_in`（[5376, 96]，96 = 24 latent 通道 × 1×2×2），
+    **出口不在这一桶里** —— H3 的 `patch_embed_video` 1,037,664 是入口 + 出口两条，
+    这一份出口被 `pdd_heads` 取代，所以这一桶 521,472 只剩入口那一半。
+
+    **`breakdown` 与页面「按子系统」表是两套分桶，逐项对账**（与 H3 同一套换算，
+    五桶数值完全相同）：
+    `modulation` 13,039,369,728 = `adaln_modulation` 13,055,204,736 − `time_embedder`
+    15,835,008（后者另立 `time_embed` 桶）；
+    `attention` 8,015,314,944 = `self_attention` 7,707,046,400 − QK-norm 12,800
+    + refiner 注意力 308,281,344；
+    `dense_ffn` 12,022,972,416 = `ffn` 11,560,550,400 + refiner FFN 462,422,016；
+    `norm` 583,168 = 542,976 + 12,800 + 27,392；
+    **`io_proj` 31,149,120 = `patch_embed_image` 521,472 + `text_proj` 27,530,496
+    + `pdd_heads` 3,097,152** —— 这是六个桶里唯一与 H3 不同的一个
+    （H3 28,917,632 = 入口+出口 1,037,664 + 文本 27,530,496 + 音频进出口 349,472）。
+    `breakdown.token_refiner` 在子系统轴上不存在，被摊成 attention 308,281,344
+    + dense_ffn 462,422,016 + norm 27,392。
+    子系统轴上**没有 `other` 桶、也没有 `audio` 桶**：644 条全部归进词表，
+    而音频塔这一份压根没有。`pdd_proj_out.N.*` 落 `io_proj` 是
+    `(?:^|[._])proj_(?:in|out)\b` 命中的（下划线算 `[._]`），**归类正确、无需改共享词表**。
+
+    **`modulation` + `time_embed` == `param_scaling.per_sample` 这条恒等在这一份也成立，
+    而且是逐位相等**：13,039,369,728 + 15,835,008 = 13,055,204,736，两边张量集合完全相同
+    （各 106 条：50 层 × 2 个 `adaln_proj.linear` + `norm_out.linear` 2 条
+    + `time_embedder` 4 条），双向取差都是空集。前提仍是**单流**（见 H3 那份的作用域说明）。
+    本仓这是第 **5** 份带 `param_scaling` 的记录，成立 4 份、
+    hunyuanvideo-1.5 不成立（原因在 `scripts/lib/subsystems.py` 里拆清了）。
+    占主干 **39.40%**（H3 39.41%，差的那一点是分母变大）。
+
+generation:
+  backbone:
+    stream_design: single
+    layers: 50
+    double_blocks: 0
+    single_blocks: 50
+    hidden: 5376
+    heads: 56
+    head_dim: 128
+    head_dim_note: >-
+      **heads × head_dim = 7168 ≠ hidden 5376**，与 H3 逐字相同：
+      q/k/v 是 [7168, 5376]、o 是 [5376, 7168]（权重实测）。
+      注意力内维比残差流宽 33%，拿 hidden 去推注意力投影的规模会低估三分之一
+    ffn: 14336
+    refiner_layers: 2
+    text_conditioning: in_sequence
+    param_scaling:
+      per_sample: 13055204736
+      per_video_token: 20070019648
+      note: >-
+        **AdaLN 调制是逐样本的，占主干 39.40%。** 形状上就能断定，判据与 H3 同一条：
+        `adaln_proj.linear` 是 [96768, **2688**] 而 hidden 5376 ——
+        入口宽度不等于 token 宽度，不可能在吃 token 流；2688 正是
+        `time_embedder.linear_2` 的出口（[2688, 5376]），
+        两份 config 的 `time_embed_dim: 2688` 是第三路印证。
+        **`per_sample` 与 H3 逐位相同**（13,055,204,736），
+        因为那 106 条张量在两份里同名同形同 dtype。
+
+        桶名沿用 `per_video_token`，但这一份**没有视频**：它实际是「逐序列 token」
+        —— 图像 latent token 与文本 token 拼在同一条序列里
+        （`text_conditioning: in_sequence`，卡原话「All tokens form one packed
+        sequence」），编辑模式下还要加上参考图的 latent token。记录没给文本长度，
+        所以推导出的序列长度是**下界**。
+
+        `per_video_token` 比 H3 多 2,231,488，全部来自 `io_proj` 那一桶的换装
+        （+6 头 3,097,152 − 原出口 516,192 − 音频进出口 349,472）。
+        **其中 5 个头每步不算** —— 单步线性项因此高 0.0128%，
+        量化与理由见 `params.counting_note`
+    patch_size: [1, 2, 2]
+    position: 3D MM-RoPE (t, h, w)，rope_freq_dim 16、rope_theta 10000
+    note: >-
+      **主干与已录 minimax-h3 的差异只有出入口**：diffusers 命名下两份清单
+      644 vs 638 条，**共有 632 条逐条同形同 dtype、零差异**；
+      只这一份有的 12 条全是 `pdd_proj_out.{0..5}`，只 H3 有的 6 条是
+      `audio_proj_in/out` 与 `proj_out`。卡原话 "the same as the
+      H3-Omni-Transformer" 与 "without the audio layers" 都对得上，
+      而**清单比那句话更紧** —— 它说的是 50 层里的注意力、FFN、AdaLN、norm
+      **一个字节都没动**（626 条 BF16 合计 66,211,541,504 B，两份相等）。
+
+      patch 三路一致：两份 config 的 `patch_size` [1,2,2]、
+      `proj_in.weight [5376, 96]`（96 = 24 × 1×2×2）、
+      以及卡的「patchifies the latent with a 2x2 patch, so each transformer token
+      covers 32x32 pixels」。时间维 1 是退化的 —— 图像只有一帧。
+
+      AdaLN 那 96768 = 18 × 5376 在这一份仍然是 **18**，而不是降到 12：
+      H3 的 96768 读作「3 种模态 × 6 组调制」，音频撤掉之后这个数**一字未改**
+      （两份 config 的 `adaln_out_features` 相同、张量同形）。
+      **所以「18 = 3 × 6」这个读法在这一代只是一种解释，不是权重能证明的事** ——
+      要么第三条模态位在图像档里空着，要么分解根本不是 3×6。见 open_questions
+
+  vae:
+    spatial_compression: 16
+    latent_channels: 24
+    decoder_arch: transformer
+    params: 584228408
+    name: H3-Image VAE（CNN 编码器 + 24 层 2D ViT 解码器）
+    note: >-
+      **编码器与 minimax-h3 的视频 VAE 逐张量同形**：diffusers 命名下两侧各 116 条，
+      **116/116 同名同形同 dtype**，合计 180,335,536 参数 / 721,342,144 B，
+      `quant_conv.weight` 两侧都是 [48, 48, 1, 1, 1]（**5 维，仍是 3D 卷积**）。
+      换掉的是解码器：403,889,920 参数 / 391 条（H3 2,423,530,496 / 583 条，
+      **这一份是 1/6**），`vit_decoder_2d: true`、24 层 / 16 头 × 64 dim_head
+      （H3 是 36 层 / 32 头），`post_quant_conv.weight` 从 [24,24,1,1,**1**]
+      降成 [24,24,1,1] —— **解码入口由 3D 卷积改成 2D，编码侧没改**。
+
+      **「编码器权重是否逐位相同」没有验到。** 整文件 LFS oid 不同，但那个文件里
+      编码器和解码器打包在一起，**整文件不同推不出编码器不同** ——
+      要判只能下权重逐张量比，本次没做。形状与 dtype 全同是目前的上限。
+
+      `temporal_compression` **按 schema 留空**（image-gen），但要注意
+      `vae_diffusers/config.json` **仍带 `temporal_downsample_factors: [1,2,2,1,1,1]`
+      （连乘 4）与 `vae_clip_length: 17`** —— 编码器的时间栈原封不动留着，
+      只是图像只有一帧、用不上。`vae_token_drop` 从 H3 的 3 变成 **0**，
+      这正是 H3 那条 `T = ceil(F/17)×5 − 3` 里被减掉的那个 3。
+      **所以这一份没有 H3 R3 那个「块内卷积比 ≠ 端到端比值」的坑** ——
+      单帧没有分块。
+      `causal` 留空：配置里没有 `causal_encoder` / `causal_decoder` 这两个键，
+      而单帧上时间因果性不可判，不替它填。
+
+      两套布局的 VAE 差 **1,024 个参数**，逐因子对平：原生 `vae/`
+      584,229,432 / 416 条带一条 `decoder.mask_token [1, 1, 1024]`，
+      **diffusers 导出把它丢了**（584,228,408 / 511 条）。
+      其余全是改名（`to_qkv` 拆成 `to_q/to_k/to_v`、`ff.w1/w2` 换成
+      `ff.net.0.proj/net.2`、`x_embedder` 换成 `proj_in`、
+      `encoder.down.N.block` 换成 `encoder.down_blocks.N.resnets`）。
+      本记录填 diffusers 那个数以与 params 同布局；
+      **`mask_token` 掉了意味着 diffusers 这条路少一个能力**，见 open_questions
+
+  text_encoders:
+    - role: primary
+      name: Qwen3-VL-32B（取第 50 层 hidden state，与 MiniMax-H3 同一份权重）
+      hf_repo: Qwen/Qwen3-VL-32B
+      ref_external: Qwen/Qwen3-VL-32B
+      params: 33357390064
+      hidden: 5120
+      shipped_with_weights: true
+      gated: false
+      release_dtype: BF16
+      hidden_layer_taken: 50
+      substitutable: false
+      note: >-
+        **本仓第一份「同一主干跨模态复用」的逐位证据。**
+        `text_encoder/` 的 14 个分片与 MiniMax-H3 仓的
+        `text_encoder/`、`FL2VA/text_encoder/`、`Ref2VA/text_encoder/`
+        **LFS sha256 两两相同**（14/14，合计 66,714,912,872 B）；
+        连同 `text_encoder/` 下 9 个非 LFS 文件、`tokenizer/` 4 个、`processor/` 7 个
+        （git blob sha1 逐个相同），**共 34 个文件、66,749,500,959 B（62.165 GiB）
+        与 H3 仓逐位相同**。厂商自己在 `model_index.json` 里写明了这件事：
+        原生那条装载路径直接从 `MiniMaxAI/MiniMax-H3` 的 `text_encoder/` 取。
+        卡的说法是「the full Qwen3-VL text encoder of MiniMax-H3, **unchanged**」。
+
+        参数量 33,357,390,064 / 66,714,780,128 B **不是在这一份上重测的** ——
+        权重逐位相同，所以 numel 必然相同，数字引自 minimax-h3 那份记录的实测。
+        config 侧本次复核过：text 64 层 / hidden 5120 / 64 头 / 8 KV 头 /
+        intermediate 25600 / vocab 151936，vision 27 层 / hidden 1152 /
+        patch 16 / out_hidden 5120 —— 与 H3 的 `text_encoder/config.json`
+        **git blob oid 相同**，即同一份文件。
+
+        **它仍然比 DiT 本体大**：参数 1.0070 倍、字节 1.0064 倍。
+        取第 50 层（共 64 层）意味着后 14 层推理时可以不跑，但权重照发。
+        编辑模式下参考图也由它编码（卡：「the reference images are encoded by
+        the H3 text encoder」），所以这一侧的负载随参考图数量涨 —— 至多 16 张
+
+  sampling:
+    steps: 6
+    cfg:
+      scale: 1
+      distilled: true
+      embedded: false
+      forwards_per_step: 1
+    step_distilled:
+      available: true
+      steps: 6
+      checkpoint: MiniMaxAI/MiniMax-H3-Image（就是这一份，没有未蒸馏版）
+      note: >-
+        **CFG 蒸馏与步数蒸馏两根轴在这一份上都拉满了，而且不可调。**
+        卡原话「distilled to 6 sampling steps (6 NFEs) with no
+        classifier-free guidance」；服务端把它做成硬约束：
+        `num_inference_steps` 省略或 6、`guidance_scale` 省略或 1，
+        其它值返回 HTTP 400，`negative_prompt` 直接拒收。
+        `pdd_config.json` 与 `modular_model_index.json` 各存一份同样的 7 个 sigma
+    scheduler: MiniMaxH3Scheduler（flow matching，euler / velocity 形式）
+    note: >-
+      **这是本家族第一份端到端 FLOPs 算得出来的记录** —— H3 那份卡与厂商脚本都不给步数
+      （见它的 R5），这一份把步数钉成了常数表：6 个 sigma 区间
+      [1.0, 0.9675, 0.8876, 0.75, 0.5328, 0.2320, 0.0]（7 个端点），
+      两处文件逐值相同。`shift_provided_sigmas: false` 说明**没有 shift 折算**，
+      与 H3 的视频 / 音频两套 sigma_shift（12.0 / 3.0）形成对照。
+      每步一次前向（CFG 已蒸馏），所以端到端 = 6 × 单步
+
+  pipeline_stages:
+    - name: H3-Image-Context-IR
+      model: 未开源（托管服务 /v1/h3_image_context_ir）
+      open_source: false
+      note: >-
+        把任意语言的短提示改写成详细英文描述，并选定 size。
+        **这一段未开源**，卡只给 API；仓里的 `examples/context_ir.py` 是调
+        `/v1/h3_image_context_ir` 的客户端脚本（读 `MINIMAX_API_KEY`），
+        **不是权重** —— 这一点与 H3 记录里「Context-IR 未开源」的结论一致，
+        不要把那个脚本当成开源了。
+        官方给的本地替代是 `MiniMaxAI/MiniMax-H3-Image-PE`（见 notes），
+        **那不是 MiniMax 自己的模型**
+    - name: H3-Image 生成 / 编辑
+      model: same-backbone
+      steps: 6
+      forwards_per_step: 1
+      out_width: 4096
+      out_height: 4096
+      open_source: true
+      note: >-
+        本记录覆盖的就是这一段，t2i 与 edit 同一个 checkpoint。
+        **没有 upscaler 段** —— 卡明说 16 MP 是直出（「directly and without an
+        upscaler」），与 H3 的 Regenerate-2K 那一段形成对照
+
+  buckets:
+    - width: 4096
+      height: 4096
+      default: true
+      note: >-
+        1:1 的 16 MP 档，卡 §Sizes 表第一行，也是 §Highlights 点名的
+        「16 megapixel (4096 × 4096)」。16,777,216 像素 /（32×32）=
+        **16,384 latent token**。官方 `examples/revised_size.edit.txt` 这一档
+    - width: 4736
+      height: 3552
+      note: 4:3，16,822,272 像素 → 148 × 111 = 16,428 token。官方 `examples/request.t2i.json` 用的就是这一档
+    - width: 5024
+      height: 3360
+      note: 3:2，16,880,640 像素 → 157 × 105 = 16,485 token（五档里 token 最多的一档）
+    - width: 5472
+      height: 3072
+      note: 16:9，16,809,984 像素 → 171 × 96 = 16,416 token
+    - width: 6272
+      height: 2688
+      note: 21:9，16,859,136 像素 → 196 × 84 = 16,464 token（卡上最宽的一档）
+
+  constraints:
+    width_divisor: 32
+    height_divisor: 32
+    note: >-
+      除数 32 = VAE 空间压缩 16 × DiT patch 2，**卡自己把它写成了结论**
+      （「each transformer token covers 32x32 pixels」），
+      而不是像 H3 那样要从「有效 32× 空间下采样」推。
+      卡 §Sizes 的五档 10 个边长**全部被 32 整除**，逐个验过。
+      **没有帧数约束** —— 单帧，H3 那条 `17n+5` 在这一份上不存在。
+
+      另有一条 H3 没有的服务端约束：`min_generation_area` 默认 **4,194,304**
+      （2048×2048 = 4 MP），比它小的 `size` 会**先在更大的画布上生成、
+      再用 LANCZOS 缩回**，传 1024 才关掉。
+      所以「请求了小图」不等于「算得少」：**负载下界是 4 MP 的 token 数
+      （4,096 token），不是请求的尺寸**。
+      卡说有效工作区间约 4–20 MP、16 MP 附近最好
+
+  checkpoint_variants:
+    - name: transformer_diffusers（diffusers 导出）
+      role: base
+      bytes: 66289356032
+      resident: true
+      note: 本记录的 params 量的就是它。6 个输出头已折进这套清单
+    - name: transformer + pdd_fused_heads.safetensors（原生）
+      role: base
+      bytes: 66291420864
+      resident: false
+      note: >-
+        **同一份权重的另一种存法，不是第二个模型** —— 四因子对账见
+        `params.counting_note`。66,279,032,256 + 12,388,608；
+        其中 `final_layer.video_out`（2,064,768 B）被 6 个头取代、照卡的说法不再使用。
+        SGLang / vLLM-Omni 走的是这一套（`model_index.json`），
+        diffusers 走另一套（`modular_model_index.json`）。
+        **两套都在仓里，但一次部署只用一套**
+    - name: text_encoder（Qwen3-VL-32B）
+      role: text-encoder
+      bytes: 66714780128
+      resident: true
+      note: >-
+        与 MiniMax-H3 仓逐位相同（14 个分片 LFS oid 两两相同）。
+        原生那条装载路径从 H3 仓取，**已经有 H3 的人不会重复下载**
+    - name: vae_diffusers
+      role: vae
+      bytes: 2336913632
+      resident: true
+      note: 原生 `vae/` 是 2,336,917,728 B，多一条 `decoder.mask_token`
+    - name: MiniMax-H3-Image-PE
+      role: prompt-expander
+      bytes: 17937191286
+      resident: false
+      note: >-
+        **不是 MiniMax 的模型** —— HF 标签 `base_model:quantized:Qwen/Qwen3.8-27B`、
+        `model_type: qwen3_5`、NVFP4（`quantization_config` 实测
+        num_bits 4 / group_size 16 / modelopt）。它是未开源的 Context-IR 的本地替代，
+        卡把它列在 Model Zoo 里并归在同一份许可下。
+        列在这里是为了把「它要不要常驻」说清楚：**不要**，提示改写跑完就可以卸。
+        详见 notes
+
+precision:
+  weights_release: [BF16, FP32]
+  weights_release_scope:
+    BF16:
+      manifest_taken: true
+      in_precision_table: true
+      repo: MiniMaxAI/MiniMax-H3-Image
+      note: >-
+        DiT 的 626 / 644 条是 BF16（注意力 208、FFN 104、调制 102、norm 210、
+        文本入口 `context_embedder` 2 条 —— 加起来正好 626，**与 H3 那份逐桶相同、
+        字节合计也相同：66,211,541,504 B**）。文本编码器 1058 条全 BF16
+        （同一份权重，未重测）。卡的 Model Zoo 表写「BF16 (DiT)」
+    FP32:
+      manifest_taken: true
+      in_precision_table: true
+      repo: MiniMaxAI/MiniMax-H3-Image
+      note: >-
+        **这一份的 F32 是 18 条，比 H3 多 6 条，而卡这次自己说了**
+        （「the embedding, timestep and output layers are FP32」，与清单逐项对上）：
+        时间步嵌入 4 条（`time_embedder.linear_1/2` 的 weight 与 bias，15,835,008 参数）、
+        图像入口 `proj_in` 2 条（521,472）、**6 个输出头 12 条（3,097,152）**。
+        合计 77,814,528 B（H3 68,888,576 B）。
+        图像 VAE 的 416 / 511 条**全部** F32（卡也写了「Image VAE, FP32」）。
+        即「BF16 模型」说的是主干与文本编码器，**VAE 整体与进出口 / 时间步是 F32**
+  quantization:
+    per_subsystem:
+      attention: BF16
+      dense_ffn: BF16
+      modulation: BF16
+      norm: BF16
+      io_proj: MIXED
+      time_embed: FP32
+    subsystem_method: >-
+      **对 diffusers 布局的完整权重清单 644 条逐项穷举，不是抽样**：12 个分片的
+      `weight_map` 全覆盖、`failed_shards` 为空、`duplicate_tensors` 为 0，
+      626 BF16 + 18 F32，numel × 每元素字节 = 66,289,356,032 B 与
+      `transformer_diffusers/` 的 index.json `total_size` 逐字相同。
+      取数用 `fetch_hf.py --include 'transformer_diffusers/*'` 把范围收到一个组件上
+      （不收窄会把两套布局各算一遍，见 `params.counting_note`）。
+
+      **六个桶里仍然只有 `io_proj` 一个是混的，另外五个与 H3 逐位相同。**
+      18 条 F32 落在两个桶：`time_embed`（4 条、15,835,008，**整格 100% F32**）、
+      `io_proj`（`proj_in` 2 条 + `pdd_proj_out.{0..5}` 12 条，共 3,618,624 F32，
+      与同桶 BF16 的 `context_embedder` 27,530,496 并存）。
+
+      **`io_proj` 报 MIXED 的判据与 H3 同一条**：这一桶装齐了这份模型的全部进出口投影
+      —— 图像入口 `proj_in`（F32）、文本入口 `context_embedder`（BF16，
+      它接的正是 BF16 的文本编码器）、按步展开的 6 个出口（F32）——
+      **每一半都货真价实属于这个桶**，所以是真混合，不是「多数值 + 异类」。
+      而占比在这一格上仍然自相矛盾，这也是不能报代表值的理由：
+      按元素数 88.38% 是 BF16（27,530,496 / 31,149,120），
+      按条目数 87.5% 是 F32（14/16）—— 两套计数基各指一个「多数」。
+      报 BF16 会让「图像入口与 6 个输出头是 F32」从表上消失，
+      报 FP32 会让文本入口消失。
+
+      没有 quantization_config、没有 scale 容器、没有低位打包，所以**本记录没有
+      `per_subsystem_scale` / `per_subsystem_block` 两个字段**。
+
+      **空桶不补行，理由与 H3 同**：`other` 空是因为 644 条没有一条归不进词表；
+      `audio` 空是因为按功能分桶之后它量的是音频塔 / 音频编码器，
+      **而这一份连 H3 那 32 通道的音频 latent 进出口都撤掉了**（`audio_enabled: false`）
+      —— 这一格的「不适用」在这一份上比 H3 更彻底。
+      `embed` / `lm_head` / `vision` 三行仍要当心：**仓里有，只是不在这张表的作用域内**
+      —— 随仓的 Qwen3-VL-32B 自带 vocab 151936 的词表与 27 层视觉塔，
+      那 1058 条属于 `generation.text_encoders`；图像 VAE 的 416 条同理。
+      这正是「锚在内侧只守得住内侧」那条规矩的落点：**本表绿不代表这个仓的精度全查过**。
+
+      **这张表的作用域是 `transformer_diffusers/` 一个组件。** 其上缺的桶的「不适用」
+      说的是 DiT 主干里没有：稠密单流、没有 MoE（无 `expert` / `shared_expert` /
+      `router`）、不建 KV 账（无 `compressor` / `indexer`）、没有检索表、
+      没有残差系数张量、没有 MTP 块 —— 依据就是上面这次穷举。
+
+      **按步展开的输出头不是 MTP、也不是草稿头。** 名字里没有 mtp / draft，
+      `subsystems.py` 的 `draft` 词条一条都不命中（实跑确认落 `io_proj`）。
+      它展开的轴是**去噪步**，不是未来 token；6 个头形状完全相同、
+      每步只用一个，没有「用小模型猜、大模型验」那套结构。
+      这件事要是标错，页面上会长出一个不存在的投机解码范式。
+      **而「没命中」这一条是机械验过的，不只是这里的断言**：
+      `derive_paradigms.py` 跑在 61 份记录上，speculative-decoding 那条**在场**
+      （命中 25 份），而这一份五条范式一条都没命中 —— `paradigms.json` 里
+      搜不到 `minimax-h3-image`。先有「断言在场」才轮到「断言缺席」
+  inference_default: BF16
+
+bottlenecks:
+  - dimension: host-io
+    finding: >-
+      「33.1B」只说 DiT。一次 t2i 推理要同时驻留 DiT、Qwen3-VL-32B 文本编码器、
+      图像 VAE 三套权重，而**文本编码器仍比 DiT 本体大**。
+      相对 H3 省下的 8.08 GiB 全在 DiT 之外（音频 VAE 撤掉、VAE 解码器缩到 1/6），
+      **主干一个字节没省**。维度记 host-io 而不是容量，沿用本线的同一判断
+    quantified: >-
+      DiT 66,289,356,032 B + 文本编码器 66,714,780,128 B + 图像 VAE 2,336,913,632 B
+      = 135,341,049,792 B（**126.05 GiB**）；参数合计 67,066,842,856。
+      文本编码器 / DiT = 1.0070（参数）、1.0064（字节）。
+      H3 四块是 144,015,992,484 B（134.13 GiB）
+    fix: >-
+      文本编码器每次生成只跑一遍且只取到第 50 层（共 64 层），DiT 要跑满 6 步 ——
+      错峰机会与 H3 相同，且这里还能截断后 14 层。
+      **但编辑模式下这条机会变小**：参考图也要过文本编码器，至多 16 张。
+      厂商给的部署基线是 4 卡 Ulysses 序列并行（`--usp 4 --text-encoder-tp-size 4`）
+    visibility: public
+  - dimension: compute
+    finding: >-
+      **16 MP 的图像比 10 秒 768p 视频「短」得多，所以瓶颈侧换边了。**
+      H3 默认档序列 72,981 token、注意力占单步 **66.2%**；
+      这一份默认档 16,384 token（不含文本），注意力占比掉到 **30.5%**，
+      单步近七成是线性项。**同一个主干、同一套权重，两条产品线的瓶颈不在同一侧**
+    quantified: >-
+      序列 token 16,384（4096×4096 ÷ 32²）对 H3 的 72,981 —— **1/4.454**；
+      注意力项随 n² 走，于是掉到 **1/19.84**（2.886e14 对 5.727e15），
+      而线性项只掉到 1/4.454 的因子上（6.577e14 对 2.929e15）——
+      于是单步合计 9.463e14 对 8.656e15、注意力占比 30.5% 对 66.2%。
+      逐值见 `data/derived/minimax-h3-image.json`，
+      两份的单步分解可直接并排比（口径同一套：同样的 `param_scaling` 两桶公式）
+    fix: >-
+      图像档上优先优化线性层与权重搬运（这一侧与语言模型 decode 同形），
+      视频档上优先优化注意力。**不要拿一条线的 kernel 优先级套另一条**
+    visibility: public
+  - dimension: compute
+    finding: >-
+      AdaLN 调制分支占主干 39.40%，与 H3 几乎逐位相同（13,055,204,736）。
+      卡在这一份上**没有**重复 H3「输出可预计算缓存」那句话，所以那条机会在这里
+      连厂商声明都没有
+    quantified: >-
+      `params.breakdown.adaln_modulation` 13,055,204,736 / 33,125,224,384 = 39.40%，
+      等于子系统轴 `modulation` 13,039,369,728 + `time_embed` 15,835,008（逐位相等）。
+      每层 `adaln_proj.linear` [96768, 2688]
+    fix: >-
+      与 H3 同：先验「预计算后实际驻留多少」再谈收益。
+      **不要用 33.13B − 13.06B = 20.07B 当驻留量** —— 那是把参数量与激活字节相减
+    visibility: public
+  - dimension: compute
+    finding: >-
+      **6 步、每步一次前向，是这一份相对整条线最大的结构性优势** ——
+      步数不是默认值而是硬约束（其它值 HTTP 400），所以端到端算得出来、
+      也没有「用户调高步数」这条尾部风险。代价是输出层变成 6 套常驻权重
+    quantified: >-
+      端到端 = 6 × 1 × 单步（见 derived 的 `end_to_end_terms`）。
+      6 个头 3,097,152 参数 / 12,388,608 B 常驻，**每步只用 1 个**；
+      多算的 5 个让单步线性项高 0.0128%
+    fix: >-
+      记在这里是为了跨记录对照时不要把两份的「步数」直接比 ——
+      H3 的步数至今未知（它的 R5）
+    visibility: public
+
+infra_signals:
+  - text: >-
+      **同一套算子表可以覆盖两条产品线，这一份是本仓第一份逐位证据。**
+      H3-Image 与 H3 的 DiT 在 diffusers 命名下 632 条共有张量**逐条同形同 dtype**，
+      626 条 BF16 的字节合计两份完全相等；文本编码器与 tokenizer / processor
+      共 34 个文件**逐位相同**（62.165 GiB）。
+      跨模态复用在这一代不是「架构相似」，是同一批权重加换一个出入口
+    evidence: derived
+  - text: >-
+      **「图像生成比视频便宜」在序列长度上成立，在驻留权重上不成立。**
+      16 MP 图像的 latent 序列只有 10 秒 768p 视频的 1/4.45，
+      而一次部署仍要 126.05 GiB（H3 134.13 GiB）—— 省下的 6% 全在 VAE 与音频侧，
+      主干与文本编码器一个字节没动。生成类的「模型多大」和「一次算多少」
+      是两根互不相关的轴
+    evidence: derived
+  - text: >-
+      **把输出层按去噪步展开（PDD）是本仓没见过的 infra 形状，而它便宜得不像一个范式。**
+      6 个头合计 3,097,152 参数 / 12 MB，占主干 0.0093%，却把采样步数从未知变成常数 6。
+      它不是 MTP、不是草稿头：展开的轴是去噪步而不是未来 token，
+      6 个头同形、每步只用一个。infra 侧要准备的是「按步选权重」这个访存形态，
+      不是一套投机解码流程
+    evidence: judgement
+  - text: >-
+      **模型卡的仓内账会过期，而过期的方向是「少算」。**
+      这张卡的 68.65 GB 与「文本编码器不在本仓」与首个提交逐字对得上，
+      同日第二个提交加进 text_encoder 与两套 diffusers 导出之后仓变成 190.00 GiB，
+      卡又被改过两次都没跟上。**按卡读会少 62 GiB，而卡自身内部是自洽的** ——
+      这类错读靠读卡读不出来，只能拿文件树当锚
+    evidence: derived
+
+evidence:
+  id: official
+  family: judgement
+  kind: official
+  display_name: official
+  released: derived
+  license: official
+  license_restriction: official
+  hf: official
+  lineage: judgement
+  params: derived
+  generation: official
+  generation.backbone.head_dim_note: derived
+  generation.backbone.note: derived
+  generation.backbone.param_scaling: derived
+  generation.vae.params: derived
+  generation.vae.decoder_arch: official
+  generation.vae.note: derived
+  generation.text_encoders: derived
+  generation.sampling: official
+  generation.pipeline_stages: official
+  generation.buckets: derived
+  generation.constraints: derived
+  generation.checkpoint_variants: derived
+  precision: derived
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: derived
+  open_questions: judgement
+
+reviewed:
+  date: '2026-11-18'
+  method: >-
+    Gate B 两路半。**config 一路**：6 份组件 config（原生与 diffusers 各一套
+    transformer / vae，外加 text_encoder、scheduler）＋ `model_index.json`、
+    `modular_model_index.json`、`pdd_config.json`；顶层没有 config.json。
+    **清单一路**：逐分片 Range 读 safetensors 头，按组件分开量
+    （transformer_diffusers 644 / transformer 531 / vae 416 / vae_diffusers 511 /
+    pdd_fused_heads 2），不下权重。
+    **第三路是跨仓 oid 比对**（HF tree API 的 LFS sha256 与 git blob sha1），
+    它顶的是「与 H3 同不同」这个问题，不是 config × 清单那种自校验，所以算半路。
+
+    结构字段三路一致：patch (1,2,2) 在两份 config、在 `proj_in.weight [5376, 96]`
+    的 96 = 24×1×2×2、也在卡的「each transformer token covers 32x32 pixels」里；
+    hidden 5376 / layers 50 / ffn 14336 / latents_dim 24 / text_dim 5120 /
+    refiner 2 / time_embed_dim 2688 / adaln_out_features 96768 八项
+    config 与清单逐项对上，**且与已录 minimax-h3 逐项相同**。
+    `num_pdd_heads: 6` 与 `pdd_proj_out.{0..5}` 12 条、
+    `pdd_fused_heads` 的 [6, 96, 5376] 三路一致。
+    `audio_enabled: false` 与「4 条音频投影消失」两路一致。
+
+    字节对账：两套 DiT 布局的实测 numel×bpe 与各自 index.json 的 `total_size`
+    **逐字相同**（66,289,356,032 / 66,279,032,256）；
+    两套布局的差额按四个因子对平到字节（见 counting_note）；
+    VAE 两套差额对平到一条张量（`decoder.mask_token` 1,024 参数）；
+    首个提交的模型文件 68,651,473,216 B 与卡的 Model Zoo 68.65 GB 逐字相同。
+    卡的「33.1B」落在 33,125,224,384（diffusers）与 33,122,643,440（原生）之间，
+    两者都四舍五入到 33.1B，**所以这个数分辨不了布局**。
+
+    Gate C：判断类字段逐条在 evidence 里标了。
+    `--list-judgements` 新增项本轮逐条看过。
+
+review:
+  - id: R1
+    field: generation.text_encoders
+    severity: wrong
+    claim: >-
+      「模型卡写 Text encoder — Not in this repository，而 `text_encoder/` 的 14 个分片
+      就在仓里 62.14 GiB；按本仓「权重赢」以文件树为准，**要在记录里写明卡这一句是错的**」
+      —— 这是巡检交过来的结论
+    finding: >-
+      **结论的方向对（以文件树为准），但「卡是错的」这个说法不成立，而且会误导下一个人。**
+      按提交史查到底了：卡那一句在写下时是**真的**。
+      首个提交 `7b6142f879`（2026-11-10T14:50:23Z）的文件树里**没有 `text_encoder/`**
+      —— 只有 model_index.json / pdd_config.json / pdd_fused_heads.safetensors /
+      processor / tokenizer / transformer / vae，与卡 §Quick Start 里那张目录树
+      **逐项相同**；那次提交的模型文件合计 68,651,473,216 B，
+      与卡 Model Zoo 的 **68.65 GB 逐字相同**。
+      同一天 16:21:40Z 的 `492fd8c4ec`「Add diffusers format weights (#2)」
+      一次性加进 `text_encoder/` + `transformer_diffusers/` + `vae_diffusers/`
+      + `scheduler/` + `modular_model_index.json`，仓从 68.65 GB 变成 **190.00 GiB**。
+      README 此后又被改过两次（11-11 的 #8、11-12 的 #18），那一行一直没动。
+
+      **而且「卡与文件树冲突」这个前提本身也不全对**：两条装载路径指向不同的仓 ——
+      `model_index.json`（原生 / SGLang 走的那条）的 text_encoder 确实写
+      `MiniMaxAI/MiniMax-H3` + `subfolder: text_encoder`，卡那一句说的就是它；
+      `modular_model_index.json`（diffusers 那条）才指本仓。
+      **所以卡描述的是一条真实存在的路径，只是仓里后来多了另一条。**
+    resolution: corrected
+    changed_to: >-
+      记录里写成「卡这一行已过期，不是写错」，并把提交史、两条装载路径、
+      68.65 GB 的逐字对账都落成 `sources` 里的两条与这一条 review。
+      **结论不变**：参数量与驻留账按文件树算，`text_encoder/` 的 62.14 GiB 算在仓里；
+      但读者被明确告知**按卡读会少 62 GiB、而卡自身是自洽的**，
+      这比「卡错了」更能防住下一次误读。infra_signals 第四条把它抽成一条通则
+  - id: R2
+    field: params.counting_note
+    severity: wrong
+    claim: >-
+      「`transformer/` 531 个张量名（原生，qkv 融合）与 `transformer_diffusers/` 644 个
+      （拆开）—— 照 H3 的解法，取**顶层 `transformer/`**」
+    finding: >-
+      **两份记录的目录名正好相反，照搬 H3 的「取顶层 transformer/」会取到另一套命名。**
+      H3 的顶层 `transformer/` 是 **diffusers** 命名（638 条 `transformer_blocks.N.*`），
+      原生那套在 `FL2VA/` / `Ref2VA/`（535 条 `blocks.N.*`）；
+      这个仓反过来 —— 顶层 `transformer/` 是**原生**（531 条 `blocks.N.*`、
+      qkv 融合成一条、mlp 叫 `fc1/fc2`、出口叫 `final_layer.video_out`），
+      diffusers 那套在 `transformer_diffusers/`（644 条）。
+      H3 记录真正的判据不是「取顶层」而是「取 diffusers 布局」，
+      而**只有在同一套命名下，与 H3 的逐条比对才做得出来**。
+      两套名字集合交集只有 1 个（`token_refiner.final_norm.weight`），实测确认
+    resolution: corrected
+    changed_to: >-
+      取 `--include 'transformer_diffusers/*'`。`facts/minimax-h3-image/shapes.json`
+      装的就是这 644 条（`duplicate_tensors` 0、`failed_shards` 空）。
+      并把两套布局的差额按**四个因子**对平到字节
+      （+pdd 3,097,152 − `final_layer.video_out` 516,192 − `rope.inv_freq` 16），
+      所以「不是两个模型」这件事有逐因子对账，不只是字节数相近
+  - id: R3
+    field: generation.backbone.note
+    severity: wrong
+    claim: >-
+      「`audio_enabled: false` 且 **6 个音频张量消失**」
+    finding: >-
+      **是 4 条音频张量，另外 2 条是出口投影，两件事不该合成一句。**
+      diffusers 命名下只 H3 有的 6 条实测是：
+      `audio_proj_in.{weight,bias}`（177,408 参数）、
+      `audio_proj_out.{weight,bias}`（172,064）、
+      `proj_out.{weight,bias}`（516,192）。
+      前 4 条是音频撤掉，后 2 条是被 6 个输出头取代 —— 后者与音频无关，
+      它在原生布局里**还在**（`final_layer.video_out`）。
+      合成一句的后果是参数差额算不平：+2,231,488 要四个因子才对得上
+    resolution: corrected
+    changed_to: >-
+      lineage 的 modality 与 decoding 两条分开写；
+      `params.counting_note` 给出四因子对账
+  - id: R4
+    field: generation.vae
+    severity: missing
+    claim: >-
+      「DiT 与 VAE 不共享」—— 巡检按整文件 oid 得出的结论
+    finding: >-
+      **按整文件 oid 判「VAE 不共享」是不成立的推论，而逐张量比出来的结果更有意思。**
+      整文件 oid 不同是事实，但那个文件里编码器与解码器打包在一起，
+      **整文件不同推不出编码器不同**。改按张量比（diffusers 命名两侧对齐）：
+      **编码器 116 条 116/116 同名同形同 dtype**，合计 180,335,536 参数 /
+      721,342,144 B，`quant_conv.weight` 两侧都是 [48,48,1,1,1]（5 维 / 3D 卷积）；
+      解码器才是换掉的那一半（403,889,920 对 2,423,530,496，**1/6**），
+      且 391 条共有名字**没有一条形状相同**，`post_quant_conv` 从 5 维降到 4 维
+      —— 解码入口由 3D 改 2D，编码侧没动
+    resolution: corrected
+    changed_to: >-
+      `vae.note` 写成「编码器逐张量同形、解码器换掉」，并明确**权重是否逐位相同没有验到**
+      （要下权重逐张量比，本次没做）。
+      顺带记下 `temporal_downsample_factors` 与 `vae_clip_length: 17` 仍留在图像 VAE 的
+      config 里、而 `vae_token_drop` 由 3 变 0
+  - id: R5
+    field: generation.backbone.note
+    severity: missing
+    claim: >-
+      `adaln_out_features: 96768` = 18 × 5376 = 3 种模态 × 6 组调制 —— 照 H3 记录的读法
+    finding: >-
+      **音频撤掉之后这个数一字未改**（两份 config 相同、张量同形 [96768, 2688]）。
+      如果 18 真是「3 模态 × 6 组」，少一个模态该掉到 12 × 5376 = 64512。
+      所以要么图像档里第三条模态位空着（权重照分配、不参与），
+      要么 18 的分解根本不是 3×6。**形状这条路到此为止** ——
+      两种读法在权重上完全一样，钉死要读实现
+    resolution: open
+    changed_to: >-
+      `generation.backbone.note` 写明「3 × 6」在这一代只是一种解释、不是权重能证明的事，
+      并开 open question。**H3 那份记录里那句「96768 = 18 × 5376 = 3 种模态 × 6 组调制」
+      同样只是解释** —— 本次没有改那份记录，列为待办
+  - id: R6
+    field: '-'
+    severity: missing
+    claim: >-
+      卡说的 33.1B 可以照抄进 `params.total`（巡检已明确提醒不要抄，这里记下结果）
+    finding: >-
+      **抄不得，而且这次实测出来的两个候选值都四舍五入到 33.1B。**
+      diffusers 布局 33,125,224,384、原生布局 33,122,643,440，差 2,580,944；
+      卡那个数**分辨不了布局**。按 `fetch_hf.py --include` 实测之后
+      `params` 标 `derived` 而不是 `official`
+    resolution: corrected
+    changed_to: >-
+      `params.total` 填实测的 33,125,224,384，`evidence.params: derived`，
+      `counting_note` 写明布局选择与四因子对账
+  - id: R7
+    field: released
+    severity: missing
+    claim: 按本仓惯例「createdAt 才是发布」，`released` 应填 2026-11-03
+    finding: >-
+      **那条惯例判的是 lastModified vs createdAt，这一份要判的是 createdAt
+      vs 首个权重提交，不是同一道题。**
+      HF `createdAt` 是 2026-11-03T06:34:36Z，而**首个提交是 11-10T14:50:23Z**
+      —— 建仓早一周、那七天仓里没有权重。
+      卡上没有发布日期，`lastModified` 是 11-16（最后一次是「add Diffsynth support」）。
+      两次判断取的其实是同一条原则：**权重落地的那一刻**
+    resolution: corrected
+    changed_to: >-
+      `released: '2026-11-10'`，`evidence.released: derived`（卡没给，是从提交史推的）。
+      **名册那边要写同一个日期** —— `check_roster` 按 released 逐字对账
+
+notes: >-
+  **字节对账。** 三块的实测 numel × 每元素字节与各自 index.json 的 `total_size`
+  逐字相同（VAE 是单文件无 index，直接读头）：
+  transformer_diffusers 66,289,356,032；text_encoder 66,714,780,128（同一份权重，
+  数字引自 minimax-h3）；vae_diffusers 2,336,913,632。
+  一次 t2i 推理合计 135,341,049,792 B（126.05 GiB）/ 67,066,842,856 参数。
+
+  **usedStorage 在这个仓上同样不能直接用。** HF 报 203,981,781,880 B，
+  tree 逐文件合计 204,016,543,520 B（190.005 GiB），约是上面驻留账的 1.51 倍。
+  原因与 H3 同类但不同形：H3 是 `FL2VA/` + `Ref2VA/` 两套任务 checkpoint，
+  这一份是**同一批权重的两套命名**（原生 + diffusers）各放一份 ——
+  DiT 61.73 + 61.74 GiB、VAE 2.18 + 2.18 GiB。
+  **所以「仓有多大」和「一次部署要多少」在这条线上又差了一半以上，必须分开说。**
+
+  **与 minimax-h3 的逐位同一性清单**（本次用 HF tree API 的 oid 比出来的，
+  LFS 文件按 LFS sha256、文本文件按 git blob sha1）：
+  `text_encoder/` 14 个分片（66,714,912,872 B）＋该目录下 9 个非 LFS 文件
+  ＋`tokenizer/` 4 个 ＋`processor/` 7 个 = **34 个文件、66,749,500,959 B
+  （62.165 GiB）逐位相同**；H3 侧三个路径（顶层、`FL2VA/`、`Ref2VA/`）
+  oid 两两相同，即 H3 仓里本来也只存一份。
+  **DiT 与 VAE 的权重文件 oid 无一重合** —— 但 VAE 的编码器是逐张量同形的（R4）。
+
+  **H3-Image-PE 要澄清两件事**（卡把它列在 Model Zoo 里，容易误读）：
+  (1) **它不是 MiniMax 的模型**。HF 标签 `base_model:quantized:Qwen/Qwen3.8-27B`、
+  `model_type: qwen3_5`、`architectures: Qwen3_5ForConditionalGeneration`，
+  `quantization_config` 实测 num_bits 4 / group_size 16 / modelopt（即 NVFP4，
+  group_size 16 是 NVFP4 的特征，MXFP4 是 32），usedStorage 17,937,191,286 B。
+  **即它是 Qwen3.8-27B 的一个由 MiniMax 发布的量化版**，与 MiniMax 自家的权重无关。
+  **而本仓已录 `qwen3.8-27b`**，所以它与那份记录的 `official_variants` 有关系要判 ——
+  判断与理由归 open_questions，这里只留可核的事实。
+  (2) 它是**未开源的 H3-Image-Context-IR 的本地替代**，不是生成链里的必需件；
+  跑完提示改写就可以卸，所以 `resident: false`。
+  **H3 记录里「Context-IR 未开源」这个结论仍然成立** ——
+  这个仓里的 `examples/context_ir.py` 是调 `/v1/h3_image_context_ir` 的
+  客户端脚本（读 `MINIMAX_API_KEY` 与 `MINIMAX_API_BASE`），不是权重。
+
+  **取数提醒。** 这个仓**没有顶层 config.json**，有 6 份组件 config、
+  41 个 safetensors、3 个 index。`fetch_hf.py --id minimax-h3-image` 不加范围
+  会把两套布局的 DiT 与 VAE **各算一遍**，而两套 DiT 的张量名集合交集只有 1 个，
+  所以 `collect_shapes` 的形状冲突检查**一条都不会报**（它只在同名张量上比形状）。
+  现在 `facts/minimax-h3-image/shapes.json` 装的是
+  `--include 'transformer_diffusers/*'` 收窄之后的 644 条
+  （`duplicate_tensors` 0、`failed_shards` 空），`derive.py` 读的就是它。
+
+  **6 份组件 config 在 `facts/minimax-h3-image/cfg_components.json` 里**，
+  而 `derive.py` 只看 `cfg.json`（这个仓那份是 `{}`），所以 derived 的 `gate_b`
+  会报 `paths: 1`、说「config 侧的交叉核对整条跳过」。
+  **那是取数脚本与 derive 之间的缺口，不是本记录只核过一路** ——
+  `reviewed.method` 里的结构字段三路是人工逐项对的。共享文件本记录不改。
+  **注意那条 `why` 的措辞不准**：它说「仓里没有任何 config（顶层与组件目录都没有）」，
+  而这个仓有 6 份组件 config，只是 derive 读不到它们。
+  措辞照字面读会让人以为取数时没取到 —— 取到了，在 `cfg_components.json` 里。
+  **收尾条件**：`derive.py` 哪天开始读 `cfg_components.json`，
+  本记录这一段与 `gate_b.paths: 1` 的说明一起删掉；判据是
+  `.venv/bin/python -c "import json;print(json.load(open('data/derived/minimax-h3-image.json'))['gate_b']['paths'])"`
+  输出 2 而不是 1。minimax-h3 那份撞的是同一个缺口。
+
+open_questions:
+  - >-
+    **6 个输出头各管哪一步，没有钉死。** `num_pdd_heads: 6` 是 config 明写的、
+    6 个头与 `pdd_config.json` 的 6 个 sigma 区间数目相同、原生那份把它们堆成
+    `[6, 96, 5376]` 的首维 —— 这三件都是事实，而「第 i 个头对应第 i 步」
+    是**从张量名与数目相同推的解释**，形状证明不了索引顺序。
+    要钉死得读 SGLang / vLLM-Omni / diffusers 任一侧的实现（pipeline 怎么按
+    step 取第几片）。**在那之前不要在页面上说「第 i 步用第 i 个头」。**
+    下游影响很小（6 个头合计 12 MB），但它是这一份唯一的新 infra 形状，
+    说法要准
+  - >-
+    `adaln_out_features: 96768 = 18 × 5376` 在音频撤掉之后**一字未改**（R5，
+    说法落在 `generation.backbone.note` 里）。
+    「18 = 3 模态 × 6 组调制」这个读法因此只是解释：
+    要么图像档里第三条模态位空着（权重照分配、不参与计算），要么分解不是 3×6。
+    两种读法在权重上完全一样。
+    **收尾条件**：哪天有人读到实现、能说出这 18 组各对应什么，
+    这一条连同 `generation.backbone.note` 里那段「只是一种解释」一起删掉；
+    在那之前 minimax-h3 那份记录里的同一句话也只是解释，不要当成已证的事实引用
+  - >-
+    图像 VAE 的编码器与 H3 视频 VAE 的编码器**逐张量同形**（116/116），
+    但**权重是否逐位相同没有验到**（R4）：整文件 oid 不同，而那个文件里
+    编码器与解码器打包在一起。要判只能下权重逐张量比，那是独立一轮的事。
+    若逐位相同，「跨模态复用」的证据就从「文本编码器一块」扩到「编码器两块」
+  - >-
+    diffusers 导出**丢了原生 VAE 的 `decoder.mask_token [1, 1, 1024]`**。
+    原生侧它存在，说明解码器支持某种掩码 / 局部解码；
+    diffusers 那条路少这一条，意味着那条路上这个能力用不了，
+    或者它在 diffusers 实现里由别的方式提供。没有验证过
+  - >-
+    **`MiniMax-H3-Image-PE` 是 `Qwen/Qwen3.8-27B` 的量化版，而量化方是 MiniMax 不是通义**
+    （标签 `base_model:quantized:Qwen/Qwen3.8-27B`、`model_type: qwen3_5`、
+    NVFP4 / modelopt，事实见 notes）。本仓已录 `qwen3.8-27b`，
+    于是有一道要判的题：**它不该进那份记录的 `official_variants`** ——
+    按 model-audit 规则 13，那个字段的硬闸只查「params_total 与主仓相等」，
+    而「形状对得上」证明不了「这就是你那份权重的官方量化」，
+    这里连量化方都换了家。现成的记法是 `official_variants_excluded`
+    （逐条写 `quantized_from` 与 `params_match`）。
+    **本轮没有改 `qwen3.8-27b` 那份记录** —— 它不在本次范围内；
+    收尾条件：那份记录里出现一条指向 `MiniMaxAI/MiniMax-H3-Image-PE` 的
+    `official_variants_excluded` 条目之后，这一条删掉
+  - >-
+    **文本 token 数不知道**，而文本与图像 latent 拼在同一条序列里（`in_sequence`）。
+    卡只说 prompt 截断到 4096 token。所以推导给出的序列长度与注意力 FLOPs
+    都是**下界**，derive 会标出来。
+    `buckets[].text_tokens` 留空就是这个原因
+  - >-
+    **编辑模式的序列长度算不出来，而它可能比 t2i 大一个量级。**
+    卡说参考图既过文本编码器、也过图像 VAE，所有 token 拼进同一条序列，
+    而参考图至多 **16 张**。一张 16 MP 参考图若按同样的 32×32 折算就是
+    +16,384 token，16 张就把序列推到六位数以上 —— 而注意力是 O(n²)。
+    但参考图是否按原分辨率编码、有没有降采样，公开材料不说。
+    **本记录的 buckets 与 derived 只覆盖 t2i**
+  - >-
+    `min_generation_area` 默认 4,194,304（2048×2048）会把小图**先在大画布上生成
+    再 LANCZOS 缩回**。所以负载下界是 4 MP 的 4,096 token 而不是请求尺寸 ——
+    这是卡上的服务端行为，**本仓没有验证它在本地 SGLang / vLLM-Omni 部署里是否同样生效**
+  - >-
+    训练精度无一手来源。发布权重 BF16（主干与文本编码器）+ F32
+    （VAE 整体、时间步嵌入、图像入口、6 个输出头）是实测，
+    但那说的是落盘格式不是训练格式
+  - >-
+    **平台矩阵本轮一条都没填。** 卡列了 SGLang / vLLM-Omni / diffusers / LightX2V /
+    DiffSynth-Studio / ComfyUI 六条部署路径，并说 vLLM-Omni recipe 带
+    per-hardware 配置与**实测时延**（H200 / RTX PRO 6000 Blackwell / MI350X）。
+    **那是公开 performance 数据，这条线目前一份都没有** ——
+    逐条核版本号与支持状态是独立一轮的事。昇腾侧一条都没查
+  - >-
+    本仓的生成线名册键仍叫 `video_families`、`video_policy` 的措辞也只讲视频，
+    而这一份是图像。**现在不改**（归类口径已定：记进 `minimax-video` 家族）。
+    真正该触发改名或拆线的是录第一个与视频无关的图像家族（Flux / Qwen-Image / SD
+    这类）—— 那时 `docs/video-gen-gate-a.md` §7 第 15 条点名「图像侧完全没看」的
+    那次调研也要补上

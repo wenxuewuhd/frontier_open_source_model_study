@@ -81,11 +81,16 @@ export const FAMILY_LABEL: Record<string, string> = {
   kimi: 'Kimi',
   qwen: 'Qwen',
   stepfun: '阶跃星辰',
-  // 视频生成线。用产品线名不用厂商名，所以 minimax-video / hunyuan-video 带后缀
+  // 生成线。用产品线名不用厂商名，所以 minimax-video / hunyuan-video 带后缀
   // —— 同厂的语言模型 family 叫 minimax，两者不能撞名。
+  // **`minimax-video` 这个键的标签不叫「MiniMax 视频」**：它下面现在有两份记录，
+  // minimax-h3（video-gen）与 minimax-h3-image（image-gen），同一个 H3 主干的两个模态档
+  // （632 条共有张量逐条同形、文本编码器逐位相同）。键名保持不动 —— 改键要同时动
+  // schema 的 family 枚举、FAMILY_ORDER、目录名与名册，而那笔改动该等到录第一个
+  // 与视频无关的图像家族时一起做（见 tracking.yaml 与 minimax-h3-image 的 open_questions）。
   wan: '通义万相',
   'hunyuan-video': '混元视频',
-  'minimax-video': 'MiniMax 视频',
+  'minimax-video': 'MiniMax 生成',
   ltx: 'LTX',
   cogvideo: 'CogVideo',
   stepvideo: 'Step-Video',

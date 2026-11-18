@@ -3,7 +3,7 @@
   "generated": {
     "by": "scripts/derive_paradigms.py",
     "inputs": {
-      "models": 60,
+      "models": 61,
       "paradigms": [
         "data/paradigms/diffusion-lm.yaml",
         "data/paradigms/hybrid-attention.yaml",

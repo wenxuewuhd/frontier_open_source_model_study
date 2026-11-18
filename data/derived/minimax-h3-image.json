@@ -1,0 +1,204 @@
+{
+ "id": "minimax-h3-image",
+ "generated_by": "scripts/derive.py",
+ "generated_at": "2026-11-18T09:54:57+00:00",
+ "inputs": {
+  "facts_dir": "facts/minimax-h3-image",
+  "config_present": false,
+  "shapes_present": true,
+  "model_yaml": "data/models/minimax-video/minimax-h3-image.yaml",
+  "ep_size": 1,
+  "ep_size_source": "inherited_from_previous_artifact"
+ },
+ "gate_b": {
+  "config": false,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 1,
+  "why": "仓里没有任何 config（顶层与组件目录都没有）。结构字段只有清单一路，config 侧的交叉核对整条跳过"
+ },
+ "from_shapes": {
+  "available": true,
+  "complete": true,
+  "tensor_count": 644,
+  "params_total": 33125224384.0,
+  "params_by_subsystem": {
+   "io_proj": 31149120.0,
+   "norm": 583168.0,
+   "dense_ffn": 12022972416.0,
+   "modulation": 13039369728.0,
+   "attention": 8015314944.0,
+   "time_embed": 15835008.0
+  },
+  "params_total_container": 33125224384.0,
+  "params_container_by_subsystem": {
+   "io_proj": 31149120.0,
+   "norm": 583168.0,
+   "dense_ffn": 12022972416.0,
+   "modulation": 13039369728.0,
+   "attention": 8015314944.0,
+   "time_embed": 15835008.0
+  },
+  "scale_elements": 0.0,
+  "weight_bytes_total": 66289356032.0,
+  "weight_bytes_by_subsystem": {
+   "io_proj": 69535488.0,
+   "norm": 1166336.0,
+   "dense_ffn": 24045944832.0,
+   "modulation": 26078739456.0,
+   "attention": 16030629888.0,
+   "time_embed": 63340032.0
+  },
+  "weight_bytes_by_dtype": {
+   "FP32": 77814528.0,
+   "BF16": 66211541504.0
+  },
+  "weight_dtype_containers": {},
+  "experts_seen": 0,
+  "expert_storage": null,
+  "layers_present": 50,
+  "mtp_layers_seen": [],
+  "mtp_attention_suffixes": [],
+  "draft_blocks_seen": 0,
+  "layer_index_max": 50,
+  "layers_missing": [],
+  "moe_layers_seen": 0,
+  "unknown_dtypes": [],
+  "packing_applied": {},
+  "packing_suspect": [],
+  "incomplete_note": null
+ },
+ "kv_cache": {
+  "status": "not_applicable",
+  "why": "非自回归生成模型：推理过程中无跨步复用的 KV，不适用本口径"
+ },
+ "kv_capacity_bytes_at_context": {},
+ "kv_capacity_basis": null,
+ "active_params": {
+  "status": "not_applicable",
+  "why": "生成类每步对全部 latent token 做一次前向，没有「每 token 激活」这个量；单步负载见 generation_workload"
+ },
+ "flops": {},
+ "arithmetic_intensity": {},
+ "ep_communication": {
+  "status": "not_applicable",
+  "why": "生成类不做 EP all-to-all；对应的通信是序列并行(Ulysses)的 all-to-all，口径不同，本脚本未建模"
+ },
+ "reconciliation": [
+  {
+   "item": "路由专家数",
+   "status": "ok",
+   "why": "dense 模型，无 MoE"
+  },
+  {
+   "item": "层数",
+   "status": "skip",
+   "why": "config 缺失"
+  },
+  {
+   "item": "参数总量",
+   "YAML 声明": 33125224384.0,
+   "shapes 实测": 33125224384.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "skip",
+   "why": "repoinfo.json 里没有 safetensors tally"
+  }
+ ],
+ "generation_workload": {
+  "status": "partial",
+  "bucket": {
+   "width": 4096,
+   "height": 4096,
+   "default": true,
+   "note": "1:1 的 16 MP 档，卡 §Sizes 表第一行，也是 §Highlights 点名的 「16 megapixel (4096 × 4096)」。16,777,216 像素 /（32×32）= **16,384 latent token**。官方 `examples/revised_size.edit.txt` 这一档"
+  },
+  "effective_compression": {
+   "temporal": 1,
+   "spatial_h": 32,
+   "spatial_w": 32,
+   "note": "VAE 压缩率 × DiT patch。两者在记录里分开存，只在这里相乘 —— 合成一个数存进记录是范畴错误"
+  },
+  "latent_tokens": 16384.0,
+  "latent_tokens_terms": {
+   "formula": "[F / t_vae] / p_t × (H / s_vae / p_h) × (W / s_vae / p_w)",
+   "factors": {
+    "frames": 1,
+    "height": 4096,
+    "width": 4096,
+    "vae_temporal_compression": 1,
+    "vae_spatial_compression": 16,
+    "vae_causal": null,
+    "patch_t": 1,
+    "patch_h": 2,
+    "patch_w": 2
+   },
+   "per_axis": {
+    "t": 1.0,
+    "h": 128.0,
+    "w": 128.0
+   },
+   "latent_frames": 1.0,
+   "latent_frames_source": "formula_plain",
+   "effective_temporal_ratio": 1.0
+  },
+  "sequence_tokens": 16384.0,
+  "sequence_tokens_is_lower_bound": true,
+  "flops_per_step": {
+   "linear": 657680514235136.0,
+   "linear_terms": {
+    "formula": "2 × (每视频 token 参数 × token 数 + 每文本 token 参数 × 文本 token 数 + 每样本参数 × 1)",
+    "factors": {
+     "per_video_token": 20070019648,
+     "per_sample": 13055204736,
+     "per_text_token": 0,
+     "tokens": 16384.0,
+     "text_tokens": 0
+    },
+    "note": "AdaLN 这类吃条件向量的参数每次前向只过一遍，不随 token 数增长"
+   },
+   "attention": 288621802291200.0,
+   "attention_terms": {
+    "formula": "每层 QK^T 2·n²·d + (softmax·V) 2·n²·d = 4·n²·d，再乘层数",
+    "factors": {
+     "layers": 50,
+     "hidden": 5376,
+     "tokens": 16384.0
+    },
+    "note": "稠密全注意力口径。块稀疏（SSTA）或线性注意力要另按其形态折算，本函数不替你折 —— 折算比例是记录里的事实，不是公式里的常数"
+   },
+   "total": 946302316526336.0,
+   "attention_share": 0.3049995728116423
+  },
+  "end_to_end_terms": {
+   "formula": "Σ各阶段(步数 × 每步前向次数 × 该段单步 FLOPs)",
+   "stages": [
+    {
+     "name": "H3-Image 生成 / 编辑",
+     "steps": 6,
+     "forwards_per_step": 1,
+     "tokens": 16384.0,
+     "flops_per_step": 946302316526336.0,
+     "flops": 5677813899158016.0,
+     "tokens_source": "stage"
+    }
+   ],
+   "stages_skipped": [
+    "H3-Image-Context-IR"
+   ]
+  },
+  "flops_end_to_end": 5677813899158016.0,
+  "excluded": [
+   "文本编码一次（编码器参数量在 generation.text_encoders，本函数不计）",
+   "VAE decode 一次（VAE 结构不在 config 里，解码器是 Transformer 时这一项不是小量）",
+   "音频 VAE 与声码器"
+  ],
+  "notes": [
+   "文本 token 拼在同一条序列里，但档位没给 text_tokens —— 序列长度是下界，注意力 FLOPs 同样是下界。填 buckets[].text_tokens 可以补上",
+   "1 个阶段缺步数或前向次数，未计入端到端：H3-Image-Context-IR"
+  ]
+ }
+}
