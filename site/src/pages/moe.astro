@@ -67,6 +67,37 @@ const moeModels = llmLine.filter(isMoe).slice().sort(byDate);
 const denseModels = llmLine.filter((m) => !isMoe(m)).slice().sort(byDate);
 const genModels = allModels().filter((m) => familyLine(m.family) === 'generation');
 
+/** 「细粒度化走向」那张表的全集：**两条线的 MoE 记录都在里面。**
+ *  细粒度化是一条行业曲线，按线切开就看不见曲线的末端 —— 本仓当前最细的专家
+ *  在生成线上（magi-2-preview，专家只吃 256 维子空间）。那张表只有无单位计数
+ *  （专家数、top-k、中间维、层数），这几项跨线本来就同一个口径。
+ *  **通信那三张表不这么取**：EP all-to-all 对生成线是产物自己说的「不适用」，
+ *  口径不同，见「不适用的两档」。所以这里新开一个常量而不是放宽 `moeModels` —— */
+const fineModels = allModels().filter(isMoe).slice().sort(byDate);
+
+/** 路由头数 = 产物数到的专家单元数 ÷ 记录里一个池子有多少专家。
+ *
+ *  **两个因子都来自数据，这个数不存在任何文件里。** `experts_seen` 数的是
+ *  堆叠张量的首维（实测），`routed_experts` 是记录里一个 router 的池子大小（官方）。
+ *  一层一个 router 时两者相等、商为 1；magi-2-preview 把 hidden 切成 12 个
+ *  256 维潜头、每头一个 router 一个池子，于是首维是 12 × 256 而池子是 256，商为 12。
+ *  全仓 39 份两边都取得到值的记录实测：38 份商恰好 1，magi-2-preview 恰好 12。
+ *
+ *  **商不是整数就返回 undefined** —— 那说明两个口径对不上（记录比产物旧、
+ *  或者归类把别的张量算进了专家桶），这时候不要猜一个头数出来。 */
+const headsOf = (m: Model): number | undefined => {
+  const seen = Number(m.derived?.from_shapes?.experts_seen ?? NaN);
+  const pool = Number(moeOf(m)?.routed_experts ?? NaN);
+  if (!Number.isFinite(seen) || !Number.isFinite(pool) || pool <= 0) return undefined;
+  const q = seen / pool;
+  return Number.isInteger(q) && q >= 1 ? q : undefined;
+};
+
+/** 专家只吃 hidden 的一个子空间（多头潜路由），而不是整宽进整宽出。
+ *  这种行的「专家数」与「专家中间维」是**每头**的口径，和整宽行不是同一个量 ——
+ *  **所以不给它画条形**：条形就是邀请读者比长短，而这里比长短是范畴错误。 */
+const subspace = (m: Model) => (headsOf(m) ?? 1) > 1;
+
 /** 通信量产物。只有真的算出了逐层字节的才算有值 —— 稠密与生成线走下面两档「不适用」 */
 const epOf = (m: Model) => {
   const e = m.derived?.ep_communication;
@@ -331,10 +362,22 @@ const famLabel = (key: string) => families().find((f) => f.key === key)?.label ?
 
   <h2>细粒度化走向 <Evidence tag="official" /></h2>
   <p class="small muted">
-    全部 MoE 记录按发布日期铺开，跨家族混排 —— 这是它和<a href={url('/families/')}>家族页</a>的区别：
-    细粒度化是一条行业曲线，在单个家族里只看得到几个点。
-    「每层路由总中间维」与「每 token 激活中间维」是本页把同一行上两个字段相乘得到的，
-    因子就在左边两列，<strong>这两列是为了让「专家变多变小、而总容量没缩」看得出来</strong>。
+    全部 MoE 记录按发布日期铺开，<strong>语言模型线与生成线混排</strong>，跨家族 ——
+    这是它和<a href={url('/families/')}>家族页</a>的区别：细粒度化是一条行业曲线，
+    在单个家族里只看得到几个点，按线切开就看不见曲线的末端。
+    本表只有无单位计数，这几项跨线同一个口径；通信字节不在这张表上。
+    「每层路由总中间维」与「每 token 激活中间维」是本页把同一行上的字段相乘得到的，
+    <strong>因子全在左边三列</strong>（路由头 × 路由专家 × 专家中间维，
+    激活那列把路由专家换成 top-k），
+    <strong>这几列是为了让「专家变多变小、而总容量没缩」看得出来</strong>。
+  </p>
+  <p class="small muted">
+    <strong>「专家数」和「专家中间维」有两种口径，表上分得开。</strong>
+    整宽行的专家吃整个 hidden；<strong>多头潜路由</strong>的专家只吃 hidden 的一个
+    子空间，它那两个数是<strong>每个路由头</strong>的，旁边标着头数。
+    这种行<strong>不画条形</strong> —— 条形是邀请读者比长短，而
+    「256 个子空间专家」和「896 个整宽专家」比长短是范畴错误，不是差 3.5 倍。
+    两列相乘得到的总中间维反而可以并排：中间维是维数，与专家进出多宽无关。
   </p>
   <div class="scroll-x">
     <table class="moe">
@@ -347,11 +390,15 @@ const famLabel = (key: string) => families().find((f) => f.key === key)?.label ?
         </tr>
       </thead>
       <tbody>
-        {moeModels.map((m) => {
+        {fineModels.map((m) => {
           const moe = moeOf(m)!;
           const n = Number(moe.routed_experts);
           const inter = Number(moe.intermediate);
           const topK = Number(moe.top_k);
+          // 头数进乘式。**整宽行一律是 1，所以它们的两个乘积一个字都不变。**
+          // 不乘的话 magi 那两列会少一个 12 倍，而「每层」是按层算的，不按头算
+          const heads = headsOf(m) ?? 1;
+          const sub = subspace(m);
           const hasProduct = Number.isFinite(n) && Number.isFinite(inter);
           return (
             <tr>
@@ -362,25 +409,39 @@ const famLabel = (key: string) => families().find((f) => f.key === key)?.label ?
               <td class="small muted">{m.released}</td>
               <td class="num">
                 <Cell field={F.experts} model={m} />
-                <div class="bar" title="路由专家数，按本列最大值缩放">
-                  <span style={`width:${(100 * n) / (maxExperts || 1)}%`} />
-                </div>
+                {sub ? (
+                  // 头数是下面两个乘积的因子之一，所以它必须看得见 ——
+                  // 不显示的话这一行的乘式就对不上，读者没法逐因子验
+                  <div class="small muted">
+                    每头的池子 · {fmtInt(heads)} 个路由头<Evidence tag="derived" />
+                  </div>
+                ) : (
+                  <div class="bar" title="路由专家数，按本列最大值缩放">
+                    <span style={`width:${(100 * n) / (maxExperts || 1)}%`} />
+                  </div>
+                )}
               </td>
               <td class="num">
                 <Cell field={F.inter} model={m} />
-                <div class="bar" title="单个专家的中间维，按本列最大值缩放">
-                  <span style={`width:${(100 * inter) / (maxInter || 1)}%`} />
-                </div>
+                {sub ? (
+                  <div class="small muted" title="专家只吃 hidden 的一个子空间，这个中间维不是整宽专家那个量">
+                    子空间内
+                  </div>
+                ) : (
+                  <div class="bar" title="单个专家的中间维，按本列最大值缩放">
+                    <span style={`width:${(100 * inter) / (maxInter || 1)}%`} />
+                  </div>
+                )}
               </td>
               <td class="num">
                 {hasProduct
-                  ? <>{fmtInt(n * inter)}<Evidence tag="derived" /></>
-                  : <span class="absent unsurveyed" title="两个因子里有一个没录，乘不出来">未录</span>}
+                  ? <>{fmtInt(heads * n * inter)}<Evidence tag="derived" /></>
+                  : <span class="absent unsurveyed" title="因子里有一个没录，乘不出来">未录</span>}
               </td>
               <td class="num">
                 {hasProduct && Number.isFinite(topK)
-                  ? <>{fmtInt(topK * inter)}<Evidence tag="derived" /></>
-                  : <span class="absent unsurveyed" title="两个因子里有一个没录，乘不出来">未录</span>}
+                  ? <>{fmtInt(heads * topK * inter)}<Evidence tag="derived" /></>
+                  : <span class="absent unsurveyed" title="因子里有一个没录，乘不出来">未录</span>}
               </td>
               <td class="num"><Cell field={F.shared} model={m} /></td>
               <td class="num"><Cell field={F.denseK} model={m} /></td>
@@ -393,6 +454,8 @@ const famLabel = (key: string) => families().find((f) => f.key === key)?.label ?
   </div>
   <p class="small muted" style="margin-top:8px">
     条形长度只在本表内按各自那一列缩放，两列之间不可比。
+    <strong>缩放的分母只算画了条形的那些行</strong>，所以多头潜路由那几行进表之后，
+    已有各行的条形长度一个都没变。
     「每 token 激活中间维」不含共享专家 —— 共享专家每 token 必算，它那一份容量在下一节单列。
   </p>
 
@@ -658,6 +721,8 @@ const famLabel = (key: string) => families().find((f) => f.key === key)?.label ?
   <p class="small muted">
     这一节在的理由是：<strong>「没有这笔通信」和「没查这笔通信」在页面上必须分得开</strong>。
     下面两档都是产物自己说出来的「不适用」，不是本页替它们推的。
+    <strong>「不适用」只落在 all-to-all 那几列上，不是整行不适用</strong> ——
+    这两档里有 MoE 的记录照样出现在上面「细粒度化走向」表里，结构计数是有值的。
   </p>
   <dl class="kv">
     <dt>稠密记录</dt>
@@ -667,7 +732,7 @@ const famLabel = (key: string) => families().find((f) => f.key === key)?.label ?
       ))}
       {denseModels[0] && <div class="muted">产物给的理由：<Prose text={epWhy(denseModels[0]) ?? ''} /></div>}
     </dd>
-    <dt>生成线记录</dt>
+    <dt>生成线记录<div class="small muted">结构计数见「细粒度化走向」</div></dt>
     <dd class="small">
       {genModels.map((m, i) => (
         <>{i ? '、' : ''}<a href={url(`/models/${m.id}/`)}>{m.display_name}</a></>

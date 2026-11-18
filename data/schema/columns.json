@@ -242,6 +242,15 @@
             }
           },
           {
+            "state": "unsurveyed",
+            "why": "这份记录没录总层数，所以「第 0 层起全是 MoE」这句话断言不出来 —— 层式见 arch.ffn.layer_pattern",
+            "test": {
+              "src": "rec",
+              "op": "absent",
+              "path": "arch.layers"
+            }
+          },
+          {
             "state": "confirmed_absent",
             "why": "是 MoE 但第 0 层起就全是 MoE 层，没有 dense 前缀",
             "test": {
