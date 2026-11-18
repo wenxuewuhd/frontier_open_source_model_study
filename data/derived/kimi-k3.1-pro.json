@@ -1,0 +1,232 @@
+{
+ "id": "kimi-k3.1-pro",
+ "generated_by": "scripts/derive.py",
+ "generated_at": "2026-11-18T01:23:23+00:00",
+ "inputs": {
+  "facts_dir": "facts/kimi-k3.1-pro",
+  "config_present": true,
+  "shapes_present": true,
+  "model_yaml": "data/models/kimi/kimi-k3.1-pro.yaml",
+  "ep_size": 4,
+  "ep_size_source": "cli"
+ },
+ "gate_b": {
+  "config": true,
+  "manifest": true,
+  "manifest_incomplete": false,
+  "paths": 2
+ },
+ "from_shapes": {
+  "available": true,
+  "complete": true,
+  "tensor_count": 497340,
+  "params_total": 2780110363392.0,
+  "params_by_subsystem": {
+   "attention": 36190737024.0,
+   "norm": 3074688.0,
+   "dense_ffn": 5453643776.0,
+   "residual": 1340416.0,
+   "router": 590955008.0,
+   "shared_expert": 12155092992.0,
+   "expert": 2722740830208.0,
+   "indexer": 178520064.0,
+   "lm_head": 1174405120.0,
+   "embed": 1174405120.0,
+   "vision": 447358976.0
+  },
+  "params_total_container": 1418739948288.0,
+  "params_container_by_subsystem": {
+   "attention": 36190737024.0,
+   "norm": 3074688.0,
+   "dense_ffn": 5453643776.0,
+   "residual": 1340416.0,
+   "router": 590955008.0,
+   "shared_expert": 12155092992.0,
+   "expert": 1361370415104.0,
+   "indexer": 178520064.0,
+   "lm_head": 1174405120.0,
+   "embed": 1174405120.0,
+   "vision": 447358976.0
+  },
+  "scale_elements": 85085650944.0,
+  "weight_bytes_total": 1561217377280.0,
+  "weight_bytes_by_subsystem": {
+   "attention": 72403536384.0,
+   "norm": 6167040.0,
+   "dense_ffn": 10907287552.0,
+   "residual": 2680832.0,
+   "router": 1182074880.0,
+   "shared_expert": 24310185984.0,
+   "expert": 1446456066048.0,
+   "indexer": 357040128.0,
+   "lm_head": 2348810240.0,
+   "embed": 2348810240.0,
+   "vision": 894717952.0
+  },
+  "weight_bytes_by_dtype": {
+   "FP32": 44489728.0,
+   "BF16": 114716821504.0,
+   "MXFP4": 1361370415104.0,
+   "UINT8": 85085650944.0
+  },
+  "weight_dtype_containers": {
+   "MXFP4": [
+    "UINT8"
+   ]
+  },
+  "experts_seen": 896,
+  "expert_storage": "individual",
+  "layers_present": 93,
+  "mtp_layers_seen": [],
+  "mtp_attention_suffixes": [],
+  "draft_blocks_seen": 0,
+  "layer_index_max": 93,
+  "layers_missing": [],
+  "moe_layers_seen": 92,
+  "unknown_dtypes": [],
+  "packing_applied": {
+   "expert": 2
+  },
+  "packing_suspect": [],
+  "incomplete_note": null
+ },
+ "kv_cache": {
+  "status": "partial",
+  "attention_type": "HYBRID",
+  "kv_dtype": "bfloat16",
+  "layers": 93,
+  "full_attention_layers": 24,
+  "linear_attention_layers": 69,
+  "per_token_bytes": 33792,
+  "per_sequence_bytes": 237404160,
+  "per_token_elems": 16896,
+  "per_token_elems_bound": "exact",
+  "components": {
+   "full_attention": {
+    "layers": 24,
+    "bytes_per_layer": 1152,
+    "bytes_per_token": 27648,
+    "dtype": "bfloat16",
+    "elements_per_token": 13824,
+    "terms": {
+     "latent": 512,
+     "qk_rope_head_dim": 64,
+     "formula": "(latent + qk_rope_head_dim) * bytes"
+    }
+   },
+   "linear_state": {
+    "layers": 69,
+    "bytes_per_layer": 3440640,
+    "bytes_per_sequence": 237404160,
+    "dtype": "BF16",
+    "terms": {
+     "matrix_state": "num_value_heads(96) * key_head_dim(128) * value_head_dim(128) * bytes(2)",
+     "conv_state": "conv_kernel_dim(4) * qkv_channels(36864 = 2 * 96 * 128 + 96 * 128) * bytes(2)"
+    },
+    "assumption": "递归状态按 [num_value_heads, key_head_dim, value_head_dim] 估；conv 状态的通道数取自权重清单（= in_proj_qkv 输出维），窗长按 conv_kernel_dim 全窗计，是上界 —— 实现若只存 k-1 个位置会略低。矩阵状态那一侧的布局仍依实现而定，需核实后再用于容量规划"
+   },
+   "indexer": {
+    "layers": 24,
+    "width": 128,
+    "bytes_per_token": 6144,
+    "elements_per_token": 3072,
+    "terms": {
+     "formula": "index_kv_dim(128)，实测自 language_model.model.layers.N.self_attn.indexer.wk.weight [128, 7168]，输出维 128。 **index_n_heads × index_head_dim = 32 × 128 = 4096 是 32 倍的上界**： index K 在 32 个 index 头之间共享（MQA 式），不是逐头。 这一代的高估因子恰好是 32，按乘积算每 token 会得到 98,304 元素而不是 3,072 * bytes * index_kv_source_layers(24)"
+    }
+   }
+  },
+  "notes": [
+   "线性注意力的状态布局依实现而定，此处是按常见布局的估算"
+  ],
+  "dtype_assumed": true,
+  "dtype_assumed_note": "precision.kv_cache 未填，按模型 dtype bfloat16 兜底。KV 精度直接决定容量结论，确认后请填进模型 YAML",
+  "bytes_basis": "dtype_fallback"
+ },
+ "kv_capacity_bytes_at_context": {
+  "4096": 375816192,
+  "32768": 1344700416,
+  "1048576": 35670884352
+ },
+ "kv_capacity_basis": "dtype_fallback",
+ "active_params": {
+  "status": "ok",
+  "total": 104368141056.0,
+  "total_with_embed": 105542546176.0,
+  "semantics": "total 是带宽口径（每 token 真正搬运的线性权重，不含只 gather 一行的输入词表）；total_with_embed 含输入词表，用于和各家公布的「激活参数」对比 —— 两者不是同一个量，混用会同时犯数值和概念错误",
+  "expert_active": 48620371968.0,
+  "expert_total": 2722740830208.0,
+  "expert_ratio": "16/896",
+  "always_active": 55747769088.0,
+  "lm_head": 1174405120.0,
+  "dense": false,
+  "excluded": {
+   "embed_tokens": 1174405120.0,
+   "retrieval_table": 0.0,
+   "vision": 447358976.0,
+   "draft": 0.0
+  },
+  "note": "embed_tokens 只 gather 一行、检索表每 token 只读极少行、视觉塔与草稿模型不在主路径上，这四项不计入；lm_head 计入，因为它每步对全词表做 GEMM"
+ },
+ "flops": {
+  "linear_per_token": 208736282112.0,
+  "note": "仅线性矩阵乘；注意力、状态更新、路由与通信不在内"
+ },
+ "arithmetic_intensity": {
+  "decode_weight_bytes_per_token": 58609671614.70288,
+  "decode_flops_per_byte": 3.5614647951659264,
+  "note": "每 token 搬运的权重字节按激活参数占比折算；该值远低于 1 说明 decode 是访存瓶颈而非算力瓶颈"
+ },
+ "ep_communication": {
+  "status": "ok",
+  "moe_layers": 92,
+  "top_k": 16,
+  "hidden": 7168,
+  "act_dtype": "bfloat16",
+  "act_bytes": 2,
+  "comm_basis": "all_experts_remote",
+  "bytes_per_token": 42205184,
+  "bytes_per_layer": 458752,
+  "formula": "2(dispatch+combine) * top_k * hidden * act_bytes * moe_layers",
+  "ep_size": 4,
+  "remote_dests_bound": 4,
+  "ep_remote_bytes_per_token": 10551296,
+  "ep_remote_bytes_per_layer": 114688,
+  "ep_remote_basis": "all_destinations_remote",
+  "ep_remote_formula": "2 * min(top_k, ep) * hidden * act_bytes * moe_layers（ep=1 时为 0）",
+  "semantics": "bytes_per_token 与 ep_size 无关，量的是细粒度化本身的通信代价，跨家族可比；ep_remote_bytes_per_token 跟 ep_size 走，只在同一个 ep_size 下比。两者都是上界而非实测，前者按被选中的专家计数、后者按离片目的 rank 计数 —— 不是同一个量的两种精度，混用会同时犯数值和概念错误",
+  "note": "跨机时这两个量都按互联带宽折算成时间，是 decode 尾延迟的主因之一。两者都没有扣掉共享专家（常驻本卡、不过网）与冗余专家副本，也都没有假设路由均衡 —— 负载不均会让某几张卡的收发量远高于平均，那一档本仓没录"
+ },
+ "reconciliation": [
+  {
+   "item": "路由专家数",
+   "config": 896.0,
+   "shapes": 896.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "专家存储布局",
+   "status": "ok",
+   "why": "individual（逐专家独立张量）"
+  },
+  {
+   "item": "层数",
+   "config": 93.0,
+   "shapes": 93.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "参数总量",
+   "YAML 声明": 2780110363392.0,
+   "shapes 实测": 2780110363392.0,
+   "delta_pct": 0.0,
+   "status": "ok"
+  },
+  {
+   "item": "外部参数量对账",
+   "status": "ok",
+   "why": "与 HF 的 safetensors tally 逐位相同（2,780,110,363,392）"
+  }
+ ]
+}

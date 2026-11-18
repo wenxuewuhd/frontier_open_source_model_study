@@ -1075,6 +1075,29 @@ review:
       补 group_size 32 / group_strategy group / activation_scheme none；
       那条 open_question 改写成三方并列并给出逐层定位
 
+  - id: R26
+    field: precision.per_subsystem.subsystem_method（R21 的验法，不是它的结论）
+    severity: imprecise
+    claim: >-
+      R21 报「ignore 列表欠描述、187 个 _res_proj 一条正则都匹配不上」时，
+      是拿**张量名**去比那六条正则的
+    finding: >-
+      **结论成立，但验的是错的字符串。** compressed-tensors 的 ignore 匹配的是**模块名**，
+      不是张量名 —— 模块是 ...mlp_res_proj，参数是它下面的 .weight。
+      R21 那六条正则没有一条带 $ 锚（全是 re:.*X.* 形），所以拿张量名比恰好得到同样结果，
+      错法被对的结果掩盖了。按模块名重验（剥掉 .weight / .bias / .weight_packed /
+      .weight_scale / .weight_shape 后缀，共 249,924 个模块）：三类 _res_proj 合 187 个模块、
+      block_sparse_moe.gate 92 个、routed_expert_down_proj 92 个，**覆盖数全部为 0**，与 R21 一致。
+      **这个错法在下一代会给出假结论**：Kimi-K3.1-Pro 的 ignore 新增了
+      re:.*block_sparse_moe\.gate$ ，带 $ 锚。它匹配模块名 ...block_sparse_moe.gate 成立，
+      匹配张量名 ...block_sparse_moe.gate.weight 失败 —— 照 R21 的验法会得出
+      「厂商加了这条但没生效」的假结论（实测模块名层面 92/92 覆盖）。
+      与本仓规则 9「注释不是证据」同一面：**一个验法给出对的结果，不等于它验的是对的东西**
+    resolution: corrected
+    changed_to: >-
+      本条只记验法，R21 的结论与 changed_to 不变（已按模块名复核）。
+      下次核 ignore 作用域先剥参数后缀再比
+
 notes: >-
   Kimi 家族的旗舰，model_type kimi_k3（语言主干 kimi_linear），原生多模态。本仓第一份 Kimi 记录，
   也是第一份「三样新结构叠在一起」的旗舰：KDA 线性注意力与 MLA 3:1 混合、AttnRes 残差、

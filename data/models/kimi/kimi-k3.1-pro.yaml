@@ -1,0 +1,738 @@
+# 手写记录。与 kimi-k3 的差分是本记录的主线：**唯一的结构变化是那 24 个全注意力层
+# 从 MLA 换成 Gated DSA**，其余逐张量相同（497,220 个共有张量的形状与 dtype 零差异）。
+# 所以凡是与 K3 相同的那些格子，判据是「同一份形状」而不是「重新推了一遍」；
+# 本代独有的 indexer 五族逐层核过形状与精度。
+#
+# 两件要先说的证据限制（见 open_questions 与 reviewed.method）：
+#   1. **本代没有技术报告** —— 模型卡里 7 处 report/pdf 命中全是别家报告与评测名
+#      （GDP.pdf / CharXiv），卡自己只链一篇 Tech Blog（本轮未读，JS 渲染）。
+#      K3 那份 47 页报告的结论**不往本代回填**。
+#   2. **仓里一个 modeling_*.py 都没有**（K3 有两个），`auto_map` 只剩 AutoConfig，
+#      却仍声明 custom_code。所以 skill 规则 12 的「形状判不出来才读实现」在本代
+#      没有实现可读 —— 判不出来的只能留 open_question，不要去猜。
+id: kimi-k3.1-pro
+family: kimi
+kind: vlm
+display_name: Kimi-K3.1-Pro
+released: '2026-11-02'
+license: other
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/moonshotai/Kimi-K3.1-Pro
+    locator: config.json / README.md @ d9e99b0792a5
+    accessed: '2026-11-18'
+    note: >-
+      MXFP4 发布（compressed-tensors，mxfp4-pack-quantized），96 分片。权重清单逐分片读头取全，
+      497,340 个张量，无读失败分片。license_name kimi-k3.1-pro。
+      规格表（Model Summary）给 Total Parameters「2.8T」、Activated Parameters「104B」、
+      Attention-Layer Composition「69 KDA + 24 Gated DSA」、DSA Index Head Dimension 128 /
+      Number of Heads 32 / Top-K 2048、Vision Encoder「MoonViT-V2」「401M」、
+      Quantization「MXFP4 weights / MXFP8 activations (quantization-aware training)」。
+      正文第一段自述「Post-trained from Kimi K3 ... it is the first model in the K3.1 series」。
+      **全卡没有任何带数字的效率倍数**，唯一的效率声明是规格表脚注 `*` 的定性一句
+      （见 lineage 的 attention 一条引了原文）
+  - kind: blog
+    url: https://www.kimi.ai/blog/kimi-k3-1-pro
+    locator: 卡头部 Tech Blog 链接
+    accessed: '2026-11-18'
+    note: >-
+      **本轮未读**（JS 渲染，curl 取不到正文），登记它存在以免下一轮重复找。
+      本记录没有任何字段依赖它
+
+hf:
+  repo: moonshotai/Kimi-K3.1-Pro
+  sha: d9e99b0792a5e93b78ea9bea62a68167e36ddd9e
+  last_modified: '2026-11-05T07:11:43.000Z'
+  pipeline_tag: image-text-to-text
+  gated: false
+
+lineage:
+  track: main
+  predecessor: kimi-k3
+  changed_from_predecessor:
+    - axis: attention
+      text: >-
+        **唯一的结构变化**：那 24 个全注意力层从 Gated MLA 换成 Gated DSA，即在 MLA 之上
+        加一个稀疏索引器。69 个 KDA 层一字未动，24 个 DSA 层的 MLA 部分也一字未动
+        （kv_a_proj_with_mqa / kv_b_proj / q_a_proj / q_b_proj / o_proj / g_proj 形状与 dtype
+        与 K3 逐位相同），新增的只有 self_attn.indexer 五族：
+        wk [128, 7168]、wq_b [4096, 1536]、weights_proj [32, 7168]、
+        k_norm.weight [128] 与 k_norm.bias [128]，全部 BF16。
+        config 新增 dsa_config（index_topk 2048、index_head_dim 128、index_num_heads 32、
+        index_rope_dim 0、index_k_norm_type layernorm、index_topk_freq 1、
+        index_skip_topk_offset 1）。
+        厂商在规格表脚注 `*` 自述了这一条：「Compared with Kimi K3, we replace the
+        full-attention Gated MLA layers with Gated DeepSeek Sparse Attention (Gated DSA)
+        layers for more efficient long-context modeling」。
+        **「Gated」不是新东西** —— K3 的 mla_use_output_gate 本来就是 true，
+        g_proj [12288, 7168] 在本代 DSA 层上仍然在；新增的只有 indexer
+      benefit: >-
+        每 query 的注意力读取量从「全部历史」降到 index_topk 2048（1M 上下文下从最多
+        1,048,576 个条目降下来）。
+        **但容量是涨的，方向与「稀疏省显存」相反**：多存一条 128 维索引键，
+        per-token 从 13,824 元素涨到 16,896（+22.2%），1M 上下文 BF16 兜底口径
+        27.00 GiB → 33.00 GiB（两侧同为 dtype_fallback，可比）。
+        省的是读带宽与注意力算力，不是容量。
+        而且索引打分本身是稠密的：每 query 要对全部历史的 128 维索引键打分，这一路不随 top-k 降
+    - axis: scale
+      text: >-
+        总参数 2,779,931,837,184 → 2,780,110,363,392（+178,526,208，+0.0064%），
+        全部来自 indexer；激活参数（带宽口径）104,188,274,432 → 104,368,141,056
+        （+178,526,208，增量**全部常驻**）。层数、hidden、专家数、top-k、共享专家、
+        latent 维、上下文长度、视觉塔**全部未变**
+      benefit: >-
+        规格上这一代几乎没有放大 —— 参数只多 0.0064%，而机制换了一处。
+        **厂商声明值分辨不出这两代**：卡上 2.8T / 104B 与 K3 卡上逐字相同
+        （实测 2.7799T → 2.7801T 都取整到 2.8T，104.19B → 104.37B 都取整到 104B），
+        只有权重清单能分辨
+
+params:
+  total: 2780110363392.0
+  breakdown:
+    expert: 2722740830208.0
+    attention: 36190737024.0
+    shared_expert: 12155092992.0
+    dense_ffn: 5453643776.0
+    lm_head: 1174405120.0
+    embed: 1174405120.0
+    router: 590955008.0
+    vision: 447358976.0
+    indexer: 178520064.0
+    norm: 3074688.0
+    residual: 1340416.0
+  counting_note: >-
+    按完整权重清单（96 分片 497,340 条目）逐项统计。497,340 里 247,296 条是路由专家的
+    weight_scale（U8 容器，MX 的逐 32 元素 scale）—— 不计入参数、只计入权重存储；
+    真权重张量 250,044 条。路由专家的 weight_packed 是 U8 容器、每字节两个 FP4，
+    参数量按 2 还原，字节不还原（同 K3）。
+    total 是本仓按清单求和的**实测值**，含视觉塔与投影（0.45B），与 HF 平台的 safetensors
+    tally 2,780,110,363,392 **逐位相同**（差 +0）—— HF 那边同样还原了打包、同样排了 scale。
+    **本代新增那 178,526,208 有四条互相独立的闭合**，任一因子错都会错开：
+    (1) 本仓按清单求和 2,780,110,363,392；
+    (2) HF tally 的 BF16 一项 57,179,884,544 → 57,358,410,752，差恰为 178,526,208，
+    而 U8 项（2,722,740,830,208）与 F32 项（11,122,432）两代**逐位未变**；
+    (3) 逐层 128×7168 + 4096×1536 + 32×7168 + 128 + 128 = 7,438,592，× 24 层 = 178,526,208；
+    (4) model.safetensors.index.json 的 total_size 1,561,217,377,280 − K3 的
+    1,560,860,324,864 = 357,052,416 B = 178,526,208 × 2 B（全 BF16）。
+    这一处同时证了五个张量的形状、层数 24、以及精度就是 BF16。
+    注意 breakdown 的 indexer 一栏是 178,520,064 而不是 178,526,208：两个 k_norm [128]
+    按本仓「带 norm 的就是归一化，没有例外」归到 norm 桶（+6,144），两栏相加才是 178,526,208。
+    除这两栏外，其余 9 个桶与 kimi-k3 **逐位相同**（expert / attention / shared_expert /
+    dense_ffn / lm_head / embed / router / vision / residual 全部 +0）。
+    归类上 block_sparse_moe.routed_expert_{down,up}_proj 仍记在 dense_ffn，口径与 K3 一致
+    （理由见那份记录的同一字段）。
+    厂商声明值：卡原文「2.8T」总参数、「104B」激活、视觉编码器「401M」——
+    实测总量比 2.8T 低 0.71%（取整）；视觉 447.36M = 编码器 401.2M + mm_projector 46.1M，
+    与 401M 对得上编码器那一半（视觉塔与 K3 逐张量相同，这一条照搬）。
+    「3T-class」是卡正文的宣传措辞，不是口径，没有进任何字段。
+    **激活参数（带宽口径：含 lm_head、不含输入词表、不含视觉塔，路由专家按 16/896 折算、
+    其余按常驻）实测 104,368,141,056**；与 K3 同口径的 104,188,274,432 相差 178,526,208，
+    就是 indexer —— **它全部常驻**：24 个 DSA 层每 token 必过，wk / wq_b / weights_proj
+    三个投影都不随 top_k 变，top_k 只决定 MLA 读多少条目、不决定索引算多少。
+    再含输入词表是 105,542,546,176（取整 106B）。与 kimi-k3 一样不填 params.active_decode，
+    激活值由 derive.py 从清单与 top_k 算，两代同一条路径才可比
+
+context:
+  max: 1048576
+  extension_method: >-
+    无。全模型 NoPE —— config 里没有 rope_theta、没有 rope_scaling，MLA 层仍是
+    mla_use_nope=true，本代新增的索引路也不旋转（dsa_config.index_rope_dim 0）。
+    1M 是原生训练长度，部署期没有 YaRN / NTK 这类外推旋钮
+
+arch:
+  layers: 93
+  hidden: 7168
+  vocab: 163840
+  norm: RMSNorm
+  norm_eps: 1.0e-05
+  activation: >-
+    SiTU-GLU（config hidden_act situ，卡上写 SiTU-GLU）：activation_situ_beta 4.0、
+    activation_situ_linear_beta 25.0，与 K3 的两个 β 逐位相同。
+    本代没有参考实现可读，所以不重复 K3 记录里那条取自 SituAndMul 的算式细节
+  position: >-
+    MLA 层不用位置编码（mla_use_nope=true）；KDA 层靠短卷积与递归状态携带位置信息；
+    本代新增的索引路同样不旋转（index_rope_dim 0）。三路都没有 RoPE
+
+  attention:
+    type: hybrid
+    num_heads: 96
+    num_kv_heads: 96
+    head_dim: 192
+    v_head_dim: 128
+    qk_rope_head_dim: 64
+    qk_nope_head_dim: 128
+    kv_lora_rank: 512
+    q_lora_rank: 1536
+    head_dim_note: >-
+      MLA 部分与 K3 逐张量相同：每头 QK 192（nope 128 + 名为 rope 的 64，本代同样不旋转）、
+      V 128。q_b_proj [18432, 1536] = 96×192，kv_b_proj [24576, 512] = 96×(K-nope 128 + V 128)，
+      o_proj [7168, 12288] = 96×128；按 head_dim 192 推 o_proj 入口会高 50%。
+      num_kv_heads=96 是 query 侧可见的头数，不是缓存宽度：最小缓存是
+      kv_a_proj_with_mqa [576, 7168] 的输出 —— 512 维 latent 经 kv_a_layernorm [512]、
+      加 64 维 k_rot，每层 576。
+      KDA 层：q/k/v_proj 都是 [12288, 7168] = 96 头 × 128，o_proj 同上。
+      **本代多一路索引**，宽度另算，见 sparse
+    layer_pattern: >-
+      69 KDA + 24 Gated DSA。DSA 层在 L3, L7, …, L87, L91, L92（0 起计，每 4 层一个、
+      最后两层连续），其余 69 层是 KDA。层集合**三路互相印证**：
+      config 的 dsa_config.dsa_layers 与 linear_attn_config.full_attn_layers 都是
+      [4, 8, …, 92, 93]（**1 起计**，减 1 后与实测一致）；清单里 indexer.wk 恰在这 24 层、
+      kv_a_proj_with_mqa 也恰在这 24 层、两个集合**完全相同**；q_conv1d 恰在其余 69 层、
+      与前者不相交。按 0 起计读 config 会得到一个不存在的 L93 并把 L3 认成 KDA
+    sparse:
+      mechanism: >-
+        Gated DSA：在 24 个全注意力层的 MLA 之上加一个稀疏索引器，每 query 只读
+        index_topk 2048 个条目。index_topk_freq 1 ⇒ **24 层各自算一次 top-k，没有跨层复用**
+        （对照 GLM-5.3：那边 freq 4、21/78 层产出、57 层复用上游的选择结果）。
+        index_skip_topk_offset 1 的确切语义本代判不出来（无参考实现），见 open_questions。
+        索引 Q 逐头：wq_b [4096, 1536] = 32 头 × 128，从 q_a 的 1536 维 latent 出，不缓存。
+        逐头打分权重走 weights_proj [32, 7168]（输出 32 = index_num_heads）。
+        index K 过一个**真 LayerNorm**（k_norm 带 bias [128]，不是 RMSNorm，
+        与 config 的 index_k_norm_type layernorm 一致 —— 本仓其余几份 DSA 记录没有这一条，
+        钉在本代）
+      index_n_heads: 32
+      index_head_dim: 128
+      index_topk: 2048
+      index_kv_dim: 128
+      index_kv_source: >-
+        language_model.model.layers.N.self_attn.indexer.wk.weight [128, 7168]，输出维 128。
+        **index_n_heads × index_head_dim = 32 × 128 = 4096 是 32 倍的上界**：
+        index K 在 32 个 index 头之间共享（MQA 式），不是逐头。
+        这一代的高估因子恰好是 32，按乘积算每 token 会得到 98,304 元素而不是 3,072
+    kv_sharing:
+      index_kv_source_layers: [3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43, 47, 51, 55, 59, 63, 67, 71, 75, 79, 83, 87, 91, 92]
+      layer_coverage: >-
+        三类缓存的覆盖面各不相同，不能统称「逐层」。层号都是 0 起、主干口径（0–92）：
+        MLA latent 在 24 层（上列那 24 个，每层 kv_a_proj_with_mqa [576, 7168]，无跨层共享）；
+        **索引 K 在同样那 24 层**（每层 indexer.wk [128, 7168]，按全名正则穷举过、不是抽样，
+        与 MLA 层集合完全相同 —— 本代没有「只重打分、不产出 index K」的层，
+        因为 index_topk_freq 是 1）；KDA 递归状态在其余 69 层，每序列固定。
+        无 MTP 块，主干口径就是全部口径
+    output_gate:
+      enabled: true
+      type: >-
+        93/93 层都有 self_attn.g_proj [12288, 7168]：DSA 层是 sigmoid 输出门
+        （mla_use_output_gate，即卡上「Gated DSA」的 Gated），KDA 层是满秩门，两者同形不同义。
+        与 K3 逐张量相同
+    hybrid:
+      layer_types_count:
+        linear: 69
+        full: 24
+      note: >-
+        24 个 DSA 层累积**两份** per-token 缓存（MLA latent 576 + 索引 K 128，共 704 元素/层），
+        69 个 KDA 层携带每序列固定的递归状态。无 MTP 块。
+        K3 同一栏只有 latent 一份 —— 本代多出来的那一份是容量涨 22.2% 的全部来源
+    linear_state:
+      mechanism: >-
+        Kimi Delta Attention（KDA）：带逐通道衰减门的 delta rule 线性注意力，q/k/v 各自
+        先过一个 depthwise 短卷积（kernel 4）。与 K3 逐张量相同
+      num_key_heads: 96
+      num_value_heads: 96
+      key_head_dim: 128
+      value_head_dim: 128
+      conv_kernel_dim: 4
+      state_layout_note: >-
+        KDA 这一路的张量与 K3 **逐位相同**（69 层 q/k/v_conv1d 都是 [12288, 1, 4]，
+        A_log [128]、dt_bias [12288]、o_norm [128]、f_a_proj [128, 7168]、
+        f_b_proj [12288, 128]、b_proj [96, 7168]），所以 K3 记录里那套判据原样成立：
+        A_log 首维 128 是 **head_dim** 不是头数，头数走 b_proj 的 96，
+        逐 (头, 通道) 的量走 12288 = 96×128；衰减标度逐通道、在 96 头间广播。
+        **不能照 Qwen3.8 那条「A_log 首维 = 状态头数」的推断读本代。**
+        状态布局（每层 [96, 128, 128] 加三份 conv 状态）在 K3 上是从参考实现读的，
+        **本代没有参考实现可读** —— 布局本身按形状判不出来，所以这一条的证据强度
+        比 K3 那份低一档，见 open_questions
+
+  ffn:
+    type: moe
+    layer_pattern: >-
+      L0 稠密（mlp.gate_proj [33792, 7168]），L1–L92 共 92 层 MoE，latent 式：
+      路由专家在 3584 维上算（routed_expert_down_proj [3584, 7168] 先把 hidden 降到 3584，
+      经专家后 routed_expert_norm [3584] 再由 routed_expert_up_proj [7168, 3584] 升回）；
+      共享专家不走 latent，直接吃 7168 维 hidden。与 K3 逐张量相同
+
+  moe:
+    routed_experts: 896
+    shared_experts: 2
+    top_k: 16
+    intermediate: 3072
+    first_k_dense: 1
+    dense_intermediate: 33792
+    routing: >-
+      sigmoid 打分、noaux_tc 选路，routed_scaling_factor 1.0，moe_renormalize；
+      num_expert_group 1 / topk_group 1，分组路由实际未启用。gate.weight 落盘是 BF16。
+      与 K3 的 config 逐键相同；K3 记录里「参考实现把 hidden 与 gate 权重转 FP32 再打分」
+      那一条取自参考实现，**本代无实现可读，不回填**
+    balance: e_score_correction_bias（每 MoE 层一个 [896] FP32）
+    storage_note: >-
+      逐专家独立张量（experts.N.w1/w2/w3，各带 weight_packed 与 weight_scale），不是堆叠的
+      3 维权重。专家形状是 latent 维的：w1/w3 逻辑 [3072, 3584]、w2 [3584, 3072]。
+      两个共享专家在清单里合并成一个 MLP（shared_experts.gate_proj [6144, 7168]，
+      6144 = 2 × 3072）。与 K3 逐位相同（expert 桶两代参数量差 0）
+
+  residual:
+    type: AttnRes（Attention Residuals，厂商命名；块大小由 attn_res_block_size=12 给出）
+    coef_proj: >-
+      每层 self_attention_res_proj 与 mlp_res_proj 各一个 [1, 7168]，另有模型级
+      output_attn_res_proj [1, 7168]；对应的 *_res_norm [7168] 是 RMSNorm。
+      187 个模块，与 K3 逐位相同
+    note: >-
+      attn_res_block_size 12，与 K3 相同。本代**没有参考实现可读**，所以 K3 记录里那套
+      数据流结论（块边界累加、softmax 加权、替代的是块边界而非残差相加本身）
+      **不往本代回填** —— 形状判得出来的只有「有这些系数张量、块大小 12」。
+      decode 侧的保活量按形状可算：每 token 最多 8 × 7168（BF16 114,688 B = 112 KiB），
+      8 是 93 层里 layer_idx % 12 == 0 的层数（L0/12/24/36/48/60/72/84）
+
+  decoding:
+    mtp_layers: 0
+    mtp_layers_note: >-
+      config num_nextn_predict_layers 0，清单里也没有任何草稿块
+      （mtp / draft / eagle / eh_proj / enorm / hnorm / shared_head 全名正则穷举，两代都是 0 个）
+
+  vision:
+    encoder: MoonViT-V2（vision_tower.encoder.blocks），模型卡称 401M
+    layers: 27
+    hidden: 1024
+    num_heads: 12
+    patch_size: 14
+    intermediate: 4096
+    out_hidden: 7168
+    params: 447358976.0
+    fusion: >-
+      mm_projector（patchmergerv2，merge_type sd2_tpool）：proj.0 [4096, 4096]、
+      proj.2 [7168, 4096]，即先把 2×2 相邻 patch 拼成 4096 维、两层 MLP 投到 7168；
+      另有 post_norm [7168]。wqkv [4608, 1024] = 3 × 1536（qkv_hidden_size 1536，比 hidden 1024 宽）
+    spatial_merge_size: 2
+    tokens:
+      reference_resolution: 672x672
+      patch_grid: 48x48
+      encoder_tokens: 2304
+      llm_tokens: 576
+      compression_ratio: 4
+      compression_stage: >-
+        projector 入口一步到位：2×2 相邻 patch 在通道维拼接（proj.0 的输入维
+        4096 = 4 × 1024 就是这个拼接，config 的 merge_kernel_size [2, 2] 是同一件事），
+        压缩在两层 MLP 之前，所以 projector 的两个 GEMM 只跑 576 次而不是 2304 次
+      dynamic_resolution: true
+      derivation: >-
+        **视觉塔与 kimi-k3 逐张量相同**：vision_config 逐键相同，168 个视觉张量的形状与
+        dtype 零差异。所以 patch 14（由 patch_embed.proj.weight [1024, 3, 14, 14] 的后两维印证）、
+        2×2 空间合并（由 proj.0 输入维 4096 = 4 × 1024 印证）、672/14 = 48、48² = 2304、
+        24² = 576 这条链原样成立。
+        注意 4096 = 4 × 1024 而不是 4 × 1152 —— 塔 hidden 是 1024（kimi-k2.5 是 1152）
+      scope_note: >-
+        上面的数覆盖单张静态图。vision_config 带 init_pos_emb_time 4 与 merge_type sd2_tpool，
+        时间池化的机制在；但本代**既没有 video_attn_type 这个键、也没有任何参考实现**，
+        所以视频的 token 账留空，k2.5 上那条「视频主干 token 数与帧数无关」不回填
+    prefill:
+      encoder_linear_gflops: 1829.2
+      projector_linear_gflops: 53.15
+      backbone_token_budget: 576
+      backbone_linear_gflops_per_token: 206.39
+      image_as_text_tokens: 585
+      attention_excluded: >-
+        被排除的是 encoder 自注意力的 QK^T 与 AV。wqkv [4608, 1024] = 3 × 1536，
+        所以那两个 matmul 按 1536 而不是 1024 算（按 hidden 1024 算会低估 1/3）。
+        跨度没有一手来源，按整图一段取 n = 2304 约 880 GFLOPs，没有加进上面几格
+      derivation: >-
+        塔侧两项与 kimi-k3 相同（同一批张量）：encoder 线性项
+        2 × 2304 × 396,963,840 = 1,829,213,368,320，每层 14,680,064 的四个因子
+        （wqkv 3 × 1536 × 1024、wo 1024 × 1536、fc0 4096 × 1024、fc1 1024 × 4096）
+        与清单里 108 个 blocks 线性张量求和逐位相同；projector 线性项
+        2 × 576 × (4096² + 7168 × 4096) = 53,150,220,288。
+        **主干分母本代重算过**（激活参数变了）：
+        2 × (104,368,141,056 − 1,174,405,120) = 206,387,471,872，
+        换算 = 576 + 1,882,363,588,608 / 206,387,471,872 = 576 + 9.1 = 585，
+        塔开销占比 1.0158（K3 是 1.016）。结论不变：**这一档做 encoder 分离部署
+        几乎没有收益**，一张图的 prefill 成本 98.4% 来自它占的 576 个位置
+    separability:
+      weight_prefix: >-
+        vision_tower.（165 个张量）与 mm_projector.（3 个），共 168 个；主干在 language_model.。
+        两个前缀不相交
+      shard_isolation: dedicated
+      shard_note: >-
+        实测 index 的 weight_map：96 个分片里最后两个是纯视觉分片
+        （model-00095 装 3 个 mm_projector. 张量、model-00096 装 165 个 vision_tower. 张量，
+        两片的非视觉张量都是 0 个）。与 kimi-k2.5 / kimi-k3 同一个做法 ——
+        **这条发布习惯在 Kimi 这一支连续三代成立**，但只到本代为止，不往后推
+      cross_prefix_sharing: >-
+        weight_map 的 497,340 个名字里没有任何一个同时匹配 vision_tower. / mm_projector.
+        与 language_model.，即没有重名共享；两侧连分片都不重合。
+        落盘层面的 tied weights 要看 safetensors 头的数据偏移，本轮没读
+
+precision:
+  weights_release: [MXFP4, BF16, FP32]
+  weights_release_scope:
+    MXFP4:
+      manifest_taken: true
+      in_precision_table: true
+      container: UINT8
+      note: 逻辑精度 MXFP4 落盘时装在 UINT8 容器里，清单里看到的是容器 dtype，不是声明错
+    BF16: { manifest_taken: true, in_precision_table: true }
+    FP32: { manifest_taken: true, in_precision_table: true }
+  quantization:
+    method: compressed-tensors（mxfp4-pack-quantized）
+    group_size: 32
+    group_strategy: group
+    activation_scheme: none
+    scale_format: torch.uint8
+    expert_dtype: MXFP4
+    packing_note: >-
+      路由专家的 FP4 权重两个一字节装进 U8 容器（weight_packed 末维是逻辑维的一半），
+      scale 同样是 U8 容器（weight_scale）。参数量按 per_subsystem 的 MXFP4 还原，字节不还原
+    per_subsystem:
+      expert: MXFP4
+      shared_expert: BF16
+      attention: BF16
+      indexer: BF16
+      dense_ffn: BF16
+      router: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+      residual: BF16
+      vision: BF16
+    per_subsystem_scale:
+      expert: UINT8
+    per_subsystem_block:
+      expert: '[1,32]'
+    block_size_note: >-
+      与 kimi-k3 相同：逐输出行、沿 K 每 32 个一个 scale，与 config 的 group_size 32 /
+      strategy group 一致（block_structure 明写 null，所以 weight_block_size 这一格没有值，
+      粒度记在 group_size / group_strategy）。scale 容器 dtype 是 U8；
+      按 MX 规范它承载 E8M0 指数，但那是格式声明（config scale_dtype torch.uint8），
+      形状与 dtype 区分不了
+    subsystem_method: >-
+      per_subsystem 的每一格都对**完整清单穷举**过（497,340 条，逐条带 dtype），不是抽样：
+      专家 247,296 对 weight_packed / weight_scale 全是 U8 无例外，其余子系统除 FP32 七类外全 BF16。
+      **本代新增的 indexer 一栏实测全 BF16**（24 层 × wk / wq_b / weights_proj 共 72 个张量，
+      形状取值各只有一种），它被 ignore 的 re:.*self_attn.* 覆盖（模块名层面 24/24），
+      所以不量化。两个 indexer.k_norm 按本仓归类进 norm 桶，不在 indexer 桶里。
+      量化作用域：config 的 ignore 列表排除 self_attn / shared_experts /
+      mlp.(gate|up|gate_up|down)_proj / **block_sparse_moe.gate$** /
+      **block_sparse_moe.routed_expert_(up|down)_proj** / lm_head / vision_tower / mm_projector。
+      **后两条是本代新增的** —— kimi-k3 的列表没有它们，而那两类在 K3 上同样未被量化，
+      即 K3 的 ignore 列表欠描述、本代补齐了两条（见 kimi-k3 的 R21 与 R26）。
+      仍未列入的是三类 _res_proj（mlp_res_proj 93 + self_attention_res_proj 93 +
+      output_attn_res_proj 1，共 187 个模块，模块名层面覆盖数 0）——
+      **两代都没列，而它们两代都是未量化的 BF16**。
+      比对 ignore 作用域要按**模块名**（剥掉 .weight / .bias / .weight_packed / .weight_scale /
+      .weight_shape 后缀）：本代新增的 block_sparse_moe.gate$ 带 $ 锚，
+      拿张量名比会得出「没生效」的假结论。
+      模型卡称 MXFP4 权重是从 SFT 起做量化感知训练得到的，同一句还声明激活走 MXFP8
+      （规格表 Quantization 行），而 config 的 input_activations 与 kv_cache_scheme 都是 null、
+      落盘里没有任何激活 scale —— 三者不一致，见 open_questions
+  qat: true
+
+platforms:
+  - engine: vLLM
+    hardware: NVIDIA
+    status: supported
+    precision: MXFP4
+    caveat: 卡的 Deployment 一节只给了 recipes 链接（recipes.vllm.ai/moonshotai/Kimi-K3.1-Pro），本轮未读配方，未核 CI 状态
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/moonshotai/Kimi-K3.1-Pro
+    visibility: public
+  - engine: SGLang
+    hardware: NVIDIA
+    status: supported
+    precision: MXFP4
+    caveat: 同上，只据卡上的 cookbook 链接（docs.sglang.io），本轮未读
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/moonshotai/Kimi-K3.1-Pro
+    visibility: public
+  - engine: TokenSpeed
+    hardware: NVIDIA
+    status: supported
+    precision: MXFP4
+    caveat: 同上，只据卡上的 recipes 链接（lightseek.org/tokenspeed），本轮未读
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/moonshotai/Kimi-K3.1-Pro
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      **DSA 让读取量降、让容量涨，两件事方向相反。** index_topk 2048 把每 query 的
+      注意力读取从「全部历史」降到 2048 个条目，但缓存里多了一条 128 维索引键，
+      per-token 容量涨 22.2%。只写「稀疏注意力更省」会把方向说反
+    quantified: >-
+      per-token 元素：MLA latent 24 × 576 = 13,824（与 K3 相同）加索引 K 24 × 128 = 3,072，
+      合计 16,896 元素 ⇒ BF16 兜底 33,792 B/token，对 K3 的 27,648 B/token 是 **+22.2%**。
+      1M 上下文 27.00 GiB → **33.00 GiB**；两侧 bytes_basis 都是 dtype_fallback，可比。
+      KDA 递归状态 69 层、每序列固定 237,404,160 B（226.41 MiB），与 K3 相同、不随上下文长。
+      索引宽度取 indexer.wk 的输出维 128：按 index_n_heads × index_head_dim = 4096 算
+      会得到 98,304 元素/token，**高估 32 倍**。
+      另一侧：索引打分本身是稠密的，每 query 要对全部历史的 128 维键打分，这一路不随 top-k 降 ——
+      所以省下的是 MLA 那一路的读带宽与算力，不是索引那一路
+    visibility: public
+  - dimension: weight-bandwidth
+    finding: >-
+      与 kimi-k3 同一个形状：只量化路由专家 ⇒ decode 的权重带宽由 BF16 的非专家部分主导。
+      indexer 新增的 178.5M 全部常驻、全是 BF16，所以它按 2 B/参数直接加进非专家那一侧
+    quantified: >-
+      按子系统逐项折算，非专家侧 111,160,730,624 B（K3 口径，不含 embed 与视觉塔）
+      加 indexer 的 357,040,128 B，激活专家 25,844,537,752 B，
+      **batch 1 合计约 137.36 GB/token**（K3 是 136.99）。
+      **口径：这是 batch 1。** 非专家是常数、专家随 batch 涨到 896 个全触达才饱和，
+      交叉点仍在 batch ≈ 5；非专家占比 batch 1 约 81.2%、batch 128 约 7.9%。
+      低时延档的瓶颈是非专家 BF16，吞吐档的瓶颈是专家，只报一个档会把结论说反。
+      derive.py 的 decode_weight_bytes_per_token 对混合精度模型按参数比例等分，
+      仍然不可用（与 kimi-k3 的 R1 / R22 同一回事）
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      本代新增一整条索引算子路，是 Kimi 这一支第一次出现：索引 Q/K 投影、逐头打分权重、
+      索引 K 的 LayerNorm、以及 top-k 选择与按索引的稀疏 gather。
+      **按本仓最省力的判据（张量名族集合）：K3 独有 0 族、本代新增 5 族，
+      集合不同 ⇒ 不能复用 K3 的算子评估结论**
+    quantified: >-
+      新增 5 个名族 × 24 层 = 120 个张量。索引侧每 token 每层的线性量：
+      wq_b 4096 × 1536 + wk 128 × 7168 + weights_proj 32 × 7168 = 7,438,336 乘加，
+      24 层合计 178,520,064 —— 相对主干每 token 206.4 GFLOPs（线性项）是 0.17%，
+      算力上微不足道；真正的新成本在 **top-k 选择与稀疏 gather**，那两项不是 GEMM，
+      形状上判不出代价，本代也没有参考实现可读
+    visibility: public
+  - dimension: long-context
+    finding: >-
+      1M 原生、无外推旋钮（同 K3），但本代长上下文的瓶颈形态变了：
+      MLA 那一路的读取量被 top-k 钉在 2048，而索引那一路随上下文线性增长
+    quantified: >-
+      1M 上下文下：MLA 每 query 每层读 2048 × 576 元素（被 top-k 钉住，不随上下文长），
+      索引每 query 每层要对 1,048,576 × 128 元素打分（随上下文线性）。
+      所以上下文越长，索引那一路在读带宽里的占比越高 —— 这与「稀疏注意力把长上下文变便宜」
+      的直觉相反，长上下文下真正没被降下来的是索引
+    visibility: public
+
+infra_signals:
+  - text: >-
+      稀疏注意力这一代的账要分两路记：选择哪些条目（索引，稠密、随上下文增长）与
+      读被选中的条目（MLA，被 top-k 钉住）。按「稀疏 ⇒ 省」一句话规划会同时错两处 ——
+      容量实际涨 22.2%，而读带宽只在 MLA 那一路降
+    evidence: judgement
+    horizon: now
+    axis: attention
+  - text: >-
+      索引缓存的宽度必须取产出张量（indexer.wk）的输出维，不能取
+      index_n_heads × index_head_dim。本代这个乘积比实际宽 32 倍，
+      而容量规划按它做会直接多买 32 倍的索引缓存
+    evidence: derived
+    horizon: now
+    axis: attention
+  - text: >-
+      本代把 MXFP4 当训练产物（卡称从 SFT 起 QAT），且只量化路由专家；indexer 也在
+      不量化之列。按「BF16 发布、部署时自己量化」写的流程在这里要倒过来：
+      反量化路径是必需的，BF16 主权重并不存在
+    evidence: judgement
+    horizon: now
+    axis: precision
+  - text: >-
+      证据档位比上一代薄两档：没有技术报告、仓里没有任何 modeling_*.py。
+      凡是形状判不出来的（索引 K 缓存还是重算、index_skip_topk_offset 的语义、
+      KDA 状态布局、AttnRes 数据流）本代都只能留疑 ——
+      上一代那些结论来自参考实现，**不随权重一起继承**
+    evidence: judgement
+    horizon: now
+    axis: precision
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: judgement
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  params.counting_note: derived
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.v_head_dim: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.attention.sparse: derived
+  arch.attention.sparse.mechanism: judgement
+  arch.attention.kv_sharing: derived
+  arch.attention.output_gate: derived
+  arch.attention.hybrid: derived
+  arch.attention.linear_state.mechanism: judgement
+  arch.attention.linear_state.state_layout_note: judgement
+  arch.ffn.layer_pattern: derived
+  arch.moe.routing: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.moe.first_k_dense: derived
+  arch.residual: derived
+  arch.residual.note: derived
+  arch.decoding.mtp_layers: derived
+  arch.vision.params: derived
+  arch.vision.fusion: derived
+  arch.vision.spatial_merge_size: official
+  arch.vision.tokens: derived
+  arch.vision.tokens.scope_note: judgement
+  arch.vision.prefill: derived
+  arch.vision.prefill.attention_excluded: judgement
+  arch.vision.prefill.derivation: derived
+  arch.vision.separability: derived
+  arch.vision.separability.shard_note: judgement
+  arch.vision.separability.cross_prefix_sharing: judgement
+  precision: official
+  precision.weights_release: derived
+  precision.weights_release_scope: derived
+  precision.quantization.packing_note: derived
+  precision.quantization.per_subsystem: derived
+  precision.quantization.per_subsystem_scale: derived
+  precision.quantization.per_subsystem_block: derived
+  precision.quantization.block_size_note: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+reviewed:
+  date: '2026-11-18'
+  scope: [official, derived, judgement]
+  reviewer: 本会话复算（p1-kimi），差分口径
+  method: >-
+    这份记录的主线是与 kimi-k3 的差分，所以复核也按差分做，**先用最省力的判据**
+    （model-audit skill 取数顺序第 1 条）：张量名族集合。
+    归一化层号与专家号后 K3 59 族、本代 64 族，**K3 独有 0 族**、新增 5 族全在
+    self_attn.indexer 下；条目数 497,220 → 497,340 恰好 +120 = 24 × 5。
+    再按全名逐条比：497,220 个共有张量的**形状与 dtype 零差异**——
+    所以凡与 K3 相同的格子，判据是「同一份形状」，不是重新推导。
+    本会话自己复算的是：
+    (1) 参数量四条独立闭合（本仓清单求和 / HF tally 的 BF16 项差额 / 逐层 7,438,592 × 24 /
+    index.json 的 total_size 差额 357,052,416 B），与 HF tally 差 +0；
+    (2) 逐桶对比 —— 只有 indexer（新）与 norm（+6,144）两桶变化，其余 9 桶逐位相同；
+    (3) indexer 五族在**全部 24 层**的形状与 dtype 取值（各只有一种），
+    不是只读一个分片的头；
+    (4) DSA 层集合三路印证（config 1 起计的 dsa_layers 减 1、清单里 indexer.wk 的层、
+    清单里 kv_a_proj_with_mqa 的层，三者完全相同；且与 69 个 q_conv1d 层不相交）；
+    (5) 索引缓存宽度取 wk 输出维 128，并算出按头数乘积会高估 32 倍；
+    (6) ignore 作用域按**模块名**比（剥参数后缀），确认本代新增两条生效 92/92、
+    三类 _res_proj 两代都是 0 覆盖；
+    (7) 视觉塔的主干分母重算（激活参数变了），换算仍是 585。
+    **没有复核的**：Tech Blog 正文（JS 渲染，未读）；索引 K 的实际缓存行为与
+    index_skip_topk_offset 的语义（本代无参考实现，形状判不出来）。
+    本轮没有派独立核查代理 —— 差分口径下 97% 的格子由「形状零差异」直接继承，
+    新增部分只有 5 个张量族，自己逐族读过形状与 dtype
+
+review:
+  - id: R1
+    field: params.total
+    severity: wrong
+    claim: 调研阶段报的是推算值 2,780,110,363,392（K3 实测 + 24 × 7,438,592）
+    finding: >-
+      调研那一轮只实读了 layer 3 一个分片的头，其余 23 层按「名族相同」推。
+      **推算值不能进 params.total** —— 本仓最贵的那类错正是「验了一个因子就报出去」。
+      本轮取了全量清单（96 分片 497,340 条目）实测，结果与推算值相同，
+      但现在它是实测值且有四条闭合，其中两条是外部锚（HF tally 的分 dtype 计数、
+      index.json 的 total_size）。顺带确认推算成立的前提也是真的：
+      497,220 个共有张量形状与 dtype 零差异、indexer 五族在全部 24 层形状取值各只有一种
+    resolution: corrected
+    changed_to: >-
+      params.total 2780110363392 为**实测**（本仓清单求和，与 HF tally 差 +0），
+      counting_note 写明四条闭合
+  - id: R2
+    field: arch.attention.sparse.index_kv_dim
+    severity: missing
+    claim: 若只填 index_n_heads 32 与 index_head_dim 128，derive.py 会按乘积 4096 算索引缓存
+    finding: >-
+      derive.py 的 indexer 分量在缺 index_kv_dim 时按 index_n_heads × index_head_dim
+      算宽度，并把状态降级成 partial、给元素数打 elements_upper_bound。
+      本代那个乘积是 4096 而实测宽度是 128（indexer.wk 的输出维），**高估 32 倍**——
+      1M 上下文下索引缓存会从 6.00 GiB 报成 192 GiB。
+      skill 的缓存提问第 2 条点名的就是这个错，本代的因子恰好是 32
+    resolution: corrected
+    changed_to: >-
+      填 index_kv_dim 128 并在 index_kv_source 写明取自哪个张量的哪一维、
+      以及乘积是 32 倍上界；同时填 kv_sharing.index_kv_source_layers（24 个层号，实测），
+      让 derive.py 走 index_kv_source_layers 这一路而不是「全部层」上界
+  - id: R3
+    field: bottlenecks（kv-capacity）与 lineage 的 benefit
+    severity: imprecise
+    claim: 初稿把 DSA 的收益写成「长上下文更省」
+    finding: >-
+      方向说反了一半。读取量确实降（每 query 从全部历史降到 2048 个条目），
+      但**容量是涨的**：多存一条 128 维索引键，per-token 13,824 → 16,896 元素，
+      1M 上下文 27.00 → 33.00 GiB（两侧同为 dtype_fallback，可比）。
+      而且索引打分本身是稠密的、随上下文线性增长，所以长上下文下真正没被降下来的是索引那一路。
+      派生页会照着这句话说，写反一次会传播
+    resolution: corrected
+    changed_to: >-
+      kv-capacity 与 long-context 两条 bottleneck 都写成两路分记，
+      lineage 的 benefit 明写「省的是读带宽与注意力算力，不是容量」
+  - id: R4
+    field: arch 里继承自 kimi-k3 的若干 note
+    severity: imprecise
+    claim: 初稿把 K3 记录里取自参考实现的结论（KDA 状态布局、AttnRes 数据流、MoE 打分精度）原样搬了过来
+    finding: >-
+      这些张量两代逐位相同，但**那些结论的来源是 K3 随仓的 modeling_*.py，
+      而本代仓里一个 modeling 文件都没有**。按 skill 规则 12，形状判得出来的照搬成立
+      （有哪些张量、什么形状、块大小 12、A_log 首维是 head_dim），
+      形状判不出来的（状态在内存里怎么排、AttnRes 的加权组合发生在哪一步、
+      打分是否转 FP32）在本代没有实现作证，证据强度比 K3 低一档。
+      **「权重相同」不等于「上一代读实现得到的结论自动继承」** —— 实现可能换了，
+      而本代没有东西能证明它没换
+    resolution: corrected
+    changed_to: >-
+      三处分别改写：state_layout_note 与 residual.note 写明「本代无参考实现、不回填」，
+      moe.routing 去掉 FP32 打分那半句；evidence 里
+      arch.attention.linear_state.state_layout_note 从 derived 降为 judgement
+
+notes: >-
+  Kimi 家族的新旗舰，model_type kimi_k31（语言主干仍是 kimi_linear），原生多模态。
+  与 kimi-k3 的关系是**后训练延续加一处机制替换**：卡自述「Post-trained from Kimi K3」、
+  「the first model in the K3.1 series」，而权重上 497,220 个共有张量零差异、
+  新增的只有 24 个全注意力层上的索引器。HF 上没有非 Pro 的 Kimi-K3.1，
+  这是 K3.1 线唯一的发布（扫过 moonshotai 全部 20 个仓）。
+  旗舰从 K3 换到本代的判据是三条而**不是日期新**：新机制、名族严格超集（K3 独有 0 族）、
+  厂商自述后训练延续。对照本仓 ds-v4-pro 判 side 的理由恰好相反 ——
+  那一份的名族集合与 V4-Flash 完全相同、无新增算子类型，是同代大号版本。
+  **「Pro」这个词在两家含义不同，不能按词判。**
+  released 取 HF 的 createdAt 2026-11-02；lastModified 2026-11-05 是改动不是发布，
+  与本仓 deepseek 那条同一判法
+
+open_questions:
+  - >-
+    **激活精度三方不一致，这本身是结论。** 卡的规格表 Quantization 行声明
+    「MXFP4 weights / MXFP8 activations (quantization-aware training)」；
+    config 声明不量化激活（text_config.quantization_config.config_groups.group_0 的
+    input_activations 是 null，顶层 kv_cache_scheme 也是 null，两个键不在同一层）；
+    落盘清单里没有任何激活 scale 张量。字段 activation_scheme 填的是 config 说的那个值
+    none，三方的差异放在这里。与 kimi-k3 同一形态，本代无技术报告可判
+  - >-
+    索引 K 是否真的被缓存，本代判不出来。本仓 derive.py 按「缓存」算（沿用 GLM-5.3 的处置，
+    索引 K 要与全部历史比较，重算的代价是每步重跑 wk），但这条**没有一手来源**：
+    本代没有技术报告、仓里也没有 modeling_*.py。若实现选择重算，
+    per-token 容量就回到 K3 的 27,648 B 而读带宽另算 —— 这一格直接决定 22.2% 那个结论
+  - >-
+    index_topk_freq 1 与 index_skip_topk_offset 1 的确切语义未核。freq 1 按字面是
+    每个 DSA 层各算一次 top-k（实测 24 层都有完整的 indexer 五族，与此一致）；
+    offset 1 判不出来。GLM-5.3 那边 freq 4 / offset 3 与实际层集合的对应关系
+    也在它自己的 open_questions 里
+  - >-
+    KV 与索引 K、递归状态的落盘精度都未披露，三个分量都按 config dtype bfloat16 兜底。
+    旁证偏向 FP32 的只有 KDA 那一路（A_log / dt_bias / o_norm / q,k,v_conv1d 在清单里是 F32）。
+    索引 K 这一路连旁证都没有
+  - >-
+    预训练数值格式无一手声明，precision.training 不填。卡的
+    「quantization-aware training」说的是 SFT 之后，不能当预训练精度。
+    本代**没有技术报告**，所以 K3 那份报告 §4.1.4 关于量化作用域与 QAT 覆盖
+    SFT+RL 的说法**不往本代回填** —— 作用域本代可以从 config 的 ignore 列表读，
+    「从 SFT 起 QAT」只有卡上一句
+  - >-
+    Tech Blog（www.kimi.ai/blog/kimi-k3-1-pro）本轮未读（JS 渲染）。
+    它可能带 DSA 的机制描述或部署建议；读了之后若与本记录的形状结论冲突，
+    按本仓源优先级，形状赢
