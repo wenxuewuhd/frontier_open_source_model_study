@@ -3,7 +3,7 @@
   "generated": {
     "by": "scripts/derive_paradigms.py",
     "inputs": {
-      "models": 58,
+      "models": 59,
       "paradigms": [
         "data/paradigms/diffusion-lm.yaml",
         "data/paradigms/hybrid-attention.yaml",
@@ -62,6 +62,7 @@
         ],
         "records": [
           "kimi-k3",
+          "kimi-k3.1-pro",
           "kimi-linear-48b",
           "minimax-m1-80k",
           "minimax-text-01",
@@ -81,7 +82,10 @@
         "engines": {
           "SGLang": {
             "partial": 1,
-            "supported": 3
+            "supported": 4
+          },
+          "TokenSpeed": {
+            "supported": 1
           },
           "Transformers": {
             "supported": 1
@@ -95,7 +99,7 @@
           },
           "vLLM": {
             "partial": 1,
-            "supported": 4
+            "supported": 5
           }
         },
         "entries": [
@@ -109,6 +113,24 @@
             "engine": "vLLM",
             "hardware": "NVIDIA",
             "model": "kimi-k3",
+            "status": "supported"
+          },
+          {
+            "engine": "SGLang",
+            "hardware": "NVIDIA",
+            "model": "kimi-k3.1-pro",
+            "status": "supported"
+          },
+          {
+            "engine": "TokenSpeed",
+            "hardware": "NVIDIA",
+            "model": "kimi-k3.1-pro",
+            "status": "supported"
+          },
+          {
+            "engine": "vLLM",
+            "hardware": "NVIDIA",
+            "model": "kimi-k3.1-pro",
             "status": "supported"
           },
           {
@@ -302,6 +324,7 @@
         "families": [
           "deepseek",
           "glm",
+          "kimi",
           "minimax",
           "qwen",
           "stepfun"
@@ -316,6 +339,7 @@
           "glm-5",
           "glm-5.2",
           "glm-5.3",
+          "kimi-k3.1-pro",
           "minimax-m3",
           "minimax-m3.1-flash",
           "qwen3.8-flash-next",
@@ -327,10 +351,10 @@
       "l2": {
         "engines": {
           "SGLang": {
-            "supported": 2
+            "supported": 3
           },
           "TokenSpeed": {
-            "supported": 1
+            "supported": 2
           },
           "transformers": {
             "supported": 4,
@@ -338,7 +362,7 @@
             "wip": 1
           },
           "vLLM": {
-            "supported": 3
+            "supported": 4
           }
         },
         "entries": [
@@ -364,6 +388,24 @@
             "engine": "transformers",
             "hardware": "NVIDIA",
             "model": "glm-5.3",
+            "status": "supported"
+          },
+          {
+            "engine": "SGLang",
+            "hardware": "NVIDIA",
+            "model": "kimi-k3.1-pro",
+            "status": "supported"
+          },
+          {
+            "engine": "TokenSpeed",
+            "hardware": "NVIDIA",
+            "model": "kimi-k3.1-pro",
+            "status": "supported"
+          },
+          {
+            "engine": "vLLM",
+            "hardware": "NVIDIA",
+            "model": "kimi-k3.1-pro",
             "status": "supported"
           },
           {
