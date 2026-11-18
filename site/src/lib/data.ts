@@ -576,6 +576,47 @@ export interface ExcludedVariant {
 export const excludedVariants = (m: Model): ExcludedVariant[] =>
   ((m.precision?.quantization?.official_variants_excluded ?? []) as ExcludedVariant[]);
 
+/**
+ * 厂商另发的**兄弟仓**：同一份逻辑权重、另一个落盘精度，**且不是量化变体**
+ * （`precision.sibling_repos`）。
+ *
+ * GLM-5.3 的主仓是 FP8，厂商另发了全 BF16 的 `zai-org/GLM-5.3-BF16`。
+ * 它进不了 `officialVariants` —— 那边 `origin` 只有 native / post_quantized，
+ * 而 BF16 仓不是任何东西的量化结果。
+ *
+ * **必须渲染出来**，理由和 `excludedVariants` 同一条：不印的话，精度页上
+ * GLM-5.3 那一格就是「FP8」，而读者看不出同一份权重还有一个 BF16 仓 ——
+ * 那是部署时真正要选的东西（305.78 GiB vs 598.51 GiB）。
+ *
+ * `relation` 常常只能是 `undetermined`：名字集合与 tally 两侧相同时，
+ * 清单层面分不出「未量化源」与「上采」—— 这一档要照实印出来，
+ * 印成某个具体方向就是把推论写成事实。
+ */
+export interface SiblingRepo {
+  repo: string;
+  dtype: string;
+  rev?: string;
+  relation: 'unquantized_source' | 'upcast' | 'undetermined';
+  relation_evidence: string;
+  shards?: number;
+  tensor_count?: number;
+  params_total?: number;
+  weight_bytes_total?: number;
+  name_set_identical?: boolean;
+  method?: string;
+  note?: string;
+}
+
+export const siblingRepos = (m: Model): SiblingRepo[] =>
+  ((m.precision?.sibling_repos ?? []) as SiblingRepo[]);
+
+/** `relation` 的中文标签。`undetermined` 不写成「未知」—— 它是查过之后的结论。 */
+export const RELATION_LABEL: Record<string, string> = {
+  unquantized_source: '主仓量化前的源',
+  upcast: '主仓反量化上采而来',
+  undetermined: '方向在清单层面分不出',
+};
+
 /** 一个子系统的精度出自哪里：主仓那一份，还是某个另发的量化仓。 */
 export interface PrecisionSource {
   dtype: string;

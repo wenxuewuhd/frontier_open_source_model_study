@@ -3,7 +3,7 @@
   "generated": {
     "by": "scripts/derive_paradigms.py",
     "inputs": {
-      "models": 59,
+      "models": 60,
       "paradigms": [
         "data/paradigms/diffusion-lm.yaml",
         "data/paradigms/hybrid-attention.yaml",
@@ -55,12 +55,14 @@
       },
       "l1": {
         "families": [
+          "glm",
           "kimi",
           "minimax",
           "qwen",
           "stepfun"
         ],
         "records": [
+          "glm-5.3-flash",
           "kimi-k3",
           "kimi-k3.1-pro",
           "kimi-linear-48b",
@@ -82,7 +84,7 @@
         "engines": {
           "SGLang": {
             "partial": 1,
-            "supported": 4
+            "supported": 5
           },
           "TokenSpeed": {
             "supported": 1
@@ -94,15 +96,33 @@
             "supported": 1
           },
           "transformers": {
-            "supported": 7,
+            "supported": 8,
             "unknown": 1
           },
           "vLLM": {
             "partial": 1,
-            "supported": 5
+            "supported": 6
           }
         },
         "entries": [
+          {
+            "engine": "SGLang",
+            "hardware": "NVIDIA",
+            "model": "glm-5.3-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "glm-5.3-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "vLLM",
+            "hardware": "NVIDIA",
+            "model": "glm-5.3-flash",
+            "status": "supported"
+          },
           {
             "engine": "SGLang",
             "hardware": "NVIDIA",
@@ -245,10 +265,17 @@
           },
           "vllm-ascend": {
             "partial": 1,
-            "supported": 2
+            "supported": 2,
+            "unknown": 1
           }
         },
         "entries": [
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾",
+            "model": "glm-5.3-flash",
+            "status": "unknown"
+          },
           {
             "engine": "SGLang",
             "hardware": "昇腾 A2/A3",
@@ -339,6 +366,7 @@
           "glm-5",
           "glm-5.2",
           "glm-5.3",
+          "glm-5.3-flash",
           "kimi-k3.1-pro",
           "minimax-m3",
           "minimax-m3.1-flash",
@@ -351,18 +379,18 @@
       "l2": {
         "engines": {
           "SGLang": {
-            "supported": 3
+            "supported": 4
           },
           "TokenSpeed": {
             "supported": 2
           },
           "transformers": {
-            "supported": 4,
+            "supported": 5,
             "unknown": 1,
             "wip": 1
           },
           "vLLM": {
-            "supported": 4
+            "supported": 5
           }
         },
         "entries": [
@@ -388,6 +416,24 @@
             "engine": "transformers",
             "hardware": "NVIDIA",
             "model": "glm-5.3",
+            "status": "supported"
+          },
+          {
+            "engine": "SGLang",
+            "hardware": "NVIDIA",
+            "model": "glm-5.3-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "glm-5.3-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "vLLM",
+            "hardware": "NVIDIA",
+            "model": "glm-5.3-flash",
             "status": "supported"
           },
           {
@@ -466,7 +512,8 @@
           },
           "vllm-ascend": {
             "partial": 1,
-            "supported": 6
+            "supported": 6,
+            "unknown": 1
           }
         },
         "entries": [
@@ -499,6 +546,12 @@
             "hardware": "昇腾 A2/A3",
             "model": "glm-5.3",
             "status": "supported"
+          },
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾",
+            "model": "glm-5.3-flash",
+            "status": "unknown"
           },
           {
             "engine": "vllm-ascend",
@@ -556,6 +609,7 @@
           "glm-5",
           "glm-5.2",
           "glm-5.3",
+          "glm-5.3-flash",
           "minimax-m3.1-flash",
           "qwen3-next-80b-a3b",
           "qwen3.5-27b",
@@ -573,7 +627,7 @@
         "engines": {
           "SGLang": {
             "partial": 1,
-            "supported": 2
+            "supported": 3
           },
           "TokenSpeed": {
             "supported": 1
@@ -585,13 +639,13 @@
             "supported": 1
           },
           "transformers": {
-            "supported": 12,
+            "supported": 13,
             "unknown": 1,
             "wip": 1
           },
           "vLLM": {
             "partial": 1,
-            "supported": 3
+            "supported": 4
           }
         },
         "entries": [
@@ -641,6 +695,24 @@
             "engine": "transformers",
             "hardware": "NVIDIA",
             "model": "glm-5.3",
+            "status": "supported"
+          },
+          {
+            "engine": "SGLang",
+            "hardware": "NVIDIA",
+            "model": "glm-5.3-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "transformers",
+            "hardware": "NVIDIA",
+            "model": "glm-5.3-flash",
+            "status": "supported"
+          },
+          {
+            "engine": "vLLM",
+            "hardware": "NVIDIA",
+            "model": "glm-5.3-flash",
             "status": "supported"
           },
           {
@@ -749,7 +821,8 @@
           },
           "vllm-ascend": {
             "partial": 1,
-            "supported": 4
+            "supported": 4,
+            "unknown": 1
           }
         },
         "entries": [
@@ -782,6 +855,12 @@
             "hardware": "昇腾 A2/A3",
             "model": "glm-5.3",
             "status": "supported"
+          },
+          {
+            "engine": "vllm-ascend",
+            "hardware": "昇腾",
+            "model": "glm-5.3-flash",
+            "status": "unknown"
           },
           {
             "engine": "SGLang",

@@ -300,7 +300,20 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None,
     # --- 层分布：先分清哪些层走 full attention、哪些走线性
     types = t.get("layer_types") or hyb.get("layer_types")
     if types:
-        full_layers = sum(1 for x in types if "full" in str(x))
+        # **这里判的是「这一层的缓存随上下文长吗」，不是算子名。** 三类写法实扫过
+        # 全部 facts：`full_attention`（通义 / 阶跃）、`linear_attention`（通义 / GLM）、
+        # `sliding_attention`（阶跃 252 条，每序列固定、既不算 full 也不算 linear，
+        # 走 measured_per_token 的 local_window），以及
+        # `deepseek_sparse_attention`（GLM-5.3-Flash 22 条）。
+        # **最后这一种必须算进 full**：DSA 选的是「读哪些 token」，全历史的 latent
+        # 与 index K 仍要逐 token 存，容量模型和全注意力同一类。
+        # 不认它的后果是 full_layers = 0 —— 11 层产出 KV 的模型在产物里写着 0，
+        # 而 per_token 那半由 measured_per_token 接管、数值仍然自洽，
+        # 于是只有层数这一格是错的，没有任何闸口查得到。
+        # 用「不是 linear 就算 full」的补集写法不行：那会把阶跃的 252 个
+        # sliding 层并进 full，改掉已提交的 5 份产物。
+        full_layers = sum(1 for x in types
+                          if "full" in str(x) or "sparse_attention" in str(x))
         linear_layers = sum(1 for x in types if "linear" in str(x) or "mamba" in str(x))
     else:
         cnt = hyb.get("layer_types_count") or {}
@@ -311,14 +324,39 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None,
     src = share.get("source_layers")
     if src:
         full_layers = len(src)
-        notes.append(f"只有 {full_layers} 层产出 KV（共 {layers} 层），其余层跨层读取；"
-                     "按总层数乘会高估")
+        # **「其余层跨层读取」这半句原先是写死的断言，而它只对一种结构成立。**
+        # 跨层共享（DeepSeek V4.1：4/40 层产出、其余层读上游的 KV）与
+        # 混合结构（GLM-5.3-Flash：11 层产出、其余 34 层走线性注意力、
+        # 根本不累积 KV）在这一格里长得一样，而两者的容量模型完全不同 ——
+        # 前者「存一份读多次」，后者「另一个量，每序列固定」。
+        # 说成前者会让读者以为那 34 层也在读同一份 KV。
+        rest = layers - full_layers
+        if linear_layers:
+            which = ("全是线性注意力层" if linear_layers >= rest
+                     else f"有 {linear_layers} 层是线性注意力")
+            notes.append(
+                f"只有 {full_layers} 层产出 KV（共 {layers} 层），按总层数乘会高估。"
+                f"其余 {rest} 层{which} —— 它们**不累积 KV**，状态每序列固定，"
+                f"不是「跨层读取同一份 KV」。"
+                f"逐层归属见记录的 attention.kv_sharing.layer_coverage")
+        else:
+            notes.append(f"只有 {full_layers} 层产出 KV（共 {layers} 层），其余层跨层读取；"
+                         "按总层数乘会高估")
 
     # --- full attention：随上下文增长。KV 精度是 MIXED 这类非单值时套不了公式，
     # 那种记录必然带 measured_per_token，交给下面的实测分支
     if full_layers and b:
         lora = attn.get("kv_lora_rank") or t.get("kv_lora_rank")
-        rope = attn.get("qk_rope_head_dim") or t.get("qk_rope_head_dim")
+        # **`or` 链在 rope = 0 上是错的。** NoPE MLA（GLM-5.3-Flash：config
+        # qk_rope_head_dim 0 + mla_use_nope true，权重侧 kv_a_proj_with_mqa 输出维
+        # 恰好 512 = kv_lora_rank，没有 rope 尾段）会让 `0 or 0` 落到 0，
+        # 下面的 `if lora and rope` 因此不成立、整条 MLA 分支被跳过，
+        # 退到 GQA 公式算出 2×64×256 = 32768 元素/层 —— 对实际的 512 是 **64 倍高估**。
+        # 「声明了 0」与「没声明」是两件事，要分开判：前者是一手事实（这一代真的没有
+        # 旋转段），后者才该回退。
+        rope = attn.get("qk_rope_head_dim")
+        if rope is None:
+            rope = t.get("qk_rope_head_dim")
         kvh = attn.get("num_kv_heads") or t.get("num_key_value_heads")
         hd = attn.get("head_dim") or t.get("head_dim")
         if not hd and t.get("hidden_size") and t.get("num_attention_heads"):
@@ -332,11 +370,14 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None,
                                     "若在其内，每层应为 latent*bytes 而非 (latent+rope)*bytes，"
                                     "当前取值为上界")
             upper = True
-        if lora and rope:
+        if lora and rope is not None:
             el = lora + rope
             per_layer = el * b
             terms.update({"latent": lora, "qk_rope_head_dim": rope,
                           "formula": "(latent + qk_rope_head_dim) * bytes"})
+            if rope == 0:
+                terms["nope"] = ("qk_rope_head_dim 声明为 0（NoPE MLA）："
+                                 "latent 就是整条缓存宽度，没有旋转尾段")
         elif kvh and hd:
             el = 2 * kvh * hd
             per_layer = el * b
@@ -405,8 +446,22 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None,
     # 两者的可信度不同，乘出来的字节要带上精度那一侧的口径
     meas = share.get("measured_per_token") or {}
     if meas.get("global_kv") or meas.get("indexer"):
+        # **只接管「随上下文增长」的那几个分量。** measured_per_token 的键只有
+        # global_kv / indexer / local_window，**没有线性注意力的递归状态** ——
+        # 那是每序列固定的另一个量。`comp.clear()` 原先把它一起清掉：
+        # 本仓此前没有一份记录同时用到两侧（8 份 measured 全是纯注意力、
+        # 11 份 linear_state 全没 measured），所以这个洞一直是空的；
+        # GLM-5.3-Flash 是第一份（34 层 KDA + 11 层稀疏 MLA），
+        # 清掉的后果是 74.375 MiB/序列 的 KDA 状态整块消失，
+        # 而 per_token 那半仍然自洽 —— 又一次「少算一项却像是精确值」。
+        kept = {k: v for k, v in comp.items() if k == "linear_state"}
         comp.clear()
+        comp.update(kept)
         bases = set()
+        # 递归状态的字节一律按模型 dtype 兜底（它不查 kv_cache_components），
+        # 口径要进 bases，否则合计会被标成一个它并不满足的 basis
+        if kept:
+            bases.add("dtype_fallback")
 
         def put(key, elems, per):
             bpe, basis, fmt = _component_bpe(components, key, b)
@@ -434,6 +489,13 @@ def kv_memory(t: dict, attn: dict, kv_dtype: str, scale_dtype: str = None,
                 "terms": {"note": "滑窗局部 KV，每序列固定，不随上下文增长。记录直接给的字节数，按模型 dtype 算"},
             }
         status = "measured"
+        if kept:
+            # status 只有一个格子，而这份结果里两半的可信度不同 ——
+            # 不写出来，「measured」会被读成连递归状态也是量出来的
+            notes.append(
+                "status=measured 只覆盖随上下文增长的那几个分量（元素数实测自权重清单）；"
+                f"同时保留的 {'/'.join(sorted(kept))} 是每序列固定分量，"
+                "按常见布局估算，可信度不同，两半不要合成一个数去比")
         if meas.get("note"):
             notes.append(meas["note"])
         out = _kv_out(comp, status, atype, kv_dtype, layers, full_layers, linear_layers, notes)

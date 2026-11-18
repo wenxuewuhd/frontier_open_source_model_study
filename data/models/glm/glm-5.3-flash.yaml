@@ -1,0 +1,1037 @@
+id: glm-5.3-flash
+family: glm
+kind: vlm
+display_name: GLM-5.3-Flash
+released: 2026-10-15
+license: mit
+visibility: public
+
+sources:
+  - kind: modelcard
+    url: https://huggingface.co/zai-org/GLM-5.3-Flash
+    locator: config.json @ 46a050bec130
+    accessed: '2026-11-18'
+    note: >-
+      FP8 发布（tags 带 fp8），62 分片。权重清单逐分片读头取全，76,108 个条目，
+      failed_shards 为空、duplicate_tensors 为 0。
+      **model_type 是 `glm5_next`，不是同代旗舰 GLM-5.3 的 `glm_moe_dsa`**；
+      architectures 为 `Glm5NextForConditionalGeneration`，
+      config 分 `text_config`（model_type `glm5_next_text`）与
+      `vision_config`（`glm5_next_vision`）两段
+  - kind: modelcard
+    url: https://huggingface.co/zai-org/GLM-5.3-Flash/blob/46a050bec13002ad29ee795c16e61cf4fa3c4a9c/README.md
+    locator: README.md 全文（73 行），Introduction 一节前两段
+    accessed: '2026-11-18'
+    note: >-
+      卡正文原话（Introduction 第 1 段）：「the **first natively multimodal** model in the
+      GLM-5 series」「With **320B total parameters and just 18B active parameters**」；
+      第 2 段：「GLM-5.3-Flash **starts from a newly trained base model**, with its
+      architecture and training recipe redesigned around capability and efficiency」
+      「**For the first time in the GLM series**, we introduce a **hybrid architecture
+      combining sparse and linear attention**」「also adopts **Manifold-Constrained
+      Hyper-Connections (mHC)**」「latest **30T-token** multimodal pre-training corpus」。
+      **没有每 token KV 字节、没有训练精度声明**（全文搜 kv.?cache / per-token /
+      cache size|capacity|memory|footprint 命中 0；FP8 只出现在 tags 与
+      quantization_config，正文一个字没提）。
+      卡引了 z.ai/blog/glm-5.3-flash 与 arXiv 2602.15763（GLM-5 技术报告，
+      同代 GLM-5.2 的卡也引了这一篇）—— **两篇本轮都没读**，见 open_questions
+  - kind: repo
+    url: https://huggingface.co/zai-org/GLM-5.3-Flash/blob/46a050bec13002ad29ee795c16e61cf4fa3c4a9c/processor_config.json
+    locator: processor_config.json 全文（image_processor / video_processor 两段）
+    accessed: '2026-11-18'
+    note: >-
+      视觉侧 token 预算的唯一一手来源：image_processor 的
+      patch_size 14 / merge_size 2 / temporal_patch_size 2 /
+      min_image_tokens 16 / max_image_tokens 8000；
+      video_processor 另有 fps 2 与 max_image_tokens 240000。
+      仓里**没有** preprocessor_config.json（取 404），所以分辨率分桶的细节只有这一份
+
+hf:
+  repo: zai-org/GLM-5.3-Flash
+  sha: 46a050bec13002ad29ee795c16e61cf4fa3c4a9c
+  last_modified: '2026-10-15T06:32:52.000Z'
+  pipeline_tag: image-text-to-text
+  gated: false
+
+lineage:
+  track: side
+  # **故意不填 predecessor。** 判据两条，都不是印象：
+  # (1) 厂商卡原话「starts from a newly trained base model, with its architecture and
+  #     training recipe redesigned」；
+  # (2) 清单实测 —— 排 scale 之后本记录 38,770 条、同代旗舰 GLM-5.3 59,585 条，
+  #     **张量名集合的交集只有 1 条**（lm_head.weight），其余互不相干。
+  # 给它挂 predecessor: glm-5.3 会让家族页的变化矩阵逐字段比两份记录，
+  # 印出一条「78 层 → 45 层、6144 → 4096、MLA → hybrid」的演进链 ——
+  # 而那不是演进，是两条线。本仓「和 lineage.predecessor 比，不和时间上的前一个比」
+  # 这条规矩正是为此立的（支线按时间比会串出假链）。
+  # 代价是它在家族页上是个孤点（glm-5.3 的 R20 记过这个形状）：
+  # **这里是有意为之，不是漏填** —— 家族页要不要长出「另起一条线」这个概念，
+  # 是站点侧的决定，不是这份记录能单方面定的，见 open_questions
+
+params:
+  total: 321323031390
+  breakdown:
+    expert: 304405807104
+    draft: 7432592416
+    attention: 5974739072
+    shared_expert: 1056964608
+    lm_head: 634388480
+    embed: 634388480
+    vision: 563627008
+    dense_ffn: 452984832
+    indexer: 82187776
+    router: 49557312
+    residual: 35391870
+    norm: 402432
+  counting_note: >-
+    按完整权重清单（62 分片 76,108 条目）逐项统计。76,108 是 safetensors 条目数，
+    其中 37,338 条是 weight_scale_inv（FP8 的 per-block scale 容器）—— 不计入参数、
+    只计入权重存储；真权重张量 38,770 条。
+    **total 与 breakdown 都是精确值，不取有效数字**（十二项求和逐位等于 total
+    321,323,031,390）—— glm-5.3 存 6 位有效数字那种写法会让「逐位相同」这句话
+    无处可说，见那份记录的 R22。
+    它与 HF 平台自己从 62 个分片头统计的 safetensors tally 逐 dtype 逐位相同：
+    BF16 6,926,096,640 / F8_E4M3 314,396,639,232 / F32 295,518，合计 321,323,031,390。
+    全清单 dtype 只有 F8_E4M3 / BF16 / F32 三种，无 INT8/UINT8/INT32 打包容器，
+    numel 即参数数，不需还原。
+    **厂商声明 320B**（模型卡 Introduction 第 1 段「320B total parameters」），
+    对实测 321,323,031,390 是 **+0.41%** —— 声明值是整数档位的约数，
+    本记录的 total 用实测值。
+    **total 含草稿侧**：breakdown 的 draft 一项（第 45 层整块，7,432,592,416）在 total 之内，
+    没有 excludes；也含视觉塔（563,627,008）。厂商没说 320B 的口径覆盖什么，
+    所以无法填 params.excludes —— 这是「厂商没说」，不是「含/不含草稿侧」。
+    激活参数见 data/derived/glm-5.3-flash.json（带宽口径与可比官方口径两套），
+    这里不写单一值；与卡上 18B 的对账见 notes。
+
+context:
+  max: 1048576
+
+arch:
+  layers: 45
+  hidden: 4096
+  vocab: 154880
+  norm: RMSNorm
+  norm_eps: 1.0e-05
+  activation: SwiGLU（config swiglu_limit 10.0，带截断）
+  position: >-
+    **主干注意力路径上没有 rotary**：config qk_rope_head_dim 0 + mla_use_nope true，
+    权重侧 kv_a_proj_with_mqa 输出维恰好 512 = kv_lora_rank，没有 rope 尾段
+    （对照 GLM-5.3 是 576 = 512 + 64）。位置信息由 34 层 KDA 的短卷积与递归衰减承担。
+    indexer 侧另有 indexer_rope_interleave true，即 index 打分那一路仍带旋转 ——
+    「整个模型没有位置编码」是错读，没有的是**全注意力层的 QK**
+
+  attention:
+    type: hybrid
+    num_heads: 64
+    num_kv_heads: 64
+    head_dim: 256
+    v_head_dim: 256
+    head_dim_note: >-
+      **这一代有三个 config 键会把 head_dim 读错，而且方向各不相同。**
+      (1) `head_dim: 0` —— config 字面就是 0。照抄得 0；而 derive.py 在 head_dim
+      为假值时会退到 hidden/num_heads = 4096/64 = **64**，比真值低 4 倍。
+      (2) `qk_head_dim: 256` 是 QK 全宽，与 qk_nope_head_dim 256 相等 ——
+      因为 qk_rope_head_dim 是 0（NoPE），nope 段就是全宽。本记录的 head_dim 填 256。
+      (3) `num_kv_heads: 64` 是 query 侧可见的 KV 头数，**不是缓存宽度**：
+      落盘缓存是 kv_a_proj_with_mqa 的 512 维 latent，按 2×64×256 = 32,768 折算
+      会高估 **64 倍**（GLM-5.3 那一代同一个错算是 56.9 倍，因为它的 latent 是 576）。
+      V 每头也是 256，与 QK 全宽相等。不对称只在 kv_b_proj [32768, 512] 内部：
+      32,768 = 64 × (K-nope 256 + V 256)，**这一代 K 没有 rope 段**，
+      所以 kv_b_proj 把 latent 全额升回 K 与 V 两侧，而 GLM-5.3 的 K-rope 64 维
+      是由 kv_a_proj_with_mqa 尾段直接产出的。o_proj 入口 16,384 = 64 × 256，
+      与 q_b_proj 出口逐位相同。
+      以上只覆盖 11 个 `deepseek_sparse_attention` 层与 MTP 块；
+      34 个 `linear_attention` 层的几何在 linear_state 里，两套不要混
+    qk_rope_head_dim: 0
+    qk_nope_head_dim: 256
+    kv_lora_rank: 512
+    q_lora_rank: 1536
+    layer_pattern: >-
+      3:1 linear:full —— config layer_types 45 项为 34 个 `linear_attention`
+      + 11 个 `deepseek_sparse_attention`，稀疏层在 L3/L7/…/L43（间隔严格 4，
+      与 linear_attn_config.full_attn_layers 逐个相等），其余 34 层是 KDA
+      （与 linear_attn_config.kda_layers 逐个相等）。MTP 块（第 45 层）是稀疏层
+    hybrid:
+      layer_types_count: { linear: 34, full: 11 }
+      interval: 4
+      note: >-
+        config 的 layer_types 用 `deepseek_sparse_attention` 而不是 `full_attention`
+        这个词。**它在容量模型上属 full**：DSA 选的是「读哪些 token」，
+        全历史的 latent 与 index K 仍逐 token 存。按字面匹配 "full" 会数出 0 层
+        —— derive.py 的词表为此扩过（见该函数注释）
+    sparse:
+      mechanism: >-
+        DSA indexer 选 token，**11 个稀疏层每层各算一次**（加 MTP 块共 12 套 indexer 权重），
+        没有 GLM-5.3 那种「每 N 层算一次、其余层复用选择结果」的跨层复用 ——
+        这一代根本没有「shared indexer 层」这个概念，因为非稀疏层走的是线性注意力。
+        **config 的 `indexer_types` 是 45 项全 `full`，照它数会得 45 层**，
+        对实测的 11 层是 4.09 倍高估；清单里有 indexer 张量的层只有
+        [3,7,11,15,19,23,27,31,35,39,43] 加第 45 层（MTP），
+        与 layer_types 里 `deepseek_sparse_attention` 的位置逐个相等。
+        index_topk 2048，index_skip_topk_offset 这个键本代没有
+      index_n_heads: 32
+      index_head_dim: 128
+      index_topk: 2048
+      index_kv_dim: 128
+      index_kv_source: >-
+        model.layers.N.self_attn.indexer.wk.weight [128, 4096]，输出维 128。
+        index_n_heads × index_head_dim = 32 × 128 = 4096 是 32 倍的上界：
+        index K 在 32 个 index 头之间 MQA 共享，不是逐头
+    kv_sharing:
+      source_layers: [3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43]
+      index_kv_source_layers: [3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43]
+      layer_coverage: >-
+        **四种缓存，覆盖面三套，互不相同。** 以下层数都是**主干口径**（0–44）：
+        全局 MLA latent 在 11 层（L3/L7/…/L43 各有 kv_a_proj_with_mqa [512, 4096]，
+        无跨层共享）；index K 在同样这 11 层（indexer.wk [128, 4096]）；
+        KDA 的递归状态与短卷积状态在另外 34 层（与前 11 层**互斥**，34 + 11 = 45）。
+        另有 MTP 块（第 45 层）自带一整套 MLA 与一整套 indexer，
+        所以权重清单里产出 MLA latent 的层共 12 个、产出 index K 的共 12 个 ——
+        config 的 indexer_types 与 layer_types 长度都只有 45、只覆盖主干 0–44，
+        按它们数会漏掉这一套。开 MTP 时按 12 / 12 / 34 算。
+        **三类的增长方式不同**：前两类随上下文线性增长，第三类每序列固定 ——
+        不能统称「逐层」，也不能相加
+      measured_per_token:
+        global_kv: 5632
+        indexer: 1408
+        note: >-
+          口径为**主干 11 层、不含 MTP 块**，与 glm-5.3 的记法一致（那份也只记主干）。
+          逐因子：global_kv = kv_a_proj_with_mqa 输出维 512（实测，12 张逐张相同）
+          × 11 层（layer_types 的 deepseek_sparse_attention 位置，与清单里
+          kv_a_proj_with_mqa 的层集合逐个相等）；
+          indexer = indexer.wk 输出维 128（实测，12 张逐张相同）× 同样 11 层。
+          开 MTP 时各 ×12/11，合计 7,680 元素/token（+640，+9.1%）。
+          **index K 这一半按「一个条目一个 token」计费，而 config 声明了
+          `index_kpool: 4` + `index_kpool_compress: true`** —— 若池化作用在落盘上，
+          这一半应除以 4（1408 → 352，合计 7,040 → 5,984 元素/token，−15.0%）。
+          清单只能告诉我们池化窗口是 4（index_kpool_compress_ape [4, 128]）与
+          压缩后的宽度是 128（index_kpool_compress_gate [128, 4096] 的输出维），
+          **定不了「缓存里存的是池化前还是池化后」**，所以这里取不折算的上界
+          并留 open question。**KDA 的递归状态不在这两个数里** ——
+          它每序列固定，由 linear_state 那一侧算
+    linear_state:
+      mechanism: >-
+        KDA（Kimi Delta Attention 式的门控增量规则），config 的
+        linear_attn_config：num_heads 64 / head_dim 128 / short_conv_kernel_size 4 /
+        gate_lower_bound −5.0。权重侧逐层 12 个张量：q/k/v_proj 各 [8192, 4096]
+        （8192 = 64 × 128）、o_proj [4096, 8192]、q/k/v_conv1d 各 [8192, 1, 4]
+        （三条独立的 depthwise 短卷积，不是一条融合的）、b_proj [64, 4096]（逐头标量）、
+        f_a_proj [128, 4096] + f_b_proj [8192, 128] 与 g_a_proj [128, 4096] +
+        g_b_proj [8192, 128]（两组低秩门，出口都是 64 × 128），
+        另有 FP32 的 A_log [64] 与 dt_bias [8192]、BF16 的 o_norm [128]。
+        **config 的 `fused_qkvbfg_a_proj` 在权重里不存在** ——
+        modules_to_not_convert 里有 34 条这个名字，清单命中 0；
+        真实张量是分开的 q_proj / k_proj / v_proj / b_proj / f_a_proj / g_a_proj。
+        本代它们恰好全是 BF16，所以排除清单写错名字没出事（与 GLM-5.3 的
+        `indexers_proj` 同一个形状）
+      num_heads: 64
+      num_key_heads: 64
+      num_value_heads: 64
+      key_head_dim: 128
+      value_head_dim: 128
+      conv_kernel_dim: 4
+      state_layout_note: >-
+        矩阵状态按 [num_value_heads 64, key_head_dim 128, value_head_dim 128] =
+        1,048,576 元素/层估算，这一侧**依实现而定、本轮未读实现**。
+        短卷积状态那一侧有权重清单给的恒等式钉住通道数：
+        三条 conv1d 的首维之和 8192 × 3 = **24,576**，
+        逐位等于 2 × num_key_heads(64) × key_head_dim(128) +
+        num_value_heads(64) × value_head_dim(128) = 24,576 ——
+        即 q/k/v 三段全展开，不是只数 key 一段（derive.py 的
+        conv_state 公式正是这个式子）。窗长按 4 全窗计，是上界：
+        实现若只存 k−1 = 3 个位置会低 25%。
+        state_dtype 没有一手来源，不填，按模型 dtype 兜底，见 open_questions
+
+  ffn:
+    type: moe
+    layer_pattern: >-
+      第 0–2 层稠密（intermediate 12288），其余 42 层为 MoE；MTP 块（第 45 层）也是 MoE。
+      与 config 的 mlp_layer_types（3 个 dense + 42 个 sparse）逐项相等。
+      稠密层的 FFN 比单个专家宽 6 倍，单层 150,994,944 参数 ——
+      而一层稀疏注意力只有 117,442,560，稠密 FFN 是它的 1.29 倍；
+      但一层 KDA 是 137,732,288，所以「稠密层最宽」在这一代**只对注意力那一侧的 11 层成立**
+
+  moe:
+    routed_experts: 288
+    shared_experts: 1
+    top_k: 8
+    intermediate: 2048
+    first_k_dense: 3
+    dense_intermediate: 12288
+    routing: >-
+      sigmoid 打分、noaux_tc 选路，routed_scaling_factor 2.5，norm_topk_prob true，
+      打分走 FP32（config moe_router_dtype=float32，而 gate 权重实测 BF16 ——
+      两者不矛盾：一个是计算精度、一个是存储精度）
+    balance: >-
+      e_score_correction_bias（无辅助损失）。config 另有 router_aux_loss_coef 0.001
+      与 output_router_logits false —— 系数存在不等于启用，这一代的判据是
+      topk_method=noaux_tc，而清单里 43 份 e_score_correction_bias [288] 全是 FP32 真参数
+    storage_note: >-
+      逐专家独立张量（mlp.experts.N.{gate,up,down}_proj），不是堆叠的 3 维权重。
+      grouped GEMM 因此吃 2 维张量列表；EP 切分按张量分配，不按首维切。
+      n_group=1 且 topk_group=1，分组路由实际未启用。
+      **288 不是 2 的幂**：EP 切分成 8 / 16 / 32 份都整除（36 / 18 / 9），
+      切 64 份不整除 —— 与 GLM-5.3 的 256 不同，那个任意 2 的幂都整除
+
+  decoding:
+    mtp_layers: 1
+
+  vision:
+    encoder: >-
+      ViT 24 块，hidden 1024 / 16 头（head_dim 64）/ intermediate 4096：
+      attn.qkv [3072, 1024] 带 bias、attn.proj [1024, 1024] 带 bias、
+      q_norm / k_norm [64]（逐头维，不是逐 token 维）、
+      门控 MLP gate_proj / up_proj [4096, 1024] + down_proj [1024, 4096] 三张全带 bias、
+      norm1 / norm2 [1024]。**没有位置嵌入张量**。
+      入口 patch_embed.proj.weight [1024, 3, 2, 14, 14] 是 3D 卷积核：
+      3 通道 × 时间 2 × 空间 14×14，与 config 的 patch_size 14 /
+      temporal_patch_size 2 逐个对上
+    layers: 24
+    hidden: 1024
+    num_heads: 16
+    patch_size: 14
+    intermediate: 4096
+    spatial_merge_size: 2
+    temporal_patch_size: 2
+    out_hidden: 4096
+    params: 563627008
+    max_image_tokens: 8000
+    fusion: >-
+      两步：先 `visual.downsample` [4096, 1024, 2, 2]（2×2 跨步卷积，
+      把 1024 宽的 encoder 输出合并 4 个 patch 并同时升到 4096 = out_hidden_size，
+      带 bias），再 `visual.merger`（proj [4096, 4096] → 门控 MLP
+      gate_proj / up_proj [10240, 4096] + down_proj [4096, 10240]，
+      10240 = config 的 projection_intermediate_size，另有
+      post_projection_norm [4096] 带 bias）。
+      **压缩在 merger 之前**，所以 merger 的四个 GEMM 只跑 256 次而不是 1024 次。
+      清单里没有 image_start / image_newline 这类可学习标记向量 ——
+      config 的 image_token_id 154854 / video_token_id 154855 /
+      image_start_token_id 154830 等六个 id 都落在 vocab 154880 之内，
+      即标记走的是词表里的普通 token，不是顶层独立张量
+    tokens:
+      reference_resolution: 448x448
+      patch_grid: 32x32
+      encoder_tokens: 1024
+      llm_tokens: 256
+      compression_ratio: 4
+      compression_stage: >-
+        `visual.downsample` 的 2×2 跨步卷积，**在 merger（projector）之前**。
+        与 config 的 spatial_merge_size 2 和 processor_config 的 merge_size 2 一致，
+        三处同一个 2。注意它和 Qwen/DeepSeek 那种「通道维拼接再过 MLP」不同：
+        这里压缩与升维由同一个卷积一次做完（1024 × 2 × 2 = 4096 恰好等于出口宽度，
+        所以这个卷积在参数量上等价于一次 4096×4096 的 GEMM）
+      dynamic_resolution: true
+      max_llm_tokens_declared: 8000
+      derivation: >-
+        三个因子：
+        (1) patch 14 —— config vision_config.patch_size 与 processor_config
+        image_processor.patch_size 都是 14，并由
+        visual.patch_embed.proj.weight 的后两维 14 × 14 印证；
+        (2) 空间 2×2 合并 —— config spatial_merge_size 2 / processor merge_size 2，
+        并由 visual.downsample.weight [4096, 1024, 2, 2] 的后两维印证；
+        (3) 参考分辨率 448 —— config vision_config.image_size 448。
+        448 / 14 = 32，32² = **1024** 个 encoder token；
+        32 / 2 = 16，16² = **256** 个主干 token。
+        **448 是本仓选的参考分辨率，不是固定输入尺寸**：processor_config 给的是
+        min_image_tokens 16 / max_image_tokens 8000，即按 token 数分桶、
+        分辨率随图变，所以 dynamic_resolution 为 true。
+        **8000 这个上限的口径（池化后的主干 token 数，还是池化前的 patch 数）
+        processor_config 里没写**，字段名 `max_image_tokens` 配 merge_size 2 同处一段，
+        按前者填进 max_llm_tokens_declared；若其实是后者，上限应是 2000，
+        见 open_questions。processor_config 另有 `patch_expand_factor: 1` 这个键，
+        含义无来源
+      scope_note: >-
+        这组数只覆盖**单张静态图**在 448×448 这一档上的 token 账。
+        视频另有一套：processor_config.video_processor 的 fps 2 与
+        max_image_tokens 240000，而 patch_embed 的时间维是 2，
+        即每 2 帧合成一个时间 patch —— 按 fps 2 采样、时间 patch 2，
+        一秒视频产出 1 个时间步的 patch 网格。**视频那一侧本记录没有算 token 账**：
+        240000 的口径与 8000 同样没写明，而帧数到 patch 的换算还要知道分桶策略
+    prefill:
+      encoder_linear_gflops: 827.1
+      projector_linear_gflops: 81.6
+      backbone_token_budget: 256
+      backbone_linear_gflops_per_token: 32.22
+      image_as_text_tokens: 284
+      attention_excluded: >-
+        被排除的是 encoder 自注意力的 QK^T 与 AV，形式 4 × n² × hidden × layers。
+        跨度没有一手来源：vision_config 里没有窗口一类的键，厂商参考实现本轮没读。
+        按整图一段取 n = 1024：1024² × 4 × 1024 × 24 ≈ 103 GFLOPs。
+        没有加进上面几格，因为主干那侧的分母也是线性项、不含注意力
+      derivation: >-
+        encoder 线性项 = 2 × 1024 token × (patch_embed 每 token
+        1024 × (3 × 2 × 14 × 14) = 1,204,224 MAC + 24 层 × 每层 16,777,216 MAC
+        = 402,653,184) = 2 × 1024 × 403,857,408 = **827,099,971,584**。
+        每层 16,777,216 = qkv [3072,1024] 3,145,728 + proj [1024,1024] 1,048,576 +
+        gate_proj [4096,1024] 4,194,304 + up_proj [4096,1024] 4,194,304 +
+        down_proj [1024,4096] 4,194,304，五项相加；bias 不计（口径只算 GEMM）。
+        projector 线性项 = downsample 2 × 256 × (4096 × 1024 × 2 × 2)
+        = 8,589,934,592 加 merger 2 × 256 × (4096² + 2 × 10240 × 4096 + 4096 × 10240)
+        = 73,014,444,032，合计 **81,604,378,624**。
+        主干分母 = 2 × (active_params.total 16,742,333,246 −
+        active_params.lm_head 634,388,480) = **32,215,889,532**
+        —— **不能用 derived 里的 flops.linear_per_token 33,484,666,492**，
+        那一项含 lm_head（decode 口径），prefill 只在最后一个位置算 logits。
+        换算 = 256 + (827,099,971,584 + 81,604,378,624) / 32,215,889,532
+        = 256 + 28.2 = **284**。
+        塔占比 284 / 256 = 1.11，是本仓 vlm 里最低的一档之一 ——
+        压缩比只有 4（DeepSeek 一代是 9），但主干每 token 32.2 GFLOPs 很厚，
+        两个因子方向相反而主干那个赢了
+    separability:
+      weight_prefix: >-
+        `model.visual.`（347 个张量）与主干的 `model.language_model.`（75,760 条）
+        加顶层 `lm_head.weight`（1 条）。三者前缀不相交，合计 76,108 = 清单总条目数。
+        **本代主干前缀多一层 `language_model.`** ——
+        这是 `Glm5NextForConditionalGeneration` 的包装，GLM-5.3 那边是裸的
+        `model.layers.`；按 GLM-5.3 的前缀写的加载器在这一代一个张量都匹配不上
+      shard_isolation: partial
+      shard_note: >-
+        实测 shard_map：62 个分片里只有**第 62 个**含视觉张量，347 个全在里面；
+        但同片还有 4 个非视觉张量 —— model.language_model.layers.9 的
+        self_attn.{q_proj, v_proj, v_conv1d} 与 model.language_model.norm.weight，
+        合计 67,145,728 个参数。
+        所以「只读第 62 个文件」会多搬 6,715 万参数，**只有视觉塔本身
+        （563,627,008）的 11.9%** —— 与 ds-v4-flash-vision-exp 那份正好相反：
+        那边混进来的单张 embed 表（5.3 亿）比整座塔还大
+      cross_prefix_sharing: >-
+        清单的 76,108 个名字里没有任何一个同时匹配 `model.visual.` 与主干前缀，
+        即没有重名共享；config 的 tie_word_embeddings 两处都是 false，
+        而 embed_tokens 与 lm_head 两张 [154880, 4096] 在清单里各自独立落盘。
+        落盘层面的 tied weights 要看 safetensors 头的数据偏移是否重合，
+        本轮没读偏移
+
+  # mHC（Manifold-Constrained Hyper-Connections）—— 卡上点名的机制，
+  # **本仓第一次在 DeepSeek 以外见到**
+  residual:
+    type: mHC
+    multiplier: 4
+    sinkhorn_iters: 20
+    eps: 1.0e-06
+    coef_proj: >-
+      每层 hc_attn_fn 与 hc_ffn_fn 各一个 [24, 16384] **BF16**，
+      配 hc_attn_base / hc_ffn_base [24] 与 hc_attn_scale / hc_ffn_scale [3] 四个 FP32。
+      16,384 = hc_mult(4) × hidden(4096)，即 fn 的入口是四路残差流拼起来
+    note: >-
+      厂商卡原话「adopts **Manifold-Constrained Hyper-Connections (mHC)**
+      to further improve scaling efficiency」；config mhc true / hc_mult 4 /
+      hc_sinkhorn_iters 20 / hc_eps 1e-06。
+      逐层 6 个张量、主干 45 层零例外，**注意力与 FFN 各一套**（attn / ffn 两组前缀），
+      不是整层一套。合计 35,391,870 个参数（总量的 0.011%）：
+      BF16 35,389,440 = 45 × 2 × 24 × 16,384，FP32 2,430 = 45 × 2 × (24 + 3)。
+      **[24, hc_mult × hidden] + [24] + [3] 这组形状跨厂商跨宽度不变**：
+      本仓五份 DeepSeek V4 记录（hidden 4096 / 5120 / 7168 → fn 的第二维
+      16384 / 20480 / 28672）第一维全是 24、scale 全是 3，MAGI-2 的
+      mhc_phi_fused_* 是 [hidden, 24] —— 同一个 24，只是转置。
+      所以 24 与 3 是 mHC 这个公式自带的常数，不是从 hidden 或 hc_mult 推出来的
+      （为什么是 24 仍无来源，见 open_questions）。
+      **三处与 DeepSeek 一代不同，都是实测**：
+      (1) **精度** —— 这一代 fn 是 BF16，而五份 DeepSeek 记录的 hc_*_fn 全是 FP32
+      （MAGI-2 的也是 FP32）。decode 下 fn 是逐层逐 token 的常驻读：
+      45 层 × 2 组 × 24 × 16,384 × 2 B = **70,778,880 B = 67.50 MiB/token**；
+      同一个式子在 V4.1 上是 40 × 2 × 24 × 20,480 × 4 B = 150 MiB/token，
+      **两侧 dtype 不同、层数与宽度也不同，不要拿这两个数算倍数**。
+      (2) **MTP 块没有 mHC** —— 第 45 层一个 hc_* 张量都没有，而五份 DeepSeek 记录
+      的 mtp 块都自带整套。按主干层的算子集合去排 MTP 块在这里反而是对的。
+      (3) **没有 hc_head_*** —— ds-v4-flash 一族有一组 hc_head_{base,fn,scale}
+      （[4, hidden×4] / [4] / [1]），这一代和 deepseek-v41-flash 一样没有。
+      **`hc_sinkhorn_iters: 20` 是参数量看不见的那种负载**：每层每组要跑 20 次
+      Sinkhorn 归一化迭代，一个权重都不占，算子表要单列。
+      占参数量只有 0.011% 而**不能不算进激活** —— 它每层每 token 都走一遍，
+      derive.py 的常驻名单里有 residual（同类机制在 Qwen3.8-Flash-Next 占激活 9.6%，
+      这一代占 0.21%，口径一样）
+
+precision:
+  weights_release: [FP8_E4M3, BF16, FP32]
+  # 三项都逐项写 repo。**不写的后果是 glm-5.3 踩过的那个**：三项全是
+  # manifest_taken: true 且都没有 repo，读起来像「三种精度都来自主仓」——
+  # 字面为真（那就是主仓内部的三种 dtype），但厂商另发了一个全 BF16 的仓之后，
+  # 「BF16」这个键就有了两个所指。兄弟仓记在同级的 sibling_repos 里，
+  # 由 validate.py 的 check_sibling_repos 卡住这两件事的区分
+  weights_release_scope:
+    FP8_E4M3: { repo: zai-org/GLM-5.3-Flash, manifest_taken: true, in_precision_table: true }
+    BF16:
+      repo: zai-org/GLM-5.3-Flash
+      manifest_taken: true
+      in_precision_table: true
+      note: >-
+        主仓**内部**的 BF16：1,141 个未量化张量、6,926,096,640 个元素（12.90 GiB），
+        占参数量的 2.16%。**不要和同级 sibling_repos 里那个全 BF16 的
+        zai-org/GLM-5.3-Flash-BF16 混为一谈** —— 那是另一个仓、38,479 个 BF16 张量
+    FP32: { repo: zai-org/GLM-5.3-Flash, manifest_taken: true, in_precision_table: true }
+  sibling_repos:
+    - repo: zai-org/GLM-5.3-Flash-BF16
+      rev: f9fed3bbc822
+      dtype: BF16
+      relation: undetermined
+      name_set_identical: true
+      shards: 120
+      tensor_count: 38770
+      params_total: 321323031390
+      weight_bytes_total: 642646653816
+      relation_evidence: >-
+        **清单层面分不出方向，两条证据各指一边。**
+        指向「它是主仓量化前的源」：主仓的 config 带
+        quantization_config（quant_method fp8 / fmt e4m3 /
+        weight_block_size [128,128] / activation_scheme dynamic /
+        modules_to_not_convert 1,509 条），而这个仓的 config **没有**
+        quantization_config —— 「convert」这个词预设了一个被转换的源；
+        而且逐 dtype 的条数对得上：主仓 BF16 1,141 + F8_E4M3 37,338 = 38,479，
+        逐位等于这个仓的 BF16 张量数，即主仓恰好量化了它的 38,479 个 BF16 张量中的 37,338 个。
+        指向「分不出」：排 scale 后两仓的张量名集合逐条相同、逐张量形状逐位相同、
+        HF 的 safetensors tally 逐位相同（321,323,031,390）。
+        **上采假设在清单上留不下任何痕迹**：反量化 FP8 → BF16 得到的张量
+        名字、形状、dtype、元素数全部与未量化源一致。
+        两个仓的 createdAt 相差 1 分 51 秒（2026-08-25T06:43:14Z 与 06:45:05Z），
+        是同一批建仓，不含信息；lastModified 这个仓晚 20 分钟
+        （06:32:52Z → 06:53:11Z），而 1.5 TB 比 300 GB 上传更久，
+        **推不出派生方向**。模型卡也答不了：这个仓的 README 与主仓的 diff
+        只有一行 H1（`# GLM-5.3-Flash` → `# GLM-5.3-Flash-BF16`，+5 字节）
+        加一个空行，关于它和主仓的关系一个字没有。
+        **怎样才能定下来**：读张量数值。若它是上采，那么对主仓里被量化的任一张量，
+        这个仓的每个元素都应恰好落在 E4M3 × 对应 block scale 的可表示集合上；
+        有一个落不上就排除上采。只读分片头读不到数值，本轮没做
+      method: >-
+        逐分片读头取全：120 分片、38,770 个条目，failed_shards 为空、
+        duplicate_tensors 为 0。**没有 weight_scale_inv**（未量化，不存在 scale 容器），
+        所以条目数 38,770 逐位等于主仓的真权重张量数。
+        逐 dtype：BF16 38,479 张 / 321,322,735,872 元素，F32 291 张 / 295,518 元素，
+        合计 321,323,031,390 —— 与 HF 自己的 safetensors tally 逐 dtype 逐位相同，
+        也与主仓排 scale 后的求和逐位相同。
+        **F32 的 291 张两仓完全相同**（hc_*_base / hc_*_scale 180 张、
+        A_log 与 dt_bias 68 张、e_score_correction_bias 43 张）——
+        量化只动了 BF16 那一侧。
+        落盘 642,646,653,816 B（598.51 GiB），是主仓 328,326,771,576 B
+        （305.78 GiB）的 **1.957 倍**（不到整 2 倍：主仓多了 19,189,248 个 FP32
+        scale 元素，少了 37,338 张张量的一半字节）
+      note: >-
+        **这个仓没有进逐子系统精度表**，也不该进：精度表的口径是 hf.repo 那一份权重
+        （derive.py 拿 per_subsystem 当识别打包的承重件）。
+        它也**不是** official_variants 的一条 —— 那个字段写的是「官方另发的量化**仓**」，
+        origin 只有 native / post_quantized 两个值，对一个不是任何东西的量化结果的
+        BF16 仓两句都是假的。填进去 check_variants 一个字都不会说
+        （参数量逐位相同），而记录里那句 origin 会是假话
+  quantization:
+    method: fp8
+    weight_format: e4m3
+    weight_block_size: [128, 128]
+    activation_scheme: dynamic
+    per_subsystem:
+      expert: FP8_E4M3
+      shared_expert: FP8_E4M3
+      dense_ffn: FP8_E4M3
+      draft: FP8_E4M3
+      # **attention 这一格记 MIXED，而且在这一代是安全的。**
+      # 它跨 BF16（81.46%）与 FP8_E4M3（18.53%）两档，单值哪一边都是假的。
+      # deepseek-v41-flash 的 draft 格明写「不能改成 MIXED」，理由是 derive.py
+      # 拿这一格当打包因子的声明而 dtypes.BITS 里没有 MIXED 这个键 ——
+      # **那条顾虑在这一代不成立**：全清单只有 F8_E4M3 / BF16 / F32 三种 dtype，
+      # 没有任何打包容器（INT8/UINT8/INT32 零条，packing_applied 为空），
+      # 所以这一格填什么都不参与还原，不丢数。与 minimax-m3.1-flash 的 draft
+      # 能记 MIXED 同一个理由
+      attention: MIXED
+      indexer: BF16
+      vision: BF16
+      router: BF16
+      residual: BF16
+      embed: BF16
+      lm_head: BF16
+      norm: BF16
+    per_subsystem_scale:
+      expert: FP32
+      shared_expert: FP32
+      dense_ffn: FP32
+      attention: FP32
+      draft: FP32
+    per_subsystem_block:
+      expert: '[128,128]'
+      shared_expert: '[128,128]'
+      dense_ffn: '[128,128]'
+      attention: '[128,128]'
+      draft: '[128,128]'
+    per_subsystem_schemes:
+      attention:
+        - { dtype: BF16, tensors: 419, elements: 4867162112 }
+        - { dtype: FP8_E4M3, block: '[128,128]', scale_dtype: FP32, tensors: 44, elements: 1107296256 }
+        - { dtype: FP32, tensors: 68, elements: 280704 }
+      draft:
+        - { dtype: FP8_E4M3, block: '[128,128]', scale_dtype: FP32, tensors: 871, elements: 7373586432 }
+        - { dtype: BF16, tensors: 17, elements: 59005696 }
+        - { dtype: FP32, tensors: 1, elements: 288 }
+      router:
+        - { dtype: BF16, tensors: 42, elements: 49545216 }
+        - { dtype: FP32, tensors: 42, elements: 12096 }
+      residual:
+        - { dtype: BF16, tensors: 90, elements: 35389440 }
+        - { dtype: FP32, tensors: 180, elements: 2430 }
+    block_size_note: >-
+      config 声明的 [128,128] 与实测一致，**而且这一代一个不满块都没有** ——
+      与 GLM-5.3 / DeepSeek V3 相反。判据是逐张量相除：
+      kv_a_proj_with_mqa [512, 4096] 的 scale 是 [4, 32]，512 / 4 = 128 整除；
+      q_a_proj [1536, 4096] → [12, 32]、q_b_proj [16384, 1536] → [128, 12]、
+      o_proj [4096, 16384] → [32, 128]、专家 [2048, 4096] → [16, 32] 与
+      [4096, 2048] → [32, 16]、稠密 [12288, 4096] → [96, 32]，全部整除。
+      **根因就是 NoPE**：GLM-5.3 的 kv_a_proj_with_mqa 输出维 576 = 4×128 + 64
+      （latent 512 + rope 64），末块只有 64 行、scale 是 5 条、本仓记作 128ceil；
+      这一代 rope 段是 0，输出维恰好 512 = 4×128，那个坑**结构上消失了**。
+      按「block 一律整除」写的反量化在这一代不会错位 —— 但这是这一代的性质，
+      不是这条线的性质，下一代仍要逐张量量一遍。
+      scale 容器实测全是 FP32，config 没有声明 scale 格式
+    subsystem_method: >-
+      全部来自完整权重清单（62 分片 76,108 条目）逐项统计，非抽样：每个条目都带
+      shape 与 dtype，无缺失、无读失败分片（fetched.json 的 failed_shards 为空、
+      duplicate_tensors 为 0），层索引 0–45 连续。
+      归类用 scripts/lib/subsystems.py，与参数量口径同一份。
+      发布权重不是纯 FP8：按元素数 FP8_E4M3 314,396,639,232（97.85%，292.80 GiB）、
+      BF16 6,926,096,640（2.16%，12.90 GiB）、FP32 295,518 个真参数 +
+      19,189,248 个 scale 元素（合计 74.33 MiB）。
+      **这一代的量化面比 GLM-5.3 窄得多，而且窄在注意力上。**
+      FP8 只覆盖 37,338 张：路由专家 36,288 张（304,405,807,104 元素）、
+      MTP 块 871 张（7,373,586,432）、共享专家 126 张（1,056,964,608）、
+      稠密 FFN 9 张（452,984,832），以及 11 个稀疏层各 4 张投影
+      （q_a_proj / q_b_proj / kv_a_proj_with_mqa / o_proj，共 44 张 /
+      1,107,296,256）。**没被量化的是整条线性注意力路径**：
+      34 个 KDA 层的 408 张投影（q/k/v/o_proj、三条 conv1d、b_proj、
+      两组低秩门）全是 BF16，加上 11 个稀疏层的 kv_b_proj [32768, 512]
+      也全是 BF16 —— 于是 attention 桶按元素数 **81.46% 是 BF16、
+      只有 18.53% 是 FP8**，和 GLM-5.3 那份（attention 整桶 FP8）方向相反。
+      config 的 modules_to_not_convert 1,509 条与此一致（34 条 ×12 种 KDA 投影名、
+      12 条 kv_b_proj、24 条 ×14 种视觉塔模块名等）。
+      **三个桶内部不同质，整桶一个精度看不见：**
+      attention 见上；draft 按元素数 99.21% 是 FP8_E4M3，但 17 个张量共
+      59,005,696 元素是 BF16，其中 eh_proj [4096, 8192] 33,554,432 与
+      kv_b_proj [32768, 512] 16,777,216 两张占 85.3% —— 假定「MTP 块整体 FP8」
+      的引擎会在这两张上直接解错；
+      residual（mHC）90 张 BF16 的 fn 矩阵配 180 张 FP32 的 base 与 scale，
+      FP32 那 2,430 个元素是真参数不是 scale 容器，所以 per_subsystem_scale
+      里没有 residual 项。
+      router 桶的 42 个 mlp.gate.weight [288, 4096] 是 BF16，而 42 个
+      e_score_correction_bias [288] 是 FP32 真参数；
+      与 GLM-5.3 一样，indexer.k_norm.{weight,bias} 按 subsystems.py 的优先级
+      （norm 在 indexer 之前）归在 norm 桶，不在 indexer 桶里 ——
+      indexer 桶是 55 张纯 BF16（11 层 × 5 种：wk / wq_b / weights_proj /
+      index_kpool_compress_ape / index_kpool_compress_gate）。
+      视觉塔 347 张全 BF16，一张都没量化
+
+platforms:
+  - engine: transformers
+    hardware: NVIDIA
+    status: supported
+    precision: FP8_E4M3
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/zai-org/GLM-5.3-Flash
+      locator: README.md「Serve GLM-5.3-Flash Locally」一节，Transformers 一条
+        （指向 transformers 的 docs/source/en/model_doc/glm5_next.md）
+      accessed: '2026-11-18'
+    visibility: public
+  - engine: SGLang
+    hardware: NVIDIA
+    status: supported
+    caveat: >-
+      卡只给出 cookbook 链接（cookbook.sglang.io/autoregressive/GLM/GLM-5.3-Flash），
+      **没有说支持到什么精度**，所以这一条不登记 precision ——
+      挑一个填进去就成了断言。cookbook 本身本轮没读
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/zai-org/GLM-5.3-Flash
+      locator: README.md「Serve GLM-5.3-Flash Locally」一节，SGLang 一条
+      accessed: '2026-11-18'
+    visibility: public
+  - engine: vLLM
+    hardware: NVIDIA
+    status: supported
+    caveat: >-
+      卡给出 recipes 链接（recipes.vllm.ai/zai-org/GLM-5.3-Flash），同样没说精度。
+      另有 TokenSpeed / KTransformers / Unsloth 三条也在同一节里 ——
+      **本仓的 platforms 只收能定位到一手清单的条目**，那三条的链接本轮没读，
+      故不登记，不是「不支持」
+    ref:
+      kind: modelcard
+      url: https://huggingface.co/zai-org/GLM-5.3-Flash
+      locator: README.md「Serve GLM-5.3-Flash Locally」一节，vLLM 一条
+      accessed: '2026-11-18'
+    visibility: public
+  - engine: vllm-ascend
+    hardware: 昇腾
+    status: unknown
+    caveat: >-
+      **未查**，不是不支持。GLM-5.3 那份记录的两条昇腾条目来自
+      vllm-ascend 的 supported_models.md 行级定位（2026-11-02 访问），
+      本轮没有重读那份清单，所以这一档留在「未查」而不是写成 none ——
+      本仓三态契约要求「未录」与「确认无」分得开
+    visibility: public
+
+bottlenecks:
+  - dimension: kv-capacity
+    finding: >-
+      **这一代把缓存账拆成了两个互不相干的量，而 GLM-5.3 只有一个。**
+      45 层里 34 层走 KDA（线性注意力），缓存是每序列固定的递归状态，
+      与上下文长度无关；只有 11 层走 DSA 全注意力，缓存随上下文线性增长。
+      前代 GLM-5.3 是 78 层全部产出 MLA KV、逐层随上下文长。
+      所以长上下文下的硬开销从「78 层 × 576」降到「11 层 × 512」——
+      省的不是宽度（576 → 512 只有 1.125 倍），是**层数**（78 → 11，7.09 倍）。
+      稀疏那一侧仍只作用在「读哪些 token」，不作用在「存多少」。
+    quantified: >-
+      口径为**主干 45 层，不含 MTP 块**，字节按 BF16 兜底（见 open_questions）。
+      **随上下文线性增长的那一半**：MLA latent 512 元素/层/token
+      （kv_a_proj_with_mqa [512, 4096] 的输出维，12 张逐张相同）× 11 层
+      （layer_types 里 deepseek_sparse_attention 的位置）= 5,632，
+      加 index K 128 元素/层/token（indexer.wk [128, 4096] 的输出维）× 同样 11 层
+      = 1,408，合计 **7,040 元素/token → 14,080 B/token → 1M 上下文 13.750 GiB**
+      （这是**只算这一半**的值；两半合计 13.822 GiB，data/derived 里的
+      kv_at 那一行给的是合计）。
+      开 MTP 时各 ×12/11，为 7,680 元素/token（+640，+9.1%）。
+      **每序列固定的那一半**：KDA 状态 = 矩阵状态 64 头 × 128 × 128
+      = 1,048,576 元素/层 加短卷积状态 4 × 24,576 通道 = 98,304 元素/层，
+      合计 1,146,880 元素/层 × 34 层 = 38,993,920 元素 → **77,987,840 B
+      = 74.375 MiB/序列**，不随上下文增长。矩阵状态的布局依实现而定（上界），
+      卷积通道数由清单钉死（三条 conv1d 首维之和 24,576 逐位等于
+      2×64×128 + 64×128）。
+      **两半不能相加成一个数**：在 1M 上下文下第二半只占 0.53%，
+      在 4K 上下文下却占 58.3%（4K：7,040 × 2 × 4,096 = 57.7 MiB
+      vs 74.375 MiB）—— 哪一半是大头取决于上下文长度。
+      **与 GLM-5.3 的倍数只能比第一半，两侧同为元素口径 + dtype_fallback 兜底、
+      同为主干口径**：47,616 → 7,040 元素/token 是 **6.764 倍**，
+      1M 下 93.0 GiB → 13.750 GiB。
+      index K 那一半按 1:1 计费，而 config 声明了 index_kpool 4 ——
+      若池化作用在落盘上，第一半降到 5,984 元素/token（−15.0%），见 open_questions
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      **一份权重里装了三套完全不同的注意力算子，而且层级交替。**
+      34 层 KDA（门控增量规则 + 三条独立 depthwise 短卷积 + 两组低秩门 +
+      逐头衰减 A_log）、11 层 NoPE MLA + DSA indexer、24 层 ViT 自注意力。
+      调度单元不是「一种注意力重复 45 次」，而是 3:1 的交替图：
+      L0–L2 KDA、L3 DSA、L4–L6 KDA、L7 DSA……严格间隔 4。
+      按单一注意力实现排算子表会漏掉其中两套；
+      按「每 4 层一个全注意力」建 KV 池的实现要能处理 11 个全注意力层
+      与 34 个状态层共存、且两者的生命周期不同（一个随上下文长、一个每序列固定）。
+    quantified: >-
+      34 层 KDA × 12 个张量 + 11 层 DSA × 11 个张量（4 个 FP8 投影 + kv_b_proj +
+      5 个 indexer + kv_a_layernorm / q_a_layernorm）+ 24 个 ViT 块 × 14 个张量。
+      KDA 侧 BF16 4,682,897,792 参数、DSA 侧 1,291,868,160 —— 层数比 34:11、
+      参数比 3.62:1，即单层 KDA 比单层 DSA 还重 1.17 倍
+      （137,732,288 vs 117,442,560）
+    visibility: public
+  - dimension: operator-gap
+    finding: >-
+      **mHC 是参数量看不见的负载。** 逐层 6 个张量、45 层零例外，
+      合计只占总参数的 0.011%（35,391,870），而 config 的
+      hc_sinkhorn_iters 20 说明每层每 token 要跑 20 次 Sinkhorn 归一化迭代，
+      hc_mult 4 说明残差流是四路、每层进出都要在四路之间混合
+      （hc_attn_fn 入口 16,384 = 4 × 4096 正是四路拼接）。
+      按参数量给算子表排优先级会把它排到最后，而它在算子图上是逐层逐 token 的。
+      本仓第一次在 DeepSeek 以外看到 mHC —— 同机制在 Qwen3.8-Flash-Next
+      叫 hyper_connection、在 MAGI-2 叫 mhc_*，三套命名、同一件事。
+    quantified: >-
+      45 层 × 2 组（attn / ffn）× 3 个张量 = 270 条，hc_mult 4、sinkhorn 20 次/层/组。
+      decode 下 fn 的常驻权重读 = 45 × 2 × 24 × 16,384 × 2 B = 70,778,880 B
+      = **67.50 MiB/token**（BF16）。**这一代把 fn 从 FP32 降到了 BF16** ——
+      五份 DeepSeek V4 记录与 MAGI-2 的同名张量全是 FP32，同一个式子在 V4.1 上
+      是 150 MiB/token。两侧 dtype、层数、宽度三样都不同，**不要算倍数**；
+      能说的是 dtype 这一个因子自己贡献 2 倍。
+      MTP 块（第 45 层）**没有** mHC，五份 DeepSeek 的 mtp 块都有
+    visibility: public
+  - dimension: ep-comm
+    finding: >-
+      288 专家 top-8、专家中间维 2048，逐专家独立张量存放。
+      **288 不是 2 的幂**：EP 8 / 16 / 32 都整除（每 rank 36 / 18 / 9 个专家），
+      EP 64 不整除 —— GLM-5.3 的 256 专家任意 2 的幂都整除，
+      按那一代的切分脚本直接套会在 EP 64 上剩 32 个专家没地方放。
+      MoE 层只有 42 个（45 层里 3 层稠密），比 GLM-5.3 的 75 层少一半。
+    visibility: public
+  - dimension: compute
+    finding: >-
+      **视觉塔的 prefill 开销在本仓 vlm 里占比偏低，原因不在塔而在主干。**
+      压缩比只有 4（2×2 空间合并），比 DeepSeek 一代的 9 弱，
+      但主干每 token 的 prefill 线性负载是 32.22 GFLOPs（激活 16.74B 的两倍，
+      扣掉 lm_head），于是一张 448×448 的图只相当于 284 个文本 token，
+      比它自己占的 256 个位置只多 11%。
+      反过来说，**这一代的塔分离部署收益小**：分出去也只省掉 11% 的主干等效量，
+      而 347 个视觉张量恰好全在第 62 个分片里（partial 隔离，同片另有 4 个主干张量、
+      6,715 万参数），分离的工程成本反倒比收益显眼。
+    quantified: >-
+      encoder 827.1 GFLOPs + projector 81.6 GFLOPs = 908.7 GFLOPs/图，
+      主干 32.22 GFLOPs/token，换算 256 + 28.2 = 284 个等效文本 token。
+      逐因子推导见 arch.vision.prefill.derivation
+    visibility: public
+
+infra_signals:
+  - text: >-
+      **「混合注意力」这个词现在盖着两种互不相容的容量模型，规划时必须先问是哪一种。**
+      一种是「线性 + 全注意力」（通义 Qwen3.5 起、Kimi-K3、本记录的 34:11）：
+      线性层的状态每序列固定，容量账分成两个量；另一种是「稀疏 + 全注意力」
+      （GLM-5.3 的 78 层全存 + topk 选读）：仍是一个量，只是带宽变了。
+      GLM 这一代把两种**叠在同一份权重里** —— 34 层线性、11 层稀疏全注意力，
+      于是三类缓存（递归状态 / MLA latent / index K）同时存在，
+      覆盖面三套、增长方式两种。按任一种单一模型写的 KV 规划在这里都会错，
+      而错的方式不是差一个系数：在 4K 上下文下每序列固定那一半占 58%，
+      在 1M 下只占 0.53%。
+    evidence: judgement
+    horizon: now
+    axis: attention
+  - text: >-
+      **NoPE 把一个已经踩了两代的量化对齐坑直接结构性地消掉了。**
+      kv_a_proj_with_mqa 的输出维 = kv_lora_rank + qk_rope_head_dim：
+      DeepSeek V3 与 GLM-5.3 都是 512 + 64 = 576，而 576 对 128 的块不整除，
+      末块只有 64 行，本仓两份记录都为此记了 128ceil，按「block 一律整除」
+      写的反量化会在这一张上错位。这一代 qk_rope_head_dim 是 0，
+      输出维恰好 512 = 4 × 128，全清单一个不满块都没有。
+      **但这是这一代的性质，不是这条线的性质** —— 下一代只要 rope 段回来，
+      坑就回来；块对齐这件事要逐张量量，不能从「上一代整除」推。
+    evidence: judgement
+    horizon: now
+    axis: precision
+  - text: >-
+      **这一代的 FP8 量化面避开了整条线性注意力路径，和同代旗舰方向相反。**
+      GLM-5.3 把注意力整桶量化成 FP8；本记录的 attention 桶按元素数 81.46% 是 BF16
+      —— 34 个 KDA 层的 408 张投影与 11 个稀疏层的 kv_b_proj 全部保持 BF16，
+      只有 q_a / q_b / kv_a / o_proj 这 44 张是 FP8。
+      对 infra 的含义是：**同一个模型里「注意力算子要不要 FP8 GEMM」没有统一答案**，
+      而按桶级精度标签生成的加载器会在 419 张张量上解错。
+      为什么避开没有来源（可能是增量规则对数值范围敏感，也可能只是量化脚本的
+      排除清单这么写的），见 open_questions。
+    evidence: judgement
+    horizon: now
+    axis: precision
+  - text: >-
+      **config 的层类型清单这一代出现了「声明覆盖面比实测宽」的新形态，
+      而上一代是反的。** GLM-5.3 的 indexer_types 长度 78、其中 21 项是 full，
+      与实测 21 层逐个相等 —— 声明是准的，陷阱在「每 4 层」那句散文。
+      本记录的 indexer_types 是 **45 项全 full**，而清单里有 indexer 张量的只有 11 层，
+      照它数会高估 4.09 倍（index K 从 1,408 变成 5,760 元素/token）。
+      真正可信的是 layer_types 与 linear_attn_config.full_attn_layers，
+      两者与清单逐个相等。**同一份 config 里两个描述层集合的键，一个准一个不准**
+      —— 所以「层集合」这类字段一律要对权重清单验，不能挑一个顺手的键读。
+    evidence: judgement
+    horizon: now
+    axis: attention
+  - text: >-
+      **index K 这一代第一次带了池化比，而缓存账的「一个条目覆盖几个 token」
+      这一问在本仓第一次有了非 1 的候选值。** config 的
+      index_kpool 4 / index_kpool_compress true / index_kpool_always_select_tail true，
+      权重侧 index_kpool_compress_ape [4, 128] 与 index_kpool_compress_gate [128, 4096]
+      坐实了「窗口 4、压缩后宽度 128」。
+      但**清单只能定宽度与窗口，定不了存的是池化前还是池化后** ——
+      前者 1,408 元素/token、后者 352，差 4 倍。
+      本仓此前所有记录这一问的答案都是 1（或滑窗那种整段 per-sequence），
+      所以这是一根新轴：引擎侧要能表达「index K 的条目粒度 ≠ token 粒度」，
+      而 topk 2048 选的也随之变成 2048 个池化单元 ≈ 8,192 个 token。
+    evidence: judgement
+    horizon: now
+    axis: attention
+
+evidence:
+  id: official
+  family: official
+  kind: derived
+  display_name: official
+  released: derived
+  license: official
+  hf: official
+  lineage: judgement
+  params: derived
+  params.counting_note: derived
+  context: official
+  arch: official
+  arch.norm: derived
+  arch.activation: derived
+  arch.position: derived
+  arch.attention.type: derived
+  arch.attention.head_dim: derived
+  arch.attention.v_head_dim: derived
+  arch.attention.head_dim_note: derived
+  arch.attention.layer_pattern: derived
+  arch.attention.hybrid: derived
+  arch.attention.hybrid.note: judgement
+  arch.attention.sparse.mechanism: derived
+  arch.attention.sparse.index_kv_dim: derived
+  arch.attention.sparse.index_kv_source: derived
+  arch.attention.kv_sharing.source_layers: derived
+  arch.attention.kv_sharing.index_kv_source_layers: derived
+  arch.attention.kv_sharing.layer_coverage: derived
+  arch.attention.kv_sharing.measured_per_token: derived
+  arch.attention.kv_sharing.measured_per_token.note: judgement
+  arch.attention.linear_state: derived
+  arch.attention.linear_state.mechanism: derived
+  arch.attention.linear_state.state_layout_note: judgement
+  arch.ffn.type: derived
+  arch.ffn.layer_pattern: derived
+  arch.moe.routing: derived
+  arch.moe.balance: derived
+  arch.moe.storage_note: derived
+  arch.moe.first_k_dense: derived
+  arch.moe.dense_intermediate: official
+  arch.decoding.mtp_layers: derived
+  arch.vision: official
+  arch.vision.encoder: derived
+  arch.vision.params: derived
+  arch.vision.fusion: derived
+  arch.vision.tokens: derived
+  arch.vision.tokens.scope_note: judgement
+  arch.vision.prefill: derived
+  arch.vision.prefill.attention_excluded: judgement
+  arch.vision.separability: derived
+  arch.residual: official
+  arch.residual.coef_proj: derived
+  arch.residual.note: derived
+  precision: official
+  precision.weights_release: derived
+  precision.weights_release_scope: derived
+  # **整块标 judgement，而不是 derived。** 条目里的计数（38,770 条 / 120 分片 /
+  # 321,323,031,390 / 642,646,653,816 / name_set_identical）全是清单实测、本该是
+  # derived，但同一条里的 `relation` 是**清单判不出来的那一件事** ——
+  # 标 derived 会让它不出现在 validate.py --list-judgements 里，绕过 Gate C 的人工复核，
+  # 而「方向定不下来」正是这条最需要人看过的地方。
+  # schema 的前缀继承不支持给数组元素里的某个键单独打标（那三条路径 validate 会报
+  # 「文档里找不到对应字段」），所以口径只能二选一，取保守的那一个
+  precision.sibling_repos: judgement
+  precision.quantization.per_subsystem: derived
+  precision.quantization.per_subsystem_scale: derived
+  precision.quantization.per_subsystem_block: derived
+  precision.quantization.per_subsystem_schemes: derived
+  precision.quantization.block_size_note: derived
+  precision.quantization.subsystem_method: derived
+  platforms: official
+  bottlenecks: judgement
+  infra_signals: judgement
+  notes: judgement
+  open_questions: judgement
+
+reviewed:
+  date: '2026-11-18'
+  scope:
+    - official
+    - derived
+  reviewer: 单会话首录，未经独立核查代理
+  method: >-
+    **这份记录还没过 Gate C 的独立核查**，scope 里没有 judgement 就是这个意思 ——
+    下面说的只是首录时自己做过的事，不是第二双眼睛看过。
+    结构与精度全部对照完整权重清单（62 分片 76,108 条目，failed_shards 为空）
+    穷举，不抽样：层集合（34 KDA / 11 DSA / 24 ViT / 1 MTP）、
+    MLA 与 KDA 两套几何、indexer 的 12 层、逐子系统 dtype 与元素数、
+    量化块逐张量相除、视觉塔的 347 张与分片隔离，都是在全清单上枚举出来的。
+    参数量有一个独立外部支点：HF 平台自己从 62 个分片头统计的 safetensors tally
+    逐 dtype 逐位相同（321,323,031,390）。
+    两个 BF16 兄弟仓各自取了全量清单（120 / 282 分片）并与主仓逐张量对了名字与形状。
+    mHC 的 [24, ·] 形状不变这一条是在全部 64 个 facts 目录上实扫出来的
+    （命中 DeepSeek 五份 + MAGI-2 + Qwen 两份 + 本份）。
+    **没做的**：没读 z.ai 博客与 arXiv 2602.15763、没读 transformers 的 glm5_next
+    实现、没读任何张量数值（于是 index K 的条目粒度与 BF16 兄弟仓的派生方向
+    两件都悬着）、昇腾侧引擎清单没重读。全部挂在 open_questions 上。
+    缓存账按 .claude/skills/model-audit 的七问重走了一遍，
+    第 2 问（缓存宽度取产出张量输出维，不是 config 头数乘积）与第 4 问
+    （一个条目覆盖几个 token）是这一份的两个关口，后者没有答案
+
+notes: >-
+  GLM 家族的**原生多模态线首作**（2026-10-15），model_type `glm5_next`、
+  pipeline_tag `image-text-to-text`、license mit。
+  **它不是 GLM-5.3 的小档位**：排 scale 后两份清单的张量名集合交集只有 1 条
+  （lm_head.weight），本记录 38,770 条、GLM-5.3 59,585 条；厂商卡也说它
+  「starts from a newly trained base model」。所以 lineage 没有 predecessor
+  （理由写在那个块的注释里），tracking.yaml 的「较小档位」条款不适用。
+  下载量 638 万，是同代旗舰 GLM-5.3 的 3.7 倍。
+  **本仓第一次同时见到四根轴**：NoPE MLA（qk_rope_head_dim 0 + mla_use_nope）、
+  index K 池化（index_kpool 4 + index_kpool_compress）、
+  mHC 出现在 DeepSeek 以外（hc_mult 4 / hc_sinkhorn_iters 20）、
+  线性与稀疏混合在同一份权重里（34 层 KDA + 11 层 DSA + 24 层 ViT）。
+  **激活参数与卡上「18B active」的对账**：本仓按清单实测，带宽口径
+  16,742,333,246（−6.99%）、含输入词表的可比官方口径 17,376,721,726（−3.46%）、
+  再加视觉塔 17,940,348,734（−0.33%）。最后一档最接近，**但「18B 的口径含视觉塔」
+  是推论不是读到的** —— 卡没有定义它的口径，所以本记录不写 params.active_decode，
+  三个数都在 data/derived/ 里，哪一个与 18B 可比是开着的问题。
+  层数、宽度、注意力几何、层集合、专家分布、MTP 块构成、视觉塔结构与逐子系统精度
+  全部对照完整权重清单核过，不是从模型卡抄的；
+  top_k / index_topk / index_kpool / hc_sinkhorn_iters / routed_scaling_factor
+  这类运行期标量只有 config 一个来源，清单只有名字、形状与 dtype，交叉验证不了。
+
+open_questions:
+  - >-
+    **index K 的条目粒度定不下来，这是本轮最大的一个口径缺口。**
+    config 的 index_kpool 4 / index_kpool_compress true /
+    index_kpool_always_select_tail true 与权重侧的
+    index_kpool_compress_ape [4, 128]、index_kpool_compress_gate [128, 4096]
+    一起只能定两件事：池化窗口是 4、压缩后宽度是 128。
+    **定不了缓存里存的是池化前（1,408 元素/token）还是池化后（352）** ——
+    差 4 倍，而这一半占随上下文增长那部分的 20%。
+    本记录取不折算的上界，与 glm-5.3 的 index K 口径保持一致（那份也是 1:1），
+    这样两代的 6.764 倍才是同一套 basis 算出来的。
+    要钉死得读实现（transformers 的 glm5_next 或 SGLang / vLLM 的 recipe），
+    或读技术报告里 kpool 那一节。
+    本仓 V4.1 的条目数因子错过一次（2.5 倍），所以这一条挂着
+  - >-
+    KV cache 与 KDA 递归状态的实际落盘精度都未披露。推导按 config
+    text_config.dtype=bfloat16 兜底（2 B/元素；这是未被量化那些模块的落盘/计算
+    dtype，不是权重存储的 FP8_E4M3），所以 14,080 B/token 与 74.375 MiB/序列
+    都是 dtype_fallback 兜底口径。**递归状态尤其可疑**：线性注意力的状态常以 FP32
+    保存（本仓 11 份 linear_state 记录里多数留着这条 open question），
+    若实际是 FP32，那一半翻倍到 148.75 MiB/序列。
+    与 DeepSeek V4.1 那个按落盘格式算出来的理论下限不能直接比倍数
+  - >-
+    **KDA 矩阵状态的布局没有一手来源。** 本记录按
+    [num_value_heads 64, key_head_dim 128, value_head_dim 128] 估，
+    这是 derive.py 的通用假设。短卷积那一侧有清单给的恒等式钉住
+    （三条 conv1d 首维之和 24,576 逐位等于 2×64×128 + 64×128），
+    矩阵状态这一侧没有任何张量能印证 —— 要读实现或实测显存
+  - >-
+    **mHC 的 24 与 3 这两个常数「是什么」已经定了，「为什么是它」还没有。**
+    定了的那一半是实测：[24, hc_mult × hidden] + [24] + [3] 这组形状在本仓
+    五份 DeepSeek V4 记录（hidden 4096 / 5120 / 7168）与本份上完全一致，
+    MAGI-2 的 mhc_phi_fused_* 是 [hidden, 24] —— 同一个 24。
+    所以它们是 mHC 公式自带的常数，不随宽度或 hc_mult 变。
+    没定的那一半：config 里 mhc / hc_mult 4 / hc_sinkhorn_iters 20 / hc_eps 1e-06
+    四个键没有哪一个等于 24 或 3，**不要去凑**（4×4 混合矩阵 16 项加 4 加 4 等于 24
+    是一种讲得通的拆法，但那是编出来的，不是读到的）。
+    要钉死得读 Manifold-Constrained Hyper-Connections 的定义（卡点名了这个全称）
+    或技术报告的对应节。
+    **另一半更该先查的是精度**：GLM 这一代 fn 是 BF16，五份 DeepSeek 与 MAGI-2 全是 FP32。
+    mHC 的 Sinkhorn 迭代在低精度下是否稳定、BF16 是厂商的选择还是量化脚本的副作用，
+    config 的 modules_to_not_convert 把 hc_* 逐条列了出来（即它没被 FP8 量化），
+    但「为什么不是 FP32」没有来源
+  - >-
+    **FP8 量化为什么避开整条线性注意力路径，没有来源。**
+    34 个 KDA 层的 408 张投影与 11 个稀疏层的 kv_b_proj 全是 BF16，
+    config 的 modules_to_not_convert 把它们逐名列了出来（1,509 条），
+    所以这是量化脚本的有意选择而不是遗漏。可能是增量规则对数值范围敏感、
+    也可能只是那份排除清单的写法。要钉死得看量化脚本或技术报告
+  - >-
+    **config 的 `fused_qkvbfg_a_proj` 在权重里不存在**：
+    modules_to_not_convert 里有 34 条这个名字，清单命中 0，
+    真实张量是分开的 q_proj / k_proj / v_proj / b_proj / f_a_proj / g_a_proj。
+    与 GLM-5.3 的 `indexers_proj` 同一个形状，本次同样没出事（那些张量恰好全是 BF16）。
+    但还有一层**本代独有**的：modules_to_not_convert 的全限定名前缀是
+    `model.layers.N.`，而清单里每个主干张量都是 `model.language_model.layers.N.`
+    —— 前缀对不上。同一份清单里另有裸模块名（`attn_mha` / `attn_mqa` /
+    `router` / `weights_proj` / `visual` / `lm_head` / `dt_bias` /
+    `hyper_connection` / `mapping_proj`），那几条按子串是能匹配上的。
+    所以「排除清单到底靠哪一类条目生效」取决于 transformers FP8 量化器的匹配规则
+    （前缀还是子串），本轮没读那段代码。**实测结果是对的**（该不量化的 1,141 张
+    确实没被量化），所以这只影响「照这份 config 做再量化会不会一样」这个问题
+  - >-
+    视觉侧 `max_image_tokens: 8000` 的口径没写明：是池化后的主干 token 数，
+    还是池化前的 patch 数？本记录按前者填进
+    arch.vision.tokens.max_llm_tokens_declared；若是后者，上限应是 2,000。
+    同一份 processor_config 的 video_processor 另有 max_image_tokens 240000
+    与 fps 2，视频那一侧的 token 账本记录没有算。
+    另有 `patch_expand_factor: 1` 这个键含义无来源
+  - >-
+    **两篇一手材料本轮都没读**：z.ai/blog/glm-5.3-flash 与
+    arXiv 2602.15763（GLM-5 技术报告，卡的 Citation 一节给了 bibtex）。
+    上面挂着的 index K 池化语义、mHC 的 24/3 宽度、FP8 排除线性路径的理由、
+    以及每 token KV 字节有没有官方公布值，都该先在这两篇里找。
+    按本仓的来源优先级（技术报告 > 模型卡），读了之后要按节号回填并关掉对应条目
+  - >-
+    本记录在 GLM 家族页上没有前代连线（lineage 没有 predecessor，理由见那个块的注释）。
+    **家族页要不要长出「另起一条线」这个概念**，是站点侧的决定：
+    现在的 changesFor 只认 lineage.predecessor，一条线的首作必然是孤点，
+    而「孤点」与「还没补 predecessor」在页面上长得一样 ——
+    glm-5.3 的 R20 正是后者。这一条留给名册与站点那一侧定
+  - >-
+    昇腾侧的引擎支持未查（platforms 里那一条是 status: unknown）。
+    GLM-5.3 的两条昇腾条目来自 vllm-ascend 的 supported_models.md
+    行级定位，本轮没有重读那份清单
+  - >-
+    厂商声明 320B 对实测 321,323,031,390 是 +0.41%，声明 18B active 对本仓
+    三套激活口径分别是 −6.99% / −3.46% / −0.33%。
+    **声明值的口径（含不含视觉塔、含不含 MTP 块、含不含输入词表）卡里一个字没写**，
+    所以 params.excludes 填不了，也不能反推。这是「厂商没说」，不是「本仓没算」

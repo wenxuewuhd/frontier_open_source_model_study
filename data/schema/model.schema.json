@@ -866,6 +866,32 @@
             }
           }
         },
+        "sibling_repos": {
+          "type": "array",
+          "description": "厂商另发在独立仓里、装着**同一份逻辑权重**但落盘精度不同的兄弟仓，**且不是量化变体**。\n\n**为什么 official_variants 装不下它。** 那个字段写的是「官方另发的量化仓」，`origin` 只有 native / post_quantized 两个值。GLM-5.3 的主仓是 FP8，厂商另发了一个全 BF16 的 `zai-org/GLM-5.3-BF16`：`native`（「厂商就是以这个精度发布/训练的这份权重」，且限定在主仓里）与 `post_quantized`（「拿已有的 BF16 权重事后再量化」）**两句话对它都是假的** —— BF16 仓不是任何东西的量化结果。填进去 `check_variants` 一个字都不会说（参数量逐位相同），而记录里那句 origin 是假话。这正是 model-audit 规则 13 点名的形状：闸绿而话错比没有闸更危险。\n\n**为什么 weights_release_scope 也装不下它。** 那个块按 **dtype 做键**，而这里的 dtype 在主仓内部**已经占着一个键**：GLM-5.3 主仓的 BF16 是那 541 个未量化张量（2,103,729,152 个元素，`manifest_taken: true`，进了精度表）。把 `repo` 指向兄弟仓就等于说主仓里没有 BF16 —— 与同一个记录的 per_subsystem 自相矛盾。**一个 dtype 可以同时是「主仓内部的一种 dtype」和「一个整仓」，而按 dtype 做键的字段只能装下其中一件。** 这才是必须另立字段的理由。\n\n**方向常常定不下来，这个字段不替人定。** 名字集合、逐张量形状与 HF 的 safetensors tally 两侧完全相同时，「BF16 是 FP8 的未量化源」与「BF16 是 FP8 的上采」在清单层面**无法区分**，所以 `relation` 有 `undetermined` 这一档，并要求 `relation_evidence` 写明两侧各有什么证据、以及怎样才能定下来（读张量数值：若是上采，每个元素都应恰好落在 E4M3 × 块 scale 的可表示集合上）。由 scripts/validate.py 的 check_sibling_repos 查。",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["repo", "dtype", "relation", "relation_evidence", "method"],
+            "properties": {
+              "repo": { "type": "string", "description": "兄弟仓的 HF 全名。**必须与 hf.repo 不同** —— 相同就不是兄弟仓，由 check_sibling_repos 挡" },
+              "rev": { "type": "string", "description": "取数时钉的 commit 短 sha" },
+              "dtype": { "$ref": "#/$defs/dtype", "description": "这个仓的落盘精度。**它不改 weights_release** —— weights_release 说的是 hf.repo 那份清单里出现过哪些精度，兄弟仓不在那份清单里" },
+              "relation": {
+                "description": "它与 hf.repo 那份权重的派生方向。unquantized_source=它是主仓量化前的源；upcast=它是主仓反量化上采来的；undetermined=清单层面分不出方向（名字集合、形状与 tally 两侧相同时就是这一档）。**不要因为一个方向听起来更合理就填它** —— 那是推论不是读到的",
+                "enum": ["unquantized_source", "upcast", "undetermined"]
+              },
+              "relation_evidence": { "type": "string", "description": "判定 relation 的依据，两侧证据都要写，以及**怎样才能定下来**。`undetermined` 尤其要写满：留空的「定不下来」和没查过长得一样" },
+              "shards": { "type": "integer", "description": "分片数。与主仓不同是正常的（同样的分片策略作用在不同的字节量上）" },
+              "tensor_count": { "type": "integer", "description": "这个仓的 safetensors 条目数。未量化仓没有 scale 容器，所以它常常等于主仓的「真权重张量数」而不是条目数" },
+              "params_total": { "type": "integer", "description": "这个仓的参数总量（排 scale、还原打包）。**这是对账锚**：与 derived.from_shapes.params_total 必须相等，由 check_sibling_repos 查 —— 「同一份逻辑权重」这个前提不成立的话，这一条根本不该放在这里" },
+              "weight_bytes_total": { "type": "integer", "description": "这个仓的落盘字节（含 scale 与格式元数据，不还原打包）" },
+              "name_set_identical": { "type": "boolean", "description": "排 scale 之后两仓的张量名集合是否逐条相同。为真时**方向就判不出来了**，这正是 relation 常常只能填 undetermined 的原因" },
+              "method": { "type": "string", "description": "这一仓的实测是怎么来的（几分片几张量、逐 dtype 元素数、与主仓怎么对的账）" },
+              "note": { "type": "string" }
+            }
+          }
+        },
         "kv_cache": { "$ref": "#/$defs/dtype" },
         "kv_cache_scale": { "$ref": "#/$defs/dtype" },
         "kv_cache_components": {

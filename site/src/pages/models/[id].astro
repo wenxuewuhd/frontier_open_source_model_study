@@ -10,6 +10,7 @@ import {
   reviewStatus, SEVERITY_LABEL, RESOLUTION_LABEL, HORIZON_LABEL, SUBSYSTEMS,
   kvCachePrecision, KV_BASIS_LABEL, evidenceFor,
   officialVariants, excludedVariants, ORIGIN_LABEL, STRATEGY_LABEL,
+  siblingRepos, RELATION_LABEL,
 } from '../../lib/data';
 
 const SUBSYSTEM_LABEL: Record<string, string> = Object.fromEntries(
@@ -575,6 +576,66 @@ const rv = reviewStatus(m);
               )}
               {e.reason ? <> —— <Prose text={e.reason} /></> : null}
             </p>
+          ))}
+        </div>
+      )
+    }
+    {/* 厂商另发的兄弟仓：**同一份逻辑权重、另一个落盘精度，不是量化变体**。
+        不印的话，主仓是 FP8 的那几代在页面上只有「FP8」一个数，而同一份权重
+        还有一个全 BF16 的仓 —— 部署时真正要选的就是这两者（305.78 GiB vs 598.51 GiB）。
+        **方向照实印**：名字集合与 tally 两侧相同时清单层面分不出「未量化源」与「上采」，
+        印成某个具体方向就是把推论写成事实。 */}
+    {
+      siblingRepos(m).length > 0 && (
+        <div style="margin-top:14px">
+          <div class="small">
+            <strong>厂商另发的兄弟仓（同一份权重，另一个落盘精度）</strong>
+            <Evidence tag={evidenceFor('precision.sibling_repos', ev)} />
+            <span class="muted"> · 不是量化变体，所以不在上面那张「另发的官方量化仓」里</span>
+          </div>
+          {siblingRepos(m).map((s) => (
+            <div class="card" style="margin-top:8px">
+              <div class="small">
+                <strong>{s.dtype}</strong>
+                {' · '}<code>{s.repo}</code>
+                {s.rev && <span class="muted"> @ {s.rev}</span>}
+                <span class="muted"> · {RELATION_LABEL[s.relation] ?? s.relation}</span>
+              </div>
+              <Facts
+                evidence={ev}
+                rows={[
+                  { label: '张量数',
+                    value: s.tensor_count
+                      ? `${fmtInt(s.tensor_count)}${s.shards ? ` / ${s.shards} 分片` : ''}`
+                      : undefined,
+                    path: 'precision.sibling_repos', mono: true },
+                  // 逐位相同是这个字段的**前提**（同一份逻辑权重），闸口卡着；
+                  // 印出来是为了让读者自己和上面「参数量」那节对一眼
+                  { label: '参数量（排 scale）',
+                    value: s.params_total
+                      ? `${fmtInt(s.params_total)}（与主仓逐位相同）`
+                      : undefined,
+                    path: 'precision.sibling_repos', mono: true },
+                  { label: '权重存储',
+                    value: s.weight_bytes_total
+                      ? `${fmtBytes(s.weight_bytes_total)}（${fmtInt(s.weight_bytes_total)} B）`
+                      : undefined,
+                    path: 'precision.sibling_repos', mono: true },
+                  { label: '张量名集合',
+                    value: s.name_set_identical === undefined
+                      ? undefined
+                      : s.name_set_identical
+                        ? '排 scale 后与主仓逐条相同 —— 派生方向因此在清单层面判不出'
+                        : '与主仓不同',
+                    path: 'precision.sibling_repos' },
+                  { label: '方向的依据', value: s.relation_evidence,
+                    path: 'precision.sibling_repos' },
+                  { label: '实测方式', value: s.method,
+                    path: 'precision.sibling_repos' },
+                ]}
+              />
+              {s.note && <p class="small muted"><Prose text={s.note} /></p>}
+            </div>
           ))}
         </div>
       )

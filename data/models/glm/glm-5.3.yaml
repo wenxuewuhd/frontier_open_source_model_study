@@ -215,10 +215,80 @@ arch:
 
 precision:
   weights_release: [FP8_E4M3, BF16, FP32]
+  # 三项都逐项写 repo。**原先三项全是 manifest_taken: true 且都没有 repo，
+  # 读起来像「三种精度都来自主仓」—— 字面为真（那就是主仓内部的三种 dtype），
+  # 但厂商另发了一个全 BF16 的仓之后，「BF16」这个键就有了两个所指**：
+  # 主仓里那 541 个未量化张量，和整仓都是 BF16 的 zai-org/GLM-5.3-BF16。
+  # 按 dtype 做键的字段只装得下其中一件，另一件记在同级的 sibling_repos 里；
+  # validate.py 的 check_sibling_repos 卡住「有兄弟仓就必须逐项写 repo」这一条
   weights_release_scope:
-    FP8_E4M3: { manifest_taken: true, in_precision_table: true }
-    BF16: { manifest_taken: true, in_precision_table: true }
-    FP32: { manifest_taken: true, in_precision_table: true }
+    FP8_E4M3: { repo: zai-org/GLM-5.3, manifest_taken: true, in_precision_table: true }
+    BF16:
+      repo: zai-org/GLM-5.3
+      manifest_taken: true
+      in_precision_table: true
+      note: >-
+        主仓**内部**的 BF16：541 个未量化张量、2,103,729,152 个元素（3.92 GiB），
+        占参数量的 0.28%。**不要和同级 sibling_repos 里那个全 BF16 的
+        zai-org/GLM-5.3-BF16 混为一谈** —— 那是另一个仓、59,509 个 BF16 张量
+    FP32: { repo: zai-org/GLM-5.3, manifest_taken: true, in_precision_table: true }
+  sibling_repos:
+    - repo: zai-org/GLM-5.3-BF16
+      rev: abf42e6c0e53
+      dtype: BF16
+      relation: undetermined
+      name_set_identical: true
+      shards: 282
+      tensor_count: 59585
+      params_total: 753329940480
+      weight_bytes_total: 1506659919872
+      relation_evidence: >-
+        **清单层面分不出方向，两条证据各指一边。**
+        指向「它是主仓量化前的源」：主仓的 config 带 quantization_config
+        （quant_method fp8 / fmt e4m3 / weight_block_size [128,128] /
+        activation_scheme dynamic / modules_to_not_convert 541 条），
+        而这个仓的 config **没有** quantization_config —— 「convert」这个词
+        预设了一个被转换的源；而且逐 dtype 的条数对得上：主仓 BF16 541 +
+        F8_E4M3 59,044 = 59,585，逐位等于这个仓的张量数，
+        即主仓恰好量化了它 59,509 个 BF16 张量中的 59,044 个
+        （另 76 个 F32 两仓完全相同，量化只动了 BF16 那一侧）。
+        指向「分不出」：排 scale 后两仓的张量名集合逐条相同、逐张量形状逐位相同、
+        HF 的 safetensors tally 逐位相同（753,329,940,480）。
+        **上采假设在清单上留不下任何痕迹**：反量化 FP8 → BF16 得到的张量
+        名字、形状、dtype、元素数全部与未量化源一致。
+        两个仓的 createdAt 相差 1 分 5 秒（2026-08-25T06:42:50Z 与 06:43:55Z），
+        是同一批建仓，不含信息；lastModified 这个仓晚 18.5 小时
+        （10-14T12:22:48Z → 10-15T06:53:07Z），而 1.4 TB 比 700 GB 上传更久，
+        **推不出派生方向**。模型卡也答不了：这个仓的 README 与主仓同 rev 的 README
+        diff 只有一行 H1（`# GLM-5.3` → `# GLM-5.3-BF16`，+5 字节），
+        关于它和主仓的关系一个字没有。
+        **怎样才能定下来**：读张量数值。若它是上采，那么对主仓里被量化的任一张量，
+        这个仓的每个元素都应恰好落在 E4M3 × 对应 block scale 的可表示集合上；
+        有一个落不上就排除上采。只读分片头读不到数值，本轮没做
+      method: >-
+        逐分片读头取全：282 分片、59,585 个条目，failed_shards 为空、
+        duplicate_tensors 为 0。**没有 weight_scale_inv**（未量化，不存在 scale 容器），
+        所以条目数 59,585 逐位等于主仓的真权重张量数。
+        逐 dtype：BF16 59,509 张 / 753,329,921,024 元素，F32 76 张 / 19,456 元素，
+        合计 753,329,940,480 —— 与 HF 自己的 safetensors tally 逐 dtype 逐位相同，
+        也与主仓排 scale 后的求和逐位相同。
+        落盘 1,506,659,919,872 B（1403.19 GiB），是主仓 755,617,140,416 B
+        （703.72 GiB）的 **1.994 倍**。
+        **这个字节数与 GLM-5.2 主仓逐位相同**（同样 282 分片、59,585 条、
+        1,506,659,919,872 B）—— 两代结构零差异，所以全 BF16 落盘的字节必然相等；
+        这也是为什么本记录 lineage 里那条「权重存储 1403.19 GiB → 703.72 GiB」
+        说的其实是「同一份权重换一种存法」，而不是跨代瘦身
+      note: >-
+        **这个仓没有进逐子系统精度表**，也不该进：精度表的口径是 hf.repo 那一份权重
+        （derive.py 拿 per_subsystem 当识别打包的承重件）。
+        它也**不是** official_variants 的一条 —— 那个字段写的是「官方另发的量化**仓**」，
+        origin 只有 native / post_quantized 两个值，对一个不是任何东西的量化结果的
+        BF16 仓两句都是假的。填进去 check_variants 一个字都不会说
+        （参数量逐位相同），而记录里那句 origin 会是假话 ——
+        model-audit 规则 13 的那个形状。
+        **精度页的指针没指错**：hf.repo 本来就指 FP8 主仓，那是厂商发过的最低精度仓；
+        缺的一直是这个 BF16 兄弟仓的声明本身。
+        下载量 40,313，是主仓 2,395,450 的 1.7%
   quantization:
     method: fp8
     weight_format: e4m3
@@ -432,6 +502,10 @@ evidence:
   precision: official
   precision.weights_release: derived
   precision.weights_release_scope: derived
+  # 整块标 judgement 而不是 derived：条目里的计数全是清单实测，但同一条里的
+  # `relation` 是**清单判不出来的那一件事**（见 R29）。标 derived 会让它不出现在
+  # --list-judgements 里、绕过 Gate C 的人工复核，而方向这件事正最需要人看过
+  precision.sibling_repos: judgement
   precision.quantization.per_subsystem: derived
   precision.quantization.per_subsystem_scale: derived
   precision.quantization.per_subsystem_block: derived
@@ -461,6 +535,11 @@ reviewed:
     ds-v3 / ds-v3.2-exp / glm-5.3 的参数总量与子系统拆分、以及 derive.py 的
     KV 公式路输出。其余计数（量化块的逐对相除、97.9% 的分母、
     排除清单的逐条比对）依据的是代理在完整清单上的枚举，未逐项重跑。
+    **2026-11-18 追加一轮，只覆盖「外侧锚」这一件事**（R28 / R29）：
+    取了 zai-org/GLM-5.3-BF16 的全量清单（282 分片 59,585 条），
+    与本记录主仓逐张量比了名字与形状、逐 dtype 比了元素数，
+    并读了那个仓同 rev 的 README 与 config。那一轮**没有**重核本记录已有的任何数字，
+    也没有读张量数值 —— 所以 R29 的方向问题是 open 而不是 corrected。
 review:
   - id: R1
     field: arch.attention.kv_sharing.layer_coverage
@@ -829,6 +908,64 @@ review:
     resolution: corrected
     changed_to: >-
       counting_note 写明卡正文已逐行核过、前代声明值的存在与口径，并点明本代没有 excludes 的原因；sources 补卡正文一条
+  - id: R28
+    field: precision.weights_release_scope
+    severity: missing
+    claim: >-
+      厂商另发的 zai-org/GLM-5.3-BF16 在这份记录里一个字都没有，
+      而 weights_release_scope 三项（FP8_E4M3 / BF16 / FP32）全是
+      manifest_taken: true 且都没有 repo
+    finding: >-
+      实测存在：zai-org/GLM-5.3-BF16（rev abf42e6c0e53），282 分片、59,585 个条目、
+      零 weight_scale_inv，BF16 59,509 张 / 753,329,921,024 元素 +
+      F32 76 张 / 19,456 元素，合计 **753,329,940,480 —— 与本记录主仓
+      排 scale 后的求和逐位相同**；排 scale 后两仓的张量名集合逐条相同、
+      逐张量形状也逐位相同。
+      这是 model-audit 规则 11 点名的那一半：`weights_release` 那道闸锚在内侧，
+      查得出「记录声明了而清单里没有」，查不出「厂商发了而记录压根没声明」——
+      声明与实测完全自洽，三道闸全绿，和 MiniMax-M3 漏掉 MXFP8 同一个毛病。
+      同族的 glm-4.5 / 4.6 / 4.7 / glm-5 / glm-5.2 五份都有 official_variants，
+      5.3 是唯一两个字段都没有的。
+      **而原来那三项没写 repo 不是笔误，是字段装不下**：按 dtype 做键的块里，
+      「BF16」这个键已经被主仓内部那 541 个未量化张量占着
+      （2,103,729,152 元素），把 repo 指向兄弟仓等于说主仓没有 BF16，
+      与同一份记录的 per_subsystem 自相矛盾。
+      官方量化变体那两个字段也装不下它：`official_variants` 的 origin 只有
+      native / post_quantized，而 BF16 仓不是任何东西的量化结果；
+      `official_variants_excluded` 要求 quantized_from，它没有诚实的值。
+      填进 official_variants 则 check_variants 一个字都不会说（参数量逐位相同），
+      而 origin 那句话是假的 —— 规则 13 的形状。
+    resolution: corrected
+    changed_to: >-
+      新立 `precision.sibling_repos` 字段（schema + validate.py 的
+      check_sibling_repos + 站点模型页的消费点），收「同一份逻辑权重、
+      另一个落盘精度、不是量化变体」这一类；三项 weights_release_scope 逐项补
+      repo: zai-org/GLM-5.3，并在 BF16 那项的 note 里点明它与兄弟仓不是一件事。
+      新闸同时卡住「有 sibling_repos 就必须逐项写 repo」
+  - id: R29
+    field: precision.sibling_repos
+    severity: unsupported
+    claim: >-
+      按同族 glm-5.2 的写法，BF16 仓该记成「FP8 的未量化源」
+    finding: >-
+      glm-5.2 是「主仓 BF16 + 另发 FP8」，方向清楚、origin 填 post_quantized 站得住；
+      5.3 正好反过来，而**方向在清单层面定不下来**。
+      指向「它是源」：主仓有 quantization_config（quant_method fp8、
+      modules_to_not_convert 541 条）而兄弟仓没有，且 541 + 59,044 = 59,585
+      逐位等于兄弟仓的张量数。
+      指向「分不出」：上采（反量化 FP8 → BF16）在清单上留不下任何痕迹 ——
+      名字、形状、dtype、元素数全部与未量化源一致。
+      时间也答不了：两仓 createdAt 相差 1 分 5 秒（同一批建仓），
+      lastModified 兄弟仓晚 18.5 小时，而它要上传的字节是主仓的两倍。
+      模型卡更答不了：兄弟仓的 README 与主仓同 rev 的 README diff
+      只有一行 H1（+5 字节）。
+    resolution: open
+    changed_to: >-
+      relation 填 undetermined（schema 的枚举里专门留了这一档），
+      relation_evidence 写满两侧证据与**定法**：读张量数值 ——
+      若是上采，每个元素都应恰好落在 E4M3 × 对应 block scale 的可表示集合上。
+      check_sibling_repos 卡住「name_set_identical 为真时 relation 只能是
+      undetermined」，免得下一个人按「哪个方向听起来更合理」填一个
 notes: >-
   GLM 家族的当前旗舰（2026-10-14），model_type 为 glm_moe_dsa：MLA 配
   DeepSeek 式 DSA 稀疏选择。本仓第一份非 DeepSeek 的稀疏注意力记录，
@@ -877,5 +1014,14 @@ open_questions:
     厂商没声明，但 HF 平台自己从 141 个分片头统计的 safetensors tally
     （753,329,940,480，同样排 scale）与本仓逐 dtype 逐位相同
   - >-
-    另有 FP8 之外的发布变体与否未核（模型卡 tags 只有 fp8），
-    若存在 BF16 版，其量化配置差异未对照
+    **原来写的是「另有 FP8 之外的发布变体与否未核，若存在 BF16 版，
+    其量化配置差异未对照」—— 核了，确实存在**：zai-org/GLM-5.3-BF16，
+    282 分片 59,585 条全 BF16/F32，记在 precision.sibling_repos 里。
+    量化配置的差异就是「主仓有 quantization_config、那个仓没有」。
+    **剩下的那半定不下来**：它是主仓量化前的源，还是主仓反量化上采来的 ——
+    名字集合、逐张量形状、HF tally 两侧完全相同，清单层面分不出方向，
+    所以 relation 填 undetermined（依据与定法见那条的 relation_evidence）。
+    要钉死得读张量数值：若是上采，每个元素都应恰好落在
+    E4M3 × 对应 block scale 的可表示集合上。
+    **同族还有一个同形的缺口已经一并补了**：zai-org/GLM-5.3-Flash-BF16，
+    见 data/models/glm/glm-5.3-flash.yaml 的 sibling_repos

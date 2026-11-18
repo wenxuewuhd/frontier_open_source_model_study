@@ -342,6 +342,97 @@ def check_excluded_variants(doc, path, errors):
                 f"留着会让精度页的「发布形态」印出一档色块那边根本没有的精度")
 
 
+def check_sibling_repos(doc, path, derived_dir, errors):
+    """precision.sibling_repos：同一份逻辑权重、另一个落盘精度的兄弟仓。
+
+    这个字段补的是 official_variants 装不下的那一类：**主仓是低精度、厂商另发了一个
+    高精度仓**。GLM-5.3 主仓是 FP8，另有全 BF16 的 `zai-org/GLM-5.3-BF16`；
+    BF16 仓不是任何东西的量化结果，所以 official_variants 的 `origin`
+    两个值对它都是假的，而填进去 check_variants 一个字都不会说（参数量逐位相同）。
+
+    查四条，都只查机器判得出来的：
+
+    **一·repo 不能等于 hf.repo。** 相同就不是兄弟仓，那是主仓自己的 dtype，
+    走 weights_release_scope。
+
+    **二·params_total 必须等于 derived.from_shapes.params_total。**
+    「同一份逻辑权重」是这个字段的前提，不是结论。不等就说明两仓装的不是同一份权重，
+    这一条压根不该放在这里（该走 official_variants 或另开一条记录）。
+
+    **三·有 sibling_repos 的记录，weights_release_scope 的每一项都必须填 repo。**
+    这是这个字段存在的直接理由：GLM-5.3 原先三项（FP8_E4M3 / BF16 / FP32）
+    全是 `manifest_taken: true` 且都没有 repo，读起来像「三种精度都来自主仓」——
+    字面为真（那是主仓内部的三种 dtype），但厂商另发了一个全 BF16 的仓之后，
+    「BF16」这个键就有了两个所指，而缺省读法只给得出一个。
+    **一旦存在兄弟仓，「这种精度在哪个仓」就不再可推断，必须逐项写出来。**
+
+    **四·relation 与 name_set_identical 不能互相打脸。** 排 scale 后名字集合逐条相同
+    （`name_set_identical: true`）时，清单层面**本来就分不出派生方向**，
+    所以这种条目的 relation 只能是 `undetermined` —— 填 unquantized_source 或 upcast
+    等于把一个推论写成读到的事实。
+
+    **这道闸锚在哪一侧、因此守不住什么**（model-audit 规则 11）：它锚在
+    **本记录自己的 derived 与 weights_release_scope** 上，所以查得出
+    「这条兄弟仓写得自相矛盾」，查不出**「厂商还发了别的兄弟仓而记录没声明」**——
+    那正是 MiniMax-M3 漏掉 MXFP8、GLM-5.3 漏掉两个 -BF16 仓的那个盲区，
+    而它自己补不了自己。外侧的锚只有厂商的发布清单 / HF 的仓列表，那是取数不是校验。
+
+    **它绿了还不能说明什么**（model-audit 规则 13）：params_total 逐位相同只证明
+    两仓装着同样形状的张量，**证明不了谁是谁派生来的**。方向这件事这道闸不判、
+    也判不了（要读张量数值：若 BF16 是 FP8 的上采，每个元素都应恰好落在
+    E4M3 × 块 scale 的可表示集合上）。所以 `undetermined` 是合法值而不是待办，
+    闸绿**不等于**方向已经查清 —— 依据写在 relation_evidence 里，由人读。
+    """
+    prec = doc.get("precision") or {}
+    sibs = prec.get("sibling_repos") or []
+    if not sibs:
+        return
+    mid = doc.get("id")
+    main_repo = str((doc.get("hf") or {}).get("repo") or "")
+    dp = os.path.join(derived_dir, f"{mid}.json")
+    want = None
+    if os.path.exists(dp):
+        try:
+            want = ((json.load(open(dp)) or {}).get("from_shapes") or {}).get("params_total")
+        except (ValueError, OSError):
+            want = None
+
+    scope = prec.get("weights_release_scope") or {}
+    norepo = sorted(k for k, v in scope.items() if not (v or {}).get("repo"))
+    if norepo:
+        errors.append(
+            f"{path}: 有 precision.sibling_repos，而 weights_release_scope 的 "
+            f"{norepo} 没填 repo —— 兄弟仓一旦存在，「这种精度在哪个仓」就不再可推断。"
+            f"主仓内部的 dtype 也要显式写 repo: {main_repo or 'hf.repo'}，"
+            f"否则读者无从分辨「主仓里的这种 dtype」与「整仓都是这种 dtype 的兄弟仓」")
+
+    seen = set()
+    for s in sibs:
+        s = s or {}
+        repo = str(s.get("repo") or "?")
+        tag = f"{path}: precision.sibling_repos[{repo}]"
+        if main_repo and repo == main_repo:
+            errors.append(
+                f"{tag} 的 repo 就是 hf.repo —— 那是主仓自己的落盘精度，"
+                f"走 precision.weights_release_scope，不是兄弟仓")
+        if repo in seen:
+            errors.append(f"{tag} 这个仓出现了两次")
+        seen.add(repo)
+        got = s.get("params_total")
+        if want and got is not None and abs(float(got) - float(want)) >= 1:
+            errors.append(
+                f"{tag} 的 params_total {int(got):,} 与主仓 derived 的 {int(want):,} "
+                f"差 {int(got) - int(want):+,}。「同一份逻辑权重的另一种落盘精度」"
+                f"是这个字段的前提 —— 不等说明两仓装的不是同一份权重，"
+                f"这一条不该放在这里")
+        if s.get("name_set_identical") and s.get("relation") != "undetermined":
+            errors.append(
+                f"{tag} 声明 name_set_identical: true，而 relation 填了 "
+                f"{s.get('relation')!r}。排 scale 后名字集合逐条相同时，"
+                f"清单层面分不出派生方向，这种条目只能填 undetermined —— "
+                f"方向要靠读张量数值才定得下来，不是靠哪个方向听起来更合理")
+
+
 def _root(data_dir):
     return os.path.dirname(os.path.abspath(data_dir)) or "."
 
@@ -1239,6 +1330,7 @@ def main():
         check_scope_coherence(doc, p, errors)
         check_variants(doc, p, os.path.join(args.data_dir, "derived"), errors)
         check_excluded_variants(doc, p, errors)
+        check_sibling_repos(doc, p, os.path.join(args.data_dir, "derived"), errors)
         check_absence_resolves(doc, p, os.path.join(args.data_dir, "derived"),
                                errors, warnings, gaps)
     check_review_pointers(loaded, errors, warnings)
