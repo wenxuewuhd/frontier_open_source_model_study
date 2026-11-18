@@ -2,7 +2,7 @@
 # 这份清单是选取结果，不是模型记录本身 —— 双周采集时核对并更新。
 # 较小档位只在有结构对照价值时才录，并在其记录里标 lineage.track: side。
 
-updated: 2026-10-30
+updated: 2026-11-18
 policy: 每个家族追最新旗舰；较小档位仅在有结构对照价值时收录
 
 families:
@@ -13,7 +13,11 @@ families:
     released: 2026-09-10
     model_id: deepseek-v41-flash
     status: recorded
-    note: 另有 DeepSeek-V4.1-Flash-1017 刷新版（下载量约 1/16）；V4.1 线尚无 Pro 档
+    note: 另有 DeepSeek-V4.1-Flash-1017 刷新版：两份 config.json 逐字段相同、
+          48 片 safetensors 合计字节完全相等（510,296,708,312 B），sha 不同说明只换了权重，
+          **结构与落盘形状零差异**，故不单立记录。
+          采用度在涨 —— 11-18 为主仓的约 30%，10-30 记这条时约 1/16，
+          **所以这个比例要带日期**。V4.1 线尚无 Pro 档
 
   - family: qwen
     flagship: Qwen3.8-2.4T-A95B
@@ -39,11 +43,21 @@ families:
     note: 另有更新的 M3.1-Flash，但无完整 M3.1，故旗舰仍取 M3
 
   - family: kimi
-    flagship: Kimi-K3
-    hf_repo: moonshotai/Kimi-K3
-    released: 2026-09-02
-    model_id: kimi-k3
+    flagship: Kimi-K3.1-Pro
+    hf_repo: moonshotai/Kimi-K3.1-Pro
+    released: 2026-11-02
+    model_id: kimi-k3.1-pro
     status: recorded
+    note: K3.1 系列的唯一档位 —— HF 上没有非 Pro 的 K3.1，moonshotai 全量 20 个仓核过。
+          **「Pro」在本仓两家含义不同**：ds-v4-pro 判 side 是因为名族集合与 V4-Flash 完全相同，
+          而这一份的名族是 K3 的严格超集（K3 独有 0 族），厂商自述 post-trained from K3。
+          相对 K3 唯一的结构变化是**那 24 个全注意力层换成 Gated DSA**（+120 张量 = 24 层 × 5 个
+          indexer 族），69 个 KDA 层一字未动，93 层 / 7168 / 896 专家 / top-16 全不变。
+          索引缓存宽度取 wk 的**输出维 128**（32 个索引头 MQA 共享一条键），
+          按 index_n_heads × index_head_dim 算会**高估 32 倍**。
+          KV 27,648 → 33,792 B/token（+22.2%，1M 下 27.00 → 33.00 GiB，两侧同为 dtype_fallback）——
+          而 index_topk 2048 降的是每 query 读取量，**不是容量，两件相反**。
+          卡上 2.8T / 104B 与 K3 逐字相同，分辨这两代只能靠清单
 
   - family: stepfun
     flagship: Step-5-Preview
