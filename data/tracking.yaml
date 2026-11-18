@@ -108,6 +108,9 @@ families:
 video_policy: >-
   每个 family 追最新旗舰，外加一个差分基线；
   VAE 或注意力形态变了的同代档位单独录；
+  跨模态档（同一主干、不同 kind）也单独录 —— 它与下面那类「任务变体」的区别不在名字：
+  VAE 与输出层都换了，端到端 FLOPs 不是同一个式子（minimax-h3-image 的注意力占比
+  30.5%，视频档 H3 是 66.2%），所以一句 lineage 讲不清；
   纯分辨率/时长/任务（i2v、s2v、animate）变体不录，进记录内的变体表。
 
 video_families:
@@ -121,6 +124,20 @@ video_families:
     note: 压力测试首录。音视频联合；文本编码器是随仓发布的 Qwen3-VL-32B 全权重；
           Ref2VA 侧带第二套 33B transformer_ref；Context-IR 与 Regenerate-2K 未开源。
           取数实测：无顶层 config，17 份组件 config（FL2VA/ 与 Ref2VA/ 两套任务 checkpoint）
+    members:
+      - model_id: minimax-h3-image
+        hf_repo: MiniMaxAI/MiniMax-H3-Image
+        released: 2026-11-10
+        status: recorded
+        wave: 1
+        note: >-
+          H3 视频 DiT 的图像档，本仓第一份 `kind: image-gen`，按 policy 里
+          「跨模态档单独录」那一条收。t2i 与多图编辑同一个 checkpoint，直出约 16 MP
+          不走 upscaler，蒸馏到 6 步（6 NFE）无 CFG —— 所以这是本线第一份
+          端到端 FLOPs 算得出来的记录。与 minimax-h3 的 DiT 在 diffusers 命名下
+          632 条共有张量逐条同形同 dtype、零差异，六个子系统桶里五个逐位相同
+          （只 io_proj 变）；文本编码器与 tokenizer / processor 共 34 个文件逐位相同。
+          `released` 取首个权重提交 11-10 —— HF createdAt 是 11-03 建仓、那时仓里没有权重
 
   - family: ltx
     flagship: LTX-2.5
